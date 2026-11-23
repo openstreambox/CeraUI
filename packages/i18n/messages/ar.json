@@ -3535,6 +3535,8 @@
 	"timeline.stream_reconfigured.detail.reconciling": "كان الجهاز يتحقق من حالة البث بعد التغيير.",
 	"timeline.stream_restored.title": "استُعيد البث",
 	"timeline.stream_restored.detail": "بدأ من جديد البث الذي كان مباشرًا قبل إعادة التشغيل.",
+	"timeline.stream_orphan_stopped.title": "أُوقف بث متبقٍ",
+	"timeline.stream_orphan_stopped.detail": "بث من قبل إعادة التشغيل لم يعد يُرسَل، لذا أُوقف.",
 	"timeline.stream_restore_failed.title": "لم يُستعد البث",
 	"timeline.stream_restore_failed.detail.runtime_state_unknown": "لم يتمكن الجهاز من معرفة ما إذا كان البث لا يزال يعمل.",
 	"timeline.stream_restore_failed.detail.lifecycle_busy": "كان إجراء بث آخر قيد التنفيذ.",

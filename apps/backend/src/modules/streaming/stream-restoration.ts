@@ -33,11 +33,11 @@
  * A RUNNING ENGINE ALWAYS BEATS RESTORATION. The runtime-state check runs first
  * and short-circuits, so a backend-only restart against a still-streaming engine
  * never launches a second session. Reconciliation retains such a session only
- * with this process's own sender and Start evidence. A predecessor's session
- * that no sender carries is stopped by reconciliation first, so the run then
- * restores into an idle engine. One a surviving sender may still carry stays
- * unconfirmed (`unknown`), so the run waits, gives up after its unknown deadline
- * and leaves recovery to an operator Stop. That is the whole reason the
+ * with this process's own sender and Start evidence. A predecessor's recorded
+ * session that nothing carries any more is stopped by reconciliation first, so
+ * the run then restores into an idle engine. Any other predecessor's session
+ * stays unconfirmed (`unknown`), so the run waits, gives up after its unknown
+ * deadline and leaves recovery to an operator Stop. That is the whole reason the
  * check is not "did we leave a marker behind" — a marker survives a backend
  * restart exactly as it survives an engine death.
  *
@@ -211,7 +211,9 @@ export interface StreamRestorationDeps {
 	 * marker is read, not merely before the launch: this path terminalizes its
 	 * one-shot marker on an unhandled refusal, so judging a marker against a
 	 * half-recovered device would spend the single restoration attempt on a
-	 * verdict the recovery was about to change.
+	 * verdict the recovery was about to change. Production also waits for the
+	 * update orchestrator's startup adjudication: until it has loaded its
+	 * persisted phase, its Start admission cannot see an install in progress.
 	 */
 	readonly awaitRecovery: () => Promise<void>;
 }
@@ -377,8 +379,25 @@ function defaultDeps(): StreamRestorationDeps {
 		logger: defaultLogger,
 		pollIntervalMs: RESTORATION_POLL_MS,
 		unknownDeadlineMs: RESTORATION_UNKNOWN_DEADLINE_MS,
-		awaitRecovery: awaitRecoveryBarrier,
+		awaitRecovery: () => awaitRestorationAdmission(),
 	};
+}
+
+/**
+ * What restoration waits for before it reads its marker: the modem-mutation
+ * replay and the update orchestrator's startup adjudication. A boot
+ * restoration that ran first could start a stream while a persisted install
+ * is still committing, before admission has loaded that phase.
+ */
+export async function awaitRestorationAdmission(
+	modems: () => Promise<void> = awaitRecoveryBarrier,
+	updates: () => Promise<unknown> = async () =>
+		(
+			await import("../system/update-orchestrator/runtime.ts")
+		).awaitUpdateStartupAdjudication(),
+): Promise<void> {
+	await modems();
+	await updates();
 }
 
 /**
@@ -492,8 +511,9 @@ async function runOnce(
 		const attemptElapsedMs = deps.now() - startedAt;
 		if (launched.ok) {
 			recordAttempt(deps, marker, "recovered", attemptElapsedMs);
-			deps.logger.warn("stream restored after an engine restart", {
+			deps.logger.warn("stream restored", {
 				module: "streaming",
+				trigger,
 				elapsedMs: attemptElapsedMs,
 				boundMs: RESTORATION_BOUND_MS,
 				withinBound: attemptElapsedMs <= RESTORATION_BOUND_MS,

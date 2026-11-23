@@ -3520,6 +3520,8 @@
 	"timeline.stream_reconfigured.detail.reconciling": "L'appareil vérifiait l'état de la diffusion après le changement.",
 	"timeline.stream_restored.title": "Diffusion rétablie",
 	"timeline.stream_restored.detail": "La diffusion qui était en direct avant le redémarrage a été relancée.",
+	"timeline.stream_orphan_stopped.title": "Diffusion résiduelle arrêtée",
+	"timeline.stream_orphan_stopped.detail": "Une diffusion d'avant le redémarrage n'était plus envoyée, elle a donc été arrêtée.",
 	"timeline.stream_restore_failed.title": "Diffusion non rétablie",
 	"timeline.stream_restore_failed.detail.runtime_state_unknown": "L'appareil n'a pas pu savoir si la diffusion était toujours en cours.",
 	"timeline.stream_restore_failed.detail.lifecycle_busy": "Une autre action de diffusion était en cours.",

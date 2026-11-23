@@ -36,6 +36,9 @@ export function evidenceHarness(protectedAtBoot = false) {
 	let subscribeGate: Promise<void> | undefined;
 	let beforeDispatch: (() => void) | undefined;
 	let failNextConnect = false;
+	// Off by default: the binding's snapshot request then fails as before.
+	let snapshots = false;
+	let sessionId: string | undefined;
 	let statusSink:
 		| ((event: Extract<EventParams, { type: "status" }>) => void)
 		| undefined;
@@ -73,6 +76,7 @@ export function evidenceHarness(protectedAtBoot = false) {
 			start: async () => {
 				calls.push("start");
 				engine = "streaming";
+				sessionId = `session-${index}`;
 				started.resolve();
 				if (index === 0) await startGate;
 				if (failedStart) throw new CerastreamTimeoutError("start", 10_000);
@@ -82,6 +86,7 @@ export function evidenceHarness(protectedAtBoot = false) {
 				calls.push("stop");
 				if (failedStop) throw new Error("stop-ack-unavailable");
 				engine = "idle";
+				sessionId = undefined;
 				return { state: "idle" };
 			},
 			subscribeEvents: async (_params, callback) => {
@@ -103,7 +108,13 @@ export function evidenceHarness(protectedAtBoot = false) {
 			setAudioMix: unused,
 			requestKeyframe: unused,
 			setEdidProfile: unused,
-			listSwitchTargets: unused,
+			listSwitchTargets: async () => {
+				calls.push("list-switch-targets");
+				if (!snapshots) throw new Error("unexpected fake engine operation");
+				return engine === "streaming" && sessionId !== undefined
+					? { session_id: sessionId, active_input: "a", switch_targets: [] }
+					: { switch_targets: [] };
+			},
 			switchInput: unused,
 			listDevices: unused,
 			getCapabilities: unused,
@@ -210,6 +221,11 @@ export function evidenceHarness(protectedAtBoot = false) {
 		setEngine: (value: typeof engine) => {
 			engine = value;
 			if (value === "streaming") marked = true;
+		},
+		/** Answer `list-switch-targets`, naming `id` while streaming. */
+		answerSnapshots: (id?: string) => {
+			snapshots = true;
+			if (id !== undefined) sessionId = id;
 		},
 		failStart: () => {
 			failedStart = true;

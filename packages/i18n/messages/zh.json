@@ -3440,6 +3440,8 @@
 	"timeline.stream_reconfigured.detail.reconciling": "更改后，设备正在检查直播状态。",
 	"timeline.stream_restored.title": "直播已恢复",
 	"timeline.stream_restored.detail": "重启前正在进行的直播已重新开始。",
+	"timeline.stream_orphan_stopped.title": "已停止残留的直播",
+	"timeline.stream_orphan_stopped.detail": "重启前的直播已不再发送，因此已将其停止。",
 	"timeline.stream_restore_failed.title": "直播未恢复",
 	"timeline.stream_restore_failed.detail.runtime_state_unknown": "设备无法判断直播是否仍在运行。",
 	"timeline.stream_restore_failed.detail.lifecycle_busy": "另一项直播操作正在进行。",

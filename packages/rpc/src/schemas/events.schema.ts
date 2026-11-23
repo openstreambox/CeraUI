@@ -132,6 +132,7 @@ export const EVENT_REGISTRY = {
 		streamSubject,
 	),
 	stream_restored: entry('stream', empty, 'success', streamSubject),
+	stream_orphan_stopped: entry('stream', empty, 'warning', streamSubject),
 	stream_restore_failed: entry(
 		'stream',
 		z.strictObject({ reason: recoveryFailureReasonSchema }),

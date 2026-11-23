@@ -96,9 +96,18 @@ export interface StreamingBackend {
 	 * whether this adapter owned an active session to stop.
 	 */
 	stop(onStopped: () => void, onFailed?: (error: unknown) => void): boolean;
-	/** Explicit Stop for an unowned/unknown engine: an operator's, or reconciliation's
-	 * for a session no sender carries. Never a passive probe. */
+	/** Explicit operator Stop for an unowned/unknown engine, never a passive probe. */
 	confirmStop?(): Promise<void>;
+	/** The engine's id for the session this adapter's Start opened, while owned. */
+	launchedSessionId?(): string | undefined;
+	/**
+	 * Stop only the session `sessionId` names, after `beforeDispatch` agrees on
+	 * the same connection; true on an idle acknowledgement. Never stops another.
+	 */
+	stopRecordedSession?(
+		sessionId: string,
+		beforeDispatch: () => boolean,
+	): Promise<boolean>;
 	/**
 	 * Hot-adjust the max bitrate while streaming: persist it and signal a reload.
 	 * Returns the applied value, or `undefined` when the input fails validation.

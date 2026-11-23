@@ -60,6 +60,7 @@ const samples = {
 	},
 	stream_reconfigured: { outcome: 'streaming' },
 	stream_restored: {},
+	stream_orphan_stopped: {},
 	stream_restore_failed: { reason: 'start_failed' },
 	stream_autostart_failed: { reason: 'network_links_unavailable' },
 	engine_lost: { streaming: true },

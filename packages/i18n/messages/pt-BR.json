@@ -3520,6 +3520,8 @@
 	"timeline.stream_reconfigured.detail.reconciling": "O dispositivo estava verificando o estado da transmissão após a mudança.",
 	"timeline.stream_restored.title": "Transmissão restaurada",
 	"timeline.stream_restored.detail": "A transmissão que estava ao vivo antes da reinicialização foi iniciada de novo.",
+	"timeline.stream_orphan_stopped.title": "Transmissão remanescente parada",
+	"timeline.stream_orphan_stopped.detail": "Uma transmissão de antes da reinicialização não estava mais sendo enviada, então foi parada.",
 	"timeline.stream_restore_failed.title": "Transmissão não restaurada",
 	"timeline.stream_restore_failed.detail.runtime_state_unknown": "O dispositivo não conseguiu saber se a transmissão ainda estava em andamento.",
 	"timeline.stream_restore_failed.detail.lifecycle_busy": "Outra ação de transmissão estava em andamento.",

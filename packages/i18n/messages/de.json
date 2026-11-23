@@ -3567,6 +3567,8 @@
 	"timeline.stream_reconfigured.detail.reconciling": "Das Gerät prüfte nach der Änderung den Stream-Zustand.",
 	"timeline.stream_restored.title": "Stream wiederhergestellt",
 	"timeline.stream_restored.detail": "Der Stream, der vor dem Neustart live war, wurde erneut gestartet.",
+	"timeline.stream_orphan_stopped.title": "Übrig gebliebenen Stream gestoppt",
+	"timeline.stream_orphan_stopped.detail": "Ein Stream von vor dem Neustart wurde nicht mehr gesendet und deshalb gestoppt.",
 	"timeline.stream_restore_failed.title": "Stream nicht wiederhergestellt",
 	"timeline.stream_restore_failed.detail.runtime_state_unknown": "Das Gerät konnte nicht feststellen, ob der Stream noch lief.",
 	"timeline.stream_restore_failed.detail.lifecycle_busy": "Eine andere Stream-Aktion lief gerade.",

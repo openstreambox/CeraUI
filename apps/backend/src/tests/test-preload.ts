@@ -18,7 +18,7 @@ afterEach(() => {
 	if (violations.length) throw new Error(violations.join("\n"));
 });
 
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,6 +59,12 @@ process.env.CERALIVE_CARRYING_BOOT_CLAIM = join(
 const previousSenderCensusRoot = process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT;
 process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT = join(runtimeRoot, "proc");
 mkdirSync(process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT);
+// A predecessor's session record (stream-provenance.ts) is never the host's.
+const previousStreamProvenance = process.env.CERALIVE_STREAM_PROVENANCE;
+process.env.CERALIVE_STREAM_PROVENANCE = join(
+	runtimeRoot,
+	"stream-session.json",
+);
 // Modem registration creates the mode-choice key on first use; never under /data.
 const previousModeChoiceDir = process.env.CERALIVE_MODE_CHOICE_DIR;
 process.env.CERALIVE_MODE_CHOICE_DIR = join(runtimeRoot, "mode-choice");
@@ -115,6 +121,8 @@ const { publishStreamSessionUnconfirmed } = await import(
 );
 beforeEach(() => {
 	publishStreamSessionUnconfirmed(false);
+	// One test's session record must not name another test's engine session.
+	rmSync(process.env.CERALIVE_STREAM_PROVENANCE ?? "", { force: true });
 });
 
 afterAll(async () => {
@@ -129,6 +137,9 @@ afterAll(async () => {
 	if (previousSenderCensusRoot === undefined)
 		delete process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT;
 	else process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT = previousSenderCensusRoot;
+	if (previousStreamProvenance === undefined)
+		delete process.env.CERALIVE_STREAM_PROVENANCE;
+	else process.env.CERALIVE_STREAM_PROVENANCE = previousStreamProvenance;
 	if (previousModeChoiceDir === undefined)
 		delete process.env.CERALIVE_MODE_CHOICE_DIR;
 	else process.env.CERALIVE_MODE_CHOICE_DIR = previousModeChoiceDir;

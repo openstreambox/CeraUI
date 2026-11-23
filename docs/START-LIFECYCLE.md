@@ -201,14 +201,28 @@ factory discards its answer. Session event listeners also check their client and
 launch owner. No locally owned client is **not** idle evidence: `stop-evidence.ts`
 queries state, stops an adopted live engine, and retains protection on unknown.
 An explicit operator Stop may additionally send a fresh Stop to confirm an unowned
-engine. Automatic reconciliation uses that effectful path in one case only: no
-`srtla_send` runs anywhere, no child of this process's session remains, this
-process has no attempt of its own, and the engine either reported a session this
-process cannot confirm or was reachable and silent beside required protection.
-Every launch sends to a local sender, so such a session (an earlier backend
-process's, whose sender died with it) carries nothing; reconciliation stops it as
-that operator Stop would and commits idle only on the engine's acknowledgement. A
-failed stop changes nothing. A positive idle
+engine; automatic reconciliation never sends that blind Stop.
+
+**Earlier process's session (`stream-provenance.ts`).** A backend restart
+mid-stream ends the sender (the unit kills its control group) but not the engine
+session, and the stream's sentinel stays. After the engine acknowledges a Start,
+the backend records in `/run` the boot, the engine's `session_id` (a per-process
+counter, so together with the engine process by PID and start time) and the
+sender by PID and start time; confirmed idle removes the record. A later process
+of the same boot, with no attempt of its own, settles that session only on that
+record, and only while nothing could carry it: the recorded sender is gone (PID
+and start time), no process is named `srtla_send`, no child of this process's
+session remains, and nothing is bound to the local sender UDP port. If the
+engine reports a session it cannot confirm, it must be the recorded engine
+process, and on one fresh connection its snapshot must name the recorded
+`session_id`; the carrier check runs again in the tick the `stop` line is
+written. The protocol's `stop` takes no session, so this compare-and-stop on one
+connection is the narrowest stop it allows. Idle is committed on the engine's
+acknowledgement, with a `stream_orphan_stopped` event. If the engine answers
+silently with no session in its snapshot, the recorded session has ended and
+idle is committed without a Stop. No record, any mismatch, or a stop the engine
+does not acknowledge changes nothing and leaves an operator Stop as the way out;
+a later reconcile or Start tries again. A positive idle
 event may settle an otherwise unowned running
 session, but never runs through outstanding launch/cleanup ownership.
 No new producer or wire field is needed. Launch config and resource-invariant
@@ -476,9 +490,9 @@ State set: `idle | starting | streaming | stopping | stop_failed | reconciling`.
 - `reconciling` is the boot/reconnect state where the backend queries the
   engine's actual runtime state. Idle is adopted; streaming is retained only for
   a session this backend process launched and still owns. A session that
-  outlived a CeraUI restart is stopped when no sender runs anywhere (see the
-  ownership section above), and otherwise stays `reconciling` with unknown
-  liveness until an operator Stop. A successfully subscribed probe observes status for 2.5
+  outlived a CeraUI restart is settled only on the earlier process's record of
+  it (see the ownership section above), and otherwise stays `reconciling` with
+  unknown liveness until an operator Stop. A successfully subscribed probe observes status for 2.5
   seconds: concordant streaming/idle is adopted immediately, silence remains
   UNKNOWN even though live sessions heartbeat every 2 seconds, and query failure or a
   contradictory/transitional event remains unknown. Events arriving after the
@@ -625,7 +639,8 @@ and drives `getIsStreaming()` — proven through the WS layer by
 sentinel and refuses a fresh Start (and, through the update and disruptive-action
 gates, update Check/Install and reboot/power) until positive engine evidence or an
 acknowledged operator Stop. The operator's `streaming.stop` is the only Stop that
-may confirm an unknown engine. Neither state moves `is_streaming`, so a device
+may confirm an unknown engine; reconciliation stops only an earlier process's
+recorded session, by its id (ownership section). Neither state moves `is_streaming`, so a device
 whose last confirmed value was `false` showed the idle cockpit, which has no Stop.
 
 `apps/frontend/src/main/live/UnconfirmedStreamBand.svelte` closes that gap with

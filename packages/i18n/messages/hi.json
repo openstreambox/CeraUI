@@ -3515,6 +3515,8 @@
 	"timeline.stream_reconfigured.detail.reconciling": "बदलाव के बाद डिवाइस स्ट्रीम की स्थिति जाँच रहा था।",
 	"timeline.stream_restored.title": "स्ट्रीम बहाल हुई",
 	"timeline.stream_restored.detail": "रीस्टार्ट से पहले लाइव रही स्ट्रीम फिर से शुरू की गई।",
+	"timeline.stream_orphan_stopped.title": "बची हुई स्ट्रीम रोकी गई",
+	"timeline.stream_orphan_stopped.detail": "रीस्टार्ट से पहले की एक स्ट्रीम अब भेजी नहीं जा रही थी, इसलिए उसे रोक दिया गया।",
 	"timeline.stream_restore_failed.title": "स्ट्रीम बहाल नहीं हुई",
 	"timeline.stream_restore_failed.detail.runtime_state_unknown": "डिवाइस यह नहीं जान सका कि स्ट्रीम अब भी चल रही थी या नहीं।",
 	"timeline.stream_restore_failed.detail.lifecycle_busy": "कोई दूसरी स्ट्रीम कार्रवाई चल रही थी।",

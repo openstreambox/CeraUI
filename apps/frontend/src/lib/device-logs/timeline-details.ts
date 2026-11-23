@@ -83,6 +83,7 @@ export const DETAILS: { readonly [C in EventCode]: Detail<C> | null } = {
 	stream_reconfigured: (params) =>
 		variant("stream_reconfigured", params.outcome),
 	stream_restored: () => plain("stream_restored"),
+	stream_orphan_stopped: () => plain("stream_orphan_stopped"),
 	stream_restore_failed: (params) =>
 		variant("stream_restore_failed", params.reason),
 	stream_autostart_failed: () => plain("stream_autostart_failed"),

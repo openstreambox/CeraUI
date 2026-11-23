@@ -46429,7 +46429,7 @@
   ],
   "dependencies": {
     "apps/backend/src/helpers/config-schemas.ts": "0b000a65929292aec789294fa84024c2c9e92db0c8ae842acaeef603cc906c0e",
-    "apps/backend/src/main.ts": "aef4ab17cfe84635d3fe172f71ee74ad1806c36f558ba909b66602bbabfa722e",
+    "apps/backend/src/main.ts": "ee3ec7c43895284ac8a2dce99f8858771cd5e1d491aeaa985cf9b7b141cc6b87",
     "apps/backend/src/mocks/mock-service.ts": "6ea399303b55478c9323e7a3233eed4a4a3d0e304c7c1ff2eec93b9b54da56e7",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -46457,7 +46457,7 @@
     "apps/backend/src/modules/streaming/audio.ts": "78185fcac611cbd9b07143c7019ac18d04a2f48d51ad423fc7387efc827e6d2b",
     "apps/backend/src/modules/streaming/auto-audio.ts": "dc196f13ae03b4d6b19ebf483b245caf46e7de01fef3051d50086c75622bb4ad",
     "apps/backend/src/modules/streaming/capabilities.ts": "8f8a39248aa0200026a8f3a80ec98b73769c9ea6743d5960a9c55f58d4a32501",
-    "apps/backend/src/modules/streaming/cerastream-backend.ts": "aeca301acba58d68d05003779fc01bedf0e2bfe4375530d666d46d502e3a990c",
+    "apps/backend/src/modules/streaming/cerastream-backend.ts": "92fb39a8999cb1bc36feffea0b053dd18e867dfa9b748f5a6c366372f1ebdd8c",
     "apps/backend/src/modules/streaming/config-change-bridge.ts": "c69aa207a8a9f7c642a19e65a91f1422f9b4e078c6f3384a9de31bc8ad1b7468",
     "apps/backend/src/modules/streaming/connection-restarting.ts": "61efbdeb6bfa9a171a1225473cd0b0eaa43679033ffee7496fe8c47f4ca82c25",
     "apps/backend/src/modules/streaming/devices.ts": "d8daf1992a9cbb6a2663a62d4be1a181462f86bba952c2eb693975508f9d9646",

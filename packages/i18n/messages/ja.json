@@ -3440,6 +3440,8 @@
 	"timeline.stream_reconfigured.detail.reconciling": "変更後、デバイスが配信の状態を確認していました。",
 	"timeline.stream_restored.title": "配信を復元しました",
 	"timeline.stream_restored.detail": "再起動前にライブだった配信を再び開始しました。",
+	"timeline.stream_orphan_stopped.title": "残っていた配信を停止しました",
+	"timeline.stream_orphan_stopped.detail": "再起動前の配信が送信されなくなっていたため、停止しました。",
 	"timeline.stream_restore_failed.title": "配信を復元できませんでした",
 	"timeline.stream_restore_failed.detail.runtime_state_unknown": "デバイスは配信がまだ続いているかを判断できませんでした。",
 	"timeline.stream_restore_failed.detail.lifecycle_busy": "別の配信操作が進行中でした。",

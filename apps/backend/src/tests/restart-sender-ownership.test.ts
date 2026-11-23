@@ -277,8 +277,6 @@ test("an unconfirmed engine session keeps network interlocks closed without a li
 		stopRuntime: async () => {
 			engine = "idle";
 		},
-		// A sender survived the restart; without one the session is stopped.
-		senderAbsent: () => false,
 	});
 	expect(await session.reconcile()).toBe("reconciling");
 	expect(session.streamLiveness()).toBe("unknown");

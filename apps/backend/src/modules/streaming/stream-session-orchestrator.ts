@@ -138,13 +138,17 @@ export type StreamSessionOrchestratorDeps = {
 	 */
 	readonly ownedSessionRemains?: () => boolean;
 	/**
-	 * True only when no `srtla_send` runs anywhere and no child of this
-	 * backend's stream session remains. Every session this backend launches
-	 * sends to a local sender, so an engine session left behind by an earlier
-	 * backend process carries nothing without one. Reconciliation then stops it
-	 * instead of waiting for an operator Stop.
+	 * Settle an engine session an earlier backend process of this boot left
+	 * behind, only on that process's own record of it (`stream-provenance.ts`):
+	 * `stopped` after the engine acknowledged stopping exactly that session,
+	 * `gone` when the engine answered and the session no longer exists,
+	 * `refused` for anything else, which changes nothing. Absent means never.
 	 */
-	readonly senderAbsent?: () => boolean;
+	readonly retireOrphanedSession?: (
+		engine: "streaming" | "silent",
+	) => Promise<"stopped" | "gone" | "refused">;
+	/** Told after an orphaned session was stopped (event history). */
+	readonly onOrphanedSessionStopped?: () => void;
 	/** Mirrors `streamLiveness() === "unknown"` for interlocks outside the session. */
 	readonly setLivenessUnconfirmed?: (unconfirmed: boolean) => void;
 	/** Engine-session evidence protects the marker, without claiming media adoption. */
@@ -341,6 +345,7 @@ export function createStreamSessionOrchestrator(
 	let active: ActiveAttempt | undefined;
 	let reconciliationEpoch = 0;
 	let runtimeObservations = 0;
+	let orphanRetryOwed = false;
 	let activeChange: ActiveConfigChange | undefined;
 	let queuedStop: QueuedStop | undefined;
 	let engineTransitionLatched = false;
@@ -444,8 +449,12 @@ export function createStreamSessionOrchestrator(
 		if (blocked !== undefined) {
 			return refuseStart(attemptId, "mutation_blocked", blocked.stableKey);
 		}
+		// Before the first Start, and whenever an earlier backend's session could
+		// not be settled (the engine did not answer the stop), ask again: a
+		// refused Start in between must not end the retries.
 		if (
-			ownership.generation === 0 &&
+			active === undefined &&
+			(ownership.generation === 0 || orphanRetryOwed) &&
 			ownership.state === "reconciling" &&
 			runtimeObservations === 0 &&
 			!cleanup.pending &&
@@ -807,26 +816,40 @@ export function createStreamSessionOrchestrator(
 	};
 
 	/**
-	 * Records an earlier backend process left behind (the OTA marker, an engine
-	 * session whose sender died with that process) while no sender runs
-	 * anywhere. Nothing can be carried, so the session is stopped the way an
-	 * operator Stop would stop it, and only the engine's acknowledgement makes
-	 * the lifecycle idle. A failed stop leaves everything as it was.
+	 * A session an earlier backend process left (its sender died with it, its
+	 * OTA marker stayed). Decided and, if it is provably that process's and
+	 * nothing can carry it, stopped inside the cleanup flight, so no Start or
+	 * Stop overlaps it. Only `stopped` or `gone` makes the lifecycle idle.
 	 */
-	const retireSenderlessSession = async (
+	const retireOrphanedSession = async (
 		owner: SessionOwner,
-		engine: EngineRuntimeState,
+		engine: "streaming" | "silent",
 	): Promise<boolean> => {
-		logger.warn("stopping a stream session that no sender carries", {
-			engine: engine === "streaming" ? "streaming" : "silent",
-		});
+		const retire = deps.retireOrphanedSession;
+		if (retire === undefined) return false;
+		let outcome: "stopped" | "gone" | "refused" = "refused";
 		try {
-			await stopWithinDeadline(ownership.generation, true);
+			await stopWithinDeadline(ownership.generation, false, async () => {
+				outcome = await retire(engine);
+			});
 		} catch (error) {
-			logger.warn("stream session without a sender could not be stopped", {
+			orphanRetryOwed = true;
+			logger.warn("an earlier backend's stream session could not be settled", {
 				reason: error instanceof Error ? error.message : "stop_failed",
 			});
 			return false;
+		}
+		orphanRetryOwed = false;
+		if (outcome === "refused") return false;
+		if (outcome === "stopped") {
+			logger.info(
+				"stopped the stream session an earlier backend left; nothing was carrying it",
+			);
+			try {
+				deps.onOrphanedSessionStopped?.();
+			} catch {
+				// Event history must not alter stream control.
+			}
 		}
 		if (active === undefined && !ownership.launchPending)
 			ownership.commit(owner, "idle", "idle");
@@ -1096,15 +1119,17 @@ export function createStreamSessionOrchestrator(
 			active === undefined &&
 			(unconfirmedStream ||
 				(runtimeState === "unknown" && silent && !ownership.unprotected())) &&
-			deps.senderAbsent?.() === true &&
-			(await retireSenderlessSession(owner, runtimeState))
+			(await retireOrphanedSession(
+				owner,
+				unconfirmedStream ? "streaming" : "silent",
+			))
 		)
 			return ownership.state;
 		if (superseded()) return ownership.state;
 		if (unconfirmedStream) {
-			// The engine can retain a session after its sender dies. Without a
-			// sender anywhere it was stopped above; with one, or when that stop
-			// failed, keep the inhibitor and require an explicit Stop.
+			// The engine can retain a session after its sender dies. Unless it
+			// was provably an earlier process's and stopped above, keep the
+			// inhibitor and require an explicit Stop.
 			ownership.protect();
 			deps.protectUnownedEngineSession?.();
 			deps.setStreamingStatus(false);

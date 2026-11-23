@@ -3515,6 +3515,8 @@
 	"timeline.stream_reconfigured.detail.reconciling": "The device was checking the stream state after the change.",
 	"timeline.stream_restored.title": "Stream restored",
 	"timeline.stream_restored.detail": "The stream that was live before the restart was started again.",
+	"timeline.stream_orphan_stopped.title": "Leftover stream stopped",
+	"timeline.stream_orphan_stopped.detail": "A stream from before the restart was no longer being sent, so it was stopped.",
 	"timeline.stream_restore_failed.title": "Stream not restored",
 	"timeline.stream_restore_failed.detail.runtime_state_unknown": "The device could not tell whether the stream was still running.",
 	"timeline.stream_restore_failed.detail.lifecycle_busy": "Another stream action was in progress.",

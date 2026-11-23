@@ -21,7 +21,12 @@ export function createSessionCleanup(
 		get pending() {
 			return flight !== undefined;
 		},
-		run: (generation: number, confirmUnknown = false): Promise<void> => {
+		/** `effect` replaces the engine stop for a decided, narrower one. */
+		run: (
+			generation: number,
+			confirmUnknown = false,
+			effect?: () => Promise<void>,
+		): Promise<void> => {
 			if (flight !== undefined) return flight.result;
 			const answer = Promise.withResolvers<void>();
 			const current: CleanupFlight = {
@@ -36,7 +41,10 @@ export function createSessionCleanup(
 			);
 			let raw: Promise<void>;
 			try {
-				raw = deps.stopRuntime(generation, confirmUnknown);
+				raw =
+					effect === undefined
+						? deps.stopRuntime(generation, confirmUnknown)
+						: effect();
 			} catch (error) {
 				raw = Promise.reject(error);
 			}

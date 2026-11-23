@@ -3520,6 +3520,8 @@
 	"timeline.stream_reconfigured.detail.reconciling": "El dispositivo estaba comprobando el estado de la transmisión después del cambio.",
 	"timeline.stream_restored.title": "Transmisión restablecida",
 	"timeline.stream_restored.detail": "La transmisión que estaba en vivo antes del reinicio se inició de nuevo.",
+	"timeline.stream_orphan_stopped.title": "Transmisión sobrante detenida",
+	"timeline.stream_orphan_stopped.detail": "Una transmisión de antes del reinicio ya no se estaba enviando, así que se detuvo.",
 	"timeline.stream_restore_failed.title": "Transmisión no restablecida",
 	"timeline.stream_restore_failed.detail.runtime_state_unknown": "El dispositivo no pudo saber si la transmisión seguía en curso.",
 	"timeline.stream_restore_failed.detail.lifecycle_busy": "Había otra acción de transmisión en curso.",

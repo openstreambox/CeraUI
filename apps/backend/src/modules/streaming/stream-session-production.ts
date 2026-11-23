@@ -5,7 +5,7 @@ import { ensureEncoderShutdownProtection } from "../system/shutdown-protection.t
 import { admitAndPrepareStreamStart } from "../system/update-orchestrator/runtime.ts";
 import { notificationBroadcast } from "../ui/notifications.ts";
 import { notifyWifiAdapterModeEdge } from "../wifi/wifi-adapter-mode-events.ts";
-import { noteStreamStopped } from "./armed-stream-marker.ts";
+import { noteStreamStopped, readSystemBootId } from "./armed-stream-marker.ts";
 import { asrcProbeRemainingMs } from "./audio.ts";
 import {
 	broadcastConfigChangePhase,
@@ -30,7 +30,6 @@ import { awaitRecoveryBarrier, isRecoveryPending } from "./recovery-barrier.ts";
 import {
 	ownedSessionProcessesRemain,
 	ownsSessionSender,
-	senderCensus,
 	unownedSenderCensus,
 } from "./sender-ownership.ts";
 import { newAttemptId } from "./start-failure-taxonomy.ts";
@@ -40,6 +39,15 @@ import {
 	updateStreamLifecycleState,
 } from "./stream-lifecycle-status.ts";
 import { publishStreamSessionUnconfirmed } from "./stream-liveness.ts";
+import {
+	clearStreamProvenance,
+	defaultOrphanRetirementDeps,
+	engineProcess,
+	processStartTime,
+	recordLaunchedSession,
+	retireOrphanedSession,
+	writeStreamProvenance,
+} from "./stream-provenance.ts";
 import type { StreamSessionOrchestratorDeps } from "./stream-session-orchestrator.ts";
 import {
 	getStartSuppressionContext,
@@ -48,6 +56,8 @@ import {
 } from "./stream-start-retry-reporting.ts";
 import { getIsStreaming, updateStatus } from "./streaming.ts";
 import { getStreamingBackend } from "./streaming-engine.ts";
+import { srtlaSendExec } from "./streamloop/exec-paths.ts";
+import { getStreamingProcesses } from "./streamloop/process-runner.ts";
 import { stopGeneration } from "./streamloop/session.ts";
 
 function recordEvent(publish: () => void): void {
@@ -85,10 +95,16 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	canReconcileIdle: () =>
 		shouldUseMocks() || unownedSenderCensus() === "absent",
 	ownedSessionRemains: () => !shouldUseMocks() && ownedSessionProcessesRemain(),
-	senderAbsent: () =>
-		!shouldUseMocks() &&
-		senderCensus() === "absent" &&
-		!ownedSessionProcessesRemain(),
+	retireOrphanedSession: async (engine) => {
+		if (shouldUseMocks()) return "refused";
+		const backend = getStreamingBackend();
+		return retireOrphanedSession(
+			engine,
+			defaultOrphanRetirementDeps(backend.stopRecordedSession?.bind(backend)),
+		);
+	},
+	onOrphanedSessionStopped: () =>
+		recordEvent(() => emitEvent("stream_orphan_stopped", {})),
 	setLivenessUnconfirmed: (unconfirmed) => {
 		// Clearing reopens the Wi-Fi mode restore that `is_streaming` alone gates.
 		if (
@@ -119,6 +135,9 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	setLifecycleState: (state) => {
 		const previous = getStreamLifecycleState();
 		updateStreamLifecycleState(state);
+		// Confirmed idle: no session is left for a later process to recognise.
+		if (state === "idle" && previous !== "idle" && !shouldUseMocks())
+			clearStreamProvenance();
 		if (previous === "starting" && state === "streaming") {
 			streamStartedAt = Date.now();
 			recordEvent(() => emitEvent("stream_started", {}));
@@ -156,6 +175,25 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 			})
 			.catch((error) =>
 				logger.warn("stream commit bookkeeping failed", { error }),
+			);
+		// Name this session for a later process of this boot (stream-provenance.ts).
+		if (!shouldUseMocks())
+			void recordLaunchedSession({
+				sessionId: () => getStreamingBackend().launchedSessionId?.(),
+				senderPid: () =>
+					getStreamingProcesses().find(
+						(child) =>
+							child.spawnfile === srtlaSendExec &&
+							child.proc.exitCode === null &&
+							child.proc.signalCode === null,
+					)?.proc.pid,
+				bootId: () => readSystemBootId(),
+				engineProcess: () => engineProcess(),
+				processStartTime: (pid) => processStartTime(pid),
+				current,
+				write: writeStreamProvenance,
+			}).catch((error) =>
+				logger.warn("stream session record failed", { error }),
 			);
 		// A session runs again, so a "restart didn't finish" notice is out of date.
 		void import("./connection-restart.ts")

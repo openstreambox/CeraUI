@@ -443,10 +443,11 @@ if (!shouldUseMocks()) {
 	// second or two from now), and that must not delay the rest of boot.
 	void runInflightConfigChangeReconciliation();
 	// The backend-restart half of restoration. `reconcileStreamSession()` above
-	// has already judged an engine session that outlived this process: without
-	// any sender it was stopped, so the run restores into an idle engine; beside
-	// a surviving sender it stays unconfirmed, so the run waits and gives up. A
-	// backend-only restart can never produce a second session.
+	// has already judged an engine session that outlived this process: an
+	// earlier process's recorded session that nothing carries was stopped, so
+	// the run restores into an idle engine; any other stays unconfirmed, so the
+	// run waits and gives up. A backend-only restart can never produce a second
+	// session.
 	void runStreamRestoration();
 } else {
 	noteStreamReconciliationCompleted(); // mock mode has no engine to adopt

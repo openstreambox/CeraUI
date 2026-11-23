@@ -808,10 +808,16 @@ export class CerastreamBackend implements StreamingBackend {
 	private subscription: Subscription | undefined;
 	private active = false;
 	private launchedSessionCurrent: (() => boolean) | undefined;
+	private launchedSession: string | undefined;
 
 	/** Only the unchanged client that acknowledged our Start is session proof. */
 	ownsLaunchedSession(): boolean {
 		return this.active && this.launchedSessionCurrent?.() === true;
+	}
+
+	/** The engine's id for the session this backend's Start opened, while owned. */
+	launchedSessionId(): string | undefined {
+		return this.ownsLaunchedSession() ? this.launchedSession : undefined;
 	}
 	private audioMixInputs: Array<AudioInputConfig & { id: string }> | undefined;
 	private clientEpoch = 0;
@@ -1019,14 +1025,17 @@ export class CerastreamBackend implements StreamingBackend {
 					dispatched = true;
 					return this.dispatchStart(client, startParams);
 				});
+				let sessionId: string | undefined;
 				await launchTransaction.runPhase("playing-wait", async () => {
 					const parsed = startResultSchema.parse(result);
+					sessionId = parsed.session_id;
 					if (parsed.state !== "streaming") await streamingStatus;
 				});
 				// Subscription replay predates this Start acknowledgement.
 				if (this.client === client && this.clientEpoch === clientEpoch) {
 					this.noteDroppedStartFeatures(droppedFeatures, capabilitiesAnswered);
 					this.audioMixInputs = startMixInputs;
+					this.launchedSession = sessionId;
 					this.launchedSessionCurrent = () =>
 						this.client === client && this.clientEpoch === clientEpoch;
 					this.runtimeEvidence = undefined;
@@ -1187,6 +1196,61 @@ export class CerastreamBackend implements StreamingBackend {
 					? Promise.resolve()
 					: this.closeWithinDeadline(stopClient),
 			]);
+		}
+	}
+
+	/**
+	 * Stop the engine session only if it is still the one `sessionId` names.
+	 * The protocol's `stop` takes no session, so the snapshot, `beforeDispatch`
+	 * and the stop share one connection, and the stop line is written in the
+	 * same tick as the last `beforeDispatch` check. The engine handles a
+	 * connection's lines in order. Resolves true only on an idle
+	 * acknowledgement, false when the session is not that one or a check
+	 * refused; it never stops anything else.
+	 */
+	async stopRecordedSession(
+		sessionId: string,
+		beforeDispatch: () => boolean,
+	): Promise<boolean> {
+		let client: CerastreamClient | undefined;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const request = (async () => {
+			client = await this.deps.connect({
+				...this.deps.connectOptions,
+				autoReconnect: false,
+				requestTimeoutMs: ENGINE_STATE_RECONCILE_TIMEOUT,
+			});
+			const snapshot = await client.listSwitchTargets();
+			if (snapshot.session_id !== sessionId || !beforeDispatch()) return false;
+			const reply = await client.stop();
+			if (reply.state !== "idle") throw new Error("stop_not_idle");
+			return true;
+		})();
+		const deadline = new Promise<never>((_resolve, reject) => {
+			timer = this.deps.scheduleTimeout(
+				() => reject(new Error("stop_timeout")),
+				ENGINE_STOP_REQUEST_DEADLINE_MS,
+			);
+		});
+		try {
+			const stopped = await Promise.race([request, deadline]);
+			if (stopped) {
+				// The adopted reconciliation client watched the session just ended.
+				const adopted = this.client;
+				const subscription = this.subscription;
+				this.client = undefined;
+				this.subscription = undefined;
+				this.active = false;
+				this.launchedSessionCurrent = undefined;
+				subscription?.close();
+				await this.closeWithinDeadline(adopted);
+				this.clearSessionScopedTelemetry();
+			}
+			return stopped;
+		} finally {
+			if (timer !== undefined) this.deps.cancelTimeout(timer);
+			void request.catch(() => undefined);
+			await this.closeWithinDeadline(client);
 		}
 	}
 

@@ -118,6 +118,7 @@ describe("eventCopy: a detail sentence for every code", () => {
 			t.stream_reconfigured.detail.reconciling,
 		],
 		["stream_restored", {}, t.stream_restored.detail],
+		["stream_orphan_stopped", {}, t.stream_orphan_stopped.detail],
 		[
 			"stream_restore_failed",
 			{ reason: "lifecycle_busy" },
