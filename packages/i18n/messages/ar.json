@@ -2203,6 +2203,7 @@
 	"settings.dialogs.addressLinkLocal": "عنوان محلي تلقائي، يُحتفَظ به للوصول المحلي حتى بدون DHCP.",
 	"settings.dialogs.addressNone": "لا يوجد عنوان مُعيَّن",
 	"settings.dialogs.blockedStreaming": "أوقف البث قبل إعادة التشغيل.",
+	"settings.dialogs.blockedStreamingPower": "أنت في بث مباشر. أوقف البث لإعادة التشغيل أو إيقاف التشغيل.",
 	"settings.dialogs.blockedUpdating": "التحديث قيد التقدم. انتظر قبل إعادة التشغيل.",
 	"settings.dialogs.confirmPassword": "تأكيد كلمة المرور",
 	"settings.dialogs.enableInterface": "استخدامها في التجميع",

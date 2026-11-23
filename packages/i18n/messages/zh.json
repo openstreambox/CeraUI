@@ -2146,6 +2146,7 @@
 	"settings.dialogs.addressLinkLocal": "自动的链路本地地址，即使没有 DHCP 也会保留用于本地访问。",
 	"settings.dialogs.addressNone": "未分配地址",
 	"settings.dialogs.blockedStreaming": "重启前请停止直播。",
+	"settings.dialogs.blockedStreamingPower": "正在直播。请先停止直播，再重启或关机。",
 	"settings.dialogs.blockedUpdating": "更新正在进行中。请等待后再重启。",
 	"settings.dialogs.confirmPassword": "确认密码",
 	"settings.dialogs.enableInterface": "用于绑定",

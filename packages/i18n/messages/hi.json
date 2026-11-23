@@ -2191,6 +2191,7 @@
 	"settings.dialogs.addressLinkLocal": "स्वचालित लिंक-लोकल पता, DHCP के बिना भी स्थानीय पहुँच के लिए बना रहता है।",
 	"settings.dialogs.addressNone": "कोई पता असाइन नहीं",
 	"settings.dialogs.blockedStreaming": "रीबूट करने से पहले स्ट्रीमिंग बंद करें।",
+	"settings.dialogs.blockedStreamingPower": "आप लाइव हैं। रीबूट या पावर ऑफ करने के लिए स्ट्रीम रोकें।",
 	"settings.dialogs.blockedUpdating": "अपडेट प्रगति पर है। रीबूट करने से पहले प्रतीक्षा करें।",
 	"settings.dialogs.confirmPassword": "पासवर्ड की पुष्टि करें",
 	"settings.dialogs.enableInterface": "बॉन्डिंग के लिए उपयोग करें",
