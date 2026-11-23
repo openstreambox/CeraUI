@@ -270,6 +270,10 @@ export interface CerastreamBackendDeps {
 	// Called at most ONCE per session, when the session's control connection is
 	// PROVEN dead (see the module header). `site` names the call that found it.
 	onSessionConnectionLost: (site: string) => void;
+	// Called when a start could not reach the engine at all (classified
+	// `engine_unavailable`), so the reconnect loop notices an engine that went
+	// away while no session held a connection.
+	onEngineUnreachable?: (site: string) => void;
 	onConfigChangePhase?: (event: {
 		attemptId: string;
 		phase: ConfigChangePhase;
@@ -617,8 +621,28 @@ function defaultOnSessionConnectionLost(site: string): void {
 				"cerastream: could not retire the session after a control-connection loss",
 				{ site, err },
 			);
+		} finally {
+			// Re-armed only after the restoration run is in flight, so the heal's
+			// own restoration call joins that run instead of judging the marker
+			// on its own while the retirement above is still settling.
+			defaultOnEngineUnreachable(site);
 		}
 	})();
+}
+
+/**
+ * Keep asking the engine after a proven loss, so the capability snapshot the
+ * loss invalidated is refreshed (and broadcast) once systemd brings it back.
+ */
+function defaultOnEngineUnreachable(site: string): void {
+	void import("./engine-reconnect.ts")
+		.then(({ rearmEngineReconnect }) => rearmEngineReconnect(site))
+		.catch((err) =>
+			defaultLogger.error("cerastream: could not re-arm the engine reconnect", {
+				site,
+				err,
+			}),
+		);
 }
 
 function defaultCerastreamBackendDeps(): CerastreamBackendDeps {
@@ -638,6 +662,7 @@ function defaultCerastreamBackendDeps(): CerastreamBackendDeps {
 		scheduleTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
 		cancelTimeout: (timer) => clearTimeout(timer),
 		onSessionConnectionLost: defaultOnSessionConnectionLost,
+		onEngineUnreachable: defaultOnEngineUnreachable,
 		onConfigChangePhase: defaultOnConfigChangePhase,
 		onEngineStatus: (event, current) => {
 			void import("./stream-session-orchestrator.ts")
@@ -1048,6 +1073,8 @@ export class CerastreamBackend implements StreamingBackend {
 							error,
 							"backend-start",
 						);
+			if (failure.class === "engine_unavailable")
+				this.deps.onEngineUnreachable?.("start");
 			throw new StreamStartFailure(
 				failure,
 				!dispatched || confirmedIdle ? "idle" : "unknown",

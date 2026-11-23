@@ -604,6 +604,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["cerastream: ", " failed"],
 	["cerastream: buffering broadcast skipped"],
 	["cerastream: control socket already closing"],
+	["cerastream: could not re-arm the engine reconnect"],
 	["cerastream: could not retire the session after a control-connection loss"],
 	["cerastream: could not route a config-change phase"],
 	["cerastream: could not route status"],
@@ -710,6 +711,15 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["encoder-load: load_interval unreadable"],
 	["encoder-load: telemetry unreadable"],
 	["engine reconnect: capability refresh threw: ", ""],
+	["engine reconnect: engine back after ", "s; reconnect loop settled"],
+	[
+		"engine reconnect: engine connection lost (",
+		"); reconnecting with the previous backoff (lost again soon after it came back)",
+	],
+	["engine reconnect: engine connection lost (", "); reconnecting"],
+	[
+		"engine reconnect: engine connection lost again during the recheck; rechecking",
+	],
 	[
 		"engine reconnect: engine reachable again; re-broadcast capabilities/pipelines/sources to clients",
 	],
@@ -718,6 +728,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 		"engine reconnect: engine unreachable at boot; scheduling background reconnect",
 	],
 	["engine reconnect: heal broadcast failed, will retry: ", ""],
+	["engine reconnect: offline broadcast failed: ", ""],
 	["engine reconnect: rechecking engine in ", "ms (attempt ", ")"],
 	["engine reconnect: reconciliation for a waiting carrying line failed: ", ""],
 	["error: attempted to send persistent unicast notification"],

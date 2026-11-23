@@ -395,3 +395,61 @@ describe("what is NOT proof that the connection died", () => {
 		expect(h.lostSites).toEqual([]);
 	});
 });
+
+describe("a start that cannot reach the engine re-arms the engine reconnect", () => {
+	function startHarness(connect: CerastreamBackendDeps["connect"]) {
+		const unreachable: string[] = [];
+		const lostSites: string[] = [];
+		const backend = new CerastreamBackend({
+			connect,
+			connectOptions: {},
+			getConfig: () => STREAM_CONFIG,
+			saveConfig: () => undefined,
+			bridge: {
+				notify: () => undefined,
+				notificationExists: () => false,
+				removeNotification: () => {},
+				broadcastStatus: () => {},
+				broadcastBuffering: () => undefined,
+			},
+			execPath: "cerastream",
+			configPath: "/tmp/cerastream-connection-loss.json",
+			logger: silentLogger,
+			onSessionConnectionLost: (site) => {
+				lostSites.push(site);
+			},
+			onEngineUnreachable: (site) => {
+				unreachable.push(site);
+			},
+		});
+		return { backend, unreachable, lostSites };
+	}
+
+	test("an engine that is not listening (restarting, or gone) is reported", async () => {
+		const h = startHarness(async () => {
+			throw new CerastreamConnectionError(
+				"failed to connect to cerastream control socket at /run/cerastream/control.sock",
+			);
+		});
+		await expect(h.backend.start(STREAM_CONFIG, RUN_OPTS)).rejects.toThrow(
+			"engine_unavailable",
+		);
+		expect(h.unreachable).toEqual(["start"]);
+		// No session existed, so this is not a session loss.
+		expect(h.lostSites).toEqual([]);
+	});
+
+	test("an engine that answers and refuses the start is not reported", async () => {
+		const fake = makeFakeClient();
+		(fake.client as unknown as Record<string, unknown>).rawRequest =
+			async () => {
+				throw new CerastreamRpcError(-32603, "transport connect failed");
+			};
+		fake.client.start = async () => {
+			throw new CerastreamRpcError(-32603, "transport connect failed");
+		};
+		const h = startHarness(async () => fake.client);
+		await expect(h.backend.start(STREAM_CONFIG, RUN_OPTS)).rejects.toThrow();
+		expect(h.unreachable).toEqual([]);
+	});
+});

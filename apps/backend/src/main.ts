@@ -151,7 +151,10 @@ import {
 	observeStartup,
 } from "./modules/streaming/continuity-observer.ts";
 import { startDeviceDiscovery } from "./modules/streaming/devices.ts";
-import { initEngineConnection } from "./modules/streaming/engine-reconnect.ts";
+import {
+	initEngineConnection,
+	stopEngineReconnect,
+} from "./modules/streaming/engine-reconnect.ts";
 import { setGatewayProbe } from "./modules/streaming/gateway-availability.ts";
 import { broadcastHealthIfChanged } from "./modules/streaming/health.ts";
 import {
@@ -802,6 +805,7 @@ void reconcileIngestDesiredState();
 void guardNonCritical("bluetooth", initBluetooth);
 
 function stopRecoveryRetries(): void {
+	stopEngineReconnect();
 	stopRuntimeConfigRecovery();
 	stopMutationRecovery();
 	stopLegacyTokenMigration();
