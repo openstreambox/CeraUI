@@ -98,6 +98,8 @@ describe("credential key words", () => {
 		"keyCount",
 		"key",
 		"stableKey",
+		"streamKeyCount",
+		"remoteCommitHash",
 		"hash",
 		"commitHash",
 		"modem_shadow",
@@ -127,6 +129,23 @@ describe("nested qualifiers and errors", () => {
 		expect(out.items[0].remote.keys).toBe(REDACTED);
 		expect(isSecretWordKey("key", "remote")).toBe(true);
 		expect(isSecretWordKey("key", "video")).toBe(false);
+	});
+
+	test("key and hash count only as the material itself, not inside another word's name", () => {
+		const out = logRedact({
+			remote: { commitHash: "keep-commit-r3", key_pem: "nested-pem-r3" },
+			stream: { keyCount: 3, key: "nested-stream-key-r3" },
+			streamKeyCount: 4,
+		}) as {
+			remote: { commitHash: string; key_pem: string };
+			stream: { keyCount: number; key: string };
+			streamKeyCount: number;
+		};
+		expect(out.remote.commitHash).toBe("keep-commit-r3");
+		expect(out.remote.key_pem).toBe(REDACTED);
+		expect(out.stream.keyCount).toBe(3);
+		expect(out.stream.key).toBe(REDACTED);
+		expect(out.streamKeyCount).toBe(4);
 	});
 
 	test("an error carrying a credential field is projected with it redacted", () => {

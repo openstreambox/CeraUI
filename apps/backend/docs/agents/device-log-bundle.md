@@ -49,14 +49,20 @@ masking when no whole-address mask applies.
 Bracketed endpoints keep their port, as in `[IP]:9000`. Link-local IPv6
 (`fe80::/10`), unique local IPv6 (`fc00::/7`), and `::1` remain visible.
 The first three MAC octets and private IPv4 remain useful diagnostics.
-A JSON string member whose key names a credential by the logger's word rule
-(`helpers/secret-key-words.ts`: `ssh_pass`, `sshPassHash`, `remote_key`,
-`remote.key`, `password_hash`, …) has its value masked as
-`[REDACTED:<kind>]`, as a plain member and inside JSON nested in a JSON
-string, so journal lines written before the logger redacted such keys stay
-out even when the backend no longer holds the value. Only a complete marker
-counts as already masked. Other historical credentials no longer held by the
-backend, and arbitrary personal text, are not guaranteed to be recognized.
+`credential-members.ts` also masks credential values by the key they sit
+under, so journal lines written before the logger redacted a key stay out even
+when the backend no longer holds the value. When the text is, or contains, a
+JSON object or array, it is parsed and walked with the logger's
+`isSensitiveKey` rule, parent keys included, following JSON strings that hold
+JSON up to four levels: every string under a sensitive key (directly, in an
+array or in a nested object) is masked as `[REDACTED:<kind>]` wherever it
+occurs as a JSON string token at its encoding depth in that text. Numbers and
+booleans are not masked. Text that does not parse gets a `"key": "value"`
+member scan, plain or escaped, using the word rule on the member's own key.
+Only a complete marker counts as already masked, and replacements keep the
+value's quotes. Credentials outside such JSON, under keys the rules do not
+name, or no longer held by the backend in plain text, and arbitrary personal
+text, are not guaranteed to be recognized.
 Literal matching is case-sensitive and does not normalize Unicode; case-folded
 or differently normalized spellings are outside the exact-occurrence contract.
 

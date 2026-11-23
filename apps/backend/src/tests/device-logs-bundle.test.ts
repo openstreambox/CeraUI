@@ -1025,3 +1025,30 @@ test("a config line from before key redaction leaves no SSH password, hash or re
 		scan.mockRestore();
 	}
 });
+
+test("nested and array credentials in an old journal line stay out of the bundle", async () => {
+	source.secrets = [];
+	const message = JSON.stringify({
+		msg: "remote state",
+		meta: {
+			remote: { key: "nested-remote-b3" },
+			relays: [{ ingest_key: "array-object-b3" }],
+			raw: JSON.stringify({ ssh: { hash: "$6$s$inner-hash-b3" } }),
+		},
+	});
+	const scan = spyOn(pages, "scanPage")
+		.mockResolvedValueOnce(page([{ ...record(1), message }]))
+		.mockResolvedValue(page());
+	try {
+		const { text } = await unpack(await download());
+		for (const value of [
+			"nested-remote-b3",
+			"array-object-b3",
+			"inner-hash-b3",
+		])
+			expect(text).not.toContain(value);
+		expect(text).toContain("remote state");
+	} finally {
+		scan.mockRestore();
+	}
+});

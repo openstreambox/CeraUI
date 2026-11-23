@@ -193,17 +193,19 @@ issue list, so callers omit the field rather than log an empty record. See
 `redact()` format scrubs every record before it reaches any transport. A key is replaced with
 `[REDACTED]` when `isSensitiveKey()` accepts it: the substring rule `SENSITIVE_KEY_RE`, the
 whole-word credential rule in `helpers/secret-key-words.ts` (`pass`, `pwd`, `psk`, `secret`, … as
-a word of the key, and `key` or `hash` qualified by `remote`, `private`, `ssh`, `stream`, … in the
-key or its parent key, so `ssh_pass`, `ssh_pass_hash`, `remote_key` and `{ ssh: { hash } }` are
-caught while `video_passthrough` and `keyframe` are not), or one of the whole-key
+a word of the key, and a final `key` or `hash` right after `remote`, `private`, `ssh`, `stream`, …,
+or alone under such a parent key, so `ssh_pass`, `ssh_pass_hash`, `remote_key` and
+`{ ssh: { hash } }` are caught while `video_passthrough`, `keyframe`, `keyCount`,
+`remoteCommitHash` and `{ video: { key } }` are not), or one of the whole-key
 classes (SMS, USSD, GPS, own number, device login). `logger-config-credentials.test.ts` pins the
 rule to exactly the credential fields of `runtimeConfigSchema`. Value-shaped secrets (PASETO
 `v4.public.*`, JWT `eyJ…`, Bearer credentials) are also scrubbed from string values. The
 `logRedact(value)` helper is exported for call sites building metadata objects. `loadConfig()`
 logs only the key names of `config.json`, and an unrecognised WebSocket frame logs its key names
-and size, never a payload. Support bundles and log exports also mask JSON members whose key
-names a credential by the same word rule (`device-logs/redaction.ts`), so journal lines written
-before a value was redacted, or holding a value the backend no longer holds, stay out.
+and size, never a payload. Support bundles and log exports also parse JSON in journal text and mask
+string values under keys `isSensitiveKey` accepts (`device-logs/credential-members.ts`, see
+`device-log-bundle.md` for the exact guarantee), so older journal lines whose values the
+backend no longer holds stay out of them.
 
 **Loop visibility:**
 Streaming and ingest loop modules log entry/exit and error paths via `logger.debug`/`logger.warn`

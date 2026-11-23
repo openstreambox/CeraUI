@@ -474,3 +474,88 @@ test.each(["text", "known"] as const)(
 		}
 	},
 );
+
+// Round-2 shapes: the walk follows parent keys, arrays and JSON inside JSON.
+const nestedFields = {
+	remote: { key: "nested-remote-r3" },
+	ssh: { hash: "$6$s$nested-ssh-hash-r3", port: 22 },
+	remote_keys: ["array-key-one-r3", "array-key-two-r3"],
+	accounts: [{ ingest_key: "array-object-r3", name: "keep-name-r3" }],
+	video: { key: "keep-video-key-r3" },
+	remoteInfo: { commitHash: "keep-commit-r3" },
+	stream: { keyCount: "keep-count-r3" },
+};
+const nestedValues = [
+	"nested-remote-r3",
+	"nested-ssh-hash-r3",
+	"array-key-one-r3",
+	"array-key-two-r3",
+	"array-object-r3",
+];
+const keptValues = [
+	"keep-name-r3",
+	"keep-video-key-r3",
+	"keep-commit-r3",
+	"keep-count-r3",
+];
+const journalLine = JSON.stringify({ msg: "x", meta: nestedFields });
+
+test.each([
+	["text", "a journal line", journalLine],
+	["known", "a journal line", journalLine],
+	[
+		"text",
+		"twice-encoded JSON",
+		JSON.stringify({ msg: "x", meta: { raw: journalLine } }),
+	],
+	[
+		"known",
+		"twice-encoded JSON",
+		JSON.stringify({ msg: "x", meta: { raw: journalLine } }),
+	],
+	["text", "a prefixed line", `backend said ${journalLine}`],
+	["text", "pretty JSON", JSON.stringify({ meta: nestedFields }, null, 2)],
+] as const)(
+	"%s masks nested, array and qualified credentials in %s",
+	(method, _shape, line) => {
+		const redact = buildRedactor([]);
+		const { text, redactions } =
+			method === "text" ? redact.text(line) : redact.known(line);
+		for (const value of nestedValues) expect(text).not.toContain(value);
+		for (const value of keptValues) expect(text).toContain(value);
+		expect(redactions).toBe(nestedValues.length);
+	},
+);
+
+test("an escaped member with an encoded newline before its value is masked when the text does not parse", () => {
+	const line =
+		'unit wrote {\\"ssh_pass\\":\\n \\"encoded-gap-r3\\"} and stopped';
+	const { text, redactions } = buildRedactor([]).text(line);
+	expect(text).not.toContain("encoded-gap-r3");
+	expect(text).toContain('\\"[REDACTED:ssh]\\"');
+	expect(redactions).toBe(1);
+});
+
+test("numbers, booleans and a value equal to a key name keep their place", () => {
+	const line = JSON.stringify({
+		meta: { pin: 1234, ssh_pass: "ssh_persistent", ssh_persistent: true },
+	});
+	const { text } = buildRedactor([]).text(line);
+	expect(text).toContain('"pin":1234');
+	expect(text).toContain('"ssh_persistent":true');
+	expect(text).toContain('"ssh_pass":"[REDACTED:ssh]"');
+});
+
+test("a held literal inside a credential member keeps the member's quotes", () => {
+	const line = JSON.stringify({
+		meta: { remote_key: "prefix-held-literal-r3-suffix" },
+	});
+	for (const method of ["text", "known"] as const) {
+		const redact = buildRedactor([{ kind: "key", value: "held-literal-r3" }]);
+		const { text } = method === "text" ? redact.text(line) : redact.known(line);
+		expect(text).not.toContain("held-literal-r3");
+		expect(text).not.toContain("suffix");
+		expect(JSON.parse(text)).toHaveProperty("meta.remote_key");
+		expect(text).toMatch(/"remote_key":"\[REDACTED(?::[a-z_]+)?\]"/);
+	}
+});

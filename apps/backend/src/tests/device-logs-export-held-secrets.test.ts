@@ -192,3 +192,26 @@ test("config credential fields are redacted by name even when the value is no lo
 	expect(text).toContain('"autostart":true');
 	expect(text).toEndWith("# complete: 1 entries\n");
 });
+
+test("nested and array credentials are redacted from an export by their parent keys", async () => {
+	held.mockReturnValue([]);
+	fixture.scan.mockImplementation(
+		journal([
+			record(1, {
+				MESSAGE: JSON.stringify({
+					msg: "remote state",
+					meta: {
+						remote: { key: "nested-remote-e3" },
+						relays: [{ ingest_key: "array-object-e3" }],
+						raw: JSON.stringify({ ssh: { hash: "$6$s$inner-hash-e3" } }),
+					},
+				}),
+			}),
+		]),
+	);
+	const text = await download();
+	for (const value of ["nested-remote-e3", "array-object-e3", "inner-hash-e3"])
+		expect(text).not.toContain(value);
+	expect(text).toContain("remote state");
+	expect(text).toEndWith("# complete: 1 entries\n");
+});

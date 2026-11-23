@@ -57,21 +57,44 @@ export function keyWords(key: string): string[] {
 		.filter((word) => word.length > 0);
 }
 
+/** Words that may follow `key` or `hash` and still name the material itself. */
+const KEY_FORMAT_WORDS: ReadonlySet<string> = new Set<string>([
+	"pem",
+	"der",
+	"hex",
+	"b64",
+	"base64",
+	"raw",
+	"value",
+	"data",
+]);
+
+const MATERIAL_WORDS: ReadonlySet<string> = new Set<string>([
+	"key",
+	"keys",
+	"hash",
+]);
+
 /**
- * Whole-word credential test: a secret word, or `key`/`hash` named by a
- * qualifier in the key itself or in its parent key, so `remote_key`,
- * `{ remote: { key } }` and `{ ssh: { hash } }` are all caught.
+ * Whole-word credential test: a secret word, or key material.
+ *
+ * Key material is a `key`, `keys` or `hash` word that ends the key (format
+ * words such as `pem` may follow) and is named by a qualifier: the word right
+ * before it (`remote_key`, `private_key_pem`, `api_key`), or the parent key when
+ * the key is that word alone (`{ remote: { key } }`, `{ ssh: { hash } }`).
+ * `keyCount`, `remoteCommitHash`, `commitHash` under `remote` and
+ * `{ video: { key } }` stay readable.
  */
 export function isSecretWordKey(key: string, parentKey?: string): boolean {
 	const words = keyWords(key);
 	if (words.some((word) => SECRET_KEY_WORDS.has(word))) return true;
-	const parentWords = parentKey === undefined ? [] : keyWords(parentKey);
-	return words.some(
-		(word, index) =>
-			(word === "key" || word === "keys" || word === "hash") &&
-			(words.some(
-				(other, at) => at !== index && KEY_MATERIAL_QUALIFIERS.has(other),
-			) ||
-				parentWords.some((other) => KEY_MATERIAL_QUALIFIERS.has(other))),
+	let index = words.length - 1;
+	while (index > 0 && KEY_FORMAT_WORDS.has(words[index] ?? "")) index--;
+	if (!MATERIAL_WORDS.has(words[index] ?? "")) return false;
+	if (index > 0) return KEY_MATERIAL_QUALIFIERS.has(words[index - 1] ?? "");
+	// The key is the material word alone: its parent names it.
+	return (
+		parentKey !== undefined &&
+		keyWords(parentKey).some((word) => KEY_MATERIAL_QUALIFIERS.has(word))
 	);
 }
