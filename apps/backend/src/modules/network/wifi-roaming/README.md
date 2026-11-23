@@ -85,9 +85,13 @@ radio associated without an address is not idle.
   holder that moves to another BSSID during a scan discards that scan.
 - **Assist mode.** When nothing new is found, the holders have not moved
   (steady BSSID and signal for 60 s) and the bond has no other uplink, an idle
-  radio joins the best BSSID, the holder's own included, to add capacity. It
-  is recalled to search when a fade starts. With headroom it is also recalled
-  to look for a diverse path.
+  radio joins to add capacity. It prefers another AP over the holder's own, even
+  a weaker one or one on the same uplink, then diversity, then signal: a spare
+  kept warm on another AP takes over with a relabel when the holder's AP drops
+  (an abrupt loss then costs no association). Only a capacity assister on a
+  holder's AP is recalled to search when a fade starts; one on another AP keeps
+  carrying and is the continuity candidate. With headroom a same-uplink assister
+  is also recalled to look for a diverse path.
 - **Gates.**
   - `scan-gate.ts`: CeraUI's own rescans skip holders, assisters, the
     hotspot radio, a radio that is searching or joining, and every radio on

@@ -280,7 +280,9 @@ export function diversityAgainst(
  * What a search is for.
  * - continuity: the holder fades; any usable other BSSID, strongest first.
  * - diversity: the holder is fine; prefer a path on a different uplink.
- * - capacity: assist mode; any usable BSSID, the holder's own included.
+ * - capacity: assist mode; any usable BSSID, another AP before the holder's own
+ *   (a warm spare: if the holder's AP fails or fades, a radio already carrying on
+ *   another AP takes over with a relabel), then diversity, then signal.
  */
 export type SearchGoal = "continuity" | "diversity" | "capacity";
 
@@ -347,7 +349,9 @@ export function pickCandidate(
 			case "diversity":
 				return [-failed(r), div, r.quality];
 			case "capacity":
-				return [-failed(r), fresh * div, r.quality];
+				// Another BSSID first, even on the same uplink: a second association
+				// to the holder's own AP covers nothing when that AP goes.
+				return [-failed(r), fresh, fresh * div, r.quality];
 		}
 	};
 	const better = (x: number[], y: number[]) => {

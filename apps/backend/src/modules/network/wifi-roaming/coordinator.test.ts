@@ -631,6 +631,34 @@ describe("assist mode", () => {
 		expect(role(c, "wlan2")).toBe("searcher");
 	});
 
+	test("assist keeps a warm spare on another AP, and a fade leaves it carrying", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -60);
+		w.station("wlan2", null, null);
+		// Too weak for a diversity candidate (more than 10 points below AP1), but
+		// usable: assist mode puts the spare there rather than on the holder's AP.
+		w.ap(AP2).quality = 50;
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+			policy: {
+				...(await import("./policy.ts")).DEFAULT_SEARCH_POLICY,
+				proactiveMs: 70_000,
+			},
+		});
+		await still(w, c);
+		expect(radio(c, "wlan2")).toMatchObject({
+			role: "assister",
+			bssid: AP2,
+			joined: { goal: "capacity" },
+		});
+		w.setSignal("wlan1", -74);
+		w.now += 16_000;
+		w.calls = [];
+		await c.step();
+		expect(w.touched("wlan2")).toEqual([]);
+		expect(radio(c, "wlan2")).toMatchObject({ role: "assister", bssid: AP2 });
+	});
+
 	test("a fade recalls the capacity assister on the holder's AP to search", async () => {
 		const w = new World();
 		w.station("wlan1", AP1, -60);

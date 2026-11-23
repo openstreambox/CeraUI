@@ -218,6 +218,26 @@ describe("candidate choice", () => {
 		);
 		expect(pick?.bssid).toBe("bb:00:00:00:00:02");
 	});
+	test("capacity keeps a spare warm on another AP, even a weaker one on the same uplink", () => {
+		const pick = pickCandidate(
+			[
+				row("aa:00:00:00:00:01", "venue", 90),
+				row("bb:00:00:00:00:02", "venue", 45),
+			],
+			ctx("capacity", [], [["bb:00:00:00:00:02", "same-uplink"]]),
+		);
+		expect(pick?.bssid).toBe("bb:00:00:00:00:02");
+	});
+	test("capacity still takes a more diverse fresh BSSID over a stronger fresh one", () => {
+		const pick = pickCandidate(
+			[
+				row("bb:00:00:00:00:02", "venue", 80),
+				row("cc:00:00:00:00:03", "home", 50),
+			],
+			ctx("capacity", ["home"], [["cc:00:00:00:00:03", "diverse"]]),
+		);
+		expect(pick?.bssid).toBe("cc:00:00:00:00:03");
+	});
 	test("the holder's SSID is no candidate without a profile bound to this radio", () => {
 		expect(
 			pickCandidate([row("bb:00:00:00:00:02", "venue", 90)], {
