@@ -31,12 +31,13 @@
   lands.
 */
 
+import { logger } from "../../helpers/logger.ts";
 import {
 	noteWriterBindMapReport,
 	type WriterDispositionCause,
 } from "./bind-map-disposition.ts";
 import { announceBindMapReport } from "./bind-map-notification.ts";
-import type { PublishedBond } from "./srtla.ts";
+import { noteSenderLaunchBond, type PublishedBond } from "./srtla.ts";
 import {
 	type CapabilityProbeResult,
 	probeSrtlaSenderCapabilities,
@@ -44,6 +45,8 @@ import {
 
 export interface BindMapSpawnDeps {
 	readonly getBond: () => PublishedBond | undefined;
+	/** Told when the spawn reads the bond, so a later change can be reloaded at commit. */
+	readonly noteLaunch?: () => void;
 	readonly probe: (execPath: string) => Promise<CapabilityProbeResult>;
 	readonly announce: (
 		cause: WriterDispositionCause,
@@ -56,6 +59,7 @@ export function defaultBindMapSpawnDeps(
 ): BindMapSpawnDeps {
 	return {
 		getBond,
+		noteLaunch: noteSenderLaunchBond,
 		probe: (execPath) => probeSrtlaSenderCapabilities(execPath),
 		announce: (cause, bond) => {
 			noteWriterBindMapReport(cause, bond?.entries ?? []);
@@ -69,8 +73,21 @@ export async function resolveBindMapArgs(
 	deps: BindMapSpawnDeps,
 ): Promise<string[]> {
 	const bond = deps.getBond();
+	deps.noteLaunch?.();
 
 	if (bond === undefined || !bond.publication.ok) {
+		if (
+			bond !== undefined &&
+			!bond.publication.ok &&
+			bond.publication.reason === "timed_out"
+		) {
+			// The sender starts on whatever IP list is on disk, without a bind map.
+			// The writer keeps republishing; once it lands the sender is reloaded,
+			// at the latest when this launch commits.
+			logger.warn(
+				"SRTLA starts on an unconfirmed IP list: the newest bond did not reach disk in time",
+			);
+		}
 		deps.announce("mapping-write-failed", bond);
 		return [];
 	}
