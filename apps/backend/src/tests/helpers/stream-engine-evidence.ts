@@ -1,5 +1,8 @@
 import type { CerastreamClient, EventParams } from "@ceralive/cerastream";
-import { CerastreamTimeoutError } from "@ceralive/cerastream";
+import {
+	CerastreamRpcError,
+	CerastreamTimeoutError,
+} from "@ceralive/cerastream";
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { CerastreamBackend } from "../../modules/streaming/cerastream-backend.ts";
 import { createLaunchTransaction } from "../../modules/streaming/launch-transaction.ts";
@@ -29,6 +32,7 @@ export function evidenceHarness(protectedAtBoot = false) {
 	let id = 0;
 	let connection = 0;
 	let failedStart = false;
+	let startRefusal: CerastreamRpcError | undefined;
 	let failedStop = false;
 	let connectGate: Promise<void> | undefined;
 	let startGate: Promise<void> | undefined;
@@ -72,6 +76,8 @@ export function evidenceHarness(protectedAtBoot = false) {
 			},
 			start: async () => {
 				calls.push("start");
+				// A refusal changes nothing in the engine.
+				if (startRefusal !== undefined) throw startRefusal;
 				engine = "streaming";
 				started.resolve();
 				if (index === 0) await startGate;
@@ -213,6 +219,9 @@ export function evidenceHarness(protectedAtBoot = false) {
 		},
 		failStart: () => {
 			failedStart = true;
+		},
+		refuseStart: (code: number, dataCode?: string) => {
+			startRefusal = new CerastreamRpcError(code, "refused", dataCode, 1);
 		},
 		failStop: () => {
 			failedStop = true;

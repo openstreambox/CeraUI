@@ -761,6 +761,18 @@ export function silenceShowsNoSession(
 	return false;
 }
 
+/**
+ * The engine refused a Start because a session is already running. The
+ * refusal opened nothing, and the running session may belong to another
+ * client, so nothing about it is ours to roll back.
+ */
+export function startRefusedAsAlreadyStreaming(error: unknown): boolean {
+	if (!(error instanceof CerastreamRpcError)) return false;
+	return error.dataCode === undefined
+		? error.code === -32002
+		: error.dataCode === "cerastream.state.already_streaming";
+}
+
 export function classifyConnectHandshakePhase(
 	error: unknown,
 ): "connect" | "hello" {
@@ -892,6 +904,7 @@ export class CerastreamBackend implements StreamingBackend {
 		this.clearRecoveredEngineError();
 		const ownsLaunch = currentStreamLaunchOwner();
 		let dispatched = false;
+		let refusedAsAlreadyStreaming = false;
 		let confirmedIdle = false;
 		let clientReleased = false;
 		let acquiredClient: CerastreamClient | undefined;
@@ -975,7 +988,9 @@ export class CerastreamBackend implements StreamingBackend {
 				assertStreamLaunchOwnership();
 				this.subscription = subscription;
 				launchTransaction.register(async () => {
-					if (!dispatched) return;
+					// A refused Start opened nothing; a Stop here would end the
+					// session that caused the refusal, which may not be ours.
+					if (!dispatched || refusedAsAlreadyStreaming) return;
 					try {
 						// A session request can still occupy the engine connection.
 						await this.stopOnFreshConnection(client);
@@ -1017,7 +1032,13 @@ export class CerastreamBackend implements StreamingBackend {
 				const result = await launchTransaction.runPhase("start-rpc", () => {
 					assertStreamLaunchOwnership();
 					dispatched = true;
-					return this.dispatchStart(client, startParams);
+					return this.dispatchStart(client, startParams).catch(
+						(error: unknown) => {
+							if (startRefusedAsAlreadyStreaming(error))
+								refusedAsAlreadyStreaming = true;
+							throw error;
+						},
+					);
 				});
 				await launchTransaction.runPhase("playing-wait", async () => {
 					const parsed = startResultSchema.parse(result);
