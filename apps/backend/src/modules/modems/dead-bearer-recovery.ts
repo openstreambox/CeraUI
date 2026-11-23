@@ -67,6 +67,11 @@ import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
 import type { LinkCarryingState } from "../streaming/link-progress.ts";
 import { linkCarryingState } from "../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
+import {
+	noteBackgroundLeaseRefused,
+	noteBackgroundRecoveryClear,
+	noteDeadPathHeld,
+} from "./background-recovery-log.ts";
 import { automaticActivationReady } from "./cellular-preparation.ts";
 import {
 	readModemNmDeviceProp,
@@ -372,9 +377,14 @@ export async function runDeadBearerRecovery(
 			const decision = decideDeadBearer(first.input);
 			if (decision.action !== "reconnect") {
 				memories.set(key, decision.memory);
+				// A dead path left alone says why, once; a healthy one clears it.
+				if (decision.action === "none" && outageRecord(first.input.record))
+					noteDeadPathHeld(key, decision.reason);
+				else if (!outageRecord(first.input.record))
+					noteBackgroundRecoveryClear("dead-bearer reconnect", key);
 				continue;
 			}
-			await deps.mutate(key, async () => {
+			const outcome = await deps.mutate(key, async () => {
 				// Memory changes only here, so a refused lease leaves it as it was.
 				const fresh = await readInput(id, key, memories.get(key) ?? before);
 				if (!fresh || fresh.uuid !== first.uuid) return;
@@ -409,6 +419,13 @@ export async function runDeadBearerRecovery(
 					changed.push(id);
 				}
 			});
+			if (outcome.ok) noteBackgroundRecoveryClear("dead-bearer reconnect", key);
+			else
+				noteBackgroundLeaseRefused(
+					"dead-bearer reconnect",
+					key,
+					outcome.refusal,
+				);
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
 			logger.warn("dead-bearer check did not complete", {

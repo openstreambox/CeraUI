@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as runner from "../helpers/run.ts";
+import { setBackgroundRecoveryLoggerForTest } from "../modules/modems/background-recovery-log.ts";
 import { resetGsmAutoconfigProbe } from "../modules/modems/gsm-autoconfig.ts";
 import { resetGsmConnections } from "../modules/modems/gsm-connections.ts";
 import {
@@ -237,6 +238,7 @@ modem.generic.ports.value[1] : wwan0 (net)`;
 });
 
 afterEach(async () => {
+	setBackgroundRecoveryLoggerForTest(undefined);
 	stopModemUpdateLoop();
 	spyOn(runner, "run").mockRestore();
 	setModemPresenceDepsForTest(null);
@@ -948,4 +950,57 @@ test("a terminated state record is accepted only when it is the sole record", as
 	nmState = "30 (disconnected)\n";
 	await runModemStatusPoll();
 	expect(activations()).toHaveLength(1);
+});
+
+// A recovery that is held back used to leave no trace at all.
+function recordRecoveryLog() {
+	const lines: Array<{ level: string; message: string; meta?: unknown }> = [];
+	setBackgroundRecoveryLoggerForTest({
+		info: (message, meta) => lines.push({ level: "info", message, meta }),
+		warn: (message, meta) => lines.push({ level: "warn", message, meta }),
+	});
+	return lines;
+}
+
+test("a redial held back by a stream launch says why once, and once when it may dial", async () => {
+	await connectAutomaticProfile();
+	const lines = recordRecoveryLog();
+	nmState = "30 (disconnected)";
+	const launch = tryAcquireLifecycle("streaming");
+	if (!launch.admitted) throw new Error("stream admission refused");
+	await pollUntil(600_000);
+	const held = lines.filter((l) => l.message.startsWith("modem ready redial"));
+	expect(held).toHaveLength(1);
+	expect(held[0]).toMatchObject({
+		level: "warn",
+		message: "modem ready redial held back: lease refused: streaming_active",
+		meta: { refusal: "streaming_active", lifecycleHolder: "streaming" },
+	});
+	launch.lease.release();
+	await pollUntil(now + 45_000);
+	expect(activations()).toHaveLength(2);
+	expect(
+		lines.filter((l) => l.message === "modem ready redial no longer held back"),
+	).toHaveLength(1);
+});
+
+test("a first activation refused by a held lease says why once", async () => {
+	await discoverModems();
+	const lines = recordRecoveryLog();
+	const lease = holdLease();
+	await runModemStatusPoll();
+	await runModemStatusPoll();
+	expect(activations()).toEqual([]);
+	const held = lines.filter((l) =>
+		l.message.startsWith("modem ready activation held back: lease refused:"),
+	);
+	expect(held).toHaveLength(1);
+	lease.release();
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(1);
+	expect(
+		lines.filter(
+			(l) => l.message === "modem ready activation no longer held back",
+		),
+	).toHaveLength(1);
 });

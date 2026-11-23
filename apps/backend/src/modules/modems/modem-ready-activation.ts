@@ -1,6 +1,10 @@
 import { logger } from "../../helpers/logger.ts";
 import { getNetworkInterfaces } from "../network/network-interfaces.ts";
 import { nmConnect, nmConnGetFields } from "../network/network-manager.ts";
+import {
+	noteBackgroundLeaseRefused,
+	noteBackgroundRecoveryClear,
+} from "./background-recovery-log.ts";
 import { automaticActivationReady } from "./cellular-preparation.ts";
 import {
 	readModemNmDeviceProp,
@@ -316,7 +320,7 @@ async function redialAutomaticProfile(
 		);
 	};
 	if (!spaced()) return;
-	await deps.backgroundMutate(key, async () => {
+	const outcome = await deps.backgroundMutate(key, async () => {
 		if (!redialEligible(id, uuid, key) || !spaced()) return;
 		if ((await readDeviceState(uuid)) !== "30") return;
 		if (!registeredForRedial(await deps.readRegistration(id))) return;
@@ -345,6 +349,8 @@ async function redialAutomaticProfile(
 			nextSpacingS: redialDelay(state.failures) / 1000,
 		});
 	});
+	if (outcome.ok) noteBackgroundRecoveryClear("ready redial", key);
+	else noteBackgroundLeaseRefused("ready redial", key, outcome.refusal);
 }
 
 /** The retained status poll calls this only AFTER releasing its reconcile lock. */
@@ -389,7 +395,7 @@ export async function runModemReadyActivations(
 				return previous === undefined || deps.now() - previous >= COOLDOWN_MS;
 			};
 			if (!cooledDown()) continue;
-			await deps.mutate(key, async () => {
+			const outcome = await deps.mutate(key, async () => {
 				const current = (): boolean =>
 					isPending(id, intent) &&
 					deps.stableKey(id) === key &&
@@ -414,6 +420,8 @@ export async function runModemReadyActivations(
 				}
 				logger.info("modem ready activation", { id, stableKey: key, result });
 			});
+			if (outcome.ok) noteBackgroundRecoveryClear("ready activation", key);
+			else noteBackgroundLeaseRefused("ready activation", key, outcome.refusal);
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
 			logger.warn("modem readiness poll did not complete", {
