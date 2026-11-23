@@ -345,10 +345,13 @@ export function createSearchNm(deps: SearchNmDeps) {
 				return SKIPPED;
 			if (gate.mayAct && !(await gate.mayAct())) return SKIPPED;
 			if (!gate.live()) return SKIPPED;
-			const done = await bus.withDevice({ ifindex, mac }, async (device) => {
-				if (!gate.live()) return { value: SKIPPED };
-				return { value: await command(device) };
-			});
+			const done = await bus.withDevice(
+				{ ifname, ifindex, mac },
+				async (device) => {
+					if (!gate.live()) return { value: SKIPPED };
+					return { value: await command(device) };
+				},
+			);
 			return done === undefined ? SKIPPED : done.value;
 		});
 

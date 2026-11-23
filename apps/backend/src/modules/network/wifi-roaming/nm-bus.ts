@@ -2,21 +2,32 @@
  * NetworkManager over D-Bus, addressed to one device incarnation.
  *
  * Every NetworkManager effect of the roaming coordinator goes through here.
- * The radio is found by its kernel ifindex, captured when the radio was
- * admitted (part of its lifetime), and confirmed by its permanent MAC. From
- * then on every call goes to that device's object path at NetworkManager's
- * unique bus name, never to an interface name. A replugged radio is a new
- * kernel interface, so it has a new ifindex and a new NetworkManager object.
- * A restarted NetworkManager has a new unique name. Either way the old
- * address is gone and NetworkManager rejects the call, so an effect can only
- * reach the radio that was admitted.
+ *
+ * Binding pins the kernel interface the radio was admitted as: its ifindex
+ * (part of the lifetime the round resolved) must be what sysfs shows for the
+ * name both before and after NetworkManager's device for that name is looked
+ * up, and the device's permanent MAC must be the radio's identity.
+ * NetworkManager does not publish an ifindex on D-Bus (1.52), so the name
+ * only locates the device; the ifindex reads around the lookup prove that
+ * the same kernel interface held the name the whole time. Ifindexes are not
+ * reused, so a replug in between shows up as a different one.
+ *
+ * From then on every call goes to that device's object path at
+ * NetworkManager's unique bus name, never to an interface name. A replugged
+ * radio gets a new NetworkManager object and a restarted NetworkManager a new
+ * unique name; either way the old address is gone and NetworkManager refuses
+ * the call ("Object does not exist", "Can not activate an unknown device"),
+ * so an effect can only reach the radio that was admitted.
  */
+import { readFile } from "node:fs/promises";
 import type {
 	DbusTransport,
 	DbusValue,
 	DbusVariant,
 } from "@ceralive/modem-control/transport";
 import { isVariant } from "@ceralive/modem-control/transport";
+import { argMatch, ID_RE } from "../../../helpers/run.ts";
+import { createSystemPortalReaderDeps } from "../../wifi/captive-portal-readers.ts";
 import type { ScanRow } from "./policy.ts";
 
 const NM = "org.freedesktop.NetworkManager";
@@ -70,12 +81,40 @@ export type NmBus = Readonly<{
 	 * device. `fn` never sees the bus connection outlive the call.
 	 */
 	withDevice<T>(
-		radio: Readonly<{ ifindex: number; mac: string }>,
+		radio: BindTarget,
 		fn: (device: BoundDevice) => Promise<T>,
 	): Promise<T | undefined>;
 }>;
 
 type Transport = Pick<DbusTransport, "connect" | "disconnect" | "callMethod">;
+
+/** The kernel interface to bind: where it is now, and what it must be. */
+export type BindTarget = Readonly<{
+	ifname: string;
+	ifindex: number;
+	/** Permanent MAC, the radio's identity. */
+	mac: string;
+}>;
+
+/** The kernel ifindex behind an interface name, `undefined` when none. */
+export type IfindexReader = (ifname: string) => Promise<number | undefined>;
+
+export async function sysfsIfindex(
+	ifname: string,
+): Promise<number | undefined> {
+	try {
+		const raw = (
+			await readFile(
+				`/sys/class/net/${argMatch(ID_RE, ifname)}/ifindex`,
+				"utf8",
+			)
+		).trim();
+		const n = Number(raw);
+		return /^\d+$/.test(raw) && Number.isSafeInteger(n) ? n : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 function str(v: DbusValue | undefined): string | undefined {
 	return typeof v === "string" ? v : undefined;
@@ -118,8 +157,10 @@ const ssidText = new TextDecoder("utf-8", { fatal: false });
  */
 export async function bindDevice(
 	bus: Transport,
-	radio: Readonly<{ ifindex: number; mac: string }>,
+	radio: BindTarget,
+	readIfindex: IfindexReader = sysfsIfindex,
 ): Promise<BoundDevice | undefined> {
+	if ((await readIfindex(radio.ifname)) !== radio.ifindex) return undefined;
 	const call = (
 		destination: string,
 		path: string,
@@ -156,22 +197,24 @@ export async function bindDevice(
 
 	const devices = (await call(owner, ROOT, NM, "GetDevices")).body[0];
 	if (!Array.isArray(devices)) return undefined;
-	let path: string | undefined;
+	const named: string[] = [];
 	for (const candidate of devices) {
 		if (typeof candidate !== "string" || !DEVICE_PATH_RE.test(candidate))
 			continue;
 		const p = await getAll(candidate, DEVICE);
 		if (
-			num(p.get("Ifindex")?.value) === radio.ifindex &&
+			str(p.get("Interface")?.value) === radio.ifname &&
 			num(p.get("DeviceType")?.value) === NM_DEVICE_TYPE_WIFI
-		) {
-			path = candidate;
-			break;
-		}
+		)
+			named.push(candidate);
 	}
+	// Two objects under one name: NetworkManager is mid-replug. Refuse.
+	const path = named.length === 1 ? named[0] : undefined;
 	if (!path) return undefined;
 	const mac = str(await get(path, WIRELESS, "PermHwAddress"))?.toLowerCase();
 	if (mac !== radio.mac.toLowerCase()) return undefined;
+	// The same kernel interface held the name across the lookup.
+	if ((await readIfindex(radio.ifname)) !== radio.ifindex) return undefined;
 	const device = path;
 
 	const safe = async <T>(work: () => Promise<T>): Promise<T | undefined> => {
@@ -267,16 +310,10 @@ export async function bindDevice(
 
 /** NetworkManager on the system bus; one connection per `withDevice`. */
 export function systemNmBus(
-	createTransport: () => Promise<Transport> = async () => {
-		const { createDbusTransport } = await import(
-			"@ceralive/modem-control/transport"
-		);
-		return createDbusTransport({
-			busAddress: "unix:path=/run/dbus/system_bus_socket",
-			callTimeoutMs: CALL_TIMEOUT_MS,
-			reconnect: { enabled: false },
-		});
-	},
+	readIfindex: IfindexReader = sysfsIfindex,
+	/** The system bus, through the same factory CeraUI's other NM readers use. */
+	createTransport: () => Promise<Transport> = () =>
+		createSystemPortalReaderDeps().createTransport(),
 ): NmBus {
 	return {
 		async withDevice(radio, fn) {
@@ -284,7 +321,7 @@ export function systemNmBus(
 			try {
 				bus = await createTransport();
 				await bus.connect();
-				const device = await bindDevice(bus, radio);
+				const device = await bindDevice(bus, radio, readIfindex);
 				return device ? await fn(device) : undefined;
 			} catch {
 				return undefined;

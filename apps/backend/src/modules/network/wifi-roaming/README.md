@@ -84,14 +84,20 @@ incarnation (`nm-bus.ts`):
   profile is a recorded clone, and the caller's last check (mode, identity
   under the lock). Then the device is bound and stop is read once more right
   before the command.
-- Binding finds NetworkManager's device by the kernel ifindex in the radio's
-  lifetime and confirms its permanent MAC. Every call then goes to that
-  device's object path at NetworkManager's unique bus name: `RequestScan`,
+- Binding pins the kernel interface the radio was admitted as: the ifindex in
+  its lifetime must be what sysfs shows for the name both before and after
+  NetworkManager's device for that name is looked up, exactly one device may
+  carry the name, and its permanent MAC must be the radio's identity.
+  NetworkManager publishes no ifindex on D-Bus (1.52), so the name only
+  locates the device; ifindexes are not reused, so a replug during the lookup
+  shows up as a different one. Every call then goes to that device's object
+  path at NetworkManager's unique bus name: `RequestScan`,
   `ActivateConnection` with that device, `DeactivateConnection` of its active
-  connection. No effect takes an interface name. A replugged radio has a new
-  ifindex and a new device object; a restarted NetworkManager has a new unique
-  name; either way NetworkManager has nothing at the old address and the call
-  fails instead of reaching another radio.
+  connection. No effect takes an interface name. A replugged radio gets a new
+  device object and a restarted NetworkManager a new unique name; either way
+  NetworkManager refuses the old address ("Object does not exist", "Can not
+  activate an unknown device", both seen on a real rebind) instead of
+  reaching another radio.
 - Reads stay by name (`iw`, `ip`, `nmcli` listings). A read of the wrong radio
   can only produce a candidate, never an effect.
 - Anything stopped, unreadable or changed: nothing is done (`skipped`).

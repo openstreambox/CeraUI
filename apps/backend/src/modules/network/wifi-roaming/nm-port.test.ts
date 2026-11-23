@@ -247,7 +247,7 @@ class FakeBus implements NmBus {
 	states: number[] = [2];
 	onBind: (() => void) | null = null;
 	async withDevice<T>(
-		radio: { ifindex: number; mac: string },
+		radio: { ifname: string; ifindex: number; mac: string },
 		fn: (device: BoundDevice) => Promise<T>,
 	): Promise<T | undefined> {
 		this.calls.push(`bind ${radio.ifindex} ${radio.mac}`);
@@ -310,7 +310,10 @@ describe("device binding over D-Bus", () => {
 		member: string;
 		args?: readonly unknown[];
 	};
-	function transport(opts: { gone?: Set<string>; owner?: string } = {}) {
+	function transport(
+		opts: { gone?: Set<string>; owner?: string; names?: [string, string] } = {},
+	) {
+		const [nameA, nameB] = opts.names ?? ["wlan5", "wlan2"];
 		const calls: Call[] = [];
 		const v = (signature: string, value: unknown) => ({ signature, value });
 		return {
@@ -348,7 +351,7 @@ describe("device binding over D-Bus", () => {
 						signature: "a{sv}",
 						body: [
 							[
-								["Ifindex", v("u", c.path === DEVICE ? 5 : IFINDEX)],
+								["Interface", v("s", c.path === DEVICE ? nameA : nameB)],
 								["DeviceType", v("u", 2)],
 							],
 						],
@@ -369,10 +372,23 @@ describe("device binding over D-Bus", () => {
 		};
 	}
 
-	test("finds the device by ifindex, confirms its permanent MAC, and talks only to it at NetworkManager's unique name", async () => {
+	const target = { ifname: "wlan2", ifindex: IFINDEX, mac: MAC };
+	const sysfs = (...reads: Array<number | undefined>) => {
+		const seen: string[] = [];
+		const read = async (ifname: string) => {
+			seen.push(ifname);
+			return reads.length > 1 ? reads.shift() : reads[0];
+		};
+		return Object.assign(read, { seen });
+	};
+
+	test("pins the kernel interface around the lookup, confirms the permanent MAC, then talks only to that device at NetworkManager's unique name", async () => {
 		const t = transport();
-		const device = await bindDevice(t, { ifindex: IFINDEX, mac: MAC });
+		const ifindex = sysfs(IFINDEX);
+		const device = await bindDevice(t, target, ifindex);
 		expect(device?.path).toBe(OTHER_DEVICE);
+		// The ifindex is read before and after NetworkManager is asked.
+		expect(ifindex.seen).toEqual(["wlan2", "wlan2"]);
 		expect(await device?.lastScan()).toBe(77n);
 		expect(await device?.requestScan()).toBe(true);
 		expect(await device?.activate(CLONE)).toBe(ACTIVE_PATH);
@@ -392,22 +408,40 @@ describe("device binding over D-Bus", () => {
 		]);
 	});
 
-	test("a replugged radio (another ifindex) or another permanent MAC binds to nothing", async () => {
+	test("binds to nothing when the name holds another kernel interface, the MAC differs, or a replug lands during the lookup", async () => {
+		// A replug before the bind: the name is now another ifindex.
+		expect(await bindDevice(transport(), target, sysfs(99))).toBeUndefined();
+		// A replug during the lookup: the second read differs.
 		expect(
-			await bindDevice(transport(), { ifindex: 99, mac: MAC }),
+			await bindDevice(transport(), target, sysfs(IFINDEX, IFINDEX + 1)),
 		).toBeUndefined();
 		expect(
-			await bindDevice(transport(), {
-				ifindex: IFINDEX,
-				mac: "02:00:00:00:00:99",
-			}),
+			await bindDevice(
+				transport(),
+				{ ...target, mac: "02:00:00:00:00:99" },
+				sysfs(IFINDEX),
+			),
+		).toBeUndefined();
+		// The name gone from the kernel.
+		expect(
+			await bindDevice(transport(), target, sysfs(undefined)),
+		).toBeUndefined();
+	});
+
+	test("two NetworkManager devices under one name (mid-replug) bind to nothing", async () => {
+		expect(
+			await bindDevice(
+				transport({ names: ["wlan2", "wlan2"] }),
+				target,
+				sysfs(IFINDEX),
+			),
 		).toBeUndefined();
 	});
 
 	test("a device that vanished after binding fails the call; nothing is redirected", async () => {
 		const gone = new Set<string>();
 		const t = transport({ gone });
-		const device = await bindDevice(t, { ifindex: IFINDEX, mac: MAC });
+		const device = await bindDevice(t, target, sysfs(IFINDEX));
 		gone.add(OTHER_DEVICE);
 		expect(await device?.requestScan()).toBe(false);
 		expect(await device?.activate(CLONE)).toBeUndefined();
@@ -416,9 +450,9 @@ describe("device binding over D-Bus", () => {
 
 	test("the system bus runs nothing when the device is not there", async () => {
 		let ran = false;
-		const bus = systemNmBus(async () => transport());
+		const bus = systemNmBus(sysfs(99), async () => transport());
 		expect(
-			await bus.withDevice({ ifindex: 99, mac: MAC }, async () => {
+			await bus.withDevice(target, async () => {
 				ran = true;
 				return 1;
 			}),
