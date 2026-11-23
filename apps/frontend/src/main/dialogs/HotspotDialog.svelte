@@ -21,8 +21,10 @@
     which shows the exact credentials the AP will broadcast (or stores the
     operator's own) and needs an explicit acknowledgement. While the hotspot is
     off, Save prepares an inactive profile; Forget removes its saved setup.
-  • When the hotspot is active, ONE QR encoding the live credentials is rendered
-    so phones can join by scan. Its `T:` token follows the LIVE security mode
+  • When the hotspot is active, ONE QR encoding the live credentials can be shown
+    so phones can join by scan. It sits behind Show code in `WifiCode` (hidden by
+    default, hides itself again) together with the join line and New Wi-Fi
+    password. Its `T:` token follows the LIVE security mode
     (`hotspotQrSecurity`): a WPA3-SAE AP advertised as `T:WPA` yields a code that
     scans perfectly and then refuses to join.
 -->
@@ -35,7 +37,6 @@ import {
 	EyeOff,
 	Loader2,
 	Power,
-	QrCode,
 	Radio,
 	Router,
 	Save,
@@ -56,6 +57,7 @@ import { generateWifiQr, hotspotQrSecurity } from '$lib/helpers/NetworkHelper';
 import { classifyWifiMutation, wifiFailureReason } from '$lib/helpers/wifi-mode-outcome';
 import {
 	confirmOperation,
+	getOperationAttempt,
 	getOperationPhase,
 	getOperationReason,
 	getOperationTarget,
@@ -64,10 +66,18 @@ import {
 import { rpc } from '$lib/rpc/client';
 import { hotspotIsActive, hotspotToggleConfirmed } from '$lib/rpc/os-toggle-predicates';
 import { getLinkEpoch } from '$lib/rpc/session-epoch.svelte';
+import { getStatus } from '$lib/rpc/subscriptions.svelte';
 import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
 import { withWifiConfigReceipt, withWifiStartReceipt } from '$lib/rpc/wifi-status-receipt';
 import { cn } from '$lib/utils';
 import HotspotActivationConfirm from '$main/network/HotspotActivationConfirm.svelte';
+import {
+	canRenewHotspotPassword,
+	mayCarryStream,
+	renewHotspotPassword,
+} from '$main/network/hotspot-new-password';
+import { generateHotspotPassword } from '$main/network/hotspot-password';
+import WifiCode from '$main/network/WifiCode.svelte';
 import WifiModeBadge from '$main/network/WifiModeBadge.svelte';
 import WifiModeSelector from '$main/network/WifiModeSelector.svelte';
 import {
@@ -320,26 +330,84 @@ const passwordError = $derived(
 			: m["hotspotConfigurator.validation.passwordMaxLength"](),
 );
 
-// ── QR for the LIVE active credentials (not the unsaved form) ──
-let qrDataUrl = $state('');
+// ── New Wi-Fi password: the live setup with only the password changed ──
+// Offered only while the hotspot runs and this form is bound to its radio; it
+// shares the Save key, so the two can never run at once. A completed renewal
+// also refreshes the form's password, so a later Save cannot put the old one back.
+//
+// The record belongs to one owner: the form binding (radio, link, dialog
+// session), the config key and the op attempt it began. Only THAT attempt can
+// write the field, from an authoritative signal: the device's confirmation, or
+// live credentials on the bound radio that already carry the new password. The
+// dispatch ack is not waited for: the confirmation already re-enables Save, so a
+// form still holding the revoked password in that gap could send it straight
+// back. A timeout also writes the field: the operator asked to revoke the old
+// password and accepted the drop, so a later Save completes the renewal instead
+// of undoing it. The ack only drops a dispatch that was refused or never sent.
+// An operator edit of the password field wins over the renewal. Closing,
+// rebinding, a failure or a replacing dispatch drops the record, so a late
+// completion can never write into a form it no longer owns.
+type Renewal = {
+	readonly id: object;
+	readonly binding: WifiRadioBinding;
+	readonly key: string;
+	readonly password: string;
+	readonly attempt: symbol | undefined;
+};
+let renewal = $state.raw<Renewal | undefined>(undefined);
+
+function startRenewal() {
+	const binding = formBinding;
+	if (!binding || !current(binding) || configuring) return;
+	const id = {};
+	const key = configKey;
+	const next = generateHotspotPassword();
+	renewal = { id, binding, key, password: next, attempt: undefined };
+	void renewHotspotPassword(deviceId, iface, () => next, (attempt) => {
+		if (renewal?.id === id) renewal = { ...renewal, attempt };
+	}).then((sent) => {
+		if (renewal?.id === id && sent === undefined) renewal = undefined;
+	});
+}
+
 $effect(() => {
-	const controller = new AbortController();
-	const hs = iface?.hotspot;
-	if (open && hs?.name && hs?.password) {
-		// The LIVE mode, not the draft: this QR carries the credentials the AP is
-		// broadcasting right now, so its auth token must describe that AP too.
-		generateWifiQr(hs.name, hs.password, hotspotQrSecurity(hs.security))
-			.then((url) => {
-				if (!controller.signal.aborted) qrDataUrl = url;
-			})
-			.catch(() => {
-				if (!controller.signal.aborted) qrDataUrl = '';
-			});
-	} else {
-		qrDataUrl = '';
-	}
-	return () => controller.abort();
+	const record = renewal;
+	if (record === undefined) return;
+	const owned = record.key === configKey && current(record.binding);
+	const phase = getOperationPhase(record.key);
+	const attempt = getOperationAttempt(record.key);
+	const live = iface?.hotspot?.password;
+	untrack(() => {
+		if (!owned) {
+			renewal = undefined;
+			return;
+		}
+		if (record.attempt === undefined) return;
+		// Replaced by another dispatch or released: never ours to write again.
+		if (attempt !== record.attempt) {
+			renewal = undefined;
+			return;
+		}
+		if (phase === 'failed') {
+			renewal = undefined;
+			return;
+		}
+		if (phase === 'confirmed' || phase === 'timed_out' || live === record.password) {
+			password = record.password;
+			renewal = undefined;
+		}
+	});
 });
+
+const renewOffer = $derived(
+	isActive && canEdit && canRenewHotspotPassword(deviceId, iface)
+		? {
+				phase: getOperationPhase(configKey),
+				streaming: mayCarryStream(getStatus()),
+				onrenew: startRenewal,
+			}
+		: undefined,
+);
 
 // Save dispatches the reconfigure; `hotspotConfigure` resolves immediately with a
 // dispatch ack, so we DON'T confirmOnResolve — the real outcome arrives later as
@@ -688,6 +756,10 @@ async function copyPassword() {
 					placeholder={m["hotspotConfigurator.hotspot.placeholderPassword"]()}
 					type={showPassword ? 'text' : 'password'}
 					aria-invalid={Boolean(passwordError)}
+					oninput={() => {
+						// The operator's own password wins over a renewal in flight.
+						renewal = undefined;
+					}}
 					bind:value={password}
 				/>
 				<div class="absolute end-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
@@ -816,21 +888,22 @@ async function copyPassword() {
 		{/if}
 		{/if}
 
-		<!-- Live QR for the active hotspot credentials -->
-		{#if isActive && qrDataUrl}
-			<div class="bg-muted/40 flex flex-col items-center gap-2 rounded-lg border p-4">
-				<div class="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
-					<QrCode class="size-3.5" />
-					<span>{m["network.accessibility.wifiQrCode"]()}</span>
-				</div>
-				<img
-					class="size-40 rounded-md bg-white p-2"
-					alt={m["network.accessibility.wifiQrCode"]()}
-					src={qrDataUrl}
-				/>
+		<!-- The live hotspot's join code, hidden until Show (WifiCode) -->
+		{#if isActive}
+			<div class="bg-muted/40 space-y-2 rounded-lg border p-4" data-testid="hotspot-wifi-code">
+				<p class="text-muted-foreground text-center text-xs font-medium">
+					{m["network.accessibility.wifiQrCode"]()}
+				</p>
 				{#if iface?.hotspot?.name}
-					<p class="text-sm font-medium">{iface.hotspot.name}</p>
+					<p class="text-center text-sm font-medium">{iface.hotspot.name}</p>
 				{/if}
+				<WifiCode
+					name={iface?.hotspot?.name}
+					password={iface?.hotspot?.password}
+					security={iface?.hotspot?.security}
+					owner={{ device: deviceId, incarnation: radioToken }}
+					renew={renewOffer}
+				/>
 			</div>
 		{/if}
 	</div>
