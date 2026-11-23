@@ -120,7 +120,6 @@ import { initUplinkSteering } from "./modules/network/uplink-steering/runtime.ts
 import {
 	initWifiRoaming,
 	stopWifiRoaming,
-	sweepRoamingClones,
 } from "./modules/network/wifi-roaming/runtime.ts";
 import {
 	getRemoteWebSocket,
@@ -350,12 +349,6 @@ beginRecoveryBarrier();
 cleanupOrphanedTempFiles(process.cwd());
 
 if (configAvailableAtBind) void initRemote();
-
-// Delete the Wi-Fi roaming clones an earlier process left, before the server
-// (saved-network Connect) and every other piece of Wi-Fi code can see them.
-// Ordering, not timing: nothing in this process can have activated one yet.
-// Bounded, never throws, and a no-op without a clone record.
-if (!shouldUseMocks()) await sweepRoamingClones();
 
 // CRITICAL: bind the WS control server FIRST — before any non-critical init that
 // could fail OR hang. It is the operator's only lifeline to the device, so it

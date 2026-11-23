@@ -7,21 +7,17 @@
  * the radio was admitted as (`nm-bus.ts`), so NetworkManager itself refuses
  * one aimed at a radio that has since been replaced.
  *
- * The searcher joins through an owned in-memory clone of its own saved,
- * interface-bound profile, locked to the chosen BSSID with autoconnect off.
- * The operator's profile is never modified. A profile with a BSSID set gets
- * no background scan from NetworkManager and the supplicant does not roam
- * away from that BSSID. Each radio keeps one clone per source profile and
- * reuses it; clones are only deleted at boot (`sweepOwnedClones`).
+ * The searcher joins through a volatile copy of its own saved,
+ * interface-bound profile, locked to the chosen BSSID with autoconnect off,
+ * created and activated in one NetworkManager call. NetworkManager deletes
+ * it by itself when it deactivates, so nothing is ever cleaned up. The
+ * operator's profile is never modified. A profile with a BSSID set gets no
+ * background scan from NetworkManager and the supplicant does not roam away
+ * from that BSSID.
  */
 import { readFile } from "node:fs/promises";
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
 import { normalizeMacAddress } from "../../wifi/wifi-permanent-mac.ts";
-import {
-	beginCloneCreation,
-	type CloneRegistry,
-	memoryCloneRegistry,
-} from "./clone-registry.ts";
 import type { ActionGate, RadioExpectation } from "./coordinator.ts";
 import {
 	JOIN_REFUSED,
@@ -69,11 +65,11 @@ export function subnetOf(cidr: string): string | null {
 	return `${[24, 16, 8, 0].map((s) => (net >>> s) & 255).join(".")}/${prefix}`;
 }
 
-/** Name of the owned clone for one radio. */
+/** Name of the owned profile for one radio. */
 export const searchProfileName = (ifname: string): string =>
 	`ceraui-search-${argMatch(ID_RE, ifname)}`;
 
-/** Every owned clone's name starts with this, whatever radio it was for. */
+/** Every owned profile's name starts with this, whatever radio it was for. */
 export const SEARCH_PROFILE_PREFIX = "ceraui-search-";
 
 /** Parse `iw dev <if> link`. */
@@ -185,21 +181,8 @@ export function parseScanRows(stdout: string): ScanRow[] {
 	return rows;
 }
 
-/** UUID of the new profile in `nmcli connection clone` output. */
-export function parseCloneUuid(stdout: string): string | undefined {
-	const all = [...stdout.matchAll(/\(([0-9a-f-]{36})\)/g)];
-	const uuid = all[all.length - 1]?.[1];
-	return uuid && UUID_RE.test(uuid) ? uuid : undefined;
-}
-
 export type SearchNmDeps = Readonly<{
 	run: Runner;
-	/**
-	 * Provenance of owned clones. Only a UUID recorded here is ever deleted,
-	 * and only at boot. Defaults to an in-memory record; production passes
-	 * the /run file.
-	 */
-	clones?: CloneRegistry;
 	/**
 	 * Confirm, right before an effect, that the registry still shows the
 	 * expected radio behind `ifname`. Defaults to yes (tests); production
@@ -247,63 +230,9 @@ function serialEffect<T>(fn: () => Promise<T>): Promise<T> {
 	return next;
 }
 
-/**
- * Delete the owned clones an earlier CeraUI process left: every recorded UUID
- * NetworkManager still has under an owned name, active or not. Runs once at
- * boot, before any of CeraUI's Wi-Fi code starts and before the coordinator,
- * so nothing else can have activated one in this process. A record whose
- * profile is gone (NetworkManager restarted) is forgotten. Nothing is deleted
- * after `deadlineMs`; what is left stays recorded for the next boot.
- */
-export async function sweepOwnedClones(
-	run: Runner,
-	clones: CloneRegistry,
-	deadlineMs = 5_000,
-	now: () => number = Date.now,
-): Promise<number> {
-	const until = now() + deadlineMs;
-	const recorded = await clones.list();
-	if (recorded.length === 0) return 0;
-	let all: string;
-	try {
-		all = await run("nmcli", ["-t", "-f", "NAME,UUID", "connection", "show"], {
-			timeout: Math.max(1, Math.min(10_000, until - now())),
-		});
-	} catch {
-		return 0;
-	}
-	const names = new Map<string, string>();
-	for (const line of all.split("\n")) {
-		const [name, uuid] = splitTerse(line);
-		if (name && uuid) names.set(uuid, name);
-	}
-	let removed = 0;
-	for (const uuid of recorded) {
-		const name = names.get(uuid);
-		if (name === undefined || !name.startsWith(SEARCH_PROFILE_PREFIX)) {
-			// Gone already, or not ours under that UUID: only the record goes.
-			await clones.remove(uuid);
-			continue;
-		}
-		const left = until - now();
-		if (left <= 0 || !UUID_RE.test(uuid)) continue;
-		try {
-			await run("nmcli", ["connection", "delete", "uuid", uuid], {
-				timeout: Math.min(10_000, left),
-			});
-			await clones.remove(uuid);
-			removed++;
-		} catch {
-			// Stays recorded; the next boot tries again.
-		}
-	}
-	return removed;
-}
-
 export function createSearchNm(deps: SearchNmDeps) {
 	const run = deps.run;
 	const macOf = deps.macOf ?? sysfsMac;
-	const clones = deps.clones ?? memoryCloneRegistry();
 	const identity = deps.identity ?? (async () => true);
 	const bus = deps.bus ?? systemNmBus();
 	const pollMs = deps.pollMs ?? 250;
@@ -320,16 +249,15 @@ export function createSearchNm(deps: SearchNmDeps) {
 	/**
 	 * The one way to change NetworkManager state. Effects run one at a time
 	 * (process-wide). In the effect's own step, in this order: stop, the
-	 * registry's view of the radio, the profile's provenance, the coordinator's
-	 * last check, then the device incarnation is bound over D-Bus and stop is
-	 * read once more right before the command. The command then only talks to
-	 * that incarnation. Anything stopped, unreadable or changed: nothing is
-	 * done and the result is `SKIPPED`.
+	 * registry's view of the radio, the coordinator's last check, then the
+	 * device incarnation is bound over D-Bus. Every state-changing call reads
+	 * stop once more as the last thing before it is sent (`nm-bus.ts`), and
+	 * only talks to that incarnation. Anything stopped, unreadable or changed:
+	 * nothing is done and the result is `SKIPPED`.
 	 */
 	const effect = <T>(
 		ifname: string,
 		gate: ActionGate,
-		profile: string | null,
 		command: (device: BoundDevice) => Promise<T | typeof SKIPPED>,
 	): Promise<T | typeof SKIPPED> =>
 		serialEffect(async () => {
@@ -338,19 +266,12 @@ export function createSearchNm(deps: SearchNmDeps) {
 			const mac = normalizeMacAddress(gate.expected.id);
 			if (ifindex === undefined || mac === undefined) return SKIPPED;
 			if (!(await identity(ifname, gate.expected))) return SKIPPED;
-			if (
-				profile !== null &&
-				(!UUID_RE.test(profile) || !(await clones.has(profile)))
-			)
-				return SKIPPED;
 			if (gate.mayAct && !(await gate.mayAct())) return SKIPPED;
 			if (!gate.live()) return SKIPPED;
 			const done = await bus.withDevice(
 				{ ifname, ifindex, mac },
-				async (device) => {
-					if (!gate.live()) return { value: SKIPPED };
-					return { value: await command(device) };
-				},
+				gate.live,
+				async (device) => ({ value: await command(device) }),
 			);
 			return done === undefined ? SKIPPED : done.value;
 		});
@@ -367,7 +288,8 @@ export function createSearchNm(deps: SearchNmDeps) {
 			if (state === ACTIVE_STATE.activated) return active;
 			if (state === undefined || state >= ACTIVE_STATE.deactivating)
 				return undefined;
-			// Stopping: leave it to the boot sweep rather than act after stop.
+			// Stopping: no state change after stop. The volatile profile goes
+			// with the activation, whenever NetworkManager ends it.
 			if (!gate.live()) return undefined;
 			if (Date.now() >= deadline) {
 				await device.deactivate(active);
@@ -420,7 +342,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 		};
 	}
 
-	/** Saved Wi-Fi profiles bound to this radio, by SSID; owned clones excluded. */
+	/** Saved Wi-Fi profiles bound to this radio, by SSID; owned copies excluded. */
 	async function boundProfiles(ifname: string): Promise<Map<string, string>> {
 		const mac = await macOf(ifname);
 		const bySsid = new Map<string, string>();
@@ -435,80 +357,12 @@ export function createSearchNm(deps: SearchNmDeps) {
 		for (const line of out?.split("\n") ?? []) {
 			const [name, uuid, type] = splitTerse(line);
 			if (type !== "802-11-wireless" || !uuid || !UUID_RE.test(uuid)) continue;
-			if (name?.startsWith(SEARCH_PROFILE_PREFIX) || (await clones.has(uuid)))
-				continue;
+			if (name?.startsWith(SEARCH_PROFILE_PREFIX)) continue;
 			const f = await profileFields(uuid);
 			if (f?.ssid && f.mac === mac && !bySsid.has(f.ssid))
 				bySsid.set(f.ssid, uuid);
 		}
 		return bySsid;
-	}
-
-	/** Lock a clone to `bssid` with autoconnect off; `false` on failure. */
-	async function lockClone(uuid: string, bssid: string): Promise<boolean> {
-		return (
-			(await quiet("nmcli", [
-				"connection",
-				"modify",
-				"--temporary",
-				uuid,
-				"802-11-wireless.bssid",
-				bssid,
-				"connection.autoconnect",
-				"no",
-			])) !== undefined
-		);
-	}
-
-	/**
-	 * This radio's clone of `source`, locked to `bssid`: the recorded one when
-	 * NetworkManager still has it, else a new one, recorded before anything
-	 * else can see it.
-	 */
-	async function cloneFor(
-		ifname: string,
-		key: string,
-		source: string,
-		bssid: string,
-	): Promise<string | undefined> {
-		const known = await clones.find(key);
-		if (known) {
-			if (await lockClone(known, bssid)) return known;
-			const exists = await quiet("nmcli", [
-				"-g",
-				"connection.uuid",
-				"connection",
-				"show",
-				known,
-			]);
-			if (exists !== undefined) return undefined;
-			// NetworkManager restarted and dropped it: only the record remains.
-			await clones.remove(known);
-		}
-		const end = beginCloneCreation();
-		let uuid: string | undefined;
-		try {
-			const cloned = await quiet("nmcli", [
-				"connection",
-				"clone",
-				"--temporary",
-				argMatch(UUID_RE, source),
-				searchProfileName(ifname),
-			]);
-			uuid = cloned ? parseCloneUuid(cloned) : undefined;
-			if (!uuid) return undefined;
-			try {
-				await clones.add(uuid, key);
-			} catch {
-				// Unrecorded, and still invisible to CeraUI's saved list while
-				// this creation runs: nothing else can have activated it.
-				await quiet("nmcli", ["connection", "delete", "uuid", uuid]);
-				return undefined;
-			}
-		} finally {
-			end();
-		}
-		return (await lockClone(uuid, bssid)) ? uuid : undefined;
 	}
 
 	return {
@@ -583,7 +437,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 			gate: ActionGate,
 		): Promise<readonly ScanRow[] | undefined> {
 			const dev = argMatch(ID_RE, ifname);
-			const out = await effect(dev, gate, null, async (device) => {
+			const out = await effect(dev, gate, async (device) => {
 				const before = await device.lastScan();
 				if (before === undefined) return undefined;
 				if (!gate.live()) return SKIPPED;
@@ -607,10 +461,11 @@ export function createSearchNm(deps: SearchNmDeps) {
 		},
 
 		/**
-		 * Activate this radio's clone of its saved profile for `ssid`, locked to
-		 * `bssid`. `gate.mayAct` is the coordinator's last check, run in the
-		 * executor's step right before activation. A refused or failed join
-		 * leaves the clone in place and recorded, inactive.
+		 * Activate a volatile copy of this radio's saved profile for `ssid`,
+		 * locked to `bssid`. `gate.mayAct` is the coordinator's last check, run
+		 * in the executor's step right before activation. A refused join creates
+		 * nothing; a failed one leaves nothing behind (NetworkManager deletes the
+		 * volatile profile with the failed activation).
 		 */
 		async join(
 			ifname: string,
@@ -620,19 +475,21 @@ export function createSearchNm(deps: SearchNmDeps) {
 		): Promise<JoinResult | typeof JOIN_REFUSED | undefined> {
 			const dev = argMatch(ID_RE, ifname);
 			const target = argMatch(BSSID_RE, bssid.toLowerCase());
-			const mac = normalizeMacAddress(gate.expected.id);
-			if (!mac) return undefined;
 			const source = (await boundProfiles(dev)).get(ssid);
 			if (!source) return undefined;
-			const uuid = await cloneFor(dev, `${mac}|${source}`, source, target);
-			if (!uuid) return undefined;
-			const up = await effect(dev, gate, uuid, async (device) => {
-				const active = await device.activate(uuid);
-				return active ? settle(device, active, gate) : undefined;
+			const up = await effect(dev, gate, async (device) => {
+				const made = await device.addAndActivate(argMatch(UUID_RE, source), {
+					id: searchProfileName(dev),
+					bssid: target,
+				});
+				if (!made) return undefined;
+				return (await settle(device, made.active, gate))
+					? made.uuid
+					: undefined;
 			});
 			if (up === SKIPPED) return JOIN_REFUSED;
 			if (up === undefined) return undefined;
-			return { activation: uuid };
+			return { activation: up };
 		},
 
 		/**
@@ -669,11 +526,11 @@ export function createSearchNm(deps: SearchNmDeps) {
 		},
 
 		/**
-		 * Take an owned clone off this radio: deactivate it if it is the
-		 * device's active connection, else nothing to do. The clone itself stays,
-		 * recorded, for the next join or the boot sweep. `false` when the
-		 * executor declined (stopped, or the radio is not the admitted one) or
-		 * NetworkManager refused.
+		 * Take an owned profile off this radio: deactivate it if it is the
+		 * device's active connection, and only if that connection is one of
+		 * ours (a volatile `ceraui-search-*` profile). NetworkManager then deletes
+		 * the profile. `false` when the executor declined (stopped, or the radio
+		 * is not the admitted one) or NetworkManager refused.
 		 */
 		async abandon(
 			ifname: string,
@@ -682,11 +539,12 @@ export function createSearchNm(deps: SearchNmDeps) {
 		): Promise<boolean> {
 			const dev = argMatch(ID_RE, ifname);
 			if (!UUID_RE.test(activation)) return false;
-			const out = await effect(dev, gate, activation, async (device) => {
+			const out = await effect(dev, gate, async (device) => {
 				const current = await device.active();
 				if (current === undefined) return undefined;
 				if (current === null || current.uuid !== activation) return true;
-				if (!gate.live()) return SKIPPED;
+				if (!current.volatile || !current.id.startsWith(SEARCH_PROFILE_PREFIX))
+					return true;
 				return (await device.deactivate(current.path)) ? true : undefined;
 			});
 			return out === true;

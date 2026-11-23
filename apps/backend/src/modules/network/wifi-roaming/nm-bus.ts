@@ -18,6 +18,16 @@
  * unique name; either way the old address is gone and NetworkManager refuses
  * the call ("Object does not exist", "Can not activate an unknown device"),
  * so an effect can only reach the radio that was admitted.
+ *
+ * A join never creates a stored profile. It hands NetworkManager the source
+ * profile's settings and secrets with the overrides (name, BSSID, autoconnect
+ * off) in one `AddAndActivateConnection2` call with `persist: "volatile"`: an
+ * in-memory profile that NetworkManager deletes by itself as soon as it
+ * deactivates or fails. There is nothing to clean up, at runtime or at boot,
+ * and no window in which a half-made profile exists.
+ *
+ * Every call that changes state (scan request, activation, deactivation)
+ * reads the caller's `live()` as the very last thing before it is sent.
  */
 import { readFile } from "node:fs/promises";
 import type {
@@ -25,9 +35,8 @@ import type {
 	DbusValue,
 	DbusVariant,
 } from "@ceralive/modem-control/transport";
-import { isVariant } from "@ceralive/modem-control/transport";
+import { isVariant, variant } from "@ceralive/modem-control/transport";
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
-import { createSystemPortalReaderDeps } from "../../wifi/captive-portal-readers.ts";
 import type { ScanRow } from "./policy.ts";
 
 const NM = "org.freedesktop.NetworkManager";
@@ -37,6 +46,11 @@ const DEVICE = `${NM}.Device`;
 const WIRELESS = `${DEVICE}.Wireless`;
 const ACCESS_POINT = `${NM}.AccessPoint`;
 const ACTIVE = `${NM}.Connection.Active`;
+const CONNECTION = `${NM}.Settings.Connection`;
+/** NM_SETTINGS_CONNECTION_FLAG_VOLATILE */
+const FLAG_VOLATILE = 0x4;
+/** Settings that can hold secrets a station profile needs to connect. */
+const SECRET_SETTINGS = ["802-11-wireless-security", "802-1x"] as const;
 const PROPS = "org.freedesktop.DBus.Properties";
 const DEVICE_PATH_RE = /^\/org\/freedesktop\/NetworkManager\/Devices\/\d+$/;
 const OBJECT_PATH_RE = /^\/org\/freedesktop\/NetworkManager\/[A-Za-z]+\/\d+$/;
@@ -62,13 +76,24 @@ export type BoundDevice = Readonly<{
 	requestScan(): Promise<boolean>;
 	/** What the last scan found, `undefined` unreadable. */
 	accessPoints(): Promise<ScanRow[] | undefined>;
-	/** Activate a profile on this device; the active connection's path. */
-	activate(uuid: string): Promise<string | undefined>;
+	/**
+	 * Activate a volatile copy of the `source` profile on this device, with
+	 * `overrides` applied: the new profile's UUID and active connection.
+	 */
+	addAndActivate(
+		source: string,
+		overrides: Readonly<{ id: string; bssid: string }>,
+	): Promise<Readonly<{ active: string; uuid: string }> | undefined>;
 	/** State of an active connection, `undefined` once it is gone. */
 	activeState(active: string): Promise<number | undefined>;
-	/** The device's active connection, `null` when none, `undefined` unreadable. */
+	/**
+	 * The device's active connection, `null` when none, `undefined`
+	 * unreadable. `volatile` and `id` describe its profile.
+	 */
 	active(): Promise<
-		Readonly<{ path: string; uuid: string }> | null | undefined
+		| Readonly<{ path: string; uuid: string; id: string; volatile: boolean }>
+		| null
+		| undefined
 	>;
 	/** Deactivate an active connection; `false` when NetworkManager refused. */
 	deactivate(active: string): Promise<boolean>;
@@ -82,6 +107,7 @@ export type NmBus = Readonly<{
 	 */
 	withDevice<T>(
 		radio: BindTarget,
+		live: () => boolean,
 		fn: (device: BoundDevice) => Promise<T>,
 	): Promise<T | undefined>;
 }>;
@@ -155,10 +181,60 @@ const ssidText = new TextDecoder("utf-8", { fatal: false });
  * The device API on an open bus. Exported for tests, which pass a fake
  * transport; production uses {@link systemNmBus}.
  */
+/** Thrown instead of sending a state change after the caller stopped. */
+export class EffectCancelled extends Error {
+	constructor() {
+		super("effect cancelled before dispatch");
+	}
+}
+
+/** Bytes of a MAC address, for `802-11-wireless.bssid`. */
+function macBytes(mac: string): Uint8Array {
+	return Uint8Array.from(mac.split(":").map((h) => Number.parseInt(h, 16)));
+}
+
+export type Settings = Map<string, Map<string, DbusVariant>>;
+
+export function settingsOf(value: DbusValue | undefined): Settings {
+	const out: Settings = new Map();
+	if (!Array.isArray(value)) return out;
+	for (const entry of value)
+		if (
+			Array.isArray(entry) &&
+			entry.length === 2 &&
+			typeof entry[0] === "string"
+		)
+			out.set(entry[0], props(entry[1]));
+	return out;
+}
+
+/**
+ * The settings for a volatile copy of a profile: its own settings and
+ * secrets, without its UUID, under a new name, locked to `bssid` with
+ * autoconnect off.
+ */
+export function volatileCopy(
+	settings: Settings,
+	overrides: Readonly<{ id: string; bssid: string }>,
+): DbusValue {
+	const connection = new Map(settings.get("connection") ?? []);
+	connection.delete("uuid");
+	connection.delete("timestamp");
+	connection.set("id", variant("s", overrides.id));
+	connection.set("autoconnect", variant("b", false));
+	const wireless = new Map(settings.get("802-11-wireless") ?? []);
+	wireless.set("bssid", variant("ay", macBytes(overrides.bssid)));
+	const all = new Map(settings);
+	all.set("connection", connection);
+	all.set("802-11-wireless", wireless);
+	return [...all].map(([name, values]) => [name, [...values]]);
+}
+
 export async function bindDevice(
 	bus: Transport,
 	radio: BindTarget,
 	readIfindex: IfindexReader = sysfsIfindex,
+	live: () => boolean = () => true,
 ): Promise<BoundDevice | undefined> {
 	if ((await readIfindex(radio.ifname)) !== radio.ifindex) return undefined;
 	const call = (
@@ -187,6 +263,17 @@ export async function bindDevice(
 	);
 	const owner = str(ownerReply.body[0]);
 	if (!owner || !/^:\d+\.\d+$/.test(owner)) return undefined;
+	/** A state change: stop is read last, right before it is sent. */
+	const dispatch = (
+		path: string,
+		iface: string,
+		member: string,
+		signature: string,
+		args: DbusValue[],
+	) => {
+		if (!live()) throw new EffectCancelled();
+		return call(owner, path, iface, member, signature, args);
+	};
 	const get = async (path: string, iface: string, name: string) => {
 		const reply = await call(owner, path, PROPS, "Get", "ss", [iface, name]);
 		const v = reply.body[0];
@@ -217,10 +304,13 @@ export async function bindDevice(
 	if ((await readIfindex(radio.ifname)) !== radio.ifindex) return undefined;
 	const device = path;
 
+	// A refusal from NetworkManager is `undefined`; a cancellation is not
+	// swallowed, so the whole effect ends as declined.
 	const safe = async <T>(work: () => Promise<T>): Promise<T | undefined> => {
 		try {
 			return await work();
-		} catch {
+		} catch (error) {
+			if (error instanceof EffectCancelled) throw error;
 			return undefined;
 		}
 	};
@@ -238,7 +328,7 @@ export async function bindDevice(
 			}),
 		requestScan: async () =>
 			(await safe(async () => {
-				await call(owner, device, WIRELESS, "RequestScan", "a{sv}", [[]]);
+				await dispatch(device, WIRELESS, "RequestScan", "a{sv}", [[]]);
 				return true;
 			})) ?? false,
 		accessPoints: () =>
@@ -264,7 +354,7 @@ export async function bindDevice(
 				}
 				return rows;
 			}),
-		activate: (uuid) =>
+		addAndActivate: (source, overrides) =>
 			safe(async () => {
 				const conn = str(
 					(
@@ -274,21 +364,46 @@ export async function bindDevice(
 							`${NM}.Settings`,
 							"GetConnectionByUuid",
 							"s",
-							[uuid],
+							[source],
 						)
 					).body[0],
 				);
-				if (!conn) return undefined;
-				const active = str(
-					(
-						await call(owner, ROOT, NM, "ActivateConnection", "ooo", [
-							conn,
-							device,
-							"/",
-						])
-					).body[0],
+				if (!conn || !OBJECT_PATH_RE.test(conn)) return undefined;
+				const settings = settingsOf(
+					(await call(owner, conn, CONNECTION, "GetSettings")).body[0],
 				);
-				return active && OBJECT_PATH_RE.test(active) ? active : undefined;
+				for (const name of SECRET_SETTINGS) {
+					if (!settings.has(name)) continue;
+					const secrets = settingsOf(
+						(await call(owner, conn, CONNECTION, "GetSecrets", "s", [name]))
+							.body[0],
+					);
+					for (const [setting, values] of secrets)
+						settings.set(
+							setting,
+							new Map([...(settings.get(setting) ?? []), ...values]),
+						);
+				}
+				const reply = await dispatch(
+					ROOT,
+					NM,
+					"AddAndActivateConnection2",
+					"a{sa{sv}}ooa{sv}",
+					[
+						volatileCopy(settings, overrides),
+						device,
+						"/",
+						[
+							["persist", variant("s", "volatile")],
+							// Not tied to this bus connection, which closes after the call.
+							["bind-activation", variant("s", "none")],
+						],
+					],
+				);
+				const active = str(reply.body[1]);
+				if (!active || !OBJECT_PATH_RE.test(active)) return undefined;
+				const uuid = str(await get(active, ACTIVE, "Uuid"));
+				return uuid ? { active, uuid } : undefined;
 			}),
 		activeState: (active) =>
 			safe(async () => num(await get(active, ACTIVE, "State"))),
@@ -297,12 +412,24 @@ export async function bindDevice(
 				const active = str(await get(device, DEVICE, "ActiveConnection"));
 				if (active === undefined) return undefined;
 				if (active === "/") return null;
-				const uuid = str(await get(active, ACTIVE, "Uuid"));
-				return uuid === undefined ? undefined : { path: active, uuid };
+				const a = await getAll(active, ACTIVE);
+				const uuid = str(a.get("Uuid")?.value);
+				const id = str(a.get("Id")?.value);
+				const profile = str(a.get("Connection")?.value);
+				if (uuid === undefined || id === undefined || !profile)
+					return undefined;
+				const flags = num(await get(profile, CONNECTION, "Flags"));
+				if (flags === undefined) return undefined;
+				return {
+					path: active,
+					uuid,
+					id,
+					volatile: (flags & FLAG_VOLATILE) !== 0,
+				};
 			}),
 		deactivate: async (active) =>
 			(await safe(async () => {
-				await call(owner, ROOT, NM, "DeactivateConnection", "o", [active]);
+				await dispatch(ROOT, NM, "DeactivateConnection", "o", [active]);
 				return true;
 			})) ?? false,
 	};
@@ -312,16 +439,18 @@ export async function bindDevice(
 export function systemNmBus(
 	readIfindex: IfindexReader = sysfsIfindex,
 	/** The system bus, through the same factory CeraUI's other NM readers use. */
-	createTransport: () => Promise<Transport> = () =>
-		createSystemPortalReaderDeps().createTransport(),
+	createTransport: () => Promise<Transport> = async () =>
+		(await import("../../wifi/captive-portal-readers.ts"))
+			.createSystemPortalReaderDeps()
+			.createTransport(),
 ): NmBus {
 	return {
-		async withDevice(radio, fn) {
+		async withDevice(radio, live, fn) {
 			let bus: Transport | undefined;
 			try {
 				bus = await createTransport();
 				await bus.connect();
-				const device = await bindDevice(bus, radio, readIfindex);
+				const device = await bindDevice(bus, radio, readIfindex, live);
 				return device ? await fn(device) : undefined;
 			} catch {
 				return undefined;

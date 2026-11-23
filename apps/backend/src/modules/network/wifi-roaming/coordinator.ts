@@ -435,7 +435,7 @@ export class RoamingCoordinator {
 	readonly #learned = new Map<string, Learned>();
 	/** Recent failed joins or verifications per BSSID. */
 	readonly #failed = new Map<string, { count: number; at: number }>();
-	/** Owned clones whose removal had to wait (busy lock, or still carrying), by radio id. */
+	/** Owned profiles whose deactivation had to wait (busy lock, or still carrying), by radio id. */
 	readonly #pendingAbandon = new Map<string, string>();
 	#clock: SearchClock = FRESH_SEARCH_CLOCK;
 	#joinFailures = 0;
@@ -752,8 +752,8 @@ export class RoamingCoordinator {
 	/**
 	 * Take an owned clone off its radio, under the radio's adapter lock and
 	 * after a fresh look: the port deactivates it if it is still the radio's
-	 * active connection. The clone itself stays recorded, for the next join and
-	 * the boot sweep. Nothing happens while the active-profile listing cannot
+	 * active connection, and NetworkManager deletes the volatile profile with
+	 * it. Nothing happens while the active-profile listing cannot
 	 * be read. A protected radio (a holder, a reserved radio, or one with an AP
 	 * on its phy or an unreadable mode) is never deactivated: there the port is
 	 * only called on positive evidence that the clone is no longer active.
@@ -1674,7 +1674,7 @@ export class RoamingCoordinator {
 		const bssid = normalizeBssid(pick.bssid);
 		const joined = await this.#act(radio, "join", async (confirm) => {
 			// The radio must still be the admitted one right before activation and
-			// right after it: a replug in between gets no clone on another radio.
+			// right after it: a replug in between gets no link on another radio.
 			let replaced = false;
 			const result = await this.#ports.join(
 				radio.ifname,

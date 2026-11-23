@@ -1,38 +1,29 @@
 /*
-  Regression tests from the third boot-wiring review, rebuilt on the narrowed
-  design: every effect carries its radio's expectation from the production
-  ports to the executor, an effect is bound to the device incarnation so a
-  replaced radio receives nothing, stop is checked at dispatch, roaming clones
-  are invisible to CeraUI's own Wi-Fi code, and the boot sweep runs before any
-  of it.
+  Regression tests from the third and fourth boot-wiring reviews, on the
+  design that answered them: every effect carries its radio's expectation
+  from the production ports to the executor, is bound to the device
+  incarnation so a replaced radio receives nothing, and reads stop as the
+  last thing before each dispatch. A join is one volatile NetworkManager
+  profile that NetworkManager removes by itself, so nothing deletes a
+  profile, at runtime or at boot.
 */
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import * as runModule from "../../../helpers/run.ts";
 import {
 	isolateWifiRegistry,
 	restoreWifiRegistry,
 } from "../../../tests/helpers/wifi-registry.ts";
 import { seedWifiRadios } from "../../../tests/helpers/wifi-verified-radios.ts";
-import { handleWifi, wifiUpdateSavedConns } from "../../wifi/wifi.ts";
-import * as wifiConnections from "../../wifi/wifi-connections.ts";
-import { getWifiIdToMacAddress } from "../../wifi/wifi-interfaces.ts";
-import * as diversity from "../../wifi/wifi-network-diversity.ts";
-import * as networkManager from "../network-manager.ts";
-import * as cloneRegistry from "./clone-registry.ts";
-import { beginCloneCreation, memoryCloneRegistry } from "./clone-registry.ts";
 import {
 	type ActionGate,
 	type CoordinatorPorts,
 	type RadioObservation,
 	RoamingCoordinator,
 } from "./coordinator.ts";
-import type { BoundDevice, NmBus } from "./nm-bus.ts";
+import { type BoundDevice, type NmBus, systemNmBus } from "./nm-bus.ts";
 import { createSearchNm } from "./nm-port.ts";
 import * as radioLock from "./radio-lock.ts";
-import { productionPorts, sweepRoamingClones } from "./runtime.ts";
+import { productionPorts } from "./runtime.ts";
 import { protectRadiosFromScans, setScanGateModeReader } from "./scan-gate.ts";
 
 afterEach(() => {
@@ -51,7 +42,7 @@ const replacementRadio = { ...originalRadio, ifindex: 32 };
 function bus(devices: Map<number, string>) {
 	const effects: string[] = [];
 	const nmBus: NmBus = {
-		async withDevice(radio, fn) {
+		async withDevice(radio, _live, fn) {
 			if (devices.get(radio.ifindex) !== radio.mac) return undefined;
 			const path = `/org/freedesktop/NetworkManager/Devices/${radio.ifindex}`;
 			const device: BoundDevice = {
@@ -62,14 +53,19 @@ function bus(devices: Map<number, string>) {
 					return true;
 				},
 				accessPoints: async () => [],
-				activate: async (uuid) => {
-					effects.push(`up ${uuid} ${path}`);
-					return "/org/freedesktop/NetworkManager/ActiveConnection/1";
+				addAndActivate: async (source) => {
+					effects.push(`up ${source} ${path}`);
+					return {
+						active: "/org/freedesktop/NetworkManager/ActiveConnection/1",
+						uuid: probeClone,
+					};
 				},
 				activeState: async () => 2,
 				active: async () => ({
 					path: "/org/freedesktop/NetworkManager/ActiveConnection/1",
 					uuid: probeClone,
+					id: "ceraui-search-wlan2",
+					volatile: true,
 				}),
 				deactivate: async (active) => {
 					effects.push(`down ${active}`);
@@ -97,7 +93,7 @@ test("production scan, join and abandon all hand the radio's expectation to the 
 	const { ports, sender } = productionPorts(
 		() => 0,
 		() => [],
-		{ clones: memoryCloneRegistry([probeClone]), macOf: async () => probeMac },
+		{ macOf: async () => probeMac },
 	);
 	const expected = { id: probeMac, lifetime: "31:3:/fixture" };
 	const gate: ActionGate = { expected, live: () => true };
@@ -130,7 +126,6 @@ test("a radio replaced during the profile reads gets no activation and no deacti
 	const nm = createSearchNm({
 		identity: radioLock.confirmRadio,
 		macOf: async () => probeMac,
-		clones: memoryCloneRegistry([probeClone]),
 		bus: nmBus,
 		pollMs: 1,
 		run: async (_bin, args) => {
@@ -255,140 +250,88 @@ test("stop while the executor reads the radio's identity: no scan is requested",
 	expect(effects).toEqual([]);
 });
 
-test("CeraUI's saved list never shows a roaming clone, and its Connect refuses one", async () => {
-	const inherited = isolateWifiRegistry();
-	const seed = await seedWifiRadios();
-	const ids = getWifiIdToMacAddress();
-	const previousId = ids[40];
-	const owned = spyOn(cloneRegistry, "isOwnedClone").mockImplementation(
-		(uuid) => uuid === probeClone,
+const root = "/org/freedesktop/NetworkManager";
+
+test("a join stopped during the source profile lookup never sends AddAndActivateConnection2", async () => {
+	const lookupStarted = Promise.withResolvers<void>();
+	const finishLookup = Promise.withResolvers<void>();
+	const dispatches: string[] = [];
+	let live = true;
+	const nmBus = systemNmBus(
+		async () => 31,
+		async () => ({
+			connect: async () => {},
+			disconnect: async () => {},
+			callMethod: async ({ member }) => {
+				switch (member) {
+					case "GetNameOwner":
+						return { signature: "s", body: [":1.3"] };
+					case "GetDevices":
+						return { signature: "ao", body: [[`${root}/Devices/1`]] };
+					case "GetAll":
+						return {
+							signature: "a{sv}",
+							body: [
+								[
+									["Interface", { signature: "s", value: "wlan2" }],
+									["DeviceType", { signature: "u", value: 2 }],
+								],
+							],
+						};
+					case "Get":
+						return {
+							signature: "v",
+							body: [{ signature: "s", value: probeMac }],
+						};
+					case "GetConnectionByUuid":
+						lookupStarted.resolve();
+						await finishLookup.promise;
+						return { signature: "o", body: [`${root}/Settings/2`] };
+					case "GetSettings":
+						return { signature: "a{sa{sv}}", body: [[]] };
+					default:
+						dispatches.push(member);
+						return { signature: "", body: [] };
+				}
+			},
+		}),
 	);
-	const list = spyOn(networkManager, "nmConnsGet").mockResolvedValue([
-		`${probeSource}:802-11-wireless`,
-		`${probeClone}:802-11-wireless`,
-	]);
-	const fields = spyOn(networkManager, "nmConnGetFields").mockResolvedValue([
-		"infrastructure",
-		"venue",
-		probeMac,
-	]);
-	const connect = spyOn(networkManager, "nmConnect").mockResolvedValue(true);
-	const refresh = spyOn(
-		wifiConnections,
-		"wifiUpdateScanResult",
-	).mockResolvedValue(true);
-	const choice = spyOn(diversity, "beginWifiOperatorChoice").mockReturnValue({
-		record: async () => {},
-		release: () => {},
+	const nm = createSearchNm({
+		bus: nmBus,
+		macOf: async () => probeMac,
+		run: async (_bin, args) => {
+			if (args.includes("NAME,UUID,TYPE"))
+				return `venue:${probeSource}:802-11-wireless\n`;
+			if (args[0] === "-g") return `venue\n${probeMac}\n\n`;
+			return "";
+		},
 	});
-	try {
-		const rows = await seed.publish([originalRadio]);
-		ids[40] = probeMac;
-		await wifiUpdateSavedConns();
-		expect(rows[probeMac]?.saved.venue).toBe(probeSource);
-		expect(rows[probeMac]?.savedAll.venue).toEqual([probeSource]);
-		// Even a Connect that names the clone directly does nothing.
-		await handleWifi({ send: () => undefined }, { connect: probeClone });
-		expect(connect.mock.calls).toEqual([]);
-	} finally {
-		owned.mockRestore();
-		list.mockRestore();
-		fields.mockRestore();
-		connect.mockRestore();
-		refresh.mockRestore();
-		choice.mockRestore();
-		if (previousId === undefined) delete ids[40];
-		else ids[40] = previousId;
-		await seed.restore();
-		restoreWifiRegistry(inherited);
-	}
+	const joining = nm.join("wlan2", "venue", target, {
+		expected: { id: probeMac, lifetime: "31:3:/fixture" },
+		live: () => live,
+	});
+	await lookupStarted.promise;
+	live = false;
+	finishLookup.resolve();
+	expect(await joining).toBe("refused");
+	expect(dispatches).toEqual([]);
 });
 
-test("a saved-list refresh taken while a clone is being created is not committed", async () => {
-	const inherited = isolateWifiRegistry();
-	const seed = await seedWifiRadios();
-	const ids = getWifiIdToMacAddress();
-	const previousId = ids[40];
-	const owned = spyOn(cloneRegistry, "isOwnedClone").mockReturnValue(false);
-	const list = spyOn(networkManager, "nmConnsGet").mockResolvedValue([
-		`${probeClone}:802-11-wireless`,
-	]);
-	const fields = spyOn(networkManager, "nmConnGetFields").mockResolvedValue([
-		"infrastructure",
-		"venue",
-		probeMac,
-	]);
-	try {
-		const rows = await seed.publish([originalRadio]);
-		ids[40] = probeMac;
-		const end = beginCloneCreation();
-		try {
-			await wifiUpdateSavedConns();
-		} finally {
-			end();
-		}
-		expect(rows[probeMac]?.saved).toEqual({});
-		// A refresh that starts before the creation and ends after it is not
-		// committed either.
-		list.mockImplementation(async () => {
-			beginCloneCreation()();
-			return [`${probeClone}:802-11-wireless`];
-		});
-		await wifiUpdateSavedConns();
-		expect(rows[probeMac]?.saved).toEqual({});
-	} finally {
-		owned.mockRestore();
-		list.mockRestore();
-		fields.mockRestore();
-		if (previousId === undefined) delete ids[40];
-		else ids[40] = previousId;
-		await seed.restore();
-		restoreWifiRegistry(inherited);
+test("nothing in roaming deletes, clones or edits a NetworkManager profile, and boot runs no sweep", async () => {
+	const read = (path: string) =>
+		Bun.file(new URL(path, import.meta.url)).text();
+	for (const file of [
+		"nm-port.ts",
+		"nm-bus.ts",
+		"runtime.ts",
+		"coordinator.ts",
+	]) {
+		const source = await read(`./${file}`);
+		expect(source, file).not.toMatch(/"(delete|clone|modify)"/);
+		expect(source, file).not.toMatch(
+			/"(Delete|Update|Update2|AddConnection2?)"/,
+		);
 	}
-});
-
-test("a clone is hidden from CeraUI once recorded, until deleted; what the boot sweep leaves stays hidden", async () => {
-	const dir = await mkdtemp(join(tmpdir(), "roaming-clones-"));
-	try {
-		const path = join(dir, "clones.json");
-		const clones = cloneRegistry.fileCloneRegistry(path);
-		await clones.add(probeClone, `${probeMac}|${probeSource}`);
-		expect(cloneRegistry.isOwnedClone(probeClone)).toBe(true);
-		await clones.remove(probeClone);
-		expect(cloneRegistry.isOwnedClone(probeClone)).toBe(false);
-		// A record an earlier process left, which this sweep cannot delete
-		// (NetworkManager unreachable): it stays recorded and hidden.
-		const leftover = "44444444-4444-4444-8444-444444444444";
-		await writeFile(path, JSON.stringify([{ uuid: leftover, key: "" }]));
-		expect(cloneRegistry.isOwnedClone(leftover)).toBe(false);
-		const failing = async (): Promise<string> => {
-			throw new Error("NetworkManager unreachable");
-		};
-		expect(await sweepRoamingClones(failing, clones, 50)).toBe(0);
-		expect(await clones.list()).toEqual([leftover]);
-		expect(cloneRegistry.isOwnedClone(leftover)).toBe(true);
-	} finally {
-		await rm(dir, { recursive: true, force: true });
-	}
-});
-
-test("boot sweeps roaming clones before the control server and any Wi-Fi code", async () => {
-	const main = await Bun.file(
-		new URL("../../../main.ts", import.meta.url),
-	).text();
-	const at = (needle: string) => {
-		const i = main.indexOf(needle);
-		if (i < 0) throw new Error(`main.ts has no ${needle}`);
-		return i;
-	};
-	const sweep = at("await sweepRoamingClones()");
-	for (const later of [
-		'await runCritical("ws-control-server", initServer)',
-		'await guardNonCritical("hotspot-credentials"',
-		'guardNonCritical("wifi-regdomain"',
-		"await initWifiRoaming(",
-		"wifiStateInit(networkMonitor",
-		"startWifiNetworkDiversity()",
-	])
-		expect(at(later)).toBeGreaterThan(sweep);
+	const main = await read("../../../main.ts");
+	expect(main).not.toMatch(/sweep[A-Za-z]*Clones/);
 });

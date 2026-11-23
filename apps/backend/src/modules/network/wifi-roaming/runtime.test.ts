@@ -3,7 +3,6 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NetworkInterface } from "../network-interfaces.ts";
-import { fileCloneRegistry } from "./clone-registry.ts";
 import type { CoordinatorPorts, CoordinatorStatus } from "./coordinator.ts";
 import { isCoordinatorOwnedRadio } from "./ownership.ts";
 import {
@@ -425,24 +424,5 @@ describe("boot entry and loop hygiene", () => {
 			"close",
 			"stopped",
 		]);
-	});
-});
-
-describe("the clone record in /run", () => {
-	let dir = "";
-	afterEach(async () => {
-		if (dir) await rm(dir, { recursive: true, force: true });
-	});
-
-	test("survives a new instance (a restart), and concurrent writes lose nothing", async () => {
-		dir = await mkdtemp(join(tmpdir(), "clones-"));
-		const path = join(dir, "clones.json");
-		const a = fileCloneRegistry(path);
-		await Promise.all(["u1", "u2", "u3"].map((u) => a.add(u)));
-		await a.remove("u2");
-		const b = fileCloneRegistry(path);
-		expect([...(await b.list())].sort()).toEqual(["u1", "u3"]);
-		expect(await b.has("u1")).toBe(true);
-		expect(await b.has("u2")).toBe(false);
 	});
 });
