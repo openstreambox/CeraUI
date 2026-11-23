@@ -267,7 +267,8 @@ One exception, for a session THIS process launched: when the engine unit's
 systemd invocation is no longer the one the Start ran in (`session-engine.ts`),
 two silent queries that each got a valid empty session list, served by the same
 replacement process read before the first and after the last, commit `idle`
-(see "one-shot stream restoration" in `apps/backend/docs/agents`). Threat model: cerastream has one control client, CeraUI. The control socket is
+(see "one-shot stream restoration" in `apps/backend/docs/agents`).
+Threat model: cerastream has one control client, CeraUI. The control socket is
 root-only (`/run/cerastream` is `root:root 0750`, `control.sock` `root:root 0755`;
 cerastream and ceralive run as root), and the loopback preview port (9997) speaks a
 preview-only protocol that cannot start a stream. A second client that starts a
