@@ -263,6 +263,11 @@ second Stop. A non-adopting probe has no authority to advance the live client's 
 Contradictory/transitional current status is not silence: it retains UNKNOWN protection.
 Reboot clears the tmpfs sentinel and permits that empty admission baseline; it
 does not upgrade a silent probe to an affirmative engine-idle observation.
+One exception, for a session THIS process launched: when the engine unit's
+systemd invocation is no longer the one the Start ran in (`session-engine.ts`),
+two silent queries that each got a valid empty session list, served by the same
+replacement process read before the first and after the last, commit `idle`
+(see "one-shot stream restoration" in `apps/backend/docs/agents`).
 The existing update reason/catalog keys now offer
 the honest Stop-confirmation hint; downstream disruptive consumers are migrated in
 the separately assigned consumer lane.
@@ -473,7 +478,11 @@ State set: `idle | starting | streaming | stopping | stop_failed | reconciling`.
   operator Stop. A successfully subscribed probe observes status for 2.5
   seconds: concordant streaming/idle is adopted immediately, silence remains
   UNKNOWN even though live sessions heartbeat every 2 seconds, and query failure or a
-  contradictory/transitional event remains unknown. Events arriving after the
+  contradictory/transitional event remains unknown. Two exceptions confirm idle
+  from silence: an inherited carrying line (`docs/CARRYING.md`), and this
+  process's own launch after systemd replaced the engine it ran in (two silent
+  queries with a valid empty session list, one replacement process read before
+  and after). Events arriving after the
   probe closes are fenced.
 - `stop_failed` is a terminal-until-retried state a stop can land in.
 

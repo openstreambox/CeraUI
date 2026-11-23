@@ -17,7 +17,10 @@ import { logger } from "../../helpers/logger.ts";
 import type { StreamStartUpdateAdmission } from "../system/update-orchestrator/runtime.ts";
 import type { StreamStopCause } from "./armed-stream-marker.ts";
 import { classifyConfigChangeDispatchError as classifyDispatchError } from "./config-change-bridge.ts";
-import { withRuntimeObservationOwner } from "./engine-runtime-observation.ts";
+import {
+	type SilenceEvidence,
+	withRuntimeObservationOwner,
+} from "./engine-runtime-observation.ts";
 import {
 	type LifecycleAdmission,
 	type LifecycleLease,
@@ -27,6 +30,7 @@ import {
 	captureOperatorStopIntent,
 	noteOperatorStopIntent,
 } from "./operator-stop-intent.ts";
+import { type EngineIdentity, sameEngine } from "./session-engine.ts";
 import {
 	classifyStartFailure,
 	type RetryPolicy,
@@ -273,14 +277,19 @@ export type StreamSessionOrchestratorDeps = {
 	 */
 	readonly engineStopped?: () => Promise<boolean>;
 	/**
-	 * True only when the session this backend launched ran in an engine process
-	 * that is no longer the engine unit's running one (systemd restarted it).
-	 * That session cannot exist any more, so engine silence is evidence of idle
-	 * exactly as for an inherited carrying line: no status and an empty session
-	 * list on {@link SILENT_WITNESS_QUERIES} separate queries. A stopped engine
-	 * does not count here; the replacement must be up and silent.
+	 * The engine invocation this backend's own launch ran in, and a reader of
+	 * the unit's serving identity. When the serving invocation differs from the
+	 * recorded one, that session cannot exist any more (it lived in the old
+	 * process), and {@link SILENT_WITNESS_QUERIES} silent queries that each got a
+	 * valid EMPTY session list confirm idle, provided the serving identity read
+	 * before the first query and after the last is the same running process.
+	 * An RPC error, an engine with no process, the same invocation or any
+	 * failed read keeps the answer unknown.
 	 */
-	readonly sessionEngineReplaced?: () => Promise<boolean>;
+	readonly sessionEngine?: {
+		readonly recorded: () => string | undefined;
+		readonly readServing: () => Promise<EngineIdentity | undefined>;
+	};
 };
 
 /**
@@ -1036,31 +1045,51 @@ export function createStreamSessionOrchestrator(
 			stopFlight !== undefined;
 		runtimeObservations++;
 		let runtimeState: EngineRuntimeState = "unknown";
+		// The replaced-engine witness: the launch invocation this session ran
+		// in, and the engine serving the queries, read BEFORE the first one.
+		const recorded = deps.sessionEngine?.recorded();
+		let serving: EngineIdentity | undefined;
+		if (recorded !== undefined && deps.awaitsIdleWitness?.() !== true)
+			serving = await deps.sessionEngine?.readServing();
 		try {
 			for (let silentQueries = 0; ; ) {
-				let silent = false;
+				if (serving !== undefined && superseded()) break;
+				let silent: SilenceEvidence | "unspecified" | undefined;
 				runtimeState = await withRuntimeObservationOwner(
 					() => ownership.owns(owner),
 					deps.queryRuntime,
 					ownership.protect,
-					() => {
-						silent = true;
+					(evidence) => {
+						silent = evidence ?? "unspecified";
 					},
 				).catch(() => "unknown" as const);
 				if (runtimeState !== "unknown" || superseded()) break;
-				const inherited = deps.awaitsIdleWitness?.() === true;
-				const replaced =
-					!inherited &&
-					(await deps.sessionEngineReplaced?.().catch(() => false)) === true &&
-					!superseded();
-				if (!inherited && !replaced) break;
-				const noSession =
-					silent ||
-					(inherited &&
-						(await deps.engineStopped?.().catch(() => false)) === true &&
-						!superseded());
-				if (!noSession) break;
+				if (deps.awaitsIdleWitness?.() === true) {
+					const noSession =
+						silent !== undefined ||
+						((await deps.engineStopped?.().catch(() => false)) === true &&
+							!superseded());
+					if (!noSession) break;
+					if (++silentQueries < SILENT_WITNESS_QUERIES) continue;
+					runtimeState = "idle";
+					break;
+				}
+				// This backend's own session ran in an engine the unit no longer
+				// runs: it is gone. Only a valid empty session list counts as
+				// silence here, and every query must be served by the same
+				// replacement, read before the first and after the last.
+				if (
+					recorded === undefined ||
+					serving === undefined ||
+					serving.invocation === recorded ||
+					silent !== "empty_snapshot"
+				)
+					break;
 				if (++silentQueries < SILENT_WITNESS_QUERIES) continue;
+				const after = await deps.sessionEngine?.readServing();
+				// A Stop or newer reconcile during the read is caught right after the
+				// loop, before anything commits.
+				if (!sameEngine(serving, after)) break;
 				runtimeState = "idle";
 				break;
 			}

@@ -325,16 +325,6 @@ export type RestorationDecision =
  * has to come back and say something authoritative.
  */
 export const RESTORATION_UNKNOWN_DEADLINE_MS = 10_000;
-/**
- * The same window for a run the ENGINE's restart triggered. That engine is
- * still down when the run starts: systemd waits 5 s before restarting it, it
- * takes up to a few seconds to listen, and an idle restarted engine is only
- * known to be idle after two silent queries (the orchestrator's
- * SILENT_WITNESS_QUERIES) of about 3 s each. Measured on a board: ready 5.5 s after the abort, so 10 s expired
- * before the first decisive answer. It equals the declared restoration bound,
- * so a run still undecided then gives up as before.
- */
-export const RESTORATION_ENGINE_RESTART_DEADLINE_MS = 30_000;
 /** Poll cadence inside that window — the orchestrator's own reconcile cadence. */
 export const RESTORATION_POLL_MS = 1_000;
 /**
@@ -345,6 +335,19 @@ export const RESTORATION_POLL_MS = 1_000;
  * healthy-but-slow start as a failure.
  */
 export const RESTORATION_BOUND_MS = 30_000;
+
+/**
+ * The same window for a run the ENGINE's restart triggered. That engine is
+ * still down when the run starts: systemd waits 5 s before restarting it, it
+ * takes up to a few seconds to listen, and an idle restarted engine is only
+ * known to be idle after two silent queries (the orchestrator's
+ * SILENT_WITNESS_QUERIES) of about 3 s each. Measured on a board: ready 5.5 s
+ * after the abort, so 10 s expired before the first decisive answer. It is the
+ * declared restoration bound, enforced at the launch too: a run still undecided
+ * then gives up as before, and an idle answer that arrives later does not
+ * launch.
+ */
+export const RESTORATION_ENGINE_RESTART_DEADLINE_MS = RESTORATION_BOUND_MS;
 
 /**
  * The whole gate table, PURE, so every condition can be flipped on its own.

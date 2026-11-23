@@ -34,8 +34,8 @@ import {
 } from "./sender-ownership.ts";
 import {
 	forgetSessionEngine,
-	noteSessionEngine,
-	sessionEngineReplaced,
+	readEngineIdentity,
+	recordedSessionEngine,
 } from "./session-engine.ts";
 import { newAttemptId } from "./start-failure-taxonomy.ts";
 import {
@@ -162,12 +162,6 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	publishConfigChangePhase: broadcastConfigChangePhase,
 	// Lazy graph edges retain initialization order; ownership is checked after import.
 	onStreamCommitted: (current) => {
-		// Which engine process this session runs in, so a later reconcile can
-		// tell that systemd replaced it (see session-engine.ts).
-		if (!shouldUseMocks())
-			void noteSessionEngine(current).catch((error) =>
-				logger.warn("session engine bookkeeping failed", { error }),
-			);
 		void import("./sources.ts")
 			.then(({ noteStreamedSourceCommitted }) => {
 				if (current()) noteStreamedSourceCommitted();
@@ -212,8 +206,10 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	confirmStreamingForOta: adoptOtaStreamingMarker,
 	awaitsIdleWitness: otaMarkerAwaitsIdleWitness,
 	engineStopped: () => engineUnitStopped(),
-	sessionEngineReplaced: () =>
-		shouldUseMocks() ? Promise.resolve(false) : sessionEngineReplaced(),
+	sessionEngine: {
+		recorded: () => (shouldUseMocks() ? undefined : recordedSessionEngine()),
+		readServing: readEngineIdentity,
+	},
 	onStreamStopped: (cause) => {
 		noteStreamStopped(cause);
 		recordEvent(() =>

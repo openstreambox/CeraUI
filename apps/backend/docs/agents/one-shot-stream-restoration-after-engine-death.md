@@ -106,17 +106,31 @@ transaction settling, a stop finishing) waits the same way rather than racing it
 
 **A REPLACED ENGINE IS EVIDENCE OF IDLE (`session-engine.ts`).** A restarted
 engine is idle and sends no status, so before this the engine-restart run could
-only see `unknown`. When this backend's OWN launch commits, it records the engine
-unit's systemd `InvocationID`; the record is dropped once the lifecycle is idle.
-A reconcile that gets `unknown` while the unit runs a DIFFERENT invocation knows
-that session is gone (it lived in the old process), and then treats engine
-silence exactly as for an inherited carrying line: no status and an empty session
-list on `SILENT_WITNESS_QUERIES` separate queries mean idle. It never stops
-anything: a status that says the engine streams wins, an unowned sender keeps the
-protection (`canReconcileIdle`), an engine with no process or the same
-invocation proves nothing, an adopted session has no record, and every failed read
-counts as "not replaced". Restoration then takes its ordinary gates (marker,
-same boot, one attempt, the operator's Stop intent, recovery barrier).
+only see `unknown`. The record is taken from the Start itself: the backend reads
+the engine unit's systemd `InvocationID` and main PID before it connects and
+after the engine acknowledged the Start, and keeps the invocation only when both
+reads name the same running process. The second read and the comparison run
+off the Start's own path, and the result is recorded only while that launch's
+session is still current (`noteLaunchEngine` → `onLaunchEngine`), never for an
+adopted session; it is dropped once the lifecycle is idle. A reconcile with a record reads the unit's serving
+identity before its first query; when that invocation differs from the record,
+the session is gone (it lived in the old process), and idle is committed after
+`SILENT_WITNESS_QUERIES` queries that each heard no status and got a valid EMPTY
+session list, provided the serving identity read after the last query is the
+same process. An RPC error or unreadable session reply is not silence here, an
+engine with no process, the same invocation, a second replacement, a new PID or
+any failed read keeps `unknown`, and a streaming status takes the adopt path.
+The binding cannot tie the IPC socket to a PID, so the equal reads before and
+after are the guard: a session started by another client in the few
+milliseconds between the last empty reply and the closing read is the residual
+window, and with the already-streaming rollback exception (no rollback Stop when
+the engine refuses Start as already streaming) a restoration Start then leaves
+that session alone. It never stops anything: an unowned sender keeps the
+protection (`canReconcileIdle`). Restoration then takes its ordinary gates
+(marker, same boot, one attempt, the operator's Stop intent, recovery barrier),
+and for the `engine_restart` trigger the 30 s window is also enforced at the
+launch: an idle answer from a query that crossed it gives up as
+`runtime_state_unknown`.
 
 **ONE-SHOT IS THE FEATURE.** Both outcomes write a terminal attempted-state onto
 the marker, so the answer to "what happens on the next backend restart" is always

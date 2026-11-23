@@ -82,7 +82,7 @@ agrees: two separate status subscriptions that are accepted and hear nothing
 (an idle engine is silent, a running session reports status about every two
 seconds) commit `idle`; a running session makes the file the stream's and stays
 unconfirmed (`reconciling`, protected) until an operator Stop, because a
-restarted backend does not own that session's sender. Engine silence without the line keeps its old meaning (unknown).
+restarted backend does not own that session's sender. Engine silence without the line keeps its old meaning (unknown), with one other exception: a session this process launched in an engine invocation the unit no longer runs (`modules/streaming/session-engine.ts`), where two silent queries with a valid empty session list, served by one replacement process, commit `idle`.
 
 "Heard nothing" is proven, not assumed. After a silent window the query sends
 `list-switch-targets` on the same connection, and only a reply with still

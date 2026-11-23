@@ -480,17 +480,25 @@ async function runOnce(
 		}
 
 		const elapsedMs = deps.now() - startedAt;
-		if (decision.action === "give_up") {
+		// The engine-restart window is a cutoff for the launch too: an idle
+		// answer from a query that crossed it does not launch.
+		const giveUpReason =
+			decision.action === "give_up"
+				? decision.reason
+				: trigger === "engine_restart" && elapsedMs >= deps.unknownDeadlineMs
+					? ("runtime_state_unknown" as const)
+					: undefined;
+		if (giveUpReason !== undefined) {
 			if (marker !== undefined)
-				recordAttempt(deps, marker, "failed", elapsedMs, decision.reason);
+				recordAttempt(deps, marker, "failed", elapsedMs, giveUpReason);
 			deps.logger.warn("stream restoration gave up", {
 				module: "streaming",
-				reason: decision.reason,
+				reason: giveUpReason,
 				elapsedMs,
 			});
 			const outcome = {
 				result: "failed",
-				reason: decision.reason,
+				reason: giveUpReason,
 				elapsedMs,
 			} as const;
 			deps.publish(outcome, trigger);
