@@ -19,6 +19,7 @@ import {
 	connectionStatusSchema,
 	deriveModemStableKey,
 	type Modem,
+	modemCarrierConfigSchema,
 	modemCellInfoSchema,
 	modemConfigAppliedSchema,
 	modemConfigInputSchema,
@@ -97,6 +98,7 @@ describe('legacy wire-shape compatibility', () => {
 			'recommended_usb_mode',
 			'data_usage',
 			'firmware_revision',
+			'carrier_config',
 			'esim',
 			'cell_info',
 			'stable_key',
@@ -139,6 +141,7 @@ describe('additive Phase-B fields', () => {
 				threshold_bytes: 10_000_000_000,
 			},
 			firmware_revision: 'RM530NGLAAR05A01M4G',
+			carrier_config: { name: 'GCF', revision: '08E0000A' },
 			esim: { sim_type: 'physical', esim_status: 'unknown' },
 			cell_info: {
 				tech: 'nr',
@@ -167,6 +170,13 @@ describe('additive Phase-B fields', () => {
 		expect(() =>
 			modemDataUsageSchema.parse({ session_bytes: 0, cycle_bytes: 0, threshold_bytes: -1 }),
 		).toThrow();
+	});
+
+	test('a carrier configuration needs a name; the revision is optional', () => {
+		expect(modemCarrierConfigSchema.parse({ name: 'GCF' })).toEqual({ name: 'GCF' });
+		expect(() => modemCarrierConfigSchema.parse({ name: '' })).toThrow();
+		expect(() => modemCarrierConfigSchema.parse({ revision: '08E0000A' })).toThrow();
+		expect(() => modemCarrierConfigSchema.parse({ name: 'GCF', revision: '' })).toThrow();
 	});
 
 	test('the EID is never carried on the eSIM wire shape', () => {

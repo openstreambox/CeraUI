@@ -2756,6 +2756,21 @@
           "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
+          "path": "modems.*.carrier_config.name",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": "modems.*.carrier_config.revision",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
           "path": "modems.*.own_numbers[]",
           "types": [
             "string"
@@ -20392,6 +20407,21 @@
         {
           "path": "modems.*.firmware_revision",
           "types": [
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": "modems.*.carrier_config.name",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": "modems.*.carrier_config.revision",
+          "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -49634,7 +49664,7 @@
     "apps/backend/src/modules/devices/usb-events.ts": "3eed84dd1003d7fe60a9aa9742dd74b75118a6daaaf1197546d25ed7bdd94995",
     "apps/backend/src/modules/modems/modem-network-scan.ts": "b66e5ea40679d5fae6cf922d803f42f306e08bb53bc95ac6ead6d1f5229c00f7",
     "apps/backend/src/modules/modems/modem-status.ts": "00286b5a7818dc3a260d66ae21e6dca0316fc10c3e78f48d44297e2a38c64406",
-    "apps/backend/src/modules/modems/modem-wire-projection.ts": "54825c600c6d6adc4f049b09d562fb90aafe85a9195fb4810649b9404ba4e7c7",
+    "apps/backend/src/modules/modems/modem-wire-projection.ts": "4075c7b1b7a1b1127713bc027232f53464de8002e383644c9bf4a5b4d1cd406c",
     "apps/backend/src/modules/modems/modems-state.ts": "664049da3a73481068a483da604719cbea8abe290995f907a9e07eebc69cc3a5",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
     "apps/backend/src/modules/network/network-ingest.ts": "fcb33cbff26195a53375f9ae12c5f85bbb76cc2bbb7d63d76a90cf2562eb8e77",
@@ -49708,7 +49738,7 @@
     "packages/rpc/src/schemas/fan.schema.ts": "8f4ab6b8b302d408994350eb66089f8d0fb195e0bccfc498e2d1b333a3fde841",
     "packages/rpc/src/schemas/logs.schema.ts": "d56584362e084a92eeb4c5d91d753a317b9f29140b4909ebc3f714e05a723038",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
-    "packages/rpc/src/schemas/modems.schema.ts": "610f2456f3ccc013d898a4d680418ad0d3aa8d577ae1c5ae435f9ad04f9afe77",
+    "packages/rpc/src/schemas/modems.schema.ts": "07876369a9da2ea07f06491d06083cf22084231aa75bd901174e793dfdaf17f7",
     "packages/rpc/src/schemas/network.schema.ts": "fd3ccb0b89bd33488e52125e541f4a68ad9a6d9eaa2119769972d58bf961220e",
     "packages/rpc/src/schemas/notifications.schema.ts": "e9ef46263064939d078285ff30d063664880f8d693ed010c5da15179e7087a60",
     "packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",
