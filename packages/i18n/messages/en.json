@@ -3129,6 +3129,7 @@
 	"live.phone.moblinCleared": "No Moblin password is saved on this box.",
 	"live.phone.moblinFailed": "The Moblin password could not be applied. Check the box and try again. It may already be saved.",
 	"live.phone.moblinBusy": "Wait until the box confirms no stream is using it before changing the Moblin password.",
+	"network.sharing.ipv6Only": "Devices on the box's Wi-Fi can't reach IPv4 sites through this link yet.",
 	"systemLogs.tabs.label": "Log views",
 	"systemLogs.tabs.events": "Events",
 	"systemLogs.tabs.raw": "Raw logs",

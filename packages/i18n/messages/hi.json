@@ -3129,6 +3129,7 @@
 	"live.phone.moblinBusy": "Moblin पासवर्ड बदलने से पहले, बॉक्स के यह पुष्टि करने तक रुकें कि कोई स्ट्रीम उसे इस्तेमाल नहीं कर रही।",
 	"live.audioMixer.error.audio_input_primary": "मुख्य इनपुट हमेशा मिक्स में रहता है। इसे बंद करने के लिए कोई दूसरा ऑडियो स्रोत चुनें।",
 	"live.layout.insetCancel": "पिछली जगह पर लौटाने के लिए छोड़ने से पहले Escape दबाएँ।",
+	"network.sharing.ipv6Only": "बॉक्स के Wi-Fi से जुड़े डिवाइस अभी इस लिंक से IPv4 साइटों तक नहीं पहुँच सकते।",
 	"systemLogs.tabs.label": "लॉग दृश्य",
 	"systemLogs.tabs.events": "इवेंट",
 	"systemLogs.tabs.raw": "रॉ लॉग",
