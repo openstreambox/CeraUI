@@ -485,7 +485,7 @@ export function resetRebootRunner(): void {
 // Gate on isDevelopment() so a dev host is never rebooted after an update.
 export function rebootAfterUpdate(): void {
 	if (!isDevelopment())
-		requestCompletionReboot(() => rebootRunner("reboot", []));
+		requestCompletionReboot(() => rebootRunner("systemctl", ["reboot"]));
 }
 
 export type AptUpgradeSummary = {
