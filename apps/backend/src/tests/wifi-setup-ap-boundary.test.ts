@@ -16,7 +16,8 @@ import {
 	spyOn,
 	test,
 } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import * as runner from "../helpers/run.ts";
 import * as mockWifi from "../mocks/providers/wifi.ts";
 import {
@@ -71,6 +72,7 @@ import {
 	isProvisioningApProfile,
 	PROVISIONING_AP_CONNECTION_ID,
 	PROVISIONING_AP_IFNAME,
+	provisioningActiveMarkerPath,
 	resetProvisioningApForTest,
 } from "../modules/wifi/wifi-provisioning-ap.ts";
 import { wifiRadioIdentity } from "../modules/wifi/wifi-radio-identity.ts";
@@ -495,4 +497,42 @@ test("a foreign unpinned AP with another connection name keeps upstream adoption
 		],
 		["con", "modify", OPERATOR, "connection.autoconnect-priority", "999"],
 	]);
+});
+
+test("under the image's marker its active AP is the setup AP whatever its name, for the marker's lifetime", async () => {
+	const renamed = "renamed-setup-ap";
+	profiles.set(renamed, setupProfile("CeraLive setup"));
+	resources = firstApInstances(new Set(profiles.keys()), profiles);
+	const marker = provisioningActiveMarkerPath();
+	mkdirSync(dirname(marker), { recursive: true });
+	writeFileSync(marker, `iface=${PROVISIONING_AP_IFNAME}\n`);
+	try {
+		const before = JSON.stringify([...profiles]);
+
+		const iface = await discoverActive(renamed);
+		await discovery.handleHotspotConn("", renamed);
+		await discovery.handleHotspotConn(undefined, renamed, { active: true });
+
+		expect(isProvisioningApConn(renamed)).toBe(true);
+		expect(iface.activeConn).toBe(renamed);
+		expect(iface.activeMode).toBe("ap");
+		expect(iface.hotspot.conn).toBeUndefined();
+		expect(getHotspotCredentials(B)).toBeUndefined();
+		expect(getAllHotspotCredentials()).toEqual([]);
+		expect(JSON.stringify([...profiles])).toBe(before);
+		expect(await startHotspotForInterface(B, iface, activationDeps())).toEqual({
+			success: false,
+			error: "DEVICE_BUSY",
+			reason: "setup-in-progress",
+		});
+		expect(await stopHotspotForInterface(B, iface, stopDeps())).toEqual({
+			success: false,
+			error: "DEVICE_BUSY",
+		});
+		expect(effects).toEqual([]);
+	} finally {
+		rmSync(marker, { force: true });
+	}
+	// The witness ends with the marker; its name alone was never evidence.
+	expect(isProvisioningApConn(renamed)).toBe(false);
 });
