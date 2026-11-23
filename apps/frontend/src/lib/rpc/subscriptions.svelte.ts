@@ -57,7 +57,11 @@ import {
 import { deliverLegacyLog } from "$lib/device-logs/download-gate.svelte";
 import { wifiFailureReason } from "$lib/helpers/wifi-mode-outcome";
 import { isSameWireValue, preserveWireIdentity } from "$lib/rpc/value-identity";
-import { authStatusStore } from "$lib/stores/auth-status.svelte";
+import {
+	authStatusStore,
+	forgetRejectedToken,
+	getSessionToken,
+} from "$lib/stores/auth-status.svelte";
 import { ingestBuffering } from "$lib/stores/buffering.svelte";
 import { markSessionExpired } from "$lib/stores/connection-ux.svelte";
 import { noteHotspotRoster } from "$lib/stores/hotspot-joins.svelte";
@@ -105,7 +109,7 @@ import {
 } from "./dirty-registry.svelte";
 import { mergeModemList } from "./modem-list-merge";
 import { pullStatusEvidence } from "./pulled-status";
-import { reauthenticateAndHydrate } from "./reconnect";
+import { type ReauthOutcome, reauthenticateAndHydrate } from "./reconnect";
 import { createSeqTracker } from "./seq-guard";
 import {
 	getLinkEpoch,
@@ -118,6 +122,7 @@ import {
 	receiveEvidence,
 } from "./session-epoch.svelte";
 import { selectStatusFields } from "./status-field-order";
+import { dropStopIntent, flushStopIntent } from "./stop-intent";
 import {
 	reconcileStreamingOptimism,
 	supersedeStartingOptimism,
@@ -1292,59 +1297,154 @@ export function receivePulledStatus<T>(
 	return { status, receipt: receiveEvidence(dispatch) };
 }
 
-const AUTH_STORAGE_KEY = "auth";
+let reauthInFlight = false;
+let reauthAgain = false;
+/**
+ * Consecutive sockets whose re-auth got no answer although the link stayed up.
+ * Each one is replaced with a longer backoff; after this many the page stops
+ * presenting a session that cannot be restored and goes to the login screen.
+ */
+let reauthStalls = 0;
+const MAX_REAUTH_STALLS = 3;
 
-function readStoredToken(): string | null {
-	return typeof localStorage !== "undefined"
-		? localStorage.getItem(AUTH_STORAGE_KEY)
-		: null;
+/**
+ * Whether a Stop still has something to stop. The lifecycle decides when the
+ * device reports one: `is_streaming` is false while a stream is starting,
+ * reconfiguring or reconciling, and the device parks a Stop in those states.
+ */
+function deviceStillStreams(): boolean {
+	const lifecycle = statusState?.stream_lifecycle;
+	return lifecycle !== undefined ? lifecycle !== "idle" : isStreamingState;
 }
 
-function clearStoredToken(rejectedToken: string): void {
-	if (readStoredToken() === rejectedToken) {
-		localStorage.removeItem(AUTH_STORAGE_KEY);
+function routeToLogin(): void {
+	dropStopIntent();
+	if (authStatusStore.value) {
+		markSessionExpired();
+		authStatusStore.set(false);
 	}
 }
 
-async function runReconnectReauth(link: number): Promise<void> {
+function loginWithToken(token: string) {
+	return rpc.auth.login({ token, persistent_token: true });
+}
+
+async function runReconnectReauth(): Promise<void> {
+	if (reauthInFlight) {
+		// A newer socket opened while an older one's re-auth was still out:
+		// sign that one in too once the current attempt settles.
+		reauthAgain = true;
+		return;
+	}
+	reauthInFlight = true;
+	const reauthSocket = rpcClient.getSocket();
+	// The socket generation this attempt signs in. A newer socket or a sign-out
+	// supersedes it, and its late answers are not applied to the new session.
+	const link = getLinkEpoch();
 	const isCurrent = () => getLinkEpoch() === link && authStatusStore.value;
-	const outcome = await reauthenticateAndHydrate({
-		isCurrent,
-		getStoredToken: readStoredToken,
-		clearStoredToken,
-		login: (token) => rpc.auth.login({ token, persistent_token: true }),
-		onAuthenticated: () => {
-			noteAuthenticatedLink(link);
-			pushNotification({
-				name: "connection-recovered",
-				type: "success",
-				key: "notifications.connectionRecovered",
-				msg: "Connection restored",
-				is_dismissable: true,
-				is_persistent: false,
-				duration: 3,
-			});
-		},
-		getConfig: () => rpc.streaming.getConfig(),
-		getStatus: () => pullStatusEvidence(),
-		dispatch: (type, data) => {
-			if (type === "status") {
-				const answer = data as ReceivedStatus | undefined;
-				if (answer !== undefined)
-					ingestPulledStatus(answer.status, answer.receipt);
-			} else {
-				handleMessage(type, data);
+	try {
+		const outcome = await reauthenticateAndHydrate({
+			isCurrent,
+			// This tab's own token only. The origin-wide `auth` slot may hold
+			// another tab's newer token, so a reconnect never reads it, and clears
+			// it only while it holds the very token the device just refused.
+			getToken: getSessionToken,
+			forgetToken: forgetRejectedToken,
+			// A REVOCABLE device-issued token, so it authenticates through
+			// `input.token`; sent as `password` it is bcrypt-compared against
+			// the password hash and every reconnect fails.
+			login: loginWithToken,
+			// Runs only for an accepted sign-in of this same socket. It releases
+			// held calls before the safety hydrate, whose own reads would
+			// otherwise wait behind the gate they are part of.
+			onAuthenticated: () => {
+				noteAuthenticatedLink(link);
+				rpcClient.confirmSocketSignedIn();
+				reauthStalls = 0;
+				// Announced only now: an open socket is not a restored session.
+				pushNotification({
+					name: "connection-recovered",
+					type: "success",
+					key: "notifications.connectionRecovered",
+					msg: "Connection restored",
+					is_dismissable: true,
+					is_persistent: false,
+					duration: 3,
+				});
+			},
+			getConfig: () => rpc.streaming.getConfig(),
+			getStatus: () => pullStatusEvidence(),
+			dispatch: (type, data) => {
+				if (type === "status") {
+					const answer = data as ReceivedStatus | undefined;
+					if (answer !== undefined)
+						ingestPulledStatus(answer.status, answer.receipt);
+					// Fresh device state: a pending Stop goes out now if still live.
+					flushStopIntent(deviceStillStreams());
+				} else {
+					handleMessage(type, data);
+				}
+			},
+			routeToLogin,
+			onError: (error) => console.error("Reconnect re-auth failed:", error),
+		});
+		settleReauth(outcome, reauthSocket);
+	} finally {
+		reauthInFlight = false;
+	}
+	if (reauthAgain) {
+		reauthAgain = false;
+		if (rpcClient.isAwaitingSignIn() && rpcClient.isConnected())
+			await runReconnectReauth();
+	}
+}
+
+function settleReauth(
+	outcome: ReauthOutcome,
+	reauthSocket: WebSocket | null,
+): void {
+	switch (outcome) {
+		case "superseded":
+			// A newer socket or a sign-out took over. That socket's own re-auth,
+			// or the login screen, owns the session now.
+			return;
+		case "hydrated":
+			noteSessionRestored();
+			// The status read failed or was superseded: decide on the last state.
+			flushStopIntent(deviceStillStreams());
+			return;
+		case "expired":
+			// `routeToLogin` already ran; its sign-out failed the held calls.
+			reauthStalls = 0;
+			return;
+		case "no-token":
+			// Signed in on an earlier socket with nothing to present on this
+			// one: the session cannot come back, so go to the login screen.
+			if (rpcClient.isAwaitingSignIn()) routeToLogin();
+			return;
+		case "unreachable":
+			// The sign-in did not finish. A closed socket already failed its held
+			// calls and reconnects by itself; one that still looks open is
+			// recycled, so the next socket gets a fresh re-auth.
+			if (
+				rpcClient.isAwaitingSignIn() &&
+				rpcClient.isConnected() &&
+				rpcClient.getSocket() === reauthSocket
+			) {
+				reauthStalls += 1;
+				if (reauthStalls >= MAX_REAUTH_STALLS) {
+					reauthStalls = 0;
+					routeToLogin();
+					// Its sign-in may still land after we gave up on it, leaving an
+					// authenticated socket under the login screen. A fresh socket
+					// serves the manual login instead.
+					rpcClient.recycleSocket();
+					return;
+				}
+				rpcClient.failHeldCalls("reconnected");
+				rpcClient.recycleSocket();
 			}
-		},
-		routeToLogin: markSessionExpired,
-		onError: (error) => console.error("Reconnect re-auth failed:", error),
-	});
-	if (!isCurrent()) return;
-	if (outcome === "hydrated") noteSessionRestored();
-	if (outcome === "no-token") markSessionExpired();
-	if (outcome === "unreachable") {
-		// Keep the stored token; a transport failure is not a credential verdict.
-		authStatusStore.set(false);
+			return;
 	}
 }
 
@@ -1375,8 +1475,14 @@ function handleConnectionChange(state: ConnectionState): void {
 			// Only an unconfigured device sends a setup prompt on socket open.
 			// The previous socket's prompt is not evidence about this one.
 			clearPasswordSetup();
-			// The existing shell is the replay owner; initial sign-in is Layout's.
-			if (authStatusStore.value) void runReconnectReauth(getLinkEpoch());
+		}
+		// Re-authenticate only for a CURRENT session of this tab: a page that
+		// signed out (or never signed in) has no token, and the initial connect
+		// of a page-load belongs to Layout's login flow. The client arms its
+		// session gate on every new socket of a signed-in page; that alone must
+		// start the re-auth, or held calls never leave.
+		if (getSessionToken() !== null || rpcClient.isAwaitingSignIn()) {
+			void runReconnectReauth();
 		}
 	}
 }
