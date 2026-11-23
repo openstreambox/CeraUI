@@ -101,12 +101,16 @@ import {
 	setRouterSubnetProcedure,
 } from "./procedures/modems-router.procedure.ts";
 import {
+	answerNetworkChangeNoticeProcedure,
 	configureNetworkInterfaceProcedure,
+	confirmNetworkChangeProcedure,
+	getChangeSafetyStatusProcedure,
 	getNetworkInterfacesProcedure,
 	getSharingPolicyProcedure,
 	setEthernetRoleProcedure,
 	setNetworkIngestEnabledProcedure,
 	setSharingPolicyProcedure,
+	undoKeptNetworkChangeProcedure,
 } from "./procedures/network.procedure.ts";
 import {
 	dismissNotificationProcedure,
@@ -331,6 +335,10 @@ const stableRoutes = {
 		getSharingPolicy: getSharingPolicyProcedure,
 		setSharingPolicy: setSharingPolicyProcedure,
 		setEthernetRole: setEthernetRoleProcedure,
+		getChangeSafety: getChangeSafetyStatusProcedure,
+		confirmChange: confirmNetworkChangeProcedure,
+		undoKeptChange: undoKeptNetworkChangeProcedure,
+		answerChangeNotice: answerNetworkChangeNoticeProcedure,
 	}),
 
 	system: base.router({
