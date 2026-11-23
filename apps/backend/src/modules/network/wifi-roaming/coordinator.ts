@@ -131,6 +131,15 @@ export type RadioLockResult<T> =
 
 export type CoordinatorPorts = Readonly<{
 	now(): number;
+	/**
+	 * The radio behind an admitted identity: its current interface name and
+	 * lifetime, or `undefined` while no verified radio has that identity (gone,
+	 * replugged and not yet verified, Limited). Without this port a radio's
+	 * identity is its configured name with a fixed lifetime.
+	 */
+	resolve?(
+		id: string,
+	): Readonly<{ ifname: string; lifetime: string }> | undefined;
 	observe(ifname: string): Promise<RadioObservation | undefined>;
 	/** Scan on this radio only; `undefined` is a failed scan. */
 	scan(ifname: string): Promise<readonly ScanRow[] | undefined>;
@@ -184,7 +193,11 @@ export type CoordinatorPorts = Readonly<{
 }>;
 
 export type RadioConfig = Readonly<{
-	ifname: string;
+	/**
+	 * The radio's admitted identity (its permanent-MAC registry key), resolved
+	 * to an interface name every round. Names move on replug; identities do not.
+	 */
+	id: string;
 	/** Serves the phone hotspot; the coordinator never touches it. */
 	reserved?: "hotspot";
 }>;
@@ -206,7 +219,11 @@ export type CoordinatorConfig = Readonly<{
 }>;
 
 export type RadioStatus = Readonly<{
+	id: string;
+	/** The radio's name this round; the last known one while it is absent. */
 	ifname: string;
+	/** A verified radio has this identity now. */
+	present: boolean;
 	role: Role;
 	bssid: string | null;
 	ssid: string | null;
@@ -247,7 +264,13 @@ type Owned = {
 };
 
 type RadioRecord = {
+	/** The admitted identity everything here is keyed by. */
+	readonly id: string;
+	/** Resolved every round; the last known name while absent. */
 	ifname: string;
+	/** The lifetime the record's state belongs to, `null` before the first. */
+	lifetime: string | null;
+	present: boolean;
 	/** Hotspot-reserved by configuration, whatever its mode. */
 	reserved: boolean;
 	role: Role;
@@ -361,7 +384,7 @@ export class RoamingCoordinator {
 	readonly #learned = new Map<string, Learned>();
 	/** Recent failed joins or verifications per BSSID. */
 	readonly #failed = new Map<string, { count: number; at: number }>();
-	/** Owned clones whose removal had to wait (busy lock, or still carrying). */
+	/** Owned clones whose removal had to wait (busy lock, or still carrying), by radio id. */
 	readonly #pendingAbandon = new Map<string, string>();
 	#clock: SearchClock = FRESH_SEARCH_CLOCK;
 	#joinFailures = 0;
@@ -388,8 +411,8 @@ export class RoamingCoordinator {
 	#stopped = false;
 
 	constructor(ports: CoordinatorPorts, config: CoordinatorConfig) {
-		const names = config.radios.map((r) => r.ifname);
-		if (new Set(names).size !== names.length)
+		const ids = config.radios.map((r) => r.id);
+		if (new Set(ids).size !== ids.length)
 			throw new Error("Each radio may be listed once");
 		this.#ports = ports;
 		this.#policy = config.policy ?? DEFAULT_SEARCH_POLICY;
@@ -401,7 +424,10 @@ export class RoamingCoordinator {
 		this.#swapTimings = config.swapTimings ?? SWAP_TIMINGS;
 		this.#historyMs = config.historyMs ?? 70_000;
 		this.#radios = config.radios.map((r) => ({
-			ifname: r.ifname,
+			id: r.id,
+			ifname: r.id,
+			lifetime: null,
+			present: !ports.resolve,
 			reserved: r.reserved === "hotspot",
 			role: r.reserved === "hotspot" ? "hotspot-reserved" : "searcher",
 			obs: undefined,
@@ -425,7 +451,7 @@ export class RoamingCoordinator {
 	#publishOwnership(): void {
 		setCoordinatorOwnedRadios(
 			this.#radios
-				.filter((r) => r.role !== "hotspot-reserved")
+				.filter((r) => r.present && r.role !== "hotspot-reserved")
 				.map((r) => r.ifname),
 		);
 	}
@@ -433,7 +459,9 @@ export class RoamingCoordinator {
 	status(): CoordinatorStatus {
 		return {
 			radios: this.#radios.map((r) => ({
+				id: r.id,
 				ifname: r.ifname,
+				present: r.present,
 				role: r.role,
 				bssid: r.obs?.bssid ?? null,
 				ssid: r.obs?.ssid ?? null,
@@ -488,9 +516,77 @@ export class RoamingCoordinator {
 		return !!r.obs?.bssid && !!r.obs.address;
 	}
 
+	/**
+	 * Resolve every identity to this round's interface name. A rename moves the
+	 * radio's bond hold with it, so a held or protected name never passes to
+	 * another radio. A radio that is gone, or back with a new lifetime (a
+	 * replug), loses its state: its hold is released, a handover it took part
+	 * in ends, and it starts over as a fresh radio of its configured kind.
+	 */
+	#resolveAll(): void {
+		const resolve = this.#ports.resolve;
+		if (!resolve) return;
+		let changed = false;
+		for (const r of this.#radios) {
+			const at = resolve(r.id);
+			if (at === undefined) {
+				if (r.present) {
+					this.#forget(r);
+					r.present = false;
+					changed = true;
+				}
+				continue;
+			}
+			if (r.present && r.lifetime !== null && at.lifetime !== r.lifetime) {
+				this.#forget(r);
+				changed = true;
+			}
+			if (!r.present) changed = true;
+			r.present = true;
+			r.lifetime = at.lifetime;
+			if (at.ifname !== r.ifname) {
+				if (r.heldOut) {
+					this.#ports.releaseBondHold(r.ifname);
+					this.#ports.holdOutOfBond(at.ifname);
+				}
+				r.ifname = at.ifname;
+				changed = true;
+			}
+		}
+		if (changed) {
+			this.#publishOwnership();
+			this.#protectFromScans();
+		}
+	}
+
+	/** Drop everything a radio's earlier lifetime owned or was doing. */
+	#forget(r: RadioRecord): void {
+		if (this.#swap && (this.#swap.holder === r || this.#swap.candidate === r))
+			this.#dropSwap("radio-gone");
+		if (r.role === "holder") this.#lastOutcome = `holder-lost:${r.ifname}`;
+		this.#release(r);
+		this.#pendingAbandon.delete(r.id);
+		r.role = r.reserved ? "hotspot-reserved" : "searcher";
+		r.obs = undefined;
+		r.uplink = null;
+		r.uplinkMacAt = null;
+		r.diversity = null;
+		r.owned = null;
+		r.samples = [];
+		r.searchedAt = Number.NEGATIVE_INFINITY;
+		r.scanFailures = 0;
+		r.restUntil = 0;
+		r.deadSince = null;
+		r.lastLink = null;
+	}
+
 	async #observeAll(): Promise<void> {
 		const now = this.#ports.now();
 		for (const r of this.#radios) {
+			if (!r.present) {
+				r.obs = undefined;
+				continue;
+			}
 			if (r.reserved) continue;
 			r.obs = await this.#ports.observe(r.ifname);
 			// The operator can turn a client radio into a hotspot at any time, or
@@ -577,16 +673,16 @@ export class RoamingCoordinator {
 			await this.#ports.abandon(r.ifname, activation);
 			return true;
 		});
-		if (done.ok && done.value) this.#pendingAbandon.delete(r.ifname);
-		else this.#pendingAbandon.set(r.ifname, activation);
+		if (done.ok && done.value) this.#pendingAbandon.delete(r.id);
+		else this.#pendingAbandon.set(r.id, activation);
 	}
 
 	/** Retry removals that had to wait, unless the clone is in use again. */
 	async #retryAbandons(): Promise<void> {
-		for (const [ifname, activation] of [...this.#pendingAbandon]) {
-			const r = this.#radios.find((x) => x.ifname === ifname);
+		for (const [id, activation] of [...this.#pendingAbandon]) {
+			const r = this.#radios.find((x) => x.id === id);
 			if (!r || r.owned?.activation === activation) {
-				this.#pendingAbandon.delete(ifname);
+				this.#pendingAbandon.delete(id);
 				continue;
 			}
 			await this.#abandon(r, activation);
@@ -627,8 +723,10 @@ export class RoamingCoordinator {
 	 * Published on every change of role, hold or ownership, not once a round.
 	 */
 	#protectFromScans(): void {
+		// An absent radio's last name may already belong to another radio.
 		const prot = this.#radios.filter(
-			(r) => r.role !== "searcher" || r.owned !== null || r.heldOut,
+			(r) =>
+				r.present && (r.role !== "searcher" || r.owned !== null || r.heldOut),
 		);
 		protectRadiosFromScans(
 			prot.map((r) => r.ifname),
@@ -768,6 +866,7 @@ export class RoamingCoordinator {
 	}
 
 	async #round(): Promise<void> {
+		this.#resolveAll();
 		await this.#observeAll();
 		this.#publishOwnership();
 		await this.#retryAbandons();

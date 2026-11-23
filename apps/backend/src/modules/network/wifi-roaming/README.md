@@ -43,6 +43,22 @@ its BSSID or activation changed, never because a lease renewal left it
 briefly without an address; a holder keeps its role through that too, and a
 radio associated without an address is not idle.
 
+## Identity
+
+Radios are configured and tracked by their admitted identity (the permanent-MAC
+registry key), never by interface name. Each round the `resolve` port maps
+every identity to its current name and lifetime. Everything the coordinator
+keeps (roles, owned joins, bond holds, scan protection, ownership, the hotspot
+reservation) belongs to the identity:
+
+- A rename moves the radio's bond hold, protection and ownership with it, so a
+  held or protected name never passes to another radio, and a dongle that takes
+  the reserved radio's name after a replug is neither reserved nor touched.
+- A radio that is gone, or back with a new lifetime (a replug), starts over: its
+  hold is released, a handover it took part in ends, and it is a fresh radio of
+  its configured kind once it is verified again.
+- Without the port (tests), a radio's identity is its configured name.
+
 ## What runs today
 
 - **Search triggers** (`policy.ts`). A holder that fades (signal, signal slope,

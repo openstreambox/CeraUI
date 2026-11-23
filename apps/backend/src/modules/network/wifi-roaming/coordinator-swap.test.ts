@@ -240,7 +240,7 @@ function setup(withReports = true) {
 		delete (ports as { senderLinks?: unknown }).senderLinks;
 	}
 	const c = new RoamingCoordinator(ports, {
-		radios: [{ ifname: "wlan1" }, { ifname: "wlan2" }],
+		radios: [{ id: "wlan1" }, { id: "wlan2" }],
 	});
 	const rounds = async (n: number) => {
 		for (let i = 0; i < n; i++) {
@@ -433,8 +433,8 @@ describe("continuity handover on arrival reports", () => {
 			w.station(`wlan${i + 2}`, bssid, dbm);
 		const c = new RoamingCoordinator(w.ports(), {
 			radios: [
-				{ ifname: "wlan1" },
-				...others.map((_, i) => ({ ifname: `wlan${i + 2}` })),
+				{ id: "wlan1" },
+				...others.map((_, i) => ({ id: `wlan${i + 2}` })),
 			],
 		});
 		const step = async () => {
@@ -506,7 +506,7 @@ describe("continuity handover on arrival reports", () => {
 		w.station("wlan2", AP3, -50); // a separate gateway: ranks first
 		w.station("wlan3", AP4, -50); // behind wlan1's router
 		const c = new RoamingCoordinator(w.ports(), {
-			radios: [{ ifname: "wlan1" }, { ifname: "wlan2" }, { ifname: "wlan3" }],
+			radios: [{ id: "wlan1" }, { id: "wlan2" }, { id: "wlan3" }],
 		});
 		const step = async (n = 1) => {
 			for (let i = 0; i < n; i++) {
@@ -589,7 +589,7 @@ describe("continuity handover on arrival reports", () => {
 		// only every second and hands out the last one in between.
 		w.sampleEvery = 2;
 		const c = new RoamingCoordinator(w.ports(), {
-			radios: [{ ifname: "wlan1" }, { ifname: "wlan2" }],
+			radios: [{ id: "wlan1" }, { id: "wlan2" }],
 		});
 		const half = async (n: number) => {
 			for (let i = 0; i < n; i++) {
@@ -722,7 +722,7 @@ describe("continuity handover on arrival reports", () => {
 		w.station("wlan2", AP2, -50); // dead below, ranks first by signal
 		w.station("wlan3", AP3, -60);
 		const c = new RoamingCoordinator(w.ports(), {
-			radios: [{ ifname: "wlan1" }, { ifname: "wlan2" }, { ifname: "wlan3" }],
+			radios: [{ id: "wlan1" }, { id: "wlan2" }, { id: "wlan3" }],
 		});
 		const step = async (n = 1) => {
 			for (let i = 0; i < n; i++) {
@@ -805,7 +805,7 @@ function harness(opts: {
 		},
 	};
 	const c = new RoamingCoordinator(ports, {
-		radios: [{ ifname: "wlan1" }, { ifname: "wlan2" }],
+		radios: [{ id: "wlan1" }, { id: "wlan2" }],
 	});
 	const rounds = async (n: number) => {
 		for (let i = 0; i < n; i++) {

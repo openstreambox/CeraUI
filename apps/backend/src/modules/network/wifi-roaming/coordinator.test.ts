@@ -285,8 +285,8 @@ class World {
 }
 
 const radios = (...names: string[]) => [
-	{ ifname: "wlan0", reserved: "hotspot" as const },
-	...names.map((ifname) => ({ ifname })),
+	{ id: "wlan0", reserved: "hotspot" as const },
+	...names.map((id) => ({ id })),
 ];
 
 const radio = (c: RoamingCoordinator, ifname: string) => {
@@ -1438,5 +1438,134 @@ describe("third fix round: unknown is not absent", () => {
 		w.now += 60_000;
 		await c.step();
 		expect(w.touched("wlan2")).toContain("scan:wlan2");
+	});
+});
+
+describe("radios are known by identity, not by interface name", () => {
+	/** A World whose radios resolve by identity; `names` maps id → [ifname, lifetime]. */
+	const resolving = (w: World, names: Map<string, [string, string]>) => ({
+		...w.ports(),
+		resolve: (id: string) => {
+			const at = names.get(id);
+			return at ? { ifname: at[0], lifetime: at[1] } : undefined;
+		},
+	});
+	const rename = (w: World, from: string, to: string) => {
+		const s = w.stations.get(from);
+		if (!s) throw new Error(`no station ${from}`);
+		w.stations.delete(from);
+		w.stations.set(to, s);
+	};
+
+	test("a dongle that takes the reserved radio's name is not reserved, and the reserved radio keeps its reservation", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const names = new Map<string, [string, string]>([
+			["int", ["wlan0", "1"]],
+			["a", ["wlan1", "1"]],
+			["b", ["wlan2", "1"]],
+		]);
+		const c = new RoamingCoordinator(resolving(w, names), {
+			radios: [{ id: "int", reserved: "hotspot" }, { id: "a" }, { id: "b" }],
+		});
+		await c.step();
+		// Replug: the internal radio comes back as wlan9, and an unconfigured
+		// dongle now answers to wlan0.
+		names.set("int", ["wlan9", "2"]);
+		w.station("wlan0", null, null);
+		w.calls = [];
+		await c.step();
+		expect(c.status().radios.find((r) => r.id === "int")).toMatchObject({
+			ifname: "wlan9",
+			role: "hotspot-reserved",
+		});
+		expect(c.status().radios.some((r) => r.ifname === "wlan0")).toBe(false);
+		expect(w.touched("wlan0")).toEqual([]);
+		expect(isCoordinatorOwnedRadio("wlan0")).toBe(false);
+		c.stop();
+	});
+
+	test("a holder's protection and ownership follow its rename; the old name keeps none", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const names = new Map<string, [string, string]>([
+			["a", ["wlan1", "1"]],
+			["b", ["wlan2", "1"]],
+		]);
+		const c = new RoamingCoordinator(resolving(w, names), {
+			radios: [{ id: "a" }, { id: "b" }],
+		});
+		await c.step();
+		expect(radio(c, "wlan1").role).toBe("holder");
+		// The holder is renamed (same lifetime) and another radio takes its name.
+		rename(w, "wlan1", "wlan5");
+		names.set("a", ["wlan5", "1"]);
+		w.station("wlan1", null, null);
+		await c.step();
+		expect(c.status().radios.find((r) => r.id === "a")).toMatchObject({
+			ifname: "wlan5",
+			role: "holder",
+		});
+		expect(scanProtectedRadios().has("wlan5")).toBe(true);
+		expect(scanProtectedRadios().has("wlan1")).toBe(false);
+		expect(isCoordinatorOwnedRadio("wlan5")).toBe(true);
+		expect(isCoordinatorOwnedRadio("wlan1")).toBe(false);
+		c.stop();
+	});
+
+	test("a replugged or vanished radio starts over: no role, no hold, no protection", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const names = new Map<string, [string, string]>([
+			["a", ["wlan1", "1"]],
+			["b", ["wlan2", "1"]],
+		]);
+		const c = new RoamingCoordinator(resolving(w, names), {
+			radios: [{ id: "a" }, { id: "b" }],
+		});
+		await c.step();
+		expect(radio(c, "wlan1").role).toBe("holder");
+		// The holder's radio vanishes: it is forgotten, not acted on.
+		names.delete("a");
+		w.calls = [];
+		await c.step();
+		expect(c.status().radios.find((r) => r.id === "a")).toMatchObject({
+			present: false,
+			role: "searcher",
+			joined: null,
+		});
+		expect(w.touched("wlan1")).toEqual([]);
+		expect(isCoordinatorOwnedRadio("wlan1")).toBe(false);
+		expect(scanProtectedRadios().has("wlan1")).toBe(false);
+		// It comes back with a new lifetime: a fresh radio, picked up again.
+		names.set("a", ["wlan1", "2"]);
+		await c.step();
+		expect(c.status().radios.find((r) => r.id === "a")?.present).toBe(true);
+		expect(isCoordinatorOwnedRadio("wlan1")).toBe(true);
+		c.stop();
+	});
+
+	test("a radio that vanishes mid-join gives its bond hold back; the name stays free", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const names = new Map<string, [string, string]>([
+			["a", ["wlan1", "1"]],
+			["b", ["wlan2", "1"]],
+		]);
+		const c = new RoamingCoordinator(resolving(w, names), {
+			radios: [{ id: "a" }, { id: "b" }],
+		});
+		await c.step();
+		// wlan2 scanned and joined AP2; it stays out of the bond until verified.
+		expect(w.bond).toEqual(["hold:wlan2"]);
+		names.delete("b");
+		await c.step();
+		expect(w.bond).toEqual(["hold:wlan2", "release:wlan2"]);
+		expect(scanProtectedRadios().has("wlan2")).toBe(false);
+		c.stop();
 	});
 });
