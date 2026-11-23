@@ -49,6 +49,11 @@ import {
 	provesSelectionIsNotHdmi,
 } from "./hdmi-signal-notification.ts";
 
+import {
+	createInputVoltageReader,
+	formatInputVoltage,
+	INPUT_VOLTAGE_SENSOR,
+} from "./input-voltage.ts";
 import { getPowerSensors, initPowerMonitoring } from "./power-monitor.ts";
 
 const bootconfigService = "ceralive-firstboot-bootconfig";
@@ -103,8 +108,15 @@ async function updateSensorsJetson() {
 	await updateSensorThermal(0, "SoC temperature");
 }
 
+const readInputVoltage = createInputVoltageReader();
+
 async function updateSensorsRk3588() {
 	await updateSensorThermal(0, "SoC temperature");
+	// ROCK 5B+ only (see input-voltage.ts); a failed read drops the key rather
+	// than keeping an old number on screen.
+	const volts = await readInputVoltage();
+	if (volts === null) delete sensors[INPUT_VOLTAGE_SENSOR];
+	else sensors[INPUT_VOLTAGE_SENSOR] = formatInputVoltage(volts);
 }
 
 async function isServiceEnabled(service: string) {

@@ -155,6 +155,7 @@ export function deriveHudState(
 		temperature: parseSensorNumber(sensors?.["SoC temperature"]),
 		voltage: parseVolts(sensors?.["SoC voltage"]),
 		current: parseCurrentAmps(sensors?.["SoC current"]),
+		inputVoltage: parseVolts(sensors?.["Input voltage"]),
 		isSensorsStale: sensorsStale,
 
 		isConnected,

@@ -54,6 +54,8 @@ import {
 	SENSOR_CURRENT_IDLE_RANGE_A,
 	SENSOR_CURRENT_STREAMING_A,
 	SENSOR_CURRENT_STREAMING_RANGE_A,
+	SENSOR_INPUT_VOLTAGE_BASE_V,
+	SENSOR_INPUT_VOLTAGE_RANGE_V,
 	SENSOR_TEMP_BASE_IDLE_C,
 	SENSOR_TEMP_BASE_STREAMING_C,
 	SENSOR_TEMP_FLUCTUATION_C,
@@ -109,6 +111,7 @@ export interface MockState {
 		socTemp: number;
 		socVoltage: number;
 		socCurrent: number;
+		inputVoltage: number;
 	};
 	streaming: {
 		isActive: boolean;
@@ -193,6 +196,7 @@ const mockState: MockState = {
 		socTemp: 52,
 		socVoltage: 5.0,
 		socCurrent: 2.0,
+		inputVoltage: 12.2,
 	},
 	streaming: {
 		isActive: false,
@@ -501,6 +505,13 @@ function applyPeriodicFluctuations(): void {
 		baseTemp + (mockRandom() - 0.5) * SENSOR_TEMP_FLUCTUATION_C;
 	mockState.sensors.socVoltage =
 		SENSOR_VOLTAGE_BASE_V + mockRandom() * SENSOR_VOLTAGE_RANGE_V;
+	// Rides the SoC-voltage draw instead of taking its own, so the seeded
+	// sequence every later mock value reads stays unchanged.
+	mockState.sensors.inputVoltage =
+		SENSOR_INPUT_VOLTAGE_BASE_V +
+		((mockState.sensors.socVoltage - SENSOR_VOLTAGE_BASE_V) /
+			SENSOR_VOLTAGE_RANGE_V) *
+			SENSOR_INPUT_VOLTAGE_RANGE_V;
 	mockState.sensors.socCurrent = config.streaming
 		? SENSOR_CURRENT_STREAMING_A +
 			mockRandom() * SENSOR_CURRENT_STREAMING_RANGE_A

@@ -2646,6 +2646,21 @@
           "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
+          "path": "modems.*.carrier_config.name",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": "modems.*.carrier_config.revision",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
           "path": "modems.*.own_numbers[]",
           "types": [
             "string"
@@ -27318,6 +27333,21 @@
           "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
+          "path": "modems.*.carrier_config.name",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": "modems.*.carrier_config.revision",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
           "path": "modems.*.own_numbers[]",
           "types": [
             "string"
@@ -46430,7 +46460,7 @@
   "dependencies": {
     "apps/backend/src/helpers/config-schemas.ts": "0b000a65929292aec789294fa84024c2c9e92db0c8ae842acaeef603cc906c0e",
     "apps/backend/src/main.ts": "b865d2fa2773b2217542c19d11fe2b4617c414c294459440ba206af2760c1c9a",
-    "apps/backend/src/mocks/mock-service.ts": "6ea399303b55478c9323e7a3233eed4a4a3d0e304c7c1ff2eec93b9b54da56e7",
+    "apps/backend/src/mocks/mock-service.ts": "142df3d9c5b4a2d7c5ca329509ad86509095b26c176e55347e4b8d57ff1b66b7",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
     "apps/backend/src/modules/addons/manager.ts": "fe0c62cb0a88f11669334681daa7b231cea84bb0f6eeef79608e66acf8bc39f5",
@@ -46438,7 +46468,7 @@
     "apps/backend/src/modules/device-logs/follow-transport.ts": "ce1daa6b85f600b5c18ee1190b0efb2702ad69a9040c244b2f3e9d14fefdd9dd",
     "apps/backend/src/modules/modems/modem-network-scan.ts": "b66e5ea40679d5fae6cf922d803f42f306e08bb53bc95ac6ead6d1f5229c00f7",
     "apps/backend/src/modules/modems/modem-status.ts": "00286b5a7818dc3a260d66ae21e6dca0316fc10c3e78f48d44297e2a38c64406",
-    "apps/backend/src/modules/modems/modem-wire-projection.ts": "204e238556c809f97819be13e65b59c17c7b1ddeb4c72f49b1535df805e08c01",
+    "apps/backend/src/modules/modems/modem-wire-projection.ts": "2726dd6c3859995e634d137adc3b4121f2789683c197d141b9aa2fe05dcb3c5b",
     "apps/backend/src/modules/modems/modems-state.ts": "664049da3a73481068a483da604719cbea8abe290995f907a9e07eebc69cc3a5",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
     "apps/backend/src/modules/network/network-ingest.ts": "fcb33cbff26195a53375f9ae12c5f85bbb76cc2bbb7d63d76a90cf2562eb8e77",
@@ -46484,7 +46514,7 @@
     "apps/backend/src/modules/system/kiosk.ts": "921df84e43d6960e9a1ab0bfd8768a7a85a7fe682fccc185bd8585f88823e96a",
     "apps/backend/src/modules/system/logs.ts": "8005a72398610c33562bd5b1d681c5656a14479b0c0e71ad3fe8f74433048109",
     "apps/backend/src/modules/system/readiness.ts": "6c2725aae677f8a4a22d0dcce028b4e0d42a83916d3b4f7ba6b94e67cfe03e22",
-    "apps/backend/src/modules/system/sensors.ts": "a8b7c1792525f429bd06018831c18832fa56f588fdf8f8345b265768375f4e4c",
+    "apps/backend/src/modules/system/sensors.ts": "6564248c81b91cb8218584f108612a0c265856b324f728222ed34fa07eecd62c",
     "apps/backend/src/modules/system/software-updates.ts": "4f64b2089233242a18b44bb6c69f4042a3c270da6208584f6f99deef4975c34b",
     "apps/backend/src/modules/system/ssh.ts": "ca8aa451fe00cbb5a50758df859b20a2fabf7caad6bb321ea814486c402ae5bf",
     "apps/backend/src/modules/system/tailscale.ts": "b2731b7eed6258db2efef8de0187b03dbf66cdeed37cee035f4c5788dc7f2fdf",
@@ -46512,7 +46542,7 @@
     "packages/rpc/src/schemas/fan.schema.ts": "8f4ab6b8b302d408994350eb66089f8d0fb195e0bccfc498e2d1b333a3fde841",
     "packages/rpc/src/schemas/logs.schema.ts": "d56584362e084a92eeb4c5d91d753a317b9f29140b4909ebc3f714e05a723038",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
-    "packages/rpc/src/schemas/modems.schema.ts": "d3733a5e5d8a4c79adb1a7089f8ebcdee54b3aed877957481eaf73c15ea56295",
+    "packages/rpc/src/schemas/modems.schema.ts": "519360a9b33d45253ad1290d4dae1e99bfc73a96772c6bced0880c3048115c54",
     "packages/rpc/src/schemas/network.schema.ts": "fd3ccb0b89bd33488e52125e541f4a68ad9a6d9eaa2119769972d58bf961220e",
     "packages/rpc/src/schemas/notifications.schema.ts": "6c13851bf6dbb6cdece71effbd24c48e4e5ee12fe45125eedb9aad8b135126fd",
     "packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",
@@ -46521,7 +46551,7 @@
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
     "packages/rpc/src/schemas/status.schema.ts": "3fc784b7ab196cbd05d9712b3a945a330ef8927333907e6826217faa7fff8893",
     "packages/rpc/src/schemas/streaming.schema.ts": "78c08e8174ab259b537e8d1ee20031bd02b24f6f59c63932e633783aabe539b0",
-    "packages/rpc/src/schemas/system.schema.ts": "be2db8dd7bbfcc4e6cba2812d4ad49f3d74d75d96216eec59532eb136f1ec009",
+    "packages/rpc/src/schemas/system.schema.ts": "a20d3c7f8201818af886a9ef0bcbd201683e9bb59b237bff74b40d82c9ce325f",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "ac5e6859c7723d4381f1502246d9778262c663d80d06b5b2eb5aaf1796da5613",
     "packages/rpc/src/schemas/wifi.schema.ts": "60305d4fd1df2a3531ff71aa42c1f2ac11e59bcc9785fb560c41100d0d093b92"
   }

@@ -28,6 +28,7 @@
  */
 
 import type {
+	ModemCarrierConfig,
 	ModemCellInfo,
 	ModemConfig,
 	ModemDataUsage,
@@ -305,12 +306,14 @@ export function hasModemDetail(input: {
 	cell_info?: ModemCellInfo | undefined;
 	esim?: ModemEsim | undefined;
 	firmware_revision?: string | undefined;
+	carrier_config?: ModemCarrierConfig | undefined;
 	own_numbers?: readonly string[] | undefined;
 	iccid?: string | undefined;
 }): boolean {
 	return (
 		cellMetricRows(input.cell_info).length > 0 ||
 		text(input.firmware_revision) !== undefined ||
+		carrierConfig(input.carrier_config) !== undefined ||
 		esimView(input.esim) !== undefined ||
 		ownNumbers(input.own_numbers) !== undefined ||
 		simIccid(input.iccid) !== undefined
@@ -322,6 +325,21 @@ export function firmwareRevision(
 	value: string | undefined,
 ): string | undefined {
 	return text(value);
+}
+
+/**
+ * The modem firmware's active carrier configuration (Qualcomm PDC/MBN, as
+ * ModemManager reads it), or `undefined` when the modem reported none. This is
+ * NOT the APN profile CeraUI picks; the two are configured in different places
+ * and the UI must never present one as the other. Read-only.
+ */
+export function carrierConfig(
+	value: ModemCarrierConfig | undefined,
+): { name: string; revision?: string } | undefined {
+	const name = text(value?.name);
+	if (name === undefined) return undefined;
+	const revision = text(value?.revision);
+	return revision === undefined ? { name } : { name, revision };
 }
 
 /**

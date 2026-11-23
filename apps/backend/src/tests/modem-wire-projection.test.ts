@@ -29,8 +29,8 @@ import { setup } from "../modules/setup.ts";
 import { carrierSupportRows } from "../modules/system/support-export.ts";
 
 /**
- * The ten additive fields that must NOT appear on an mmcli-derived row.
- * `stable_key` is the deliberate eleventh — it IS emitted there.
+ * The additive fields that must NOT appear on an mmcli-derived row.
+ * `stable_key` is the deliberate exception — it IS emitted there.
  */
 const ADDITIVE_DETAIL_KEYS = [
 	"device_class",
@@ -41,6 +41,7 @@ const ADDITIVE_DETAIL_KEYS = [
 	"recommended_usb_mode",
 	"data_usage",
 	"firmware_revision",
+	"carrier_config",
 	"esim",
 	"cell_info",
 ] as const;
@@ -545,6 +546,10 @@ describe("modem wire projection — D-Bus rows", () => {
 		expect(entry.usb_mode).toBe("qmi");
 		expect(entry.recommended_usb_mode).toBe("mbim");
 		expect(entry.firmware_revision).toBe("RM520NGLAAR03A03M4G");
+		expect(entry.carrier_config).toEqual({
+			name: "ROW_Commercial",
+			revision: "0501081F",
+		});
 		expect(entry.esim).toEqual({
 			sim_type: "physical",
 			esim_status: "unknown",
@@ -652,6 +657,7 @@ describe("modem wire projection — D-Bus rows", () => {
 			"recommended_usb_mode",
 			"data_usage",
 			"firmware_revision",
+			"carrier_config",
 			"esim",
 			"cell_info",
 			"stable_key",
@@ -719,6 +725,7 @@ function buildDbusViewFixture() {
 		recommendedUsbMode: "mbim" as const,
 		dataUsage: { session_bytes: 1024, cycle_bytes: 8192 },
 		firmwareRevision: "RM520NGLAAR03A03M4G",
+		carrierConfig: { name: "ROW_Commercial", revision: "0501081F" },
 		esim: { sim_type: "physical" as const, esim_status: "unknown" as const },
 		cellInfo: { tech: "nr" as const, sinr: 12.5 },
 	};

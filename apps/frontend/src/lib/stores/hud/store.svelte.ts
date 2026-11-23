@@ -54,6 +54,7 @@ interface HudStore {
 		temp: number | null;
 		voltage: number | null;
 		current: number | null;
+		inputVoltage: number | null;
 		isStale: boolean;
 	};
 	destroy(): void;
@@ -242,6 +243,7 @@ function createHudStore(): HudStore {
 				temp: state.temperature,
 				voltage: state.voltage,
 				current: state.current,
+				inputVoltage: state.inputVoltage,
 				isStale: state.isSensorsStale,
 			};
 		},
@@ -288,6 +290,7 @@ export function getSocTelemetry(): {
 	temp: number | null;
 	voltage: number | null;
 	current: number | null;
+	inputVoltage: number | null;
 	isStale: boolean;
 } {
 	return store().getSocTelemetry();
