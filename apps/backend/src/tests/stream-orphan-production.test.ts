@@ -84,6 +84,11 @@ beforeEach(async () => {
 		writeFileSync(join(root, "net", "udp"), UDP_HEADER);
 		writeFileSync(join(root, "net", "udp6"), UDP_HEADER);
 	}
+	// The recorded engine process still runs (start time 1000).
+	writeFileSync(
+		join(proc(), "700", "stat"),
+		`700 (cerastream) S 1 ${Array(17).fill("0").join(" ")} 1000 0\n`,
+	);
 });
 afterEach(async () => {
 	await h?.dispose();

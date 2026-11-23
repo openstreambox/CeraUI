@@ -160,7 +160,8 @@ export function localSenderPortBound(
  * Nothing can carry the recorded session: its sender process is gone (by PID
  * and start time), no process named `srtla_send` runs, no child of this
  * backend's session remains, and nothing holds the recorded port, neither in
- * this process's network namespace nor in the engine's, where its packets go.
+ * this process's network namespace nor, while the recorded engine process still
+ * runs, in the engine's, where its packets go.
  * That also covers a sender under another name. Unreadable evidence is not
  * absence. Limits: a carrier on another port, or in a third namespace the
  * engine's loopback cannot reach, is not looked for, because it cannot
@@ -176,8 +177,11 @@ export function carrierAbsent(
 		senderCensus(procRoot) === "absent" &&
 		!ownedRemain() &&
 		localSenderPortBound(procRoot, record.port) === false &&
-		localSenderPortBound(`${procRoot}/${record.engine.pid}`, record.port) ===
-			false
+		// The engine's namespace, while the recorded engine process still runs.
+		// Once it has exited (an engine restart), nothing it sent can arrive.
+		(!processRuns(record.engine, procRoot) ||
+			localSenderPortBound(`${procRoot}/${record.engine.pid}`, record.port) ===
+				false)
 	);
 }
 

@@ -109,9 +109,17 @@ test("the carrier is absent only when every sign of one is", () => {
 	udpTables(proc, [row(9000)]);
 	expect(carrierAbsent(RECORD, proc, none)).toBe(false);
 	udpTables(proc);
-	// ... or in the engine's network namespace, where its packets go.
+	// ... or in the engine's network namespace, where its packets go, while
+	// the recorded engine process still runs ...
+	processRow(700, "cerastream", "1000");
 	udpTables(join(proc, "700"), [row(9000)]);
 	expect(carrierAbsent(RECORD, proc, none)).toBe(false);
+	rmSync(join(proc, "700", "net"), { recursive: true });
+	expect(carrierAbsent(RECORD, proc, none)).toBe(false);
+	// ... and not once it has exited (an engine restart): its namespace is gone.
+	rmSync(join(proc, "700"), { recursive: true });
+	expect(carrierAbsent(RECORD, proc, none)).toBe(true);
+	processRow(700, "cerastream", "1000");
 	udpTables(join(proc, "700"));
 	// The recorded port is checked, not the current default.
 	udpTables(proc, [row(9000)]);
@@ -125,10 +133,7 @@ test("the carrier is absent only when every sign of one is", () => {
 	mkdirSync(join(proc, "6161", "comm"), { recursive: true });
 	expect(carrierAbsent(RECORD, proc, none)).toBe(false);
 	rmSync(join(proc, "6161"), { recursive: true });
-	// ... nor are unreadable port tables, here or in the engine's namespace.
-	rmSync(join(proc, "700", "net"), { recursive: true });
-	expect(carrierAbsent(RECORD, proc, none)).toBe(false);
-	udpTables(join(proc, "700"));
+	// ... nor are unreadable port tables here.
 	rmSync(join(proc, "net"), { recursive: true });
 	expect(carrierAbsent(RECORD, proc, none)).toBe(false);
 });
