@@ -76,6 +76,12 @@ export function createSessionOwnership(deps: StreamSessionOrchestratorDeps) {
 		owner: SessionOwner,
 		next: LifecycleState,
 		liveness: SessionLiveness,
+		/**
+		 * Idle that keeps the OTA guard: the replaced-engine witness proved this
+		 * process's session gone, but not that nobody else started one since,
+		 * so protection stays until restoration resolves the handoff.
+		 */
+		retainProtection = false,
 	): boolean => {
 		if (!owns(owner) || !transition(next)) return false;
 		confirmedLiveness = liveness;
@@ -96,6 +102,10 @@ export function createSessionOwnership(deps: StreamSessionOrchestratorDeps) {
 				break;
 			case "idle":
 				deps.setStreamingStatus(false);
+				if (retainProtection) {
+					protect();
+					break;
+				}
 				try {
 					protectionRequired = deps.unmarkStreamingForOta?.() === false;
 				} catch {

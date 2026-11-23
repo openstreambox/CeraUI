@@ -126,7 +126,21 @@ milliseconds between the last empty reply and the closing read is the residual
 window, and with the already-streaming rollback exception (no rollback Stop when
 the engine refuses Start as already streaming) a restoration Start then leaves
 that session alone. It never stops anything: an unowned sender keeps the
-protection (`canReconcileIdle`). Restoration then takes its ordinary gates
+protection (`canReconcileIdle`), and with our own processes still running it
+leaves their cleanup to an ordinary reconcile.
+
+**THE WITNESS'S IDLE KEEPS THE OTA GUARD (restart handoff).** It proves this
+process's session gone, not that nobody started one since, so the idle commit
+(`commit(..., retainProtection)`) clears `is_streaming` but keeps the encoder OTA
+guard. Only restoration's own Start may take that protection over (any other
+Start is refused as busy, like in every unconfirmed state). The handoff ends with
+restoration: a launch carries the protection into the new session; a Start the
+engine refuses as already streaming goes `reconciling` with protection kept for
+the operator's Stop; a Start whose rollback Stop was acknowledged releases it as
+a confirmed idle; an operator Stop resolves it as today. A run that ends without
+any launch calls `settleRestartHandoff`, which reconciles once with the witness
+off: only an engine that reports idle releases the guard, a silent one leaves
+the session `reconciling` for the operator's Stop. Restoration then takes its ordinary gates
 (marker, same boot, one attempt, the operator's Stop intent, recovery barrier),
 and for the `engine_restart` trigger the 30 s window is also enforced at the
 launch: an idle answer from a query that crossed it gives up as

@@ -1131,6 +1131,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["stream restoration attempt failed"],
 	["stream restoration blocked"],
 	["stream restoration gave up"],
+	["stream restoration handoff settle failed"],
 	["stream restoration run failed"],
 	["stream restoration suppressed by a planned shutdown"],
 	["stream restoration: no boot id available; the session is not armed"],

@@ -329,6 +329,14 @@ export type StreamSessionOrchestrator = {
 	readonly start: (request: StreamStartRequest) => Promise<StartResult>;
 	readonly stop: (cause: StreamStopCause) => Promise<StopResult>;
 	readonly reconcile: () => Promise<LifecycleState>;
+	/**
+	 * Close the engine-restart handoff once restoration is done. An idle the
+	 * replaced-engine witness committed kept the OTA guard; if no Start or Stop
+	 * has resolved it since, only an ordinary reconcile (witness off) may
+	 * release it, and an engine that stays silent leaves the session
+	 * unconfirmed for the operator's Stop.
+	 */
+	readonly settleRestartHandoff: () => Promise<LifecycleState>;
 	readonly snapshot: () => StreamSessionSnapshot;
 	readonly changeConfig: (
 		delta: StreamConfigChangeDelta,
@@ -352,6 +360,11 @@ export function createStreamSessionOrchestrator(
 	const ownership = createSessionOwnership(deps);
 	let active: ActiveAttempt | undefined;
 	let reconciliationEpoch = 0;
+	// An idle the replaced-engine witness committed holds the OTA guard until
+	// restoration resolves it (`settleRestartHandoff`). Any Start or Stop takes
+	// the protection over and ends the handoff.
+	let restartHandoff = false;
+	let replacedWitnessEnabled = true;
 	let runtimeObservations = 0;
 	let activeChange: ActiveConfigChange | undefined;
 	let queuedStop: QueuedStop | undefined;
@@ -474,14 +487,22 @@ export function createStreamSessionOrchestrator(
 			await reconcile();
 
 		if (!currentIntent()) return { result: "cancelled", attemptId };
+		// Restoration's own Start may take over the protection the handoff
+		// holds; every other Start waits for that handoff like for any
+		// unconfirmed state.
+		const handoffLaunch =
+			restartHandoff &&
+			request.origin === "restoration" &&
+			ownership.state === "idle";
 		if (
 			ownership.state !== "idle" ||
-			ownership.streamLiveness() !== "idle" ||
+			(ownership.streamLiveness() !== "idle" && !handoffLaunch) ||
 			cleanup.pending ||
 			stopFlight !== undefined ||
 			ownership.launchPending
 		)
 			return { result: "busy", attemptId };
+		if (handoffLaunch) restartHandoff = false;
 
 		// The interlock is consulted HERE and nowhere else: after the
 		// duplicate-start rejection above (so a genuine duplicate keeps its own
@@ -898,6 +919,7 @@ export function createStreamSessionOrchestrator(
 	};
 
 	const stop = (cause: StreamStopCause): Promise<StopResult> => {
+		restartHandoff = false;
 		if (cause === "operator") noteOperatorStopIntent();
 		deps.onStreamStopped?.(cause);
 		if (cause === "operator") {
@@ -1047,7 +1069,10 @@ export function createStreamSessionOrchestrator(
 		let runtimeState: EngineRuntimeState = "unknown";
 		// The replaced-engine witness: the launch invocation this session ran
 		// in, and the engine serving the queries, read BEFORE the first one.
-		const recorded = deps.sessionEngine?.recorded();
+		const recorded = replacedWitnessEnabled
+			? deps.sessionEngine?.recorded()
+			: undefined;
+		let viaReplacedWitness = false;
 		let serving: EngineIdentity | undefined;
 		if (recorded !== undefined && deps.awaitsIdleWitness?.() !== true)
 			serving = await deps.sessionEngine?.readServing();
@@ -1091,6 +1116,7 @@ export function createStreamSessionOrchestrator(
 				// loop, before anything commits.
 				if (!sameEngine(serving, after)) break;
 				runtimeState = "idle";
+				viaReplacedWitness = true;
 				break;
 			}
 		} finally {
@@ -1112,14 +1138,23 @@ export function createStreamSessionOrchestrator(
 			ownership.protect();
 			return ownership.state;
 		}
-		if (runtimeState === "idle" && deps.ownedSessionRemains?.() === true)
+		if (runtimeState === "idle" && deps.ownedSessionRemains?.() === true) {
+			// The witness proves the engine session gone, not our own processes:
+			// leave their cleanup to an ordinary reconcile or the operator.
+			if (viaReplacedWitness) {
+				ownership.protect();
+				return ownership.state;
+			}
 			return await retireOwnedSession(owner);
+		}
 		if (
 			runtimeState !== "unknown" &&
-			ownership.commit(owner, runtimeState, runtimeState) &&
+			ownership.commit(owner, runtimeState, runtimeState, viaReplacedWitness) &&
 			runtimeState === "idle"
-		)
+		) {
 			active = undefined;
+			if (viaReplacedWitness) restartHandoff = true;
+		}
 		if (runtimeState === "unknown")
 			ownership.settleUnprotectedObservation(owner);
 		return ownership.state;
@@ -1266,11 +1301,24 @@ export function createStreamSessionOrchestrator(
 		};
 	};
 
+	const settleRestartHandoff = async (): Promise<LifecycleState> => {
+		if (!restartHandoff) return ownership.state;
+		restartHandoff = false;
+		if (ownership.state !== "idle") return ownership.state;
+		replacedWitnessEnabled = false;
+		try {
+			return await reconcile();
+		} finally {
+			replacedWitnessEnabled = true;
+		}
+	};
+
 	return {
 		streamLiveness: ownership.streamLiveness,
 		start,
 		stop,
 		reconcile,
+		settleRestartHandoff,
 		snapshot: () => ({
 			state: ownership.state,
 			generation: ownership.generation,
@@ -1298,6 +1346,10 @@ export function stopStreamSession(cause: StreamStopCause): Promise<StopResult> {
 
 export function reconcileStreamSession(): Promise<LifecycleState> {
 	return productionOrchestrator.reconcile();
+}
+
+export function settleStreamRestartHandoff(): Promise<LifecycleState> {
+	return productionOrchestrator.settleRestartHandoff();
 }
 
 export function getStreamSessionSnapshot(): StreamSessionSnapshot {
