@@ -202,6 +202,17 @@ import { PROCESS_ERROR_CODES } from "./streamloop/process-error-patterns.ts";
 
 const CERASTREAM_PIPELINE_PATH = "/tmp/cerastream-pipeline.txt";
 
+/**
+ * Session request timeouts in a row that prove the control connection dead.
+ * Only a request sent after the previously counted one had timed out counts
+ * (the device poll overlaps its requests every 2 s), and any reply or engine
+ * event resets the count. Requests time out after 10 s, so three is at least
+ * 30 s of silence from an engine that sends status events every second while it
+ * streams: far longer than a late reply from a busy engine, and well before its
+ * 90 s watchdog.
+ */
+export const SESSION_SILENT_TIMEOUT_LIMIT = 3;
+
 function engineAdvertises(feature: string): boolean {
 	const capabilities = getLastCapabilities();
 	return (
@@ -270,10 +281,12 @@ export interface CerastreamBackendDeps {
 	// Called at most ONCE per session, when the session's control connection is
 	// PROVEN dead (see the module header). `site` names the call that found it.
 	onSessionConnectionLost: (site: string) => void;
-	// Called when a start could not reach the engine at all (classified
-	// `engine_unavailable`), so the reconnect loop notices an engine that went
-	// away while no session held a connection.
+	// Called once per proven loss of the session's control connection, after
+	// `onSessionConnectionLost`, so the reconnect loop keeps asking the engine
+	// until it answers again.
 	onEngineUnreachable?: (site: string) => void;
+	/** Clock for counting silent session timeouts; defaults to performance.now. */
+	now?: () => number;
 	onConfigChangePhase?: (event: {
 		attemptId: string;
 		phase: ConfigChangePhase;
@@ -621,11 +634,6 @@ function defaultOnSessionConnectionLost(site: string): void {
 				"cerastream: could not retire the session after a control-connection loss",
 				{ site, err },
 			);
-		} finally {
-			// Re-armed only after the restoration run is in flight, so the heal's
-			// own restoration call joins that run instead of judging the marker
-			// on its own while the retirement above is still settling.
-			defaultOnEngineUnreachable(site);
 		}
 	})();
 }
@@ -633,16 +641,17 @@ function defaultOnSessionConnectionLost(site: string): void {
 /**
  * Keep asking the engine after a proven loss, so the capability snapshot the
  * loss invalidated is refreshed (and broadcast) once systemd brings it back.
+ * Resolves once the reconnect loop has been told (test seam).
  */
-function defaultOnEngineUnreachable(site: string): void {
-	void import("./engine-reconnect.ts")
+export function defaultOnEngineUnreachable(site: string): Promise<void> {
+	return import("./engine-reconnect.ts")
 		.then(({ rearmEngineReconnect }) => rearmEngineReconnect(site))
-		.catch((err) =>
+		.catch((err) => {
 			defaultLogger.error("cerastream: could not re-arm the engine reconnect", {
 				site,
 				err,
-			}),
-		);
+			});
+		});
 }
 
 function defaultCerastreamBackendDeps(): CerastreamBackendDeps {
@@ -830,6 +839,13 @@ export class CerastreamBackend implements StreamingBackend {
 	private readonly errorListeners: Array<BackendErrorListener> = [];
 
 	private client: CerastreamClient | undefined;
+	/** Consecutive session request timeouts on one client (see noteSessionTimeout). */
+	private silentTimeouts: {
+		client: CerastreamClient | undefined;
+		count: number;
+		/** When the last counted timeout was noticed. */
+		lastAt: number;
+	} = { client: undefined, count: 0, lastAt: Number.NEGATIVE_INFINITY };
 	private subscription: Subscription | undefined;
 	private active = false;
 	private launchedSessionCurrent: (() => boolean) | undefined;
@@ -979,6 +995,7 @@ export class CerastreamBackend implements StreamingBackend {
 								!ownsLaunch()
 							)
 								return;
+							this.noteEngineAnswered(client);
 							this.handleEvent(
 								event,
 								() =>
@@ -1073,8 +1090,6 @@ export class CerastreamBackend implements StreamingBackend {
 							error,
 							"backend-start",
 						);
-			if (failure.class === "engine_unavailable")
-				this.deps.onEngineUnreachable?.("start");
 			throw new StreamStartFailure(
 				failure,
 				!dispatched || confirmedIdle ? "idle" : "unknown",
@@ -1570,8 +1585,11 @@ export class CerastreamBackend implements StreamingBackend {
 	async listDevicesIfActive(): Promise<ListDevicesResult | null> {
 		const client = this.client;
 		if (!client) return null;
+		const sentAt = this.clock();
 		try {
-			return await client.listDevices();
+			const result = await client.listDevices();
+			this.noteEngineAnswered(client);
+			return result;
 		} catch (err) {
 			this.deps.logger.debug("cerastream: registry listDevices failed", {
 				err,
@@ -1579,7 +1597,7 @@ export class CerastreamBackend implements StreamingBackend {
 			// `devices.ts` re-polls this every couple of seconds for the whole
 			// session, so it is the first call to touch a dead control connection —
 			// which makes detection proactive with no watchdog timer to mis-fire.
-			this.noteConnectionLoss(client, err, "list-devices-poll");
+			this.noteConnectionLoss(client, err, "list-devices-poll", sentAt);
 			return null;
 		}
 	}
@@ -1932,10 +1950,13 @@ export class CerastreamBackend implements StreamingBackend {
 		op: (client: CerastreamClient) => Promise<Result>,
 	): Promise<Result> {
 		const client = this.requireClient();
+		const sentAt = this.clock();
 		try {
-			return await op(client);
+			const result = await op(client);
+			this.noteEngineAnswered(client);
+			return result;
 		} catch (error) {
-			this.noteConnectionLoss(client, error, site);
+			this.noteConnectionLoss(client, error, site, sentAt);
 			throw error;
 		}
 	}
@@ -1961,15 +1982,88 @@ export class CerastreamBackend implements StreamingBackend {
 		client: CerastreamClient | undefined,
 		error: unknown,
 		site: string,
+		sentAt?: number,
 	): void {
-		if (!(error instanceof CerastreamConnectionError)) return;
 		if (client === undefined || client !== this.client) return;
 		if (!this.active) return;
+		if (error instanceof CerastreamTimeoutError) {
+			if (sentAt !== undefined)
+				this.noteSessionTimeout(client, error, site, sentAt);
+			return;
+		}
+		if (!(error instanceof CerastreamConnectionError)) return;
+		this.retireLostSession(site, error.code, error.message);
+	}
+
+	/**
+	 * A session request that timed out. One late reply is normal (a busy engine
+	 * rebuilding a pipeline) and keeps the session. A connection that stays open
+	 * but never answers again (a hung engine, a half-open socket) raises no close
+	 * and no write error, so only the silence itself can prove it dead:
+	 * {@link SESSION_SILENT_TIMEOUT_LIMIT} timeouts in a row, with no reply and no
+	 * engine event in between, count as a lost connection.
+	 */
+	private noteSessionTimeout(
+		client: CerastreamClient,
+		error: CerastreamTimeoutError,
+		site: string,
+		sentAt: number,
+	): void {
+		if (this.silentTimeouts.client !== client)
+			this.silentTimeouts = {
+				client,
+				count: 0,
+				lastAt: Number.NEGATIVE_INFINITY,
+			};
+		// Overlapping with the last counted timeout: same silence, not new proof.
+		if (sentAt < this.silentTimeouts.lastAt) return;
+		this.silentTimeouts.count += 1;
+		this.silentTimeouts.lastAt = this.clock();
+		const count = this.silentTimeouts.count;
+		if (count < SESSION_SILENT_TIMEOUT_LIMIT) {
+			this.deps.logger.warn("cerastream: session request timed out", {
+				site,
+				consecutive: count,
+				message: error.message,
+			});
+			return;
+		}
+		this.retireLostSession(
+			site,
+			"timeout",
+			`no reply to ${count} consecutive requests`,
+		);
+	}
+
+	/** Any reply or event on the session's client proves it is still answering. */
+	private noteEngineAnswered(client: CerastreamClient | undefined): void {
+		if (client !== undefined && this.silentTimeouts.client === client)
+			this.silentTimeouts = {
+				client: undefined,
+				count: 0,
+				lastAt: Number.NEGATIVE_INFINITY,
+			};
+	}
+
+	private clock(): number {
+		return (this.deps.now ?? (() => performance.now()))();
+	}
+
+	private retireLostSession(
+		site: string,
+		code: string | undefined,
+		message: string,
+	): void {
 		invalidateCapabilities();
+		this.silentTimeouts = {
+			client: undefined,
+			count: 0,
+			lastAt: Number.NEGATIVE_INFINITY,
+		};
 
 		this.deps.logger.error(
 			"cerastream: session control connection lost; retiring the engine session",
-			{ site, code: error.code, message: error.message },
+			{ site, code, message },
 		);
 
 		try {
@@ -1983,6 +2077,7 @@ export class CerastreamBackend implements StreamingBackend {
 		this.telemetry = null;
 		this.deps.bridge.broadcastStatus();
 		this.deps.onSessionConnectionLost(site);
+		this.deps.onEngineUnreachable?.(site);
 	}
 
 	/**

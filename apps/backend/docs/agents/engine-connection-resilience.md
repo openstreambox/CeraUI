@@ -26,11 +26,30 @@ It is the boot `pipelines` init now (main.ts) and owns ONE self-rescheduling loo
 - **Heal broadcast** — on the unavailable→reachable transition it re-broadcasts
   `capabilities` + `pipelines` + `sources` to already-connected clients (the SAME
   trio the `setMockHardware` RPC uses), so the offline banner clears LIVE with no
-  page reload, then SETTLES (stops polling). Settling is gated on the broadcast
-  actually completing: a reachable engine whose heal broadcast throws (a transient
-  broadcast-collaborator error) does NOT settle — it reschedules under the same
-  backoff — so clients are never stranded on the offline banner while the loop
-  silently gives up.
+  page reload, then SETTLES (stops polling) until the next proven loss. Settling is
+  gated on the broadcast actually completing: a reachable engine whose heal broadcast
+  throws (a transient broadcast-collaborator error) does NOT settle — it reschedules
+  under the same backoff — so clients are never stranded on the offline banner while
+  the loop silently gives up. The BOOT heal also settles the boot race (session
+  reconcile, in-flight config change, restoration).
+- **Re-arm after a later loss** — `rearmEngineReconnect(site)` starts the same loop
+  again whenever the engine connection is PROVEN lost after boot: a session whose
+  control connection died or stopped answering (`cerastream-backend.ts`
+  `noteConnectionLoss` → `deps.onEngineUnreachable`), or a start classified
+  `engine_unavailable` (`stream-start-retry.ts`, the one place every start origin's
+  failure is classified; a cancelled attempt returns before it, so an operator Stop
+  closing a pending start never counts). Without it a watchdog restart of cerastream
+  left "Streaming engine offline" and a disabled Start until `ceralive.service`
+  restarted. The loop pushes the unavailable snapshot to connected clients once per
+  outage. Its heal only PUBLISHES availability (`publishEngineAvailability`:
+  capabilities, pipelines, sources): session reconcile, owned-session cleanup and
+  restoration keep their own triggers, and a second reconcile here would supersede
+  their pending observations. A loss within `ENGINE_RECONNECT_FLAP_WINDOW_MS` (60 s)
+  of a heal that followed rechecks keeps the backoff, so a flapping engine is not
+  probed every second; a loss during an attempt cannot settle on that attempt's
+  answer. Rechecks log at info until the backoff caps, once more at the cap, then at
+  debug. `stopEngineReconnect()` runs first on SIGTERM/SIGINT (`helpers/shutdown.ts`
+  `stopEngineReconnect` dep) and makes an in-flight heal skip its remaining steps.
 
 Reachability = `getLastCapabilities()?.engineUnavailable === false` (a live snapshot).
 It feeds INTO the existing `engine-unavailable`/`engine-starting` capability tier — it
@@ -48,5 +67,9 @@ it emits no "became available" event. Recovery therefore lives backend-side here
 
 Coverage: `tests/engine-reconnect.test.ts` (boot-retry heal, later out-of-band
 reconnect, backoff-ceiling cadence, and the permanently-unavailable case through the
-REAL capability ladder — no regression to `engineUnavailable`/`engineStarting`).
+REAL capability ladder — no regression to `engineUnavailable`/`engineStarting`);
+`tests/engine-reconnect-rearm.test.ts` (re-arm after a loss, long absence, flapping,
+loss during an attempt, publish-only heal, teardown during a heal, SIGTERM wiring,
+logging); `tests/engine-reconnect-start.test.ts` (the start hook);
+`tests/engine-session-connection-loss.test.ts` (session loss and silent timeouts).
 

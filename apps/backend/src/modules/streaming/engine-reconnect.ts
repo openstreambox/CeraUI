@@ -48,16 +48,21 @@
 //      masked/disabled cerastream just gets a cheap periodic poll, never hammering.
 //   3. Re-arm after a later loss — once settled, `rearmEngineReconnect()` starts
 //      the same loop again whenever the engine connection is proven lost after
-//      boot (a session's control connection died, or a start could not reach the
-//      engine). Without it a watchdog restart of cerastream left the capability
-//      snapshot marked unavailable for the rest of the process: the offline
-//      banner stayed and Start stayed blocked until the backend itself restarted.
-//      A loss shortly after a heal keeps the backoff where it was, so an engine
-//      that keeps crashing is rechecked ever more slowly instead of every second.
+//      boot (a session's control connection died or stopped answering, or a
+//      start could not reach the engine). Without it a watchdog restart of
+//      cerastream left the capability snapshot marked unavailable for the rest
+//      of the process: the offline banner stayed and Start stayed blocked until
+//      the backend itself restarted. A loss shortly after a heal keeps the
+//      backoff where it was, so an engine that keeps crashing is rechecked ever
+//      more slowly instead of every second.
 //
 // On the unavailable→reachable transition it re-broadcasts `capabilities`,
 // `pipelines`, and `sources` to already-connected clients (so the offline banner
-// clears live, no page reload) and then SETTLES until the next loss. It
+// clears live, no page reload) and then SETTLES until the next loss. The boot
+// heal also settles the boot race (session reconcile, in-flight config change,
+// restoration). A heal after a re-arm does only the publishing: the session,
+// its cleanup and restoration already have their own triggers on a loss, and a
+// second reconcile here would supersede their pending observations. It
 // feeds INTO the existing `engine-unavailable`/`engine-starting` capability tier
 // state machine (reachability = a live `getLastCapabilities()` snapshot); it does
 // not create a parallel one.
@@ -107,6 +112,7 @@ type TimerHandle = ReturnType<typeof setTimeout>;
 
 /** Minimal logger surface (winston satisfies it; tests pass a silent stub). */
 export interface EngineReconnectLogger {
+	debug?(message: string): void;
 	info(message: string): void;
 	warn(message: string): void;
 }
@@ -127,11 +133,17 @@ export interface EngineReconnectDeps {
 	 */
 	isEngineReachable: () => boolean;
 	/**
-	 * Re-broadcast the engine-derived state (`capabilities` + `pipelines` +
-	 * `sources`) to already-connected clients. Called ONCE on the
-	 * unavailable→reachable transition so the offline banner clears live.
+	 * Boot heal: re-broadcast the engine-derived state (`capabilities` +
+	 * `pipelines` + `sources`) to already-connected clients and settle the boot
+	 * race. Called ONCE on the unavailable→reachable transition of the boot loop.
+	 * `alive` turns false once the loop is torn down; later steps are skipped.
 	 */
-	broadcastEngineState: () => Promise<void> | void;
+	broadcastEngineState: (alive: () => boolean) => Promise<void> | void;
+	/**
+	 * Heal after a re-arm: publish engine availability only (`capabilities` +
+	 * `pipelines` + `sources`). No session reconcile, cleanup or restoration.
+	 */
+	publishEngineAvailability: (alive: () => boolean) => Promise<void> | void;
 	/**
 	 * Push the unavailable capability snapshot to already-connected clients, once
 	 * per outage, so a page that stays open shows the engine as offline instead
@@ -189,22 +201,45 @@ export interface EngineConnectionOverrides {
  * null capability snapshot or a sources refresh failure is swallowed by the loop's
  * own catch.
  */
-function buildDefaultBroadcastEngineState(
+export function buildDefaultPublishEngineAvailability(
 	sourcesOverride: EngineDeviceCacheDeps | undefined,
-): () => Promise<void> {
-	return async () => {
+	steps: {
+		resolveHardware: () => Promise<unknown>;
+		broadcastCapabilities: () => void;
+		broadcastPipelines: () => void;
+		refreshSources: (deps?: EngineDeviceCacheDeps) => Promise<unknown>;
+	} = {
+		resolveHardware: getHardwareKind,
+		broadcastCapabilities: () =>
+			broadcastMsg("capabilities", getLastCapabilities()),
+		broadcastPipelines: () => broadcastMsg("pipelines", getPipelinesMessage()),
+		refreshSources: (deps) =>
+			deps ? refreshAndBroadcastSources(deps) : refreshAndBroadcastSources(),
+	},
+): (alive: () => boolean) => Promise<void> {
+	return async (alive) => {
 		// Ordering is load-bearing: re-resolve the hardware kind BEFORE the
 		// pipelines/sources broadcasts, which read the freshly-cached kind live via
 		// getEffectiveHardware(). The engine is reachable again, so its
 		// platform.hardware_kind now supersedes any boot-time fallback.
-		await getHardwareKind();
-		broadcastMsg("capabilities", getLastCapabilities());
-		broadcastMsg("pipelines", getPipelinesMessage());
-		await (sourcesOverride
-			? refreshAndBroadcastSources(sourcesOverride)
-			: refreshAndBroadcastSources());
+		await steps.resolveHardware();
+		if (!alive()) return;
+		steps.broadcastCapabilities();
+		steps.broadcastPipelines();
+		await steps.refreshSources(sourcesOverride);
+	};
+}
+
+function buildDefaultBroadcastEngineState(
+	sourcesOverride: EngineDeviceCacheDeps | undefined,
+): (alive: () => boolean) => Promise<void> {
+	const publish = buildDefaultPublishEngineAvailability(sourcesOverride);
+	return async (alive) => {
+		await publish(alive);
+		if (!alive()) return;
 		if (sourcesOverride === undefined) {
 			await reconcileStreamSession();
+			if (!alive()) return;
 			// The engine just became reachable, which is exactly the moment a
 			// marker that DEFERRED at boot (no decisive engine answer yet) can be
 			// re-judged. Fire-and-forget: the heal broadcast above must settle on
@@ -239,6 +274,9 @@ function defaultDeps(
 		refreshCapabilities: () => initPipelines(capsOverride),
 		isEngineReachable: () => getLastCapabilities()?.engineUnavailable === false,
 		broadcastEngineState: buildDefaultBroadcastEngineState(fetchers.sources),
+		publishEngineAvailability: buildDefaultPublishEngineAvailability(
+			fetchers.sources,
+		),
 		broadcastEngineOffline: () =>
 			broadcastMsg("capabilities", getLastCapabilities()),
 		reportEngineState: (reachable, streaming) =>
@@ -275,6 +313,8 @@ interface ReconnectState {
 	lossDuringAttempt: boolean;
 	/** The offline snapshot went out for the current outage. */
 	offlineAnnounced: boolean;
+	/** The running loop was started by a re-arm (heal publishes only). */
+	rearmed: boolean;
 }
 
 // Process-wide singleton (mirrors channel.ts module-state posture).
@@ -314,8 +354,12 @@ function errMessage(err: unknown): string {
  * this module's "clients are updated before the loop settles" invariant.
  */
 async function runAttempt(broadcastOnHeal: boolean): Promise<boolean> {
-	if (!state) return false;
-	const { deps } = state;
+	const owner = state;
+	if (!owner) return false;
+	// False once this loop is torn down (or replaced): nothing after that point
+	// may touch clients, the session or the indicators.
+	const alive = () => state === owner;
+	const { deps } = owner;
 	try {
 		await deps.refreshCapabilities();
 	} catch (err) {
@@ -325,7 +369,7 @@ async function runAttempt(broadcastOnHeal: boolean): Promise<boolean> {
 			`engine reconnect: capability refresh threw: ${errMessage(err)}`,
 		);
 	}
-	if (!state) return false;
+	if (!alive()) return false;
 	const reachable = deps.isEngineReachable();
 	const streaming = getIsStreaming();
 	if (!reachable || !broadcastOnHeal) {
@@ -333,7 +377,10 @@ async function runAttempt(broadcastOnHeal: boolean): Promise<boolean> {
 		return reachable;
 	}
 	try {
-		await deps.broadcastEngineState();
+		await (owner.rearmed
+			? deps.publishEngineAvailability(alive)
+			: deps.broadcastEngineState(alive));
+		if (!alive()) return false;
 		deps.logger.info(
 			"engine reconnect: engine reachable again; re-broadcast capabilities/pipelines/sources to clients",
 		);
@@ -376,10 +423,20 @@ function scheduleRecheck(): void {
 		deps.maxDelayMs,
 		deps.random,
 	);
+	const capped = deps.baseDelayMs * 2 ** state.attempt >= deps.maxDelayMs;
+	const firstCapped =
+		capped && deps.baseDelayMs * 2 ** (state.attempt - 1) < deps.maxDelayMs;
 	state.attempt += 1;
-	deps.logger.info(
-		`engine reconnect: rechecking engine in ${Math.round(delay)}ms (attempt ${state.attempt})`,
-	);
+	const message = `engine reconnect: rechecking engine in ${Math.round(delay)}ms (attempt ${state.attempt})`;
+	// Once the backoff is capped the cadence no longer changes: say so once,
+	// then keep the per-recheck line at debug so a long outage does not log
+	// about 120 info lines an hour.
+	if (!capped) deps.logger.info(message);
+	else if (firstCapped)
+		deps.logger.info(
+			`${message}; rechecking about every ${Math.round(deps.maxDelayMs / 1000)}s until it answers`,
+		);
+	else deps.logger.debug?.(message);
 	state.timer = deps.setTimer(() => {
 		if (!state) return;
 		state.timer = undefined;
@@ -395,10 +452,11 @@ function scheduleRecheck(): void {
  * never left on the offline banner while the loop silently gives up.
  */
 async function tickRecheck(): Promise<void> {
-	if (!state || state.stopped) return;
-	state.lossDuringAttempt = false;
+	const owner = state;
+	if (!owner || owner.stopped) return;
+	owner.lossDuringAttempt = false;
 	const healed = await runAttempt(true);
-	if (!state || state.stopped) return;
+	if (state !== owner || owner.stopped) return;
 	if (healed && !state.lossDuringAttempt) {
 		// Healed and clients are updated; settle until the next proven loss.
 		const { deps } = state;
@@ -434,7 +492,7 @@ async function tickRecheck(): Promise<void> {
 				`engine reconnect: reconciliation for a waiting carrying line failed: ${errMessage(err)}`,
 			);
 		}
-		if (!state || state.stopped) return;
+		if (state !== owner || owner.stopped) return;
 	}
 	scheduleRecheck();
 }
@@ -473,6 +531,7 @@ export async function initEngineConnection(
 		healedAt: undefined,
 		lossDuringAttempt: false,
 		offlineAnnounced: false,
+		rearmed: false,
 	};
 
 	// First attempt is awaited (no heal broadcast — there are no clients yet at
@@ -523,6 +582,7 @@ export function rearmEngineReconnect(site: string): void {
 		now - state.healedAt < deps.flapWindowMs;
 	if (!flapping) state.attempt = 0;
 	state.stopped = false;
+	state.rearmed = true;
 	state.lostAt = now;
 	state.lossDuringAttempt = false;
 	state.offlineAnnounced = false;

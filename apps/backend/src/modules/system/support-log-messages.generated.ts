@@ -624,6 +624,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["cerastream: rollback stop best-effort failed"],
 	["cerastream: runtime-state query unresolved"],
 	["cerastream: session control connection lost; retiring the engine session"],
+	["cerastream: session request timed out"],
 	["cerastream: status broadcast skipped"],
 	[
 		"cerastream: the engine did not close its control socket within the bound; completing the stop anyway",
@@ -666,6 +667,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["control-channel: unpaired, control channel gated (no dial)"],
 	["control-command: ", " failed: ", ""],
 	["could not enumerate USB devices for mutation-block presence"],
+	["could not re-arm the engine reconnect after a start"],
 	["could not write the armed-stream marker"],
 	["could not write the config-change in-flight marker"],
 	["cpu: core-count read failed"],
@@ -730,6 +732,12 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["engine reconnect: heal broadcast failed, will retry: ", ""],
 	["engine reconnect: offline broadcast failed: ", ""],
 	["engine reconnect: rechecking engine in ", "ms (attempt ", ")"],
+	[
+		"engine reconnect: rechecking engine in ",
+		"ms (attempt ",
+		"); rechecking about every ",
+		"s until it answers",
+	],
 	["engine reconnect: reconciliation for a waiting carrying line failed: ", ""],
 	["error: attempted to send persistent unicast notification"],
 	["ethernet role reconcile: ", " could not be restored to shared-lan (", ")"],

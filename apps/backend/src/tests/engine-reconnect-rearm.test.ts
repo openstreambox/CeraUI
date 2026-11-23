@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
+	handleTerminationSignal,
+	resetShutdownForTest,
+} from "../helpers/shutdown.ts";
+import { defaultOnEngineUnreachable } from "../modules/streaming/cerastream-backend.ts";
+import {
+	buildDefaultPublishEngineAvailability,
 	ENGINE_RECONNECT_FLAP_WINDOW_MS,
 	ENGINE_RECONNECT_MAX_MS,
 	type EngineReconnectLogger,
@@ -26,12 +34,18 @@ function harness() {
 	const cleared: number[] = [];
 	const warnings: string[] = [];
 	const infos: string[] = [];
+	const debugs: string[] = [];
 	let refreshes = 0;
 	let heals = 0;
+	let bootHeals = 0;
 	let offline = 0;
+	let recovered = 0;
 	let gate: Promise<void> | undefined;
+	let healGate: Promise<void> | undefined;
+	const healSteps: string[] = [];
 
 	const logger: EngineReconnectLogger = {
+		debug: (message) => debugs.push(message),
 		info: (message) => infos.push(message),
 		warn: (message) => warnings.push(message),
 	};
@@ -46,13 +60,25 @@ function harness() {
 			reachable = answer;
 		},
 		isEngineReachable: () => reachable,
+		// The boot heal (publishing plus the boot race's session settling).
 		broadcastEngineState: () => {
+			bootHeals += 1;
+		},
+		// The heal after a re-arm: publishing only.
+		publishEngineAvailability: async (alive: () => boolean) => {
+			healSteps.push("publish-start");
+			if (healGate) await healGate;
+			if (!alive()) return;
+			healSteps.push("publish-done");
 			heals += 1;
 		},
 		broadcastEngineOffline: () => {
 			offline += 1;
 		},
 		reportEngineState: () => {},
+		onRecovered: () => {
+			recovered += 1;
+		},
 		awaitsIdleWitness: () => false,
 		reconcileSession: async () => undefined,
 		logger,
@@ -86,6 +112,16 @@ function harness() {
 		},
 		advance(ms: number) {
 			clock += ms;
+		},
+		holdHeal() {
+			let release!: () => void;
+			healGate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			return () => {
+				healGate = undefined;
+				release();
+			};
 		},
 		holdRefresh() {
 			let release!: () => void;
@@ -122,6 +158,14 @@ function harness() {
 		get heals() {
 			return heals;
 		},
+		get bootHeals() {
+			return bootHeals;
+		},
+		get recovered() {
+			return recovered;
+		},
+		healSteps,
+		debugs,
 		get offline() {
 			return offline;
 		},
@@ -371,9 +415,150 @@ describe("rearmEngineReconnect — shutdown", () => {
 		expect(h.pending).toBe(0);
 	});
 
-	test("a loss before the boot attempt ever ran starts nothing", () => {
+	test("a loss before the boot attempt ever ran starts nothing", async () => {
 		stopEngineReconnect();
 		rearmEngineReconnect("start");
-		// No state, no timers: the boot path owns the first attempt.
+		// The boot path then owns the first attempt, undisturbed: one refresh,
+		// nothing scheduled, no offline broadcast left over from the early loss.
+		const h = harness();
+		await initEngineConnection(h.deps);
+		expect(h.refreshes).toBe(1);
+		expect(h.pending).toBe(0);
+		expect(h.offline).toBe(0);
+	});
+
+	test("shutting down during a heal skips its remaining steps and the recovery report", async () => {
+		const h = await bootedReachable();
+		h.advance(120_000);
+		h.lose();
+		const release = h.holdHeal();
+		const tick = h.fire();
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		expect(h.healSteps).toEqual(["publish-start"]);
+		stopEngineReconnect();
+		release();
+		await tick;
+		expect(h.healSteps).toEqual(["publish-start"]);
+		expect(h.heals).toBe(0);
+		expect(h.recovered).toBe(0);
+		expect(h.pending).toBe(0);
+	});
+
+	test("SIGTERM and SIGINT stop the loop: handleTerminationSignal runs it, main.ts passes it", async () => {
+		const h = await bootedReachable();
+		h.advance(120_000);
+		h.lose();
+		expect(h.pending).toBe(1);
+		try {
+			handleTerminationSignal("SIGTERM", {
+				stopEngineReconnect,
+				stopSrtIngest: async () => {},
+				stopDmesgWatchers: () => {},
+				gracefulShutdown: async () => {},
+				exit: () => {},
+			});
+			// Synchronous, before any async cleanup starts.
+			expect(h.pending).toBe(0);
+			expect(h.cleared.length).toBe(1);
+		} finally {
+			resetShutdownForTest();
+		}
+		const main = readFileSync(resolve(import.meta.dir, "../main.ts"), "utf8");
+		for (const signal of ["SIGTERM", "SIGINT"]) {
+			const call = main.slice(
+				main.indexOf(`handleTerminationSignal("${signal}"`),
+				main.indexOf("exit: process.exit", main.indexOf(`"${signal}"`)),
+			);
+			expect(call, signal).toContain("stopEngineReconnect,");
+		}
+	});
+});
+
+describe("heal after a re-arm — publishing only", () => {
+	test("the boot heal settles the boot race; a heal after a re-arm only publishes", async () => {
+		const h = harness();
+		h.setEngineUp(false);
+		await initEngineConnection(h.deps);
+		h.setEngineUp(true);
+		await h.fire();
+		expect(h.bootHeals).toBe(1);
+		expect(h.heals).toBe(0);
+
+		h.advance(5 * ENGINE_RECONNECT_FLAP_WINDOW_MS);
+		h.lose();
+		await h.fire();
+		expect(h.bootHeals).toBe(1);
+		expect(h.heals).toBe(1);
+	});
+
+	test("a loss while the boot loop still runs keeps the boot heal", async () => {
+		const h = harness();
+		h.setEngineUp(false);
+		await initEngineConnection(h.deps);
+		h.lose();
+		h.setEngineUp(true);
+		await h.fire();
+		expect(h.bootHeals).toBe(1);
+		expect(h.heals).toBe(0);
+	});
+
+	test("the default publisher sends capabilities, pipelines and sources, and stops when torn down", async () => {
+		const calls: string[] = [];
+		const steps = {
+			resolveHardware: async () => {
+				calls.push("hardware");
+			},
+			broadcastCapabilities: () => {
+				calls.push("capabilities");
+			},
+			broadcastPipelines: () => {
+				calls.push("pipelines");
+			},
+			refreshSources: async () => {
+				calls.push("sources");
+			},
+		};
+		await buildDefaultPublishEngineAvailability(undefined, steps)(() => true);
+		expect(calls).toEqual(["hardware", "capabilities", "pipelines", "sources"]);
+
+		calls.length = 0;
+		let alive = true;
+		const publish = buildDefaultPublishEngineAvailability(undefined, {
+			...steps,
+			resolveHardware: async () => {
+				calls.push("hardware");
+				alive = false; // torn down while the hardware kind resolves
+			},
+		});
+		await publish(() => alive);
+		expect(calls).toEqual(["hardware"]);
+	});
+});
+
+describe("rearmEngineReconnect — logging during a long outage", () => {
+	test("rechecks log at info until the backoff caps, once more at the cap, then at debug", async () => {
+		const h = await bootedReachable();
+		h.advance(120_000);
+		h.setEngineUp(false);
+		h.lose();
+		for (let i = 0; i < 20; i++) await h.fire();
+		const rechecks = h.infos.filter((m) => m.includes("rechecking engine in"));
+		// 1.5 s, 3 s, 6 s, 12 s, then the first capped one.
+		expect(rechecks.length).toBe(5);
+		expect(rechecks.at(-1)).toContain("until it answers");
+		expect(
+			h.debugs.filter((m) => m.includes("rechecking engine in")).length,
+		).toBe(16);
+	});
+});
+
+describe("default wiring of a proven loss", () => {
+	test("defaultOnEngineUnreachable re-arms the running loop", async () => {
+		const h = await bootedReachable();
+		h.advance(120_000);
+		h.setEngineUp(false);
+		await defaultOnEngineUnreachable("list-devices-poll");
+		expect(h.pending).toBe(1);
+		expect(h.warnings.some((w) => w.includes("list-devices-poll"))).toBe(true);
 	});
 });

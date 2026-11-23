@@ -805,7 +805,6 @@ void reconcileIngestDesiredState();
 void guardNonCritical("bluetooth", initBluetooth);
 
 function stopRecoveryRetries(): void {
-	stopEngineReconnect();
 	stopRuntimeConfigRecovery();
 	stopMutationRecovery();
 	stopLegacyTokenMigration();
@@ -813,6 +812,7 @@ function stopRecoveryRetries(): void {
 process.on("SIGTERM", () =>
 	handleTerminationSignal("SIGTERM", {
 		stopRecoveryRetries,
+		stopEngineReconnect,
 		terminateWifiObservation: () => {
 			stopWifiAdapterModeRestore();
 			stopProvisioningMarkerWatch();
@@ -835,6 +835,7 @@ process.on("SIGTERM", () =>
 process.on("SIGINT", () =>
 	handleTerminationSignal("SIGINT", {
 		stopRecoveryRetries,
+		stopEngineReconnect,
 		terminateWifiObservation: () => {
 			stopWifiAdapterModeRestore();
 			stopProvisioningMarkerWatch();

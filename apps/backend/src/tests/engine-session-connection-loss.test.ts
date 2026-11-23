@@ -8,11 +8,13 @@ import type {
 import {
 	CerastreamConnectionError,
 	CerastreamRpcError,
+	CerastreamTimeoutError,
 } from "@ceralive/cerastream";
 import type { RuntimeConfig } from "../helpers/config-schemas.ts";
 import {
 	CerastreamBackend,
 	type CerastreamBackendDeps,
+	SESSION_SILENT_TIMEOUT_LIMIT,
 } from "../modules/streaming/cerastream-backend.ts";
 import { createStreamSessionOrchestrator } from "../modules/streaming/stream-session-orchestrator.ts";
 import type { StreamRunOptions } from "../modules/streaming/streaming-backend.ts";
@@ -396,12 +398,16 @@ describe("what is NOT proof that the connection died", () => {
 	});
 });
 
-describe("a start that cannot reach the engine re-arms the engine reconnect", () => {
-	function startHarness(connect: CerastreamBackendDeps["connect"]) {
-		const unreachable: string[] = [];
-		const lostSites: string[] = [];
+describe("a proven loss re-arms the engine reconnect", () => {
+	function lossHarness(now: () => number = () => 0) {
+		const events: string[] = [];
+		const clients: FakeClient[] = [];
 		const backend = new CerastreamBackend({
-			connect,
+			connect: async () => {
+				const next = makeFakeClient();
+				clients.push(next);
+				return next.client;
+			},
 			connectOptions: {},
 			getConfig: () => STREAM_CONFIG,
 			saveConfig: () => undefined,
@@ -416,40 +422,127 @@ describe("a start that cannot reach the engine re-arms the engine reconnect", ()
 			configPath: "/tmp/cerastream-connection-loss.json",
 			logger: silentLogger,
 			onSessionConnectionLost: (site) => {
-				lostSites.push(site);
+				events.push(`lost:${site}`);
 			},
 			onEngineUnreachable: (site) => {
-				unreachable.push(site);
+				events.push(`unreachable:${site}`);
 			},
+			now,
 		});
-		return { backend, unreachable, lostSites };
+		return { backend, events, clients };
 	}
 
-	test("an engine that is not listening (restarting, or gone) is reported", async () => {
-		const h = startHarness(async () => {
-			throw new CerastreamConnectionError(
-				"failed to connect to cerastream control socket at /run/cerastream/control.sock",
-			);
-		});
-		await expect(h.backend.start(STREAM_CONFIG, RUN_OPTS)).rejects.toThrow(
-			"engine_unavailable",
-		);
-		expect(h.unreachable).toEqual(["start"]);
-		// No session existed, so this is not a session loss.
-		expect(h.lostSites).toEqual([]);
+	test("a dead control connection retires the session, then re-arms, once", async () => {
+		const h = lossHarness();
+		await h.backend.start(STREAM_CONFIG, RUN_OPTS);
+		await h.backend.settle();
+		h.clients[0]?.killConnection();
+		await expect(h.backend.listDevicesIfActive()).resolves.toBeNull();
+		await expect(h.backend.listDevicesIfActive()).resolves.toBeNull();
+		expect(h.events).toEqual([
+			"lost:list-devices-poll",
+			"unreachable:list-devices-poll",
+		]);
 	});
 
-	test("an engine that answers and refuses the start is not reported", async () => {
-		const fake = makeFakeClient();
-		(fake.client as unknown as Record<string, unknown>).rawRequest =
-			async () => {
-				throw new CerastreamRpcError(-32603, "transport connect failed");
+	describe("a connection that stays open but never answers", () => {
+		const timeout = () => new CerastreamTimeoutError("list-devices", 10_000);
+
+		async function silentSession(clock: { t: number }) {
+			const h = lossHarness(() => clock.t);
+			await h.backend.start(STREAM_CONFIG, RUN_OPTS);
+			await h.backend.settle();
+			const session = h.clients[0];
+			if (!session) throw new Error("no session client");
+			let answering = true;
+			session.client.listDevices = async () => {
+				if (answering) return { devices: [] };
+				clock.t += 10_000; // each request waits out its timeout
+				throw timeout();
 			};
-		fake.client.start = async () => {
-			throw new CerastreamRpcError(-32603, "transport connect failed");
-		};
-		const h = startHarness(async () => fake.client);
-		await expect(h.backend.start(STREAM_CONFIG, RUN_OPTS)).rejects.toThrow();
-		expect(h.unreachable).toEqual([]);
+			return {
+				...h,
+				session,
+				silence: () => {
+					answering = false;
+				},
+				answer: () => {
+					answering = true;
+				},
+			};
+		}
+
+		test(`is retired after ${SESSION_SILENT_TIMEOUT_LIMIT} timeouts in a row`, async () => {
+			const h = await silentSession({ t: 0 });
+			h.silence();
+			for (let i = 1; i < SESSION_SILENT_TIMEOUT_LIMIT; i++) {
+				await h.backend.listDevicesIfActive();
+				expect(h.events).toEqual([]);
+			}
+			await h.backend.listDevicesIfActive();
+			expect(h.events).toEqual([
+				"lost:list-devices-poll",
+				"unreachable:list-devices-poll",
+			]);
+			expect(h.backend.getTelemetry()).toBeNull();
+		});
+
+		test("one late reply keeps the session: a reply resets the count", async () => {
+			const h = await silentSession({ t: 0 });
+			for (let round = 0; round < 3; round++) {
+				h.silence();
+				for (let i = 1; i < SESSION_SILENT_TIMEOUT_LIMIT; i++)
+					await h.backend.listDevicesIfActive();
+				h.answer();
+				await h.backend.listDevicesIfActive();
+			}
+			expect(h.events).toEqual([]);
+		});
+
+		test("an engine event resets the count too", async () => {
+			const h = await silentSession({ t: 0 });
+			h.silence();
+			for (let round = 0; round < 3; round++) {
+				for (let i = 1; i < SESSION_SILENT_TIMEOUT_LIMIT; i++)
+					await h.backend.listDevicesIfActive();
+				h.session.emit({
+					type: "status",
+					seq: round + 1,
+					state: "streaming",
+					streaming: true,
+				} as EventParams);
+			}
+			expect(h.events).toEqual([]);
+		});
+
+		test("overlapping requests that time out together count once", async () => {
+			const clock = { t: 0 };
+			const h = await silentSession(clock);
+			const rejecters: Array<() => void> = [];
+			h.session.client.listDevices = () =>
+				new Promise((_resolve, reject) => {
+					rejecters.push(() => reject(timeout()));
+				});
+			// The device poll sends every 2 s while earlier requests still wait.
+			const polls: Array<Promise<unknown>> = [];
+			for (let i = 0; i < 5; i++) {
+				polls.push(h.backend.listDevicesIfActive());
+				clock.t += 2_000;
+			}
+			clock.t = 20_000;
+			for (const reject of rejecters) reject();
+			await Promise.all(polls);
+			// All five were sent before the first timeout was noticed.
+			expect(h.events).toEqual([]);
+		});
+
+		test("timeouts after the session ended are not counted", async () => {
+			const h = await silentSession({ t: 0 });
+			h.silence();
+			await h.backend.stop();
+			for (let i = 0; i <= SESSION_SILENT_TIMEOUT_LIMIT; i++)
+				await h.backend.listDevicesIfActive();
+			expect(h.events).toEqual([]);
+		});
 	});
 });

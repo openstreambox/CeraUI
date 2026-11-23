@@ -31,9 +31,10 @@ minutes.
    a fresh `streaming.start` was inadmissible; forced through, an engine with no
    memory of the session answered an RPC error classified `engine_internal`.
 
-`engine-reconnect.ts` does NOT cover this: it SETTLES (`state.stopped = true`)
-once the engine is reachable at boot and never re-arms, and it heals the
-capability probe — a short-lived connection — not a session's dedicated one.
+`engine-reconnect.ts` does NOT cover this: it heals the capability probe — a
+short-lived connection — not a session's dedicated one. A proven session loss
+re-arms it (`deps.onEngineUnreachable`, after `onSessionConnectionLost`) so the
+capability snapshot the loss invalidated is refreshed once the engine is back.
 
 **The rule.** cerastream is systemd-owned (ADR-0005), so a dropped control
 connection means the process CeraUI was driving went away; a restarted engine has
@@ -42,9 +43,15 @@ the ONLY handle on the engine-side pipeline, so losing it retires the session.
 
 `noteConnectionLoss(client, error, site)` is the single seam. It acts only on
 PROOF — a `CerastreamConnectionError` from the client we are STILL holding, for a
-session we still believe is `active`. An engine RPC error, a request timeout, a
-rejection from an already-superseded client, and our own `stop()`'s close (which
-clears `active` first) are all deliberately NOT proof.
+session we still believe is `active`. An engine RPC error, a single request
+timeout, a rejection from an already-superseded client, and our own `stop()`'s
+close (which clears `active` first) are all deliberately NOT proof. A connection
+that stays open but never answers (a hung engine, a half-open socket) raises no
+close, so the silence itself is the proof: `SESSION_SILENT_TIMEOUT_LIMIT` (3)
+session request timeouts in a row, counting only a request sent after the
+previously counted one timed out (the device poll overlaps its requests), and
+reset by any reply or engine event. With the 10 s request timeout that is at
+least 30 s of silence, well before the engine's 90 s watchdog.
 
 | Concern | Rule |
 |---------|------|
