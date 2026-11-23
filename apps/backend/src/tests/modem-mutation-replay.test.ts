@@ -21,6 +21,7 @@ import {
 } from "@ceraui/rpc/schemas";
 
 import { getConfig } from "../modules/config.ts";
+import { rebaselineMutation } from "../modules/modems/mutation-acknowledge.ts";
 import {
 	PRESENCE_UNKNOWN,
 	refreshMutationBlocks,
@@ -461,6 +462,19 @@ describe("crash-point replay — one test per journal state", () => {
 		});
 		// A destroyed modem must never strand the remaining links.
 		expect(streamingBlockingMutation()).toBeUndefined();
+	});
+
+	test("a replacement at a decommissioned port can be rebaselined after boot", async () => {
+		const unitLinkId = mintLinkId("usb-serial:2c7c:fixture-original-5b2");
+		await commitMutationEntry({ ...seed("decommissioned"), unitLinkId });
+		useUdevDevice("fixture-replacement-38a");
+
+		await initMutationRecovery();
+		expect((await readMutationEntry(KEY))?.state).toBe("recommission-pending");
+		expect(getMutationBlocks()).toContainEqual(
+			expect.objectContaining({ stableKey: KEY, unitLinkId }),
+		);
+		expect(await rebaselineMutation(KEY)).toMatchObject({ success: true });
 	});
 
 	test("a REPLACEMENT modem in the same port is treated identically", async () => {

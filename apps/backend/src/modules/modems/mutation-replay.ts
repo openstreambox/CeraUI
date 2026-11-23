@@ -138,7 +138,7 @@ async function replayEntry(
 			(await captureModemState(
 				entry.stableKey,
 				undefined,
-				entry.unitLinkId,
+				entry.state === "decommissioned" ? undefined : entry.unitLinkId,
 			)) !== undefined;
 		assertMutationJournalRevision(revision);
 		const target = presenceRecheckTarget(entry.state, present);
