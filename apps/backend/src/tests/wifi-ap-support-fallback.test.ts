@@ -26,6 +26,7 @@ import {
 	wifiCancelScanRefresh,
 } from "../modules/wifi/wifi-connections.ts";
 import * as devices from "../modules/wifi/wifi-device-list.ts";
+import { wifiHotspotStart } from "../modules/wifi/wifi-hotspot-activation.ts";
 import { canHotspot } from "../modules/wifi/wifi-hotspot-types.ts";
 import {
 	resetWifiConnectionModeCache,
@@ -234,4 +235,45 @@ test("evidence published after the first classification re-runs it once", async 
 	const passes = listings.mock.calls.length;
 	await settle();
 	expect(listings.mock.calls.length).toBe(passes);
+});
+
+test("discovery keeps a published Start target while reading another radio", async () => {
+	useIw(withoutApMode(phyDump));
+	await refreshWifiCapabilities(["wlan0"]);
+	await wifiUpdateDevices();
+	await settle();
+	const { id } = row();
+	expect(canHotspot(row())).toBe(false);
+	const otherMac = "02:00:00:00:00:02";
+	spyOn(devices, "wifiDeviceListGetMacAddress").mockImplementation((ifname) =>
+		ifname === "wlan1" ? otherMac : mac,
+	);
+	spyOn(nm, "nmDevices").mockResolvedValue([
+		"wlan1:wifi:disconnected:",
+		"wlan0:wifi:disconnected:",
+	]);
+	const entered = Promise.withResolvers<void>();
+	const release = Promise.withResolvers<string[]>();
+	spyOn(nm, "nmDeviceProp").mockImplementation(async (ifname, fields) => {
+		if (!fields.startsWith("GENERAL.VENDOR") || ifname !== "wlan1")
+			return undefined;
+		entered.resolve();
+		return release.promise;
+	});
+	const refresh = wifiUpdateDevices();
+	try {
+		await Promise.race([
+			entered.promise,
+			refresh.then(() => {
+				throw new Error("Discovery skipped the second radio");
+			}),
+		]);
+		expect(await wifiHotspotStart({ device: id })).toEqual({
+			success: false,
+			error: "unsupported",
+		});
+	} finally {
+		release.resolve(["Vendor", "Radio", "yes", "yes", "yes"]);
+		await refresh;
+	}
 });
