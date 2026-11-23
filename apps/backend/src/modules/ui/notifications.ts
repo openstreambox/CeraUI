@@ -387,3 +387,8 @@ export function notificationSendPersistent(
 		}),
 	);
 }
+
+/** Internal relay snapshot; revision orders clears against preceding shows. */
+export function getNotificationRelaySnapshot() {
+	return { ...getPersistentNotifications(true), revision: revisionCounter };
+}

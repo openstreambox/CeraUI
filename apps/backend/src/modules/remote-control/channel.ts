@@ -56,8 +56,10 @@ import {
 	type ControlChannelEndpoint,
 	resolveControlChannelEndpoint,
 } from "../remote/control-endpoint.ts";
+import { createNotificationPeerRelay } from "../remote/notification-relay.ts";
 import { getLastCapabilities } from "../streaming/capabilities.ts";
 import { hasCapability } from "../system/board-capabilities.ts";
+import { getNotificationRelaySnapshot } from "../ui/notifications.ts";
 import { reportActiveProfile } from "./active-profile-reporter.ts";
 import {
 	COMMAND_REGISTRY,
@@ -91,6 +93,7 @@ type IntervalHandle = ReturnType<typeof setInterval>;
  */
 export interface ControlSocket {
 	send(data: string): void;
+	bufferedAmount?: number;
 	ping(): void;
 	close(): void;
 	onOpen(listener: () => void): void;
@@ -154,6 +157,9 @@ function defaultCreateSocket(url: string, authToken?: string): ControlSocket {
 			: openOutboundWebSocket(url);
 	return {
 		send: (data) => ws.send(data),
+		get bufferedAmount() {
+			return ws.bufferedAmount;
+		},
 		ping: () => ws.ping(),
 		close: () => ws.close(),
 		onOpen: (listener) => ws.on("open", listener),
@@ -310,6 +316,18 @@ function stopKeepalive(): void {
 	}
 }
 
+let notificationTimer: ReturnType<typeof setInterval> | undefined;
+const notificationRelay = createNotificationPeerRelay(
+	"cloud",
+	getNotificationRelaySnapshot,
+	() => (state?.connected ? state.socket : undefined),
+	{ sendFrame: (frame) => sendFrame(frame as Frame) },
+);
+function stopNotificationRelay() {
+	clearInterval(notificationTimer);
+	notificationTimer = undefined;
+}
+
 function handleOpen(): void {
 	if (!state) return;
 	const { deps } = state;
@@ -322,10 +340,15 @@ function handleOpen(): void {
 	// (re)connect (cloud Todo 15): the hub loses the snapshot on disconnect, so
 	// force past the de-dup even when the config is unchanged.
 	reportActiveProfile({ force: true });
+	notificationRelay.flush(true);
+	stopNotificationRelay();
+	notificationTimer = setInterval(() => notificationRelay.flush(), 250);
+	notificationTimer.unref();
 	startKeepalive();
 }
 
 function handleClose(): void {
+	stopNotificationRelay();
 	if (!state) return;
 	const { deps } = state;
 	const wasConnected = state.connected;
@@ -423,6 +446,7 @@ function dial(): void {
  * across reboots and test cases.
  */
 function teardown(): void {
+	stopNotificationRelay();
 	if (!state) return;
 	if (state.reconnectTimer !== undefined) {
 		state.deps.clearTimer(state.reconnectTimer);
