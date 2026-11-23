@@ -467,8 +467,10 @@ State set: `idle | starting | streaming | stopping | stop_failed | reconciling`.
 - `starting` is **distinct** from `streaming` (Todo 26: `is_streaming=true` only
   after engine confirmation).
 - `reconciling` is the boot/reconnect state where the backend queries the
-  engine's actual runtime state and adopts it (the engine may be streaming while
-  CeraUI restarted). A successfully subscribed probe observes status for 2.5
+  engine's actual runtime state. Idle is adopted; streaming is retained only for
+  a session this backend process launched and still owns, so a session that
+  outlived a CeraUI restart stays `reconciling` with unknown liveness until an
+  operator Stop. A successfully subscribed probe observes status for 2.5
   seconds: concordant streaming/idle is adopted immediately, silence remains
   UNKNOWN even though live sessions heartbeat every 2 seconds, and query failure or a
   contradictory/transitional event remains unknown. Events arriving after the
@@ -491,8 +493,8 @@ stopping    → idle          (stopped)
 stopping    → stop_failed   (stop did not settle within the bound)
 stop_failed → stopping      (retry the stop)
 stop_failed → idle          (reconciled / abandoned to idle)
-reconciling → streaming     (engine was streaming — adopt)
-reconciling → idle          (engine was idle — adopt)
+reconciling → streaming     (engine was streaming and this process owns the session)
+reconciling → idle          (engine was idle, no unowned sender, own children retired)
 ```
 
 `isLegalLifecycleTransition(from, to)` is the pure guard over

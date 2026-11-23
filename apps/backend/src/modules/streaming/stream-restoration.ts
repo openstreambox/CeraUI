@@ -30,12 +30,14 @@
  * cannot restore its stream lands in an honest `idle` with a published reason
  * rather than in a loop nobody asked for.
  *
- * ADOPTION ALWAYS BEATS RESTORATION. The runtime-state check runs first and
- * short-circuits, so a backend-only restart against a still-streaming engine
- * adopts that session and never launches a second one. That is the whole reason
- * the check is not "did we leave a marker behind" — a marker survives a backend
- * restart exactly as it survives an engine death, and only the engine can say
- * which of the two happened.
+ * A RUNNING ENGINE ALWAYS BEATS RESTORATION. The runtime-state check runs first
+ * and short-circuits, so a backend-only restart against a still-streaming engine
+ * never launches a second session. Reconciliation retains such a session only
+ * with this process's own sender and Start evidence; a predecessor's session
+ * stays unconfirmed (`unknown`), so the run waits, gives up after its unknown
+ * deadline and leaves recovery to an operator Stop. That is the whole reason the
+ * check is not "did we leave a marker behind" — a marker survives a backend
+ * restart exactly as it survives an engine death.
  *
  * THE RUN IS SELF-SERIALISING. Three seams trigger it — the engine-loss
  * retirement, backend boot, and the engine-reconnect heal — and they overlap in
@@ -173,6 +175,13 @@ export type RestorationRunOutcome =
 			readonly elapsedMs: number;
 	  };
 
+/**
+ * What started the run, for operator copy only. Only the engine-loss seam knows
+ * the streaming engine restarted; boot and the reconnect heal follow a restart of
+ * this backend or of the engine, so their copy names neither.
+ */
+export type RestorationTrigger = "engine_restart" | "service_restart";
+
 export interface RestorationLogger {
 	info(message: string, meta?: Record<string, unknown>): void;
 	warn(message: string, meta?: Record<string, unknown>): void;
@@ -186,7 +195,10 @@ export interface StreamRestorationDeps {
 		config: ArmedStreamConfig,
 		current: () => boolean,
 	) => Promise<RestorationLaunchOutcome>;
-	readonly publish: (outcome: RestorationRunOutcome) => void;
+	readonly publish: (
+		outcome: RestorationRunOutcome,
+		trigger: RestorationTrigger,
+	) => void;
 	readonly wait: (ms: number) => Promise<void>;
 	readonly now: () => number;
 	readonly logger: RestorationLogger;
@@ -278,7 +290,34 @@ async function defaultLaunch(
 	return { ok: false, reason: "start_failed" };
 }
 
-function defaultPublish(outcome: RestorationRunOutcome): void {
+const RESTORATION_COPY = {
+	engine_restart: {
+		recovered: [
+			"The stream was restored after the streaming engine restarted.",
+			"notifications.streamRecovered",
+		],
+		failed: [
+			"The stream could not be restored after the streaming engine restarted. Open Settings → System Logs for details.",
+			"notifications.streamRecoveryFailed",
+		],
+	},
+	service_restart: {
+		recovered: [
+			"The stream was restored automatically after a service restart.",
+			"notifications.streamRecoveredAfterRestart",
+		],
+		failed: [
+			"The stream could not be restored after a service restart. Open Settings → System Logs for details.",
+			"notifications.streamRecoveryFailedAfterRestart",
+		],
+	},
+} as const;
+
+function defaultPublish(
+	outcome: RestorationRunOutcome,
+	trigger: RestorationTrigger,
+): void {
+	const copy = RESTORATION_COPY[trigger];
 	if (outcome.result === "recovered") {
 		try {
 			emitEvent("stream_restored", {});
@@ -289,12 +328,12 @@ function defaultPublish(outcome: RestorationRunOutcome): void {
 		notificationBroadcast(
 			"stream_recovered",
 			"success",
-			"The stream was restored after the streaming engine restarted.",
+			copy.recovered[0],
 			10,
 			false,
 			true,
 			true,
-			"notifications.streamRecovered",
+			copy.recovered[1],
 			{ elapsedMs: outcome.elapsedMs },
 		);
 		return;
@@ -308,12 +347,12 @@ function defaultPublish(outcome: RestorationRunOutcome): void {
 	notificationBroadcast(
 		"stream_recovery_failed",
 		"error",
-		"The stream could not be restored after the streaming engine restarted. Open Settings → System Logs for details.",
+		copy.failed[0],
 		0,
 		true,
 		true,
 		true,
-		"notifications.streamRecoveryFailed",
+		copy.failed[1],
 		{ reason: outcome.reason },
 	);
 }
@@ -380,6 +419,7 @@ let inflight: Promise<RestorationRunOutcome> | undefined;
 
 async function runOnce(
 	deps: StreamRestorationDeps,
+	trigger: RestorationTrigger,
 ): Promise<RestorationRunOutcome> {
 	const current = captureOperatorStopIntent();
 	await deps.awaitRecovery();
@@ -439,7 +479,7 @@ async function runOnce(
 				reason: decision.reason,
 				elapsedMs,
 			} as const;
-			deps.publish(outcome);
+			deps.publish(outcome, trigger);
 			return outcome;
 		}
 
@@ -460,7 +500,7 @@ async function runOnce(
 				result: "recovered",
 				elapsedMs: attemptElapsedMs,
 			} as const;
-			deps.publish(outcome);
+			deps.publish(outcome, trigger);
 			return outcome;
 		}
 
@@ -475,7 +515,7 @@ async function runOnce(
 			reason: launched.reason,
 			elapsedMs: attemptElapsedMs,
 		} as const;
-		deps.publish(outcome);
+		deps.publish(outcome, trigger);
 		return outcome;
 	}
 }
@@ -489,11 +529,12 @@ async function runOnce(
  */
 export function runStreamRestoration(
 	overrides: Partial<StreamRestorationDeps> = {},
+	trigger: RestorationTrigger = "service_restart",
 ): Promise<RestorationRunOutcome> {
 	if (inflight !== undefined) return inflight;
 	const deps: StreamRestorationDeps = { ...defaultDeps(), ...overrides };
 
-	const run = runOnce(deps)
+	const run = runOnce(deps, trigger)
 		.catch((err: unknown): RestorationRunOutcome => {
 			// Leaving the marker untouched is the safe end state: an un-judged
 			// marker is re-judged on the next reconnect, whereas a half-written

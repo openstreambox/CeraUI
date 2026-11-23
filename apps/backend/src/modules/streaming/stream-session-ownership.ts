@@ -39,6 +39,16 @@ export function createSessionOwnership(deps: StreamSessionOrchestratorDeps) {
 		epoch++;
 		return capture();
 	};
+	const streamLiveness = (): SessionLiveness =>
+		unprotectedBaseline() && state === "idle"
+			? "idle"
+			: confirmedLiveness === "streaming" &&
+					protectedForOta &&
+					state === "streaming"
+				? "streaming"
+				: "unknown";
+	const publishUnconfirmed = () =>
+		deps.setLivenessUnconfirmed?.(streamLiveness() === "unknown");
 	const transition = (next: LifecycleState): boolean => {
 		if (state === next && published) return true;
 		if (state !== next && !isLegalLifecycleTransition(state, next)) {
@@ -48,16 +58,19 @@ export function createSessionOwnership(deps: StreamSessionOrchestratorDeps) {
 		state = next;
 		deps.setLifecycleState?.(state);
 		published = true;
+		publishUnconfirmed();
 		return true;
 	};
 	const protect = () => {
 		protectionRequired = true;
-		if (protectedForOta) return;
-		try {
-			protectedForOta = deps.markStreamingForOta?.() !== false;
-		} catch {
-			protectedForOta = false;
+		if (!protectedForOta) {
+			try {
+				protectedForOta = deps.markStreamingForOta?.() !== false;
+			} catch {
+				protectedForOta = false;
+			}
 		}
+		publishUnconfirmed();
 	};
 	const commit = (
 		owner: SessionOwner,
@@ -92,8 +105,10 @@ export function createSessionOwnership(deps: StreamSessionOrchestratorDeps) {
 				else protectedForOta = false;
 				break;
 		}
+		publishUnconfirmed();
 		return true;
 	};
+	publishUnconfirmed();
 	return {
 		get state() {
 			return state;
@@ -101,14 +116,7 @@ export function createSessionOwnership(deps: StreamSessionOrchestratorDeps) {
 		get generation() {
 			return generation;
 		},
-		streamLiveness: (): SessionLiveness =>
-			unprotectedBaseline() && state === "idle"
-				? "idle"
-				: confirmedLiveness === "streaming" &&
-						protectedForOta &&
-						state === "streaming"
-					? "streaming"
-					: "unknown",
+		streamLiveness,
 		get launchPending() {
 			return launches > 0;
 		},
@@ -126,8 +134,10 @@ export function createSessionOwnership(deps: StreamSessionOrchestratorDeps) {
 		},
 		trackLaunch: (launch: Promise<void>): Promise<void> => {
 			launches++;
+			publishUnconfirmed();
 			return launch.finally(() => {
 				launches--;
+				publishUnconfirmed();
 			});
 		},
 	};

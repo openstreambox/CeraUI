@@ -40,7 +40,6 @@ import {
 	installBootSignalGuards,
 } from "./helpers/boot-signals.ts";
 import { checkExecPath } from "./helpers/exec.ts";
-import killall from "./helpers/killall.ts";
 import { logger } from "./helpers/logger.ts";
 import { tightenPrivateFiles } from "./helpers/private-startup.ts";
 // allow: SIZE_OK — Sequential boot composition root; ordering and signal wiring are pinned by boot contract tests.
@@ -427,9 +426,9 @@ if (!shouldUseMocks()) {
 	// second or two from now), and that must not delay the rest of boot.
 	void runInflightConfigChangeReconciliation();
 	// The backend-restart half of restoration. `reconcileStreamSession()` above
-	// has already adopted an engine session that outlived this process, so the
-	// run sees `streaming` and correctly declines — a backend-only restart can
-	// never produce a second session.
+	// has already judged an engine session that outlived this process: it stays
+	// unconfirmed without this process's sender, so the run waits and gives up —
+	// a backend-only restart can never produce a second session.
 	void runStreamRestoration();
 } else {
 	noteStreamReconciliationCompleted(); // mock mode has no engine to adopt
@@ -493,9 +492,9 @@ await guardNonCritical("log-retention", initLogRetention);
 await guardNonCritical("encoder-load", initEncoderLoad);
 await guardNonCritical("fan", initFan);
 await guardNonCritical("rtmp-ingest", initRTMPIngestStats);
-// make sure we didn't inherit orphan processes (cerastream is systemd-owned and
-// never spawned by CeraUI, so only srtla_send needs the orphan sweep)
-await killall(["srtla_send"]);
+// Unowned senders may still carry a stream. Never signal them by name.
+// Session reconciliation refuses adoption and Start until ownership is proven
+// or explicit recovery has confirmed that no sender remains.
 await guardNonCritical("srt-ingest", initSRTIngest);
 // Raw passthrough event bridge: the typed cerastream binding strips
 // active_encode.passthrough, so a persistent raw subscription reads it for the

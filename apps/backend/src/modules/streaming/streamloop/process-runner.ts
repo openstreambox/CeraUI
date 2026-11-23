@@ -63,6 +63,14 @@ export function getStreamingProcesses(): Array<StreamingProcess> {
 	return streamingProcesses;
 }
 
+/**
+ * Every child this backend supervises: the stream session and SRT forwarding.
+ * The sender census subtracts these by process id, never by name.
+ */
+export function getOwnedProcessHandles(): ReadonlyArray<StreamingProcess> {
+	return [...streamingProcesses, ...forwardProcesses];
+}
+
 export function spawnStreamingLoop(
 	launch: string | { readonly command: string; readonly role: "srtla_send" },
 	args: Array<string>,

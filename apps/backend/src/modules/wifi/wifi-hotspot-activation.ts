@@ -1057,7 +1057,11 @@ export async function startHotspotLocked(
 	  was asked for. An adapter with no stated preference resolves to concurrency,
 	  which is the behaviour every capable radio had before the mode was selectable.
 	*/
-	if (!useConcurrentAp && wifiInterface.conn && getIsStreaming()) {
+	if (
+		!useConcurrentAp &&
+		wifiInterface.conn &&
+		(getIsStreaming() || isStreamSessionUnconfirmed())
+	) {
 		logger.warn(
 			`wifi hotspot start: streaming keeps the station link on ${ifname}`,
 		);
