@@ -67,6 +67,12 @@ import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
 import type { LinkCarryingState } from "../streaming/link-progress.ts";
 import { linkCarryingState } from "../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
+import {
+	forgetDetachedRecoveries,
+	noteBackgroundLeaseRefused,
+	noteBackgroundRecoveryClear,
+	noteDeadPathHeld,
+} from "./background-recovery-log.ts";
 import { automaticActivationReady } from "./cellular-preparation.ts";
 import {
 	readModemNmDeviceProp,
@@ -361,6 +367,10 @@ export async function runDeadBearerRecovery(
 	skip: readonly number[] = [],
 ): Promise<readonly ModemId[]> {
 	const changed: ModemId[] = [];
+	forgetDetachedRecoveries(
+		"data_session_reconnect",
+		deps.ids().flatMap((id) => deps.stableKey(id) ?? []),
+	);
 	for (const id of deps.ids()) {
 		if (skip.includes(id)) continue;
 		const key = deps.stableKey(id);
@@ -372,9 +382,14 @@ export async function runDeadBearerRecovery(
 			const decision = decideDeadBearer(first.input);
 			if (decision.action !== "reconnect") {
 				memories.set(key, decision.memory);
+				// A dead path left alone says why, once. A path that is up again, or
+				// only waits out its hold, is no longer held back.
+				if (decision.action === "none" && outageRecord(first.input.record))
+					noteDeadPathHeld(key, decision.reason);
+				else noteBackgroundRecoveryClear("data_session_reconnect", key);
 				continue;
 			}
-			await deps.mutate(key, async () => {
+			const outcome = await deps.mutate(key, async () => {
 				// Memory changes only here, so a refused lease leaves it as it was.
 				const fresh = await readInput(id, key, memories.get(key) ?? before);
 				if (!fresh || fresh.uuid !== first.uuid) return;
@@ -409,6 +424,14 @@ export async function runDeadBearerRecovery(
 					changed.push(id);
 				}
 			});
+			if (outcome.ok)
+				noteBackgroundRecoveryClear("data_session_reconnect", key);
+			else
+				noteBackgroundLeaseRefused(
+					"data_session_reconnect",
+					key,
+					outcome.refusal,
+				);
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
 			logger.warn("dead-bearer check did not complete", {

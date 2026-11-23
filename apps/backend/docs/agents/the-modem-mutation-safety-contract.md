@@ -380,3 +380,19 @@ transport).
 
 **Honest status:** none of this has been exercised against a real modem. Every
 fixture models the contract; the board drill is a separate, still-owed step.
+
+**Held-back automatic recoveries are logged, once per change**
+(`modules/modems/background-recovery-log.ts`). The data-session reconnect
+(dead-bearer recovery) and the ready redial take the background lease; the first
+ready activation takes the ordinary mutation lease. When a lease refuses, or the
+reconnect leaves a dead path alone, the poll logs
+`modem recovery held back: lease refused` (refusal code, lifecycle holder,
+recovery barrier) or `modem recovery held back: dead path left alone` (the
+decision as a fixed `deadPath` code), once per distinct cause per modem and
+recovery kind; a new holder or barrier state with the same code is a new cause.
+`modem recovery no longer held back` follows once when the recovery gets its
+lease, the path is up again or only waits out its hold, or the redial finds the
+profile connected again. A modem that leaves the roster is forgotten silently.
+Messages are fixed text and every field comes from a closed set
+(`background-recovery-codes.ts`), which the support filter allows; no message
+names the bearer, which the logger's credential rule would redact.
