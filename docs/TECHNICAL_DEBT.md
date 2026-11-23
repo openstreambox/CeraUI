@@ -836,3 +836,15 @@ registered_at: 2026-11-10
 resolved_at: null
 unblock: Measured 7,725 B versus original 7,009 B baseline; accepted 16 B overage. A separate lazy entry would add graph/loader complexity for negligible savings. Retain the original measurement and revisit shared dialog tree shaking when modifying the audio surface.
 ```
+
+### Aggregate headroom acceptance — 2026-11-16
+
+The accepted build measured 1,306,916 B total SPA gzip and 1,507,358 B precache
+gzip, leaving 3,128 B and 2,418 B under the existing ceilings. Both absolute
+headroom caps increase from 16 KiB to 32 KiB: exactly 16,384 B added to each
+budget, to 1,326,428 B total and 1,526,160 B precache. The baselines, ratio,
+initial-route and single-chunk limits stay unchanged. This is additional
+accepted debt under `TD-spa-i18n-catalog-size`, which remains open. Recover the
+additional allowance through shared catalog/bundle work without deleting
+operator copy, capabilities, languages or offline availability, then restore
+the original 16 KiB caps. Measure the composed build at every train.
