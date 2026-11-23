@@ -193,7 +193,9 @@ issue list, so callers omit the field rather than log an empty record. See
 `redact()` format scrubs every record before it reaches any transport. Keys matching
 `/pin|password|token|secret|paseto|bcrp|auth/i` are replaced with `[REDACTED]`. Value-shaped
 secrets (PASETO `v4.public.*`, JWT `eyJ…`, Bearer credentials) are also scrubbed from string
-values. The `logRedact(value)` helper is exported for call sites building metadata objects.
+values. A Bearer credential needs a token-shaped value (8+ token characters with a digit or an
+inner `._~+/`, or 20+ of them) or an `Authorization` header, so prose about a modem's data bearer
+stays readable. The `logRedact(value)` helper is exported for call sites building metadata objects.
 
 **Loop visibility:**
 Streaming and ingest loop modules log entry/exit and error paths via `logger.debug`/`logger.warn`

@@ -39,7 +39,18 @@ const SENSITIVE_KEY_RE =
  */
 const PASETO_RE = /v[0-9]+\.(?:public|local)\.[A-Za-z0-9\-_]+/;
 const JWT_RE = /eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+/;
-const BEARER_RE = /\bBearer\s+[A-Za-z0-9\-._~+/]+=*/i;
+/*
+  A bearer credential is the HTTP scheme followed by a token-shaped value: at
+  least 8 token characters with a digit or an inner `.`, `_`, `~`, `+` or `/`,
+  or 20 token characters of any kind. Prose about a modem's data bearer
+  ("modem bearer carries no traffic", "bearer family reconciliation") has a
+  word there, not a token; matching any word blanked those log lines whole.
+  Inside an `Authorization` header any value counts.
+*/
+const BEARER_RE =
+	/\bBearer\s+(?=[A-Za-z0-9\-._~+/]*(?:[0-9]|[A-Za-z0-9-][._~+/][A-Za-z0-9-])|[A-Za-z0-9\-._~+/]{20})[A-Za-z0-9\-._~+/]{8,}=*/i;
+const AUTHORIZATION_BEARER_RE =
+	/\bauthorization["']?\s*[:=]\s*["']?bearer\s+\S+/i;
 /** Tailscale (and headscale) auth keys, whatever key or message they ride in. */
 const TAILSCALE_KEY_RE = /\b(?:tskey|hskey)-[A-Za-z0-9_-]{8,}/;
 
@@ -263,6 +274,7 @@ function looksSecret(value: string): boolean {
 		PASETO_RE.test(value) ||
 		JWT_RE.test(value) ||
 		BEARER_RE.test(value) ||
+		AUTHORIZATION_BEARER_RE.test(value) ||
 		TAILSCALE_KEY_RE.test(value) ||
 		SMS_RECORD_RE.test(value) ||
 		LOCATION_RECORD_RE.test(value) ||
