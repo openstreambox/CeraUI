@@ -239,7 +239,7 @@ describe("StreamSetupChain — three rows in signal order", () => {
 	});
 });
 
-describe("StreamSetupChain — unconfirmed stream state", () => {
+describe("StreamSetupChain: unconfirmed stream state", () => {
 	it("pauses Start and points to the band's Stop instead of 'Ready to go live'", () => {
 		const ready = renderChain({
 			config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
