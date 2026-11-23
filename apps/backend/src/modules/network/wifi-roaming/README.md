@@ -58,6 +58,10 @@ reservation) belongs to the identity:
   hold is released, a handover it took part in ends, and it is a fresh radio of
   its configured kind once it is verified again.
 - Without the port (tests), a radio's identity is its configured name.
+- A join confirms the identity again under the adapter lock right before
+  activation (no clone on a replaced radio) and right after (a radio replaced
+  while its join activated has the clone removed at once). Both end as
+  `radio-replaced`, not as a failure of the BSSID.
 
 ## What runs today
 

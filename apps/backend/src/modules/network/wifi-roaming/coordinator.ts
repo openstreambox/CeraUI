@@ -124,6 +124,9 @@ export type JoinResult = Readonly<{ activation: string }>;
 /** `join` declined to activate because the last check before it said no. */
 export const JOIN_REFUSED = "refused";
 
+/** The radio was replaced while its join activated; the clone was removed. */
+const RADIO_REPLACED = "radio-replaced";
+
 /** `ok: false` when another CeraUI operation holds the radio's adapter lock. */
 export type RadioLockResult<T> =
 	| Readonly<{ ok: true; value: T }>
@@ -185,10 +188,12 @@ export type CoordinatorPorts = Readonly<{
 	/**
 	 * Run `fn` under CeraUI's per-adapter Wi-Fi lock for this radio, the one
 	 * hotspot start and stop hold. Never waits: a busy radio is `ok: false`.
+	 * The radio's identity is confirmed at lock entry; `confirm` samples it
+	 * again under the held lock (same permanent MAC and lifetime).
 	 */
 	withRadioLock<T>(
 		ifname: string,
-		fn: () => Promise<T>,
+		fn: (confirm: () => Promise<boolean>) => Promise<T>,
 	): Promise<RadioLockResult<T>>;
 }>;
 
@@ -1565,11 +1570,34 @@ export class RoamingCoordinator {
 		goal: SearchGoal,
 	): Promise<void> {
 		const bssid = normalizeBssid(pick.bssid);
-		const joined = await this.#act(radio, "join", () =>
-			this.#ports.join(radio.ifname, pick.ssid, bssid, () =>
-				this.#mayActNow(radio),
-			),
-		);
+		const joined = await this.#act(radio, "join", async (confirm) => {
+			// The radio must still be the admitted one right before activation and
+			// right after it: a replug in between gets no clone on another radio.
+			let replaced = false;
+			const result = await this.#ports.join(
+				radio.ifname,
+				pick.ssid,
+				bssid,
+				async () => {
+					if (!(await confirm())) {
+						replaced = true;
+						return false;
+					}
+					return this.#mayActNow(radio);
+				},
+			);
+			if (result === JOIN_REFUSED && replaced) return RADIO_REPLACED;
+			if (result && result !== JOIN_REFUSED && !(await confirm())) {
+				await this.#ports.abandon(radio.ifname, result.activation);
+				return RADIO_REPLACED;
+			}
+			return result;
+		});
+		if (joined.stop === null && joined.value === RADIO_REPLACED) {
+			this.#settle(radio);
+			this.#lastOutcome = RADIO_REPLACED;
+			return;
+		}
 		if (joined.stop === null && joined.value === JOIN_REFUSED) {
 			this.#settle(radio);
 			this.#lastOutcome = "radio-in-ap-mode";
@@ -1586,7 +1614,8 @@ export class RoamingCoordinator {
 			await this.#giveUp(radio, "join-failed");
 			return;
 		}
-		if (joined.value === JOIN_REFUSED) return;
+		if (joined.value === JOIN_REFUSED || joined.value === RADIO_REPLACED)
+			return;
 		radio.owned = {
 			ssid: pick.ssid,
 			bssid,
@@ -1688,7 +1717,7 @@ export class RoamingCoordinator {
 	async #act<T>(
 		r: RadioRecord,
 		kind: "scan" | "join",
-		action: () => Promise<T>,
+		action: (confirm: () => Promise<boolean>) => Promise<T>,
 	): Promise<{ value: T | undefined; stop: ActStop | null }> {
 		if (this.#departure) throw new Error("A departure is already in flight");
 		if (r.role !== "searcher" || !r.heldOut)
@@ -1702,10 +1731,13 @@ export class RoamingCoordinator {
 		};
 		this.#departure = departure;
 		try {
-			const locked = await this.#ports.withRadioLock(r.ifname, async () => {
-				if (!(await this.#mayActNow(r))) return { refused: true as const };
-				return { refused: false as const, value: await action() };
-			});
+			const locked = await this.#ports.withRadioLock(
+				r.ifname,
+				async (confirm) => {
+					if (!(await this.#mayActNow(r))) return { refused: true as const };
+					return { refused: false as const, value: await action(confirm) };
+				},
+			);
 			if (!locked.ok) return { value: undefined, stop: "radio-busy" };
 			if (locked.value.refused)
 				return { value: undefined, stop: "radio-in-ap-mode" };

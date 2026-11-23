@@ -216,9 +216,12 @@ class World {
 			otherUplinks: () => 0,
 			holdOutOfBond: (ifname) => this.bond.push(`hold:${ifname}`),
 			releaseBondHold: (ifname) => this.bond.push(`release:${ifname}`),
-			withRadioLock: async <T>(_ifname: string, fn: () => Promise<T>) => ({
+			withRadioLock: async <T>(
+				_ifname: string,
+				fn: (confirm: () => Promise<boolean>) => Promise<T>,
+			) => ({
 				ok: true as const,
-				value: await fn(),
+				value: await fn(async () => true),
 			}),
 			senderLinks: () => this.snapshot(),
 			encoderRate: () => this.encoderBps,

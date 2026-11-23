@@ -13,12 +13,9 @@
  * lifetime) before the action runs. A Limited, Unverified, unpublished or
  * replaced radio is refused, so the coordinator does not act on it.
  *
- * Identity is confirmed once, at lock entry, not again at activation or after
- * the action. A replug during a join is still bounded: the clone keeps the
- * source profile's MAC binding, so NetworkManager does not bring it up on
- * another radio, and verification next round needs the clone's activation on
- * this interface. Confirming in `mayActivate` and after the action, as the
- * two-radio effect adapter does, is a slice-3 item.
+ * Identity is confirmed at lock entry, and `fn` gets `confirm` to sample it
+ * again under the held lock: the coordinator does so right before a join
+ * activates and right after, and removes the clone if the radio changed.
  */
 import {
 	admitWifiAdapter,
@@ -40,14 +37,14 @@ export function admitRadio(ifname: string): WifiAdapterAdmission | undefined {
 
 export async function withRadioLock<T>(
 	ifname: string,
-	fn: () => Promise<T>,
+	fn: (confirm: () => Promise<boolean>) => Promise<T>,
 ): Promise<RadioLockResult<T>> {
 	const admission = admitRadio(ifname);
 	if (!admission) return { ok: false };
+	const confirm = () => confirmWifiAdapterLifetime(admission);
 	const result = await withWifiAdapterLock(admission.owner, async () => {
-		if (!(await confirmWifiAdapterLifetime(admission)))
-			return { confirmed: false as const };
-		return { confirmed: true as const, value: await fn() };
+		if (!(await confirm())) return { confirmed: false as const };
+		return { confirmed: true as const, value: await fn(confirm) };
 	});
 	if (!result.success || !result.result.confirmed) return { ok: false };
 	return { ok: true, value: result.result.value };

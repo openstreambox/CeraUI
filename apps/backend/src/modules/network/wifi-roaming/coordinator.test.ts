@@ -71,6 +71,8 @@ class World {
 		],
 	]);
 	stations = new Map<string, Station>();
+	/** Radios whose identity sample under the lock no longer matches (a replug). */
+	replaced = new Set<string>();
 	saved = new Map<string, Set<string>>();
 	health = new Map<string, HolderHealth>();
 	otherLinks = 0;
@@ -81,6 +83,7 @@ class World {
 	duringScan: (() => void) | null = null;
 	/** Applied while a join runs. */
 	duringJoin: (() => void) | null = null;
+	afterActivate: (() => void) | null = null;
 	/** Radios whose scans fail (unplugged, rfkill, NM unavailable). */
 	scanFails = new Set<string>();
 	/** BSSIDs whose joins fail even with a profile (wrong PSK, full AP). */
@@ -238,6 +241,7 @@ class World {
 				s.activation = activation;
 				s.locked = true;
 				s.signalDbm = -60;
+				this.afterActivate?.();
 				return { activation };
 			},
 			abandon: async (ifname, activation) => {
@@ -273,10 +277,16 @@ class World {
 				if (this.modeFails || !this.stations.has(ifname)) return undefined;
 				return { phy: this.phyOf(ifname), apOnPhy: this.apOnPhyOf(ifname) };
 			},
-			withRadioLock: async <T>(ifname: string, fn: () => Promise<T>) => {
+			withRadioLock: async <T>(
+				ifname: string,
+				fn: (confirm: () => Promise<boolean>) => Promise<T>,
+			) => {
 				if (this.lockBusy.has(ifname)) return { ok: false as const };
 				this.insideLock?.();
-				return { ok: true as const, value: await fn() };
+				return {
+					ok: true as const,
+					value: await fn(async () => !this.replaced.has(ifname)),
+				};
 			},
 			holdOutOfBond: (ifname) => this.bond.push(`hold:${ifname}`),
 			releaseBondHold: (ifname) => this.bond.push(`release:${ifname}`),
@@ -1567,5 +1577,44 @@ describe("radios are known by identity, not by interface name", () => {
 		expect(w.bond).toEqual(["hold:wlan2", "release:wlan2"]);
 		expect(scanProtectedRadios().has("wlan2")).toBe(false);
 		c.stop();
+	});
+});
+
+describe("identity confirmed around a join's activation", () => {
+	test("a radio replaced before activation gets no clone", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		w.beforeActivate = () => w.replaced.add("wlan2");
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		expect(c.status().lastOutcome).toBe("radio-replaced");
+		expect(w.stations.get("wlan2")).toMatchObject({
+			bssid: AP1,
+			locked: false,
+		});
+		expect(radio(c, "wlan2").joined).toBeNull();
+		expect(w.bond).toEqual(["hold:wlan2", "release:wlan2"]);
+	});
+
+	test("a radio replaced while its join activated has the clone removed at once", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		w.afterActivate = () => w.replaced.add("wlan2");
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		expect(c.status().lastOutcome).toBe("radio-replaced");
+		expect(w.calls).toEqual(["scan:wlan2", "join:wlan2", "abandon:wlan2"]);
+		expect(w.stations.get("wlan2")).toMatchObject({
+			bssid: null,
+			locked: false,
+		});
+		expect(radio(c, "wlan2").joined).toBeNull();
+		expect(w.bond).toEqual(["hold:wlan2", "release:wlan2"]);
 	});
 });

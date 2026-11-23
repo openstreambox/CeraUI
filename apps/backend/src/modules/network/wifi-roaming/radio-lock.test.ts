@@ -123,4 +123,17 @@ describe("coordinator actions under the adapter lock", () => {
 		).toEqual({ ok: false });
 		expect(ran).toBe(false);
 	});
+
+	test("confirm samples the identity again under the held lock", async () => {
+		const seen: boolean[] = [];
+		const r = await withRadioLock("wlan2", async (confirm) => {
+			seen.push(await confirm());
+			// A replug while the action runs: sysfs shows a new lifetime.
+			seed.sysfs([radio({ ifindex: 33 })]);
+			seen.push(await confirm());
+			return "done";
+		});
+		expect(r).toEqual({ ok: true, value: "done" });
+		expect(seen).toEqual([true, false]);
+	});
 });
