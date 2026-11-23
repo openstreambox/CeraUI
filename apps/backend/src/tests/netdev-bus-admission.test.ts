@@ -387,6 +387,33 @@ test("an earlier unreadable bus does not hold Ethernet on its first indexed retu
 	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
 });
 
+test("an unrelated USB scan cannot publish an indexed predecessor", async () => {
+	const output = firstSightIfconfig(MODEM, IP);
+	const f = fixture(output, []);
+	f.set(MODEM, ok("usb"));
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toContain(MODEM);
+
+	f.setIndex(MODEM, 29);
+	f.setOutput(`${output}\n\n${firstSightIfconfig("eth9", "192.0.2.2")}`);
+	const seen: string[][] = [];
+	const off = scanModule.onUsbNetScanCommitted(() => {
+		seen.push(genSrtlaBondEntries().map((entry) => entry.iface));
+	});
+	try {
+		await updateNetif();
+		expect(seen).toHaveLength(1);
+		expect(seen[0]).not.toContain(MODEM);
+		expect(genSrtlaBondEntries().map((entry) => entry.iface)).not.toContain(
+			MODEM,
+		);
+		await f.settle();
+		expect(genSrtlaBondEntries().map((entry) => entry.iface)).toContain(MODEM);
+	} finally {
+		off();
+	}
+});
+
 test("a late USB descriptor is remembered even after a scan drops the disconnected name", async () => {
 	const f = fixture(firstSightIfconfig(MODEM, IP), [MODEM]);
 	f.setIpUnavailable();

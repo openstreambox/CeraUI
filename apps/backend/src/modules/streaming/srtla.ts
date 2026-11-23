@@ -114,7 +114,12 @@ function collectBondEntries(
 			let owner = name;
 			if (isClatTunName(name)) {
 				const translation = clatTranslationFor(name, networkInterface.ip);
-				if (!translation) continue;
+				if (
+					!translation ||
+					!networkInterfaces[translation.parent] ||
+					!isBondLinkMappable(name, networkInterface.ip)
+				)
+					continue;
 				owner = translation.parent;
 			}
 			const parent = networkInterfaces[owner];

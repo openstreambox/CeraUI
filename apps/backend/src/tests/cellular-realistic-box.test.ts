@@ -443,6 +443,25 @@ test("the local CLAT sender checks the held parent even when its link identity w
 	}
 });
 
+test("a local translator requires a current mapped modem parent", async () => {
+	box = await realisticBox();
+	const modem = { ...MODEMS[0], ip: "" };
+	const tun = { ifname: "clat3", ip: "10.254.0.3", kind: "ethernet" as const };
+	await box.scan([ETHERNET, modem, tun]);
+	setClatTranslationsForTest(
+		new Map([
+			[tun.ifname, { parent: modem.ifname, tun: tun.ifname, ipv4: tun.ip }],
+		]),
+	);
+	try {
+		expect(genSrtlaBondEntriesForLocalIpAddress("10.254.0.4")).toHaveLength(1);
+		await box.scan([ETHERNET, tun]);
+		expect(genSrtlaBondEntriesForLocalIpAddress("10.254.0.4")).toEqual([]);
+	} finally {
+		setClatTranslationsForTest(new Map());
+	}
+});
+
 test("a known ifindex survives disconnection and distinguishes return from replacement", async () => {
 	box = await realisticBox();
 	const links = [ETHERNET, MODEMS[1], MODEMS[2]];

@@ -389,6 +389,7 @@ export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 		const translation = clatTranslationFor(name, int.ip);
 		if (
 			!translation ||
+			netif[translation.parent] === undefined ||
 			isBondOptedOut(translation.parent) ||
 			!isBondLinkMappable(name, int.ip)
 		)
@@ -1021,6 +1022,34 @@ async function resolveIpAddrOverrides(
 	}
 }
 
+/** Retire an indexed predecessor before any scan can publish its successor. */
+function withdrawReplacedNetifs(
+	ifnames: readonly string[],
+	ifindices: ReadonlyMap<string, number>,
+): Set<string> {
+	const withdrawn = new Set<string>();
+	for (const name of ifnames) {
+		const previous = netdevIdentity.get(name);
+		const index = ifindices.get(name);
+		if (
+			!netif[name] ||
+			previous?.index === undefined ||
+			index === undefined ||
+			previous.index === index
+		)
+			continue;
+		delete netif[name];
+		bumpPresence(name, "replaced");
+		netdevIdentity.set(name, { ...previous, index, present: false });
+		withdrawn.add(name);
+	}
+	if (withdrawn.size > 0) {
+		triggerNetworkInterfacesChange();
+		notifyTopologyChange();
+	}
+	return withdrawn;
+}
+
 async function refreshNetifFromOs(): Promise<void> {
 	const generation = ++netifRefreshGeneration;
 	const ifindices = new Map<string, number>();
@@ -1037,6 +1066,7 @@ async function refreshNetifFromOs(): Promise<void> {
 				(name) =>
 					name !== "" && name !== "lo" && !/^(?:docker|l4tbr)/.test(name),
 			);
+		const withdrawn = withdrawReplacedNetifs(ifnames, ifindices);
 		await Promise.all(
 			ifnames
 				.filter((name) => !ifindices.has(name))
@@ -1046,6 +1076,11 @@ async function refreshNetifFromOs(): Promise<void> {
 				}),
 		);
 		if (generation !== netifRefreshGeneration) return;
+		for (const name of withdrawReplacedNetifs(ifnames, ifindices)) {
+			withdrawn.add(name);
+		}
+		// Establish a new snapshot before letting a USB scan settle a successor.
+		const scanIfnames = ifnames.filter((name) => !withdrawn.has(name));
 		const buses = new Map<string, NetdevBusEvidence>();
 		const reads = new Map<string, { seen: number; promise: Promise<void> }>();
 		const issue = (name: string): void => {
@@ -1083,7 +1118,7 @@ async function refreshNetifFromOs(): Promise<void> {
 			)
 				issue(name);
 		}
-		if (ifnames.some((name) => !usbNetScanCovers(name))) {
+		if (scanIfnames.some((name) => !usbNetScanCovers(name))) {
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let expired = false;
 			const deadline = new Promise<void>((resolve) => {
@@ -1096,9 +1131,9 @@ async function refreshNetifFromOs(): Promise<void> {
 				while (
 					!expired &&
 					generation === netifRefreshGeneration &&
-					ifnames.some((name) => !usbNetScanCovers(name))
+					scanIfnames.some((name) => !usbNetScanCovers(name))
 				) {
-					await Promise.race([refreshUsbNetMarkers(ifnames), deadline]);
+					await Promise.race([refreshUsbNetMarkers(scanIfnames), deadline]);
 				}
 			} finally {
 				clearTimeout(timer);
