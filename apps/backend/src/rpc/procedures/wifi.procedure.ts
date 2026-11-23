@@ -1,5 +1,3 @@
-import { wifiHotspotDelete } from "../../modules/wifi/wifi-hotspot-profile.ts";
-import { resolveHotspotRadioDevice } from "../../modules/wifi/wifi-interfaces.ts";
 /**
  * WiFi Procedures
  * Wraps existing WiFi logic from modules/wifi/
@@ -309,18 +307,6 @@ export const wifiForgetProcedure = authedProcedure
 	.output(successResponseSchema)
 	.handler(async ({ input, context }): Promise<MutationResult> => {
 		if (mockWifiBusy()) return { success: false, error: "DEVICE_BUSY" };
-		for (const iface of Object.values(getWifiInterfacesByMacAddress())) {
-			if (iface && "hotspot" in iface && iface.hotspot.conn === input.uuid) {
-				const result = await wifiHotspotDelete(iface.id);
-				return result.success
-					? { success: true }
-					: {
-							success: false,
-							error: result.error === "DEVICE_BUSY" ? "DEVICE_BUSY" : "generic",
-						};
-			}
-		}
-
 		const ws = context.ws;
 		const lockKey = wifiAdapterLockKeyForConnectionUuid(input.uuid);
 		const busy = await runGuarded(lockKey, () => {
@@ -380,7 +366,7 @@ export const hotspotStartProcedure = authedProcedure
 			}
 			publishHotspotOutcome(
 				"start",
-				resolveHotspotRadioDevice(input),
+				Number(input.device),
 				{ success: true },
 				input.attempt,
 			);
@@ -414,10 +400,7 @@ export const hotspotPrepareProcedure = authedProcedure
 			const { name, password } = getMockHotspotConfig(device);
 			return { success: true, name, password };
 		}
-		return wifiHotspotPrepare({
-			device: resolveHotspotRadioDevice(input),
-			...chosen,
-		});
+		return wifiHotspotPrepare({ device: Number(input.device), ...chosen });
 	});
 
 /**
@@ -428,19 +411,11 @@ export const hotspotStopProcedure = authedProcedure
 	.output(hotspotToggleOutputSchema)
 	.handler(async ({ input }): Promise<HotspotToggleOutput> => {
 		if (mockWifiBusy()) return refuseHotspot("stop", input.device);
-		if (
-			!shouldUseMocks() &&
-			!Number.isFinite(resolveHotspotRadioDevice(input))
-		) {
-			return { success: false, error: "no-device" };
-		}
 		// For a published row Stop owns the handoff wait and lock. Only probe
 		// here if the id map cannot resolve the row but the registry still can.
 		if (
-			!getMacAddressForWifiInterface(resolveHotspotRadioDevice(input)) &&
-			(await adapterBusy(
-				wifiAdapterLockKeyForDeviceId(resolveHotspotRadioDevice(input)),
-			))
+			!getMacAddressForWifiInterface(Number(input.device)) &&
+			(await adapterBusy(wifiAdapterLockKeyForDeviceId(input.device)))
 		) {
 			return refuseHotspot("stop", input.device);
 		}
@@ -449,15 +424,11 @@ export const hotspotStopProcedure = authedProcedure
 				const device = resolveMockWifiDevice(input.device);
 				if (device) getMockState().wifiModes[device] = "station";
 			}
-			publishHotspotOutcome("stop", resolveHotspotRadioDevice(input), {
-				success: true,
-			});
+			publishHotspotOutcome("stop", Number(input.device), { success: true });
 			return { success: true };
 		}
 
-		const result = await wifiHotspotStop({
-			device: resolveHotspotRadioDevice(input),
-		});
+		const result = await wifiHotspotStop({ device: Number(input.device) });
 		if (!result.success) return { success: false, error: result.error };
 		return { success: true };
 	});
@@ -612,10 +583,3 @@ export const setWifiCountryProcedure = authedProcedure
 
 		return setWifiCountry(input.country);
 	});
-
-export const hotspotDeleteProcedure = authedProcedure
-	.input(hotspotToggleInputSchema)
-	.output(successResponseSchema)
-	.handler(async ({ input }) =>
-		wifiHotspotDelete(resolveHotspotRadioDevice(input)),
-	);
