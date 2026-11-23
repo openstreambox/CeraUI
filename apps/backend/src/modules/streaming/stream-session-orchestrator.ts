@@ -272,6 +272,15 @@ export type StreamSessionOrchestratorDeps = {
 	 * that stays down does not hold the line, and every update, until reboot.
 	 */
 	readonly engineStopped?: () => Promise<boolean>;
+	/**
+	 * True only when the session this backend launched ran in an engine process
+	 * that is no longer the engine unit's running one (systemd restarted it).
+	 * That session cannot exist any more, so engine silence is evidence of idle
+	 * exactly as for an inherited carrying line: no status and an empty session
+	 * list on {@link SILENT_WITNESS_QUERIES} separate queries. A stopped engine
+	 * does not count here; the replacement must be up and silent.
+	 */
+	readonly sessionEngineReplaced?: () => Promise<boolean>;
 };
 
 /**
@@ -1038,15 +1047,17 @@ export function createStreamSessionOrchestrator(
 						silent = true;
 					},
 				).catch(() => "unknown" as const);
-				if (
-					runtimeState !== "unknown" ||
-					superseded() ||
-					deps.awaitsIdleWitness?.() !== true
-				)
-					break;
+				if (runtimeState !== "unknown" || superseded()) break;
+				const inherited = deps.awaitsIdleWitness?.() === true;
+				const replaced =
+					!inherited &&
+					(await deps.sessionEngineReplaced?.().catch(() => false)) === true &&
+					!superseded();
+				if (!inherited && !replaced) break;
 				const noSession =
 					silent ||
-					((await deps.engineStopped?.().catch(() => false)) === true &&
+					(inherited &&
+						(await deps.engineStopped?.().catch(() => false)) === true &&
 						!superseded());
 				if (!noSession) break;
 				if (++silentQueries < SILENT_WITNESS_QUERIES) continue;

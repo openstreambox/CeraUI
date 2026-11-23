@@ -95,10 +95,28 @@ the post-update backend.
 **`unknown` triggers NEITHER, with a declared sub-deadline.** The engine answers
 `unknown` both while it is down and while a probe is transitional, so the runner
 polls at `RESTORATION_POLL_MS` (1 s) for up to `RESTORATION_UNKNOWN_DEADLINE_MS`
-(10 s). Resolving to `idle` proceeds to eligibility, resolving to `streaming`
+(10 s), or `RESTORATION_ENGINE_RESTART_DEADLINE_MS` (30 s, the declared bound) for
+the `engine_restart` trigger: that run starts while the engine is still down
+(systemd waits 5 s, measured ready at 5.5 s) and an idle restarted engine is only
+known to be idle after two silent queries. Resolving to `idle` proceeds to
+eligibility, resolving to `streaming`
 adopts, and expiry writes a terminal `stream_recovery_failed{runtime_state_unknown}`
 that does NOT re-arm on a later restart. A busy LIFECYCLE (a config-change
 transaction settling, a stop finishing) waits the same way rather than racing it.
+
+**A REPLACED ENGINE IS EVIDENCE OF IDLE (`session-engine.ts`).** A restarted
+engine is idle and sends no status, so before this the engine-restart run could
+only see `unknown`. When this backend's OWN launch commits, it records the engine
+unit's systemd `InvocationID`; the record is dropped once the lifecycle is idle.
+A reconcile that gets `unknown` while the unit runs a DIFFERENT invocation knows
+that session is gone (it lived in the old process), and then treats engine
+silence exactly as for an inherited carrying line: no status and an empty session
+list on `SILENT_WITNESS_QUERIES` separate queries mean idle. It never stops
+anything: a status that says the engine streams wins, an unowned sender keeps the
+protection (`canReconcileIdle`), an engine with no process or the same
+invocation proves nothing, an adopted session has no record, and every failed read
+counts as "not replaced". Restoration then takes its ordinary gates (marker,
+same boot, one attempt, the operator's Stop intent, recovery barrier).
 
 **ONE-SHOT IS THE FEATURE.** Both outcomes write a terminal attempted-state onto
 the marker, so the answer to "what happens on the next backend restart" is always

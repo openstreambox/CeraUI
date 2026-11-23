@@ -63,6 +63,7 @@ import {
 	decideStreamRestoration,
 	defaultArmedStreamMarkerDeps,
 	RESTORATION_BOUND_MS,
+	RESTORATION_ENGINE_RESTART_DEADLINE_MS,
 	RESTORATION_POLL_MS,
 	RESTORATION_UNKNOWN_DEADLINE_MS,
 	type RecoveryFailureReason,
@@ -357,7 +358,20 @@ function defaultPublish(
 	);
 }
 
-function defaultDeps(): StreamRestorationDeps {
+/**
+ * How long a run may wait for a decisive engine answer. A run the engine's own
+ * restart triggered starts while that engine is still down, so it gets the
+ * declared restoration bound instead of the shorter window.
+ */
+export function restorationUnknownDeadlineMs(
+	trigger: RestorationTrigger,
+): number {
+	return trigger === "engine_restart"
+		? RESTORATION_ENGINE_RESTART_DEADLINE_MS
+		: RESTORATION_UNKNOWN_DEADLINE_MS;
+}
+
+function defaultDeps(trigger: RestorationTrigger): StreamRestorationDeps {
 	return {
 		marker: defaultArmedStreamMarkerDeps,
 		runtimeState: async () => {
@@ -374,7 +388,7 @@ function defaultDeps(): StreamRestorationDeps {
 		now: Date.now,
 		logger: defaultLogger,
 		pollIntervalMs: RESTORATION_POLL_MS,
-		unknownDeadlineMs: RESTORATION_UNKNOWN_DEADLINE_MS,
+		unknownDeadlineMs: restorationUnknownDeadlineMs(trigger),
 		awaitRecovery: awaitRecoveryBarrier,
 	};
 }
@@ -532,7 +546,7 @@ export function runStreamRestoration(
 	trigger: RestorationTrigger = "service_restart",
 ): Promise<RestorationRunOutcome> {
 	if (inflight !== undefined) return inflight;
-	const deps: StreamRestorationDeps = { ...defaultDeps(), ...overrides };
+	const deps: StreamRestorationDeps = { ...defaultDeps(trigger), ...overrides };
 
 	const run = runOnce(deps, trigger)
 		.catch((err: unknown): RestorationRunOutcome => {

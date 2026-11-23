@@ -1060,6 +1060,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["sender reload signal delivered"],
 	["sender reload"],
 	["sensors: HDMI raise scope unreadable — raising"],
+	["session engine bookkeeping failed"],
 	["session input switch failed"],
 	["set-profile: dropped malformed device.setProfile payload"],
 	["set-profile: reconnect failed after applying ", ": ", ""],
