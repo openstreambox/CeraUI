@@ -389,7 +389,6 @@ export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 		const translation = clatTranslationFor(name, int.ip);
 		if (
 			!translation ||
-			netif[translation.parent] === undefined ||
 			isBondOptedOut(translation.parent) ||
 			!isBondLinkMappable(name, int.ip)
 		)
