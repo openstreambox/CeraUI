@@ -68,6 +68,15 @@ export const LINK_CARRYING_SHOW_MS = 5_000;
 export const LINK_CARRYING_CLEAR_MS = 2_000;
 /** Sender snapshots arrive every second; a verdict older than this is void. */
 export const LINK_CARRYING_EVIDENCE_MS = 2_500;
+/**
+ * Quiet time ignores trickles: a held-out link still gets a duplicate probe
+ * now and then, and a single SRT packet (about 1.3 KB) moves the byte counter.
+ * Only a snapshot that moved at least this much, or reports at least this
+ * much per second, counts as stream payload. On ROCK1 (T1777) a healthy modem
+ * at 500 kbit/s moved a median 59 KB per 1 s snapshot; single-packet steps
+ * were 17 of 1,175, the same size black-holed links still showed.
+ */
+export const LINK_QUIET_RESET_BYTES = 4_000;
 
 export type LinkCarryingState = "carrying" | "not_carrying" | "unknown";
 
@@ -89,6 +98,8 @@ interface LinkTrack {
 	lastProgressMs: number | undefined;
 	progressSinceMs: number | undefined;
 	notCarrying: boolean;
+	/** Start of the current quiet span: the baseline or the last payload. */
+	quietSinceMs: number;
 }
 
 type ParentResolver = (iface: string) => string | undefined;
@@ -131,6 +142,7 @@ function freshTrack(iface: string, nowMs: number): LinkTrack {
 		lastProgressMs: undefined,
 		progressSinceMs: undefined,
 		notCarrying: false,
+		quietSinceMs: nowMs,
 	};
 }
 
@@ -142,10 +154,20 @@ function observeRow(
 ): void {
 	const bytes = counterOf(row);
 	const moved = linkMadeProgress(row, track.bytes);
+	const bps = row.bitrate_bps;
+	const payload =
+		(typeof bps === "number" &&
+			Number.isFinite(bps) &&
+			bps >= LINK_QUIET_RESET_BYTES * 8) ||
+		(bytes !== undefined &&
+			track.bytes !== undefined &&
+			bytes - track.bytes >= LINK_QUIET_RESET_BYTES);
 	if (
 		bytes === undefined ||
 		(track.bytes !== undefined && bytes < track.bytes)
 	) {
+		// A rebuilt or missing counter starts the quiet span over.
+		track.quietSinceMs = nowMs;
 		// No comparable evidence: forget the baseline, any verdict and the
 		// progress the old counter showed. A measured rate below can still
 		// make the link carrying again on its own.
@@ -163,6 +185,7 @@ function observeRow(
 		track.bytesSinceMs = nowMs;
 		track.unchangedSamples = 1;
 	}
+	if (payload) track.quietSinceMs = nowMs;
 	if (moved) {
 		track.lastProgressMs = nowMs;
 		track.progressSinceMs ??= nowMs;
@@ -262,12 +285,13 @@ export class LinkProgressTracker {
 	}
 
 	/**
-	 * How long no row of `iface` has moved stream data, on the tracker's clock:
-	 * since its latest progress, or since the start of the comparable evidence
-	 * when there was none. `undefined` without current evidence for every row.
-	 * Unlike `not_carrying`, which clears only after sustained progress, any
-	 * single burst resets it, so it is what "nothing went out" means for an
-	 * action that would cut the link.
+	 * How long no row of `iface` has moved stream payload, on the tracker's
+	 * clock: since its latest payload step (LINK_QUIET_RESET_BYTES), or since
+	 * the start of the comparable evidence when there was none. `undefined`
+	 * without current evidence for every row. Unlike `not_carrying`, which
+	 * clears only after sustained progress, any single burst of payload resets
+	 * it, while duplicate probes and keepalives do not, so it is what "nothing
+	 * went out" means for an action that would cut the link.
 	 */
 	quietForIface(iface: string, nowMs: number): number | undefined {
 		if (!this.current(nowMs)) return undefined;
@@ -275,7 +299,7 @@ export class LinkProgressTracker {
 		for (const track of this.tracks.values()) {
 			if (track.iface !== iface) continue;
 			if (track.bytes === undefined) return undefined;
-			const since = Math.max(track.bytesSinceMs, track.lastProgressMs ?? 0);
+			const since = track.quietSinceMs;
 			quietSince = Math.max(quietSince ?? since, since);
 		}
 		return quietSince === undefined ? undefined : nowMs - quietSince;

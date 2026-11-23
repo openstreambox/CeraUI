@@ -31,12 +31,21 @@ export const UPLINK_HEALTH_CONFIG = {
 	 */
 	streamingQuietMs: 10_000,
 	/**
-	 * Those checks are metered: each costs about 1 KB on the link. At most
-	 * `perHour` per link (one per 15 s on average), with up to `burst` in a row,
-	 * so at most about 0.25 MB per link per hour. Without a token the link keeps
-	 * its passive verdict.
+	 * Those checks, and the checks of a streamed link that is already down, are
+	 * metered: each costs about 1 KB on the link (a second one when the first
+	 * address fails). At most `perHour` per link (one per 15 s on average), with
+	 * up to `burst` in a row; a link with no payload for `reserveQuietMs` may
+	 * also draw on its own reserve, so a black hole that starts after a drained
+	 * bucket still gets its checks. Together at most about 0.6 MB per link per
+	 * hour. Without a token the round is held and the last verdict stands.
 	 */
-	streamingProbeBudget: { perHour: 240, burst: 24 },
+	streamingProbeBudget: {
+		perHour: 240,
+		burst: 24,
+		reservePerHour: 60,
+		reserveBurst: 6,
+		reserveQuietMs: 60_000,
+	},
 } as const;
 
 export type UplinkHealthOutcome =
@@ -72,6 +81,14 @@ export interface UplinkObservation {
 	readonly displayName?: string;
 	readonly outcome: UplinkHealthOutcome;
 	readonly now: number;
+	/** The outcome is a probe's own answer, not passive evidence. */
+	readonly probed?: boolean;
+}
+
+/** The last answer a real probe gave for an interface (not published). */
+export interface UplinkProbeEvidence {
+	readonly outcome: UplinkHealthOutcome;
+	readonly at: number;
 }
 
 const weightFor = (state: UplinkHealthState): number => {
@@ -112,7 +129,14 @@ export class UplinkHealthEngine {
 		}
 	>();
 
+	readonly #probes = new Map<string, UplinkProbeEvidence>();
+
 	observe(observation: UplinkObservation): UplinkHealthRecord {
+		if (observation.probed === true)
+			this.#probes.set(observation.iface, {
+				outcome: observation.outcome,
+				at: observation.now,
+			});
 		const previous = this.#records.get(observation.iface)?.record;
 		const current = previous ?? this.#initialRecord(observation);
 		const next = this.#reduce(current, observation);
@@ -125,6 +149,28 @@ export class UplinkHealthEngine {
 
 	get(iface: string): UplinkHealthRecord | undefined {
 		return this.#records.get(iface)?.record;
+	}
+
+	/** The last real probe answer for `iface`, if one was recorded. */
+	lastProbe(iface: string): UplinkProbeEvidence | undefined {
+		return this.#records.has(iface) ? this.#probes.get(iface) : undefined;
+	}
+
+	/**
+	 * A round that measured nothing for `iface` (no probe budget, no check
+	 * address) keeps its verdict and streak; only its freshness moves on.
+	 */
+	touch(iface: string, now: number): void {
+		const entry = this.#records.get(iface);
+		if (!entry) return;
+		entry.lastSeen = now;
+		entry.record = {
+			...entry.record,
+			staleAt: Math.max(
+				entry.record.staleAt,
+				now + UPLINK_HEALTH_CONFIG.telemetryExpiryMs,
+			),
+		};
 	}
 
 	restartRecovery(iface: string, now: number): void {
@@ -154,6 +200,7 @@ export class UplinkHealthEngine {
 					now - entry.lastSeen >= UPLINK_HEALTH_CONFIG.missingRecordTtlMs)
 			) {
 				this.#records.delete(iface);
+				this.#probes.delete(iface);
 				continue;
 			}
 			if (present) {
@@ -176,6 +223,7 @@ export class UplinkHealthEngine {
 			Math.max(0, missing.length - UPLINK_HEALTH_CONFIG.maxMissingRecords),
 		)) {
 			this.#records.delete(iface);
+			this.#probes.delete(iface);
 		}
 	}
 

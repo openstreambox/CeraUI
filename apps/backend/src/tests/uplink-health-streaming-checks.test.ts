@@ -6,6 +6,10 @@ import {
 } from "../modules/network/device-bound-probe.ts";
 import type { NetworkInterface } from "../modules/network/network-interfaces.ts";
 import {
+	CONNECTIVITY_TARGET_FAILURE_REFRESH_MS,
+	createConnectivityTargetResolver,
+} from "../modules/network/uplink-health/connectivity-target.ts";
+import {
 	UPLINK_HEALTH_CONFIG,
 	UplinkHealthEngine,
 	type UplinkHealthOutcome,
@@ -48,6 +52,10 @@ function core(options: {
 	resolveTarget?: UplinkHealthRuntimeCoreDeps["resolveTarget"];
 	interfaces?: Record<string, NetworkInterface>;
 	onInterfacesChange?: UplinkHealthRuntimeCoreDeps["onInterfacesChange"];
+	monotonic?: () => number;
+	alternateTarget?: UplinkHealthRuntimeCoreDeps["alternateTarget"];
+	targetFailed?: UplinkHealthRuntimeCoreDeps["targetFailed"];
+	probeAt?: (target: string) => UplinkHealthOutcome;
 }) {
 	const interfaces = options.interfaces ?? {
 		wwan0: { ip: "10.64.0.2", error: 0, tp: 0, txb: 0 },
@@ -62,10 +70,13 @@ function core(options: {
 			streaming: () => true,
 			telemetry: options.telemetry,
 			quietForMs: () => options.quiet,
+			monotonicNow: options.monotonic ?? options.now,
+			alternateTarget: options.alternateTarget,
+			targetFailed: options.targetFailed,
 			resolveTarget: options.resolveTarget ?? (async () => "192.0.2.204"),
-			probe: async (candidate) => {
+			probe: async (candidate, target) => {
 				probes.push(candidate.name);
-				return options.probe?.() ?? "failure";
+				return options.probeAt?.(target) ?? options.probe?.() ?? "failure";
 			},
 			publish: () => {},
 			exclusionReason: (entry) => (entry?.ip ? undefined : "no address"),
@@ -214,11 +225,14 @@ test("the passive fallback is dropped when the link changed while the target res
 	expect(engine.get("wwan0")?.state ?? "up").toBe("up");
 });
 
-test("without a check address the quiet link keeps its passive verdict", async () => {
-	const now = 100_000;
+test("without a check address the quiet link keeps its last verdict, and stays fresh", async () => {
+	let now = 100_000;
+	let quiet: number | undefined = 1_000;
 	const { runtime, engine, probes } = core({
 		now: () => now,
-		quiet: 60_000,
+		get quiet() {
+			return quiet;
+		},
 		telemetry: () => ({
 			links: [row({ rtt_ms: 1_500 })],
 			not_carrying_ifaces: ["wwan0"],
@@ -227,9 +241,16 @@ test("without a check address the quiet link keeps its passive verdict", async (
 		}),
 		resolveTarget: async () => undefined,
 	});
+	// Still sending: the passive verdict (degraded on RTT) is recorded.
+	await runtime.tick();
+	expect(engine.get("wwan0")).toMatchObject({ state: "degraded" });
+	// Quiet, and no check address: nothing is measured, nothing changes.
+	quiet = 60_000;
+	now += 60_000;
 	await runtime.tick();
 	expect(probes).toEqual([]);
 	expect(engine.get("wwan0")).toMatchObject({ state: "degraded" });
+	expect((engine.get("wwan0")?.staleAt ?? 0) > now).toBe(true);
 });
 
 test("streaming checks of one link stay within the hourly budget", async () => {
@@ -248,10 +269,13 @@ test("streaming checks of one link stay within the hourly budget", async () => {
 	for (; now < 3_600_000; now += UPLINK_HEALTH_CONFIG.probeRoundCadenceMs) {
 		await runtime.tick();
 	}
-	const { perHour, burst } = UPLINK_HEALTH_CONFIG.streamingProbeBudget;
-	// 720 rounds in the hour; the burst, then one check per refilled token.
+	const { perHour, burst, reservePerHour, reserveBurst } =
+		UPLINK_HEALTH_CONFIG.streamingProbeBudget;
+	// 720 rounds in the hour; the bursts, then one check per refilled token.
 	expect(probes.length).toBeGreaterThanOrEqual(perHour);
-	expect(probes.length).toBeLessThanOrEqual(perHour + burst);
+	expect(probes.length).toBeLessThanOrEqual(
+		perHour + burst + reservePerHour + reserveBurst,
+	);
 });
 
 test("the production resolver keeps the family each source asks for", async () => {
@@ -274,4 +298,151 @@ test("one check downloads at most a bounded body", () => {
 	expect(argv[argv.indexOf("--max-filesize") + 1]).toBe(
 		String(DEVICE_PROBE_MAX_BYTES),
 	);
+});
+
+function quietTelemetry(now: () => number) {
+	return () => ({
+		links: [row()],
+		not_carrying_ifaces: ["wwan0"],
+		measured_bps: 0,
+		lastReadMs: now(),
+	});
+}
+
+test("rounds without a check token keep the failure streak instead of resetting it", async () => {
+	let now = 0;
+	let answer: UplinkHealthOutcome = "success";
+	const { runtime, engine } = core({
+		now: () => now,
+		quiet: 3_600_000,
+		probe: () => answer,
+		telemetry: quietTelemetry(() => now),
+	});
+	// Spend the burst on a healthy link, then it goes black.
+	for (let round = 0; round < 40; round++, now += 5_000) await runtime.tick();
+	answer = "failure";
+	let streak = 0;
+	for (let round = 0; round < 60; round++, now += 5_000) {
+		await runtime.tick();
+		const failures = engine.get("wwan0")?.probes.failures ?? 0;
+		// Held rounds never reset it; it only grows.
+		expect(failures).toBeGreaterThanOrEqual(streak);
+		streak = failures;
+	}
+	expect(engine.get("wwan0")).toMatchObject({
+		state: "down",
+		reason: "probe_failed",
+	});
+	expect(streak).toBeGreaterThanOrEqual(6);
+});
+
+test("a down link that stays quiet is metered too", async () => {
+	let now = 0;
+	const { runtime, probes } = core({
+		now: () => now,
+		quiet: 3_600_000,
+		probe: () => "failure",
+		telemetry: quietTelemetry(() => now),
+	});
+	for (; now < 3_600_000; now += UPLINK_HEALTH_CONFIG.probeRoundCadenceMs) {
+		await runtime.tick();
+	}
+	const { perHour, burst, reservePerHour, reserveBurst } =
+		UPLINK_HEALTH_CONFIG.streamingProbeBudget;
+	// 720 rounds in the hour, down for nearly all of them.
+	expect(probes.length).toBeLessThanOrEqual(
+		perHour + burst + reservePerHour + reserveBurst,
+	);
+});
+
+test("a wall-clock jump does not refill the check budget", async () => {
+	let now = 0;
+	let mono = 0;
+	const { runtime, probes } = core({
+		now: () => now,
+		monotonic: () => mono,
+		quiet: 3_600_000,
+		probe: () => "success",
+		telemetry: quietTelemetry(() => now),
+	});
+	for (let round = 0; round < 40; round++) {
+		await runtime.tick();
+		mono += 5_000;
+		// The wall clock is set back and forward by an hour in between.
+		now += round === 20 ? 3_600_000 : round === 30 ? -3_600_000 : 5_000;
+	}
+	const { burst, perHour } = UPLINK_HEALTH_CONFIG.streamingProbeBudget;
+	// 200 s of monotonic time: the burst plus what 200 s refill, no more.
+	expect(probes.length).toBeLessThanOrEqual(
+		burst + Math.ceil((200_000 * perHour) / 3_600_000),
+	);
+});
+
+test("a failed check is retried at another address before it counts", async () => {
+	const now = 100_000;
+	const failedTargets: string[] = [];
+	const { runtime, engine } = core({
+		now: () => now,
+		quiet: 60_000,
+		telemetry: quietTelemetry(() => now),
+		probeAt: (target) => (target === "192.0.2.204" ? "failure" : "success"),
+		alternateTarget: (_family, failed) =>
+			failed === "192.0.2.204" ? "192.0.2.205" : undefined,
+		targetFailed: (_family, target) => failedTargets.push(target),
+	});
+	await runtime.tick();
+	expect(failedTargets).toEqual(["192.0.2.204"]);
+	expect(engine.get("wwan0")).toMatchObject({
+		state: "up",
+		probes: { failures: 0 },
+	});
+	expect(engine.lastProbe("wwan0")).toMatchObject({ outcome: "success" });
+});
+
+test("a failed check at every address counts", async () => {
+	const now = 100_000;
+	const { runtime, engine } = core({
+		now: () => now,
+		quiet: 60_000,
+		telemetry: quietTelemetry(() => now),
+		probeAt: () => "failure",
+		alternateTarget: () => "192.0.2.205",
+	});
+	await runtime.tick();
+	expect(engine.get("wwan0")?.probes.failures).toBe(1);
+	expect(engine.lastProbe("wwan0")).toMatchObject({ outcome: "failure" });
+});
+
+test("after a failed check the resolver serves another address and looks the name up again, at most once a minute", async () => {
+	let clock = 0;
+	let lookups = 0;
+	let dnsDown = false;
+	const target = createConnectivityTargetResolver({
+		now: () => clock,
+		resolve: async () => {
+			lookups++;
+			if (dnsDown) throw new Error("no DNS");
+			return {
+				addrs: ["192.0.2.204", "192.0.2.205", "2001:db8::204"],
+				fromCache: false,
+			};
+		},
+	});
+	expect(await target(4)).toBe("192.0.2.204");
+	expect(target.alternate(4, "192.0.2.204")).toBe("192.0.2.205");
+	expect(target.alternate(6, "2001:db8::204")).toBeUndefined();
+	// The cached address stops answering while DNS is down too.
+	dnsDown = true;
+	target.failed(4, "192.0.2.204");
+	expect(await target(4)).toBe("192.0.2.205");
+	expect(lookups).toBe(2);
+	// Another failure within the minute does not ask DNS again.
+	clock += 10_000;
+	target.failed(4, "192.0.2.205");
+	expect(await target(4)).toBe("192.0.2.204");
+	expect(lookups).toBe(2);
+	clock += CONNECTIVITY_TARGET_FAILURE_REFRESH_MS;
+	target.failed(4, "192.0.2.204");
+	await target(4);
+	expect(lookups).toBe(3);
 });

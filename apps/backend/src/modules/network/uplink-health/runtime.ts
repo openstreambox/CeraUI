@@ -20,6 +20,7 @@ import {
 import { resolveUplinkIdentity } from "../uplink-identity.ts";
 import {
 	type ConnectivityTargetResolver,
+	type ConnectivityTargetRotation,
 	createConnectivityTargetResolver,
 } from "./connectivity-target.ts";
 import { UPLINK_HEALTH_CONFIG, type UplinkHealthState } from "./model.ts";
@@ -52,7 +53,9 @@ export type UplinkHealthRuntimeDeps = Omit<
   this module is still initializing reads a `const` the cycle has not defined
   yet. One shared instance, so the TTL cache is shared by every default runtime.
 */
-let sharedTarget: ConnectivityTargetResolver | undefined;
+let sharedTarget:
+	| (ConnectivityTargetResolver & ConnectivityTargetRotation)
+	| undefined;
 const resolveTargetShared: ConnectivityTargetResolver = (family) => {
 	sharedTarget ??= createConnectivityTargetResolver();
 	return sharedTarget(family);
@@ -82,6 +85,8 @@ const defaultDeps: UplinkHealthRuntimeDeps = {
 	// IPv6-only modem probed at an IPv4 address fails however healthy it is.
 	resolveTarget: (family) =>
 		resolveUplinkHealthTarget(undefined, undefined, family),
+	alternateTarget: (family, failed) => sharedTarget?.alternate(family, failed),
+	targetFailed: (family, target) => sharedTarget?.failed(family, target),
 	probe: async (iface, remoteAddr) => {
 		const result = await portalHealthProbe(iface, () =>
 			probeConnectivityViaDevice(remoteAddr, iface),

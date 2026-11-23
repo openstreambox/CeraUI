@@ -25,18 +25,24 @@
     out there, and a dead bearer keeps the translator's lease up for minutes,
     so skipping such a modem left it dead for that whole time. Both the TUN
     and the native IPv6 address ride the same bearer, so a translated modem
-    whose native IPv6 still reads `up` is not reconnected, and one whose TUN
-    has no record yet is left alone;
+    whose native IPv6 answered a real probe in the last
+    DEAD_BEARER_NATIVE_PROOF_MS is not reconnected (a record that reads `up`
+    only from passive evidence, or because no IPv6 check address exists, is
+    no such answer), and one whose TUN has no record yet is left alone;
   - while a stream runs, the sender's own per-link evidence says this
     interface carries nothing (`linkCarryingState`: its byte counter stood
     still across fresh snapshots, CLAT translator traffic counted for its
     modem). A link that moves stream data is not dead, whatever the probe
     says, and a row's mere presence proves nothing: the sender keeps a row
     for every uplink in its IP list. When the evidence is missing, stale or
-    too short ("unknown"), nothing happens. "Not carrying" stays latched
-    through short bursts, so the link must also have sent nothing at all
-    (`linkQuietForMs`) for the whole outage seen here plus the probe streak
-    before it (DEAD_BEARER_QUIET_LEAD_MS); any burst starts the outage over.
+    too short ("unknown"), nothing happens. The verdict counts duplicate
+    probes and keepalives as traffic and stays latched through short
+    bursts, so what decides is payload (`linkQuietForMs`, single-packet
+    trickles ignored): a "carrying" link with no payload for
+    DEAD_BEARER_PAYLOAD_QUIET_MS counts as carrying nothing, and the link
+    must have sent no payload for the whole outage seen here plus the probe
+    streak before it (DEAD_BEARER_QUIET_LEAD_MS); any burst starts the
+    outage over.
     That is checked once more under the lease, after every other read and
     with nothing awaited before the teardown, so a link that resumed sending
     while the owner reads ran is left alone;
@@ -70,7 +76,10 @@ import {
 	nmConnGetFields,
 	nmDisconnect,
 } from "../network/network-manager.ts";
-import type { UplinkHealthRecord } from "../network/uplink-health/model.ts";
+import type {
+	UplinkHealthRecord,
+	UplinkProbeEvidence,
+} from "../network/uplink-health/model.ts";
 import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
 import type { LinkCarryingState } from "../streaming/link-progress.ts";
 import {
@@ -102,6 +111,10 @@ export const DEAD_BEARER_ALONE_HOLD_MS = 300_000;
 export const DEAD_BEARER_STABLE_MS = 300_000;
 export const DEAD_BEARER_AFTER_DIAL_MS = 60_000;
 export const DEAD_BEARER_MIN_FAILURES = 6;
+/** No payload for this long overrides a "carrying" verdict built on trickles. */
+export const DEAD_BEARER_PAYLOAD_QUIET_MS = 10_000;
+/** How recent a native IPv6 probe success must be to veto a CLAT modem. */
+export const DEAD_BEARER_NATIVE_PROOF_MS = 60_000;
 /** The probe streak before an outage is first seen: six 5 s health rounds. */
 export const DEAD_BEARER_QUIET_LEAD_MS = DEAD_BEARER_MIN_FAILURES * 5_000;
 export const DEAD_BEARER_SPACING_MS = [
@@ -125,7 +138,7 @@ export interface DeadBearerInput {
 	readonly otherUplinkUp: boolean;
 	/** The profile is preparation-owned (autoconnect no + live grant). */
 	readonly owned: boolean;
-	/** Translated, and the modem's own native IPv6 still reads `up`. */
+	/** Translated, and the modem's own native IPv6 answered a recent probe. */
 	readonly nativeAnswers: boolean;
 	/**
 	 * `idle` when no stream runs; otherwise the sender's verdict on whether
@@ -259,6 +272,8 @@ export interface DeadBearerDeps {
 	readonly stableKey: typeof modemStableKeyForId;
 	readonly health: (iface: string) => UplinkHealthRecord | undefined;
 	readonly healthList: () => readonly UplinkHealthRecord[];
+	/** The last real probe answer for an interface (not passive evidence). */
+	readonly lastProbe: (iface: string) => UplinkProbeEvidence | undefined;
 	/** The physical modem interface a CLAT TUN translates for, if any. */
 	readonly clatParent: (iface: string) => string | undefined;
 	/** The TUN of a usable CLAT translation for this modem interface. */
@@ -296,6 +311,7 @@ const defaultDeps: DeadBearerDeps = {
 	stableKey: modemStableKeyForId,
 	health: (iface) => getUplinkHealthEngine().get(iface),
 	healthList: () => getUplinkHealthEngine().list(),
+	lastProbe: (iface) => getUplinkHealthEngine().lastProbe(iface),
 	clatParent: (iface) =>
 		isClatTunName(iface) ? clatTranslationForTun(iface)?.parent : undefined,
 	clatTun: clatTunForParent,
@@ -340,15 +356,31 @@ function independentUplinkUp(iface: string, wallNow: number): boolean {
 		);
 }
 
+/** The modem's native IPv6 answered a real probe recently. */
+function nativeAnswered(iface: string, wallNow: number): boolean {
+	const probe = deps.lastProbe(iface);
+	return (
+		deps.health(iface)?.state === "up" &&
+		probe?.outcome === "success" &&
+		wallNow - probe.at <= DEAD_BEARER_NATIVE_PROOF_MS
+	);
+}
+
 function streamState(
 	iface: string,
 ): Pick<DeadBearerInput, "stream" | "quietMs"> {
 	if (!deps.streaming()) return { stream: "idle" };
 	const stream = deps.carrying(iface);
-	if (stream !== "not_carrying") return { stream };
+	if (stream === "unknown") return { stream };
 	const quietMs = deps.quiet(iface);
-	// "Not carrying" without a quiet span to check is no evidence at all.
-	return quietMs === undefined ? { stream: "unknown" } : { stream, quietMs };
+	// Without a quiet span to check, neither verdict is evidence enough.
+	if (quietMs === undefined) return { stream: "unknown" };
+	// The carrying verdict counts duplicate probes and keepalives as traffic;
+	// a link that moved no payload for DEAD_BEARER_PAYLOAD_QUIET_MS carries
+	// nothing, whatever that verdict says.
+	if (stream === "carrying" && quietMs < DEAD_BEARER_PAYLOAD_QUIET_MS)
+		return { stream };
+	return { stream: "not_carrying", quietMs };
 }
 
 /** Inputs read fresh; undefined when the modem is not a candidate at all. */
@@ -377,7 +409,7 @@ async function readInput(
 		now,
 		record,
 		otherUplinkUp: independentUplinkUp(modem.ifname, wallNow),
-		nativeAnswers: tun !== undefined && native?.state === "up",
+		nativeAnswers: tun !== undefined && nativeAnswered(modem.ifname, wallNow),
 		...streamState(modem.ifname),
 		lastDial: deps.lastDial(key),
 		memory,

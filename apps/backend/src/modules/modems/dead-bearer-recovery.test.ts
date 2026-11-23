@@ -220,6 +220,8 @@ describe("runDeadBearerRecovery", () => {
 	let carrying: Record<string, LinkCarryingState>;
 	/** Monotonic time of the link's last stream progress. */
 	let lastSent: number;
+	/** The native IPv6 path answered a real probe at every poll. */
+	let nativeProbed: boolean;
 	let autoconnect: string;
 	let grant: boolean;
 	let nmState: string | undefined;
@@ -261,12 +263,17 @@ describe("runDeadBearerRecovery", () => {
 				...(tunHealth ? [tunHealth] : []),
 				...others,
 			],
+			lastProbe: (iface) =>
+				iface === "wwan0" && nativeProbed
+					? { outcome: "success" as const, at: wall }
+					: undefined,
 			clatParent: (iface) => clatParents[iface],
 			clatTun: (parent) =>
 				Object.keys(clatParents).find((tun) => clatParents[tun] === parent),
 			streaming: () => streaming,
 			carrying: (iface) => carrying[iface] ?? "unknown",
-			quiet: () => now - lastSent,
+			// A carrying link moved payload just now unless a test says otherwise.
+			quiet: (iface) => (carrying[iface] === "carrying" ? 0 : now - lastSent),
 			readAutoconnect: async () => {
 				ownerReads++;
 				return autoconnect;
@@ -330,6 +337,7 @@ describe("runDeadBearerRecovery", () => {
 		streaming = false;
 		carrying = {};
 		lastSent = -3_600_000;
+		nativeProbed = false;
 		autoconnect = "no";
 		grant = true;
 		nmState = "100";
@@ -392,6 +400,16 @@ describe("runDeadBearerRecovery", () => {
 		lastSent = 50_000;
 		// Quiet for the 30 s streak lead from 80 s: seen at 90 s, hold to 150 s.
 		expect(await pollUntil(200_000)).toEqual([150_000]);
+	});
+
+	test("while streaming, a link whose only traffic is duplicates is not protected by the carrying verdict", async () => {
+		others = [eth()];
+		health = dead();
+		streaming = true;
+		// The verdict reads carrying from duplicate probes, but no payload moved.
+		carrying = { wwan0: "carrying" };
+		setDeadBearerDepsForTest({ ...deps(), quiet: () => 3_600_000 });
+		expect(await pollUntil(120_000)).toEqual([75_000]);
 	});
 
 	test("while streaming, data resuming during the owner reads withdraws the reconnect", async () => {
@@ -461,7 +479,19 @@ describe("runDeadBearerRecovery", () => {
 		clatParents = { clat7: "wwan0" };
 		tunHealth = tunDead();
 		health = record({ state: "up" }, wall);
+		nativeProbed = true;
 		expect(await pollUntil(3_600_000)).toEqual([]);
+	});
+
+	test("a native record that reads up without a probe answer does not veto a dead translator", async () => {
+		// No AAAA for the check address: the native path is never probed, and
+		// its record reads up from the passive or initial verdict alone.
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = record({ state: "up" }, wall);
+		nativeProbed = false;
+		expect(await pollUntil(120_000)).toEqual([75_000]);
 	});
 
 	test("a translated modem with no record for its translator yet is left alone", async () => {

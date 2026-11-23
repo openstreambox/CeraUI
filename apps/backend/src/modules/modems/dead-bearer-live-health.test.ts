@@ -5,6 +5,7 @@ import { resetClatTranslationStateForTest } from "../network/clat-translation.ts
 import type { ProbeCandidate } from "../network/connectivity-candidates.ts";
 import type { NetworkInterface } from "../network/network-interfaces.ts";
 import {
+	UPLINK_HEALTH_CONFIG,
 	UplinkHealthEngine,
 	type UplinkHealthOutcome,
 	type UplinkHealthRecord,
@@ -211,6 +212,7 @@ beforeEach(() => {
 			streaming: () => true,
 			telemetry: buildLinkTelemetry,
 			quietForMs: linkQuietForMs,
+			monotonicNow: () => now,
 			resolveTarget: async (family) =>
 				family === 4 ? "192.0.2.204" : undefined,
 			probe: async (candidate) => {
@@ -435,7 +437,7 @@ describe("while streaming, a bearer that carries nothing is judged by its own pr
 	});
 
 	for (const alternate of [true, false]) {
-		test(`a modem already down on its checks is never cut while it sends bursts (alternate up: ${alternate})`, async () => {
+		test(`a modem down on its checks that then sends bursts comes back up and is never cut (alternate up: ${alternate})`, async () => {
 			startStream([MODEM, ETH]);
 			probeAnswer = (iface) =>
 				iface === "wwan0" ? "failure" : alternate ? "success" : "failure";
@@ -457,14 +459,60 @@ describe("while streaming, a bearer that carries nothing is judged by its own pr
 			);
 			// The pre-fix trigger: the sender reads it as not carrying throughout.
 			expect(notCarryingSeen).toBe(true);
-			expect(record("wwan0")).toMatchObject({
-				state: "down",
-				reason: "probe_failed",
-			});
+			// Down on its blocked check first; once it sends payload again its
+			// sender row is evidence that the path works, and it comes back.
+			expect(states.get("wwan0")).toMatch(/D.*U+$/);
 			expect(at).toEqual([]);
 			expect(calls).toEqual([]);
 		});
 	}
+
+	test("a black hole after an hour of quiet that drained the check budget is still reconnected", async () => {
+		startStream([MODEM, ETH]);
+		// A healthy spare: it carries nothing for an hour and answers every
+		// check, which spends its budget down to the hourly refill.
+		const blackholeAt = 3_600_000;
+		probeAnswer = (iface, t) =>
+			iface === "wwan0" && t > blackholeAt && calls.length === 0
+				? "failure"
+				: "success";
+		const at = await streamUntil(blackholeAt + 600_000, (t) => [
+			{ link_id: MODEM.linkId, bytes_sent_total: 1_332 },
+			{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
+		]);
+		const before = probes.filter(
+			(probe) =>
+				probe.endsWith(":wwan0") &&
+				Number(probe.split(":")[0]) * 1000 <= blackholeAt,
+		).length;
+		const { perHour, burst } = UPLINK_HEALTH_CONFIG.streamingProbeBudget;
+		expect(before).toBeLessThanOrEqual(perHour + burst);
+		// Skipped rounds keep the failure streak, and the failing link's reserve
+		// adds checks: reconnected 90 s after the fault (150 s on the hourly
+		// refill alone).
+		expect(at).toHaveLength(1);
+		expect((at[0] ?? Infinity) - blackholeAt).toBeLessThanOrEqual(120_000);
+	});
+
+	test("a black hole whose counter still grows by duplicate probes is reconnected", async () => {
+		startStream([MODEM, ETH]);
+		const blackholeAt = 20_000;
+		const dead = (t: number) => t > blackholeAt && calls.length === 0;
+		probeAnswer = (iface, t) =>
+			iface === "wwan0" && dead(t) ? "failure" : "success";
+		let bytes = 0;
+		const at = await streamUntil(300_000, (t) => {
+			// Payload until the fault, then one duplicate probe every 2 s.
+			if (!dead(t)) bytes += 200_000;
+			else if (t % 2_000 === 0) bytes += 1_332;
+			return [
+				{ link_id: MODEM.linkId, bytes_sent_total: bytes },
+				{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
+			];
+		});
+		expect(at).toHaveLength(1);
+		expect(calls).toEqual([`down ${UUID}`, `up ${UUID}`]);
+	});
 
 	test("with every link black-holed, the modem waits for the alone hold", async () => {
 		startStream([MODEM, ETH]);
@@ -486,6 +534,7 @@ describe("while streaming, a bearer that carries nothing is judged by its own pr
 				streaming: () => true,
 				telemetry: buildLinkTelemetry,
 				quietForMs: linkQuietForMs,
+				monotonicNow: () => now,
 				resolveTarget: async () => undefined,
 				probe: async (candidate) => {
 					probes.push(candidate.name);

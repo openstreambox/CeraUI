@@ -62,6 +62,14 @@ import { CONNECTIVITY_CHECK_DOMAIN } from "../internet.ts";
  */
 export const CONNECTIVITY_TARGET_TTL_MS = 300_000;
 
+/**
+ * After a check at the cached address fails, the resolver looks the name up
+ * again on the next round, at most this often: a cached address can stop
+ * answering on its own, but a dead link fails every round, and a lookup per
+ * round is the cost the TTL exists to avoid.
+ */
+export const CONNECTIVITY_TARGET_FAILURE_REFRESH_MS = 60_000;
+
 /** Effectful surface, injected so the caching + fail-soft rules are provable. */
 export interface ConnectivityTargetDeps {
 	/** The shared DNS machinery. Rejects when nothing (live or cached) answers. */
@@ -81,28 +89,53 @@ export type ConnectivityTargetResolver = (
 	family?: 4 | 6,
 ) => Promise<string | undefined>;
 
+/** What a check round may do after a check at `target` failed. */
+export interface ConnectivityTargetRotation {
+	/** Another address of the family from the last answer, if there is one. */
+	alternate(family: 4 | 6, failed: string): string | undefined;
+	/**
+	 * Move past `target` (the next call serves another address of the last
+	 * answer when there is one) and look the name up again on the next call,
+	 * at most once per CONNECTIVITY_TARGET_FAILURE_REFRESH_MS.
+	 */
+	failed(family: 4 | 6, target: string): void;
+}
+
+interface FamilyTargetResolver {
+	(): Promise<string | undefined>;
+	alternate(failed: string): string | undefined;
+	failed(target: string): void;
+}
+
 export function createConnectivityTargetResolver(
 	deps: ConnectivityTargetDeps = defaultConnectivityTargetDeps,
 	domain: string = CONNECTIVITY_CHECK_DOMAIN,
-): ConnectivityTargetResolver {
-	const resolvers = new Map<number | undefined, ConnectivityTargetResolver>();
-	return (family) => {
+): ConnectivityTargetResolver & ConnectivityTargetRotation {
+	const resolvers = new Map<number | undefined, FamilyTargetResolver>();
+	const forFamily = (family?: 4 | 6): FamilyTargetResolver => {
 		let resolver = resolvers.get(family);
 		if (!resolver) {
 			resolver = createFamilyTargetResolver(deps, domain, family);
 			resolvers.set(family, resolver);
 		}
-		return resolver();
+		return resolver;
 	};
+	return Object.assign((family?: 4 | 6) => forFamily(family)(), {
+		alternate: (family: 4 | 6, failed: string) =>
+			forFamily(family).alternate(failed),
+		failed: (family: 4 | 6, target: string) => forFamily(family).failed(target),
+	});
 }
 
 function createFamilyTargetResolver(
 	deps: ConnectivityTargetDeps,
 	domain: string,
 	family?: 4 | 6,
-): ConnectivityTargetResolver {
+): FamilyTargetResolver {
 	let cachedAddr: string | undefined;
+	let cachedAddrs: readonly string[] = [];
 	let cachedAt = 0;
+	let lastFailureRefresh = Number.NEGATIVE_INFINITY;
 	let inflight: Promise<string | undefined> | undefined;
 
 	const refresh = async (): Promise<string | undefined> => {
@@ -115,6 +148,10 @@ function createFamilyTargetResolver(
 					? addrs[0]
 					: addrs.find((ip) => ip.includes(":") === (family === 6));
 			if (addr === undefined) throw new Error(`no address for ${domain}`);
+			cachedAddrs =
+				family === undefined
+					? addrs
+					: addrs.filter((ip) => ip.includes(":") === (family === 6));
 			cachedAddr = addr;
 			cachedAt = deps.now();
 			return addr;
@@ -122,6 +159,13 @@ function createFamilyTargetResolver(
 			// A failed lookup is a statement about DNS, never about an uplink. Keep
 			// serving the last real address if we have one; otherwise say so, so the
 			// caller skips its round instead of recording a fabricated failure.
+			// Serve the old address for a minute before asking DNS again, rather
+			// than once per round while DNS is down.
+			if (cachedAddr !== undefined)
+				cachedAt =
+					deps.now() -
+					CONNECTIVITY_TARGET_TTL_MS +
+					CONNECTIVITY_TARGET_FAILURE_REFRESH_MS;
 			logger.debug(
 				`uplink-health: could not resolve ${domain}: ${String(err)}${
 					cachedAddr === undefined
@@ -135,7 +179,7 @@ function createFamilyTargetResolver(
 		}
 	};
 
-	return () => {
+	const resolve = () => {
 		if (
 			cachedAddr !== undefined &&
 			deps.now() - cachedAt < CONNECTIVITY_TARGET_TTL_MS
@@ -145,4 +189,16 @@ function createFamilyTargetResolver(
 		inflight ??= refresh();
 		return inflight;
 	};
+	return Object.assign(resolve, {
+		alternate: (failed: string) => cachedAddrs.find((ip) => ip !== failed),
+		failed: (target: string) => {
+			if (target !== cachedAddr) return;
+			cachedAddr = cachedAddrs.find((ip) => ip !== target) ?? cachedAddr;
+			const now = deps.now();
+			if (now - lastFailureRefresh < CONNECTIVITY_TARGET_FAILURE_REFRESH_MS)
+				return;
+			lastFailureRefresh = now;
+			cachedAt = Number.NEGATIVE_INFINITY;
+		},
+	});
 }

@@ -52,6 +52,15 @@ export interface UplinkHealthRuntimeCoreDeps {
 	 * no streamed link is promoted to an active check.
 	 */
 	readonly quietForMs?: (iface: string) => number | undefined;
+	/** Monotonic milliseconds for the probe budget (default `performance.now`). */
+	readonly monotonicNow?: () => number;
+	/** Another address of the family than `failed`, when the resolver has one. */
+	readonly alternateTarget?: (
+		family: 4 | 6,
+		failed: string,
+	) => string | undefined;
+	/** A check at `target` failed: the resolver may look the name up again. */
+	readonly targetFailed?: (family: 4 | 6, target: string) => void;
 }
 
 export class UplinkHealthRuntimeCore {
@@ -67,7 +76,10 @@ export class UplinkHealthRuntimeCore {
 		}
 	>();
 	/** Streaming check tokens per interface (`streamingProbeBudget`). */
-	readonly #budget = new Map<string, { tokens: number; at: number }>();
+	readonly #budget = new Map<
+		string,
+		{ tokens: number; reserve: number; at: number }
+	>();
 	#round = 0;
 	#completedRound = 0;
 	#generation = 0;
@@ -103,29 +115,39 @@ export class UplinkHealthRuntimeCore {
 		const present = new Set(Object.keys(interfaces));
 		this.#engine.removeMissing(present, now);
 		this.#sampleInterfaces(interfaces);
-		const { passive, carryingNothing } = this.#passiveEvidence(now);
+		const { passive, fresh } = this.#passiveEvidence(now);
 		const candidates = this.#deps.candidates(interfaces);
-		// A link the sender reads as carrying nothing has no passive evidence
-		// either way: a black hole returns no NAKs, its RTT freezes and its row
-		// stays fresh, so the row alone would keep it `up` for as long as the
-		// stream runs. Once nothing at all went out on it for `streamingQuietMs`
-		// its own probe decides instead, within the link's probe budget. A merely
-		// idle link (a spare, or a modem the bond hardly uses at a low bitrate)
-		// answers the probe and stays up; one that sends a burst in between keeps
-		// its passive verdict, and only one that stays quiet and fails goes down.
-		const promoted = new Set(
-			candidates
-				.filter(
-					(candidate) =>
-						passive.has(candidate.name) &&
-						carryingNothing.has(candidate.name) &&
-						this.#quietEnough(candidate.name, 0),
-				)
-				.map((candidate) => candidate.name)
-				.filter((iface) => this.#takeToken(iface, now)),
-		);
+		// A streamed link that sends no payload has no passive evidence either
+		// way: a black hole returns no NAKs, its RTT freezes and its row stays
+		// fresh, so the row alone would keep it `up` for as long as the stream
+		// runs. Once no payload went out on it for `streamingQuietMs` (on fresh,
+		// current rows; duplicate probes and keepalives are no payload), or once
+		// health has it down, its own probe decides instead, within the link's
+		// probe budget. A link that sent
+		// payload recently keeps its passive verdict, down or not: it works.
+		// Without a token the round is held: nothing is recorded, so the last
+		// real verdict and its failure streak stand.
+		const promoted = new Set<string>();
+		const held = new Set<string>();
+		for (const candidate of candidates) {
+			const iface = candidate.name;
+			if (!passive.has(iface) || promoted.has(iface) || held.has(iface))
+				continue;
+			const quiet = this.#deps.quietForMs?.(iface);
+			const down = this.#engine.get(iface)?.state === "down";
+			if (quiet !== undefined && quiet < UPLINK_HEALTH_CONFIG.streamingQuietMs)
+				continue;
+			if (!down && !(fresh.has(iface) && quiet !== undefined)) continue;
+			const record = this.#engine.get(iface);
+			const failing = down || (record?.probes.failures ?? 0) > 0;
+			(this.#takeToken(iface, quiet, failing) ? promoted : held).add(iface);
+		}
 		for (const [iface, outcome] of passive) {
 			if (promoted.has(iface)) continue;
+			if (held.has(iface)) {
+				this.#engine.touch(iface, now);
+				continue;
+			}
 			this.#observe(
 				{ iface, ...this.#deps.identity(iface), outcome, now },
 				round,
@@ -182,29 +204,14 @@ export class UplinkHealthRuntimeCore {
 			const target = await this.#deps.resolveTarget(family);
 			if (target !== undefined) targets.set(family, target);
 		}
-		// Without a check address for its family the promoted link keeps its
-		// passive verdict, as long as this round still owns its evidence.
-		const kept = new Set<string>();
+		// Without a check address for its family a promoted link is held, like
+		// a link without a token: its last real verdict stands.
 		for (const candidate of active) {
-			const outcome = passive.get(candidate.name);
 			if (
-				kept.has(candidate.name) ||
-				!promoted.has(candidate.name) ||
-				outcome === undefined ||
-				targets.has(candidate.ip.includes(":") ? 6 : 4) ||
-				!isCurrent(candidate)
+				promoted.has(candidate.name) &&
+				!targets.has(candidate.ip.includes(":") ? 6 : 4)
 			)
-				continue;
-			kept.add(candidate.name);
-			this.#observe(
-				{
-					iface: candidate.name,
-					...this.#deps.identity(candidate.name),
-					outcome,
-					now,
-				},
-				round,
-			);
+				this.#engine.touch(candidate.name, now);
 		}
 		if (targets.size > 0) {
 			for (
@@ -224,7 +231,7 @@ export class UplinkHealthRuntimeCore {
 				const sentAt = timed ? this.#deps.now() : 0;
 				const outcomes = await Promise.all(
 					batch.map((candidate) =>
-						this.#deps.probe(
+						this.#checkOnce(
 							candidate,
 							targets.get(candidate.ip.includes(":") ? 6 : 4) as string,
 						),
@@ -234,17 +241,21 @@ export class UplinkHealthRuntimeCore {
 				for (const [index, candidate] of batch.entries()) {
 					if (!isCurrent(candidate)) continue;
 					let outcome = outcomes[index] ?? "failure";
-					// A failed check of a streamed link counts only while the sender
-					// agrees nothing went out on it for the whole check; a burst in
-					// between means the path works and the passive verdict stands.
+					let probed = true;
+					// A failed check of a streamed link does not count when the
+					// sender saw payload go out on it during the check: the path
+					// works, and its passive verdict stands.
+					const quiet = this.#deps.quietForMs?.(candidate.name);
 					if (
 						promoted.has(candidate.name) &&
 						outcome !== "success" &&
-						!this.#quietEnough(candidate.name, elapsed)
+						quiet !== undefined &&
+						quiet < UPLINK_HEALTH_CONFIG.streamingQuietMs + elapsed
 					) {
 						const fallback = passive.get(candidate.name);
 						if (fallback === undefined) continue;
 						outcome = fallback;
+						probed = false;
 					}
 					this.#observe(
 						{
@@ -252,6 +263,7 @@ export class UplinkHealthRuntimeCore {
 							...this.#deps.identity(candidate.name),
 							outcome,
 							now,
+							probed,
 						},
 						round,
 					);
@@ -320,28 +332,66 @@ export class UplinkHealthRuntimeCore {
 		}
 	}
 
-	/** The sender saw nothing go out on `iface` for the quiet span plus `extraMs`. */
-	#quietEnough(iface: string, extraMs: number): boolean {
-		const quiet = this.#deps.quietForMs?.(iface);
-		return (
-			quiet !== undefined &&
-			quiet >= UPLINK_HEALTH_CONFIG.streamingQuietMs + extraMs
-		);
+	/**
+	 * One check, retried once at another address of the same family when it
+	 * fails: a cached check address can stop answering on its own, and that is
+	 * no verdict on the link. A failure also asks the resolver to look again.
+	 */
+	async #checkOnce(
+		candidate: ProbeCandidate,
+		target: string,
+	): Promise<UplinkHealthOutcome> {
+		const outcome = await this.#deps.probe(candidate, target);
+		if (outcome !== "failure") return outcome;
+		const family: 4 | 6 = candidate.ip.includes(":") ? 6 : 4;
+		this.#deps.targetFailed?.(family, target);
+		const alternate = this.#deps.alternateTarget?.(family, target);
+		return alternate === undefined
+			? outcome
+			: this.#deps.probe(candidate, alternate);
 	}
 
-	/** Spend one streaming check token for `iface`, refilled per hour. */
-	#takeToken(iface: string, now: number): boolean {
-		const { perHour, burst } = UPLINK_HEALTH_CONFIG.streamingProbeBudget;
-		const previous = this.#budget.get(iface) ?? { tokens: burst, at: now };
+	/**
+	 * Spend one streaming check token for `iface`. The main bucket refills per
+	 * hour on the monotonic clock; when it is empty, a link that is already
+	 * failing its checks and quiet for `reserveQuietMs` may draw on a small
+	 * reserve of its own, so a black hole that starts after a drained bucket
+	 * still reaches a recovery decision. A healthy quiet link never touches it.
+	 */
+	#takeToken(
+		iface: string,
+		quiet: number | undefined,
+		failing: boolean,
+	): boolean {
+		const budget = UPLINK_HEALTH_CONFIG.streamingProbeBudget;
+		const at = (this.#deps.monotonicNow ?? performance.now.bind(performance))();
+		const entry = this.#budget.get(iface) ?? {
+			tokens: budget.burst,
+			reserve: budget.reserveBurst,
+			at,
+		};
+		const elapsed = Math.max(0, at - entry.at);
 		const tokens = Math.min(
-			burst,
-			previous.tokens + (Math.max(0, now - previous.at) * perHour) / 3_600_000,
+			budget.burst,
+			entry.tokens + (elapsed * budget.perHour) / 3_600_000,
 		);
+		const reserve = Math.min(
+			budget.reserveBurst,
+			entry.reserve + (elapsed * budget.reservePerHour) / 3_600_000,
+		);
+		const fromMain = tokens >= 1;
+		const fromReserve =
+			!fromMain &&
+			failing &&
+			reserve >= 1 &&
+			quiet !== undefined &&
+			quiet >= budget.reserveQuietMs;
 		this.#budget.set(iface, {
-			tokens: tokens >= 1 ? tokens - 1 : tokens,
-			at: now,
+			tokens: fromMain ? tokens - 1 : tokens,
+			reserve: fromReserve ? reserve - 1 : reserve,
+			at,
 		});
-		return tokens >= 1;
+		return fromMain || fromReserve;
 	}
 
 	#observe(observation: UplinkObservation, round: number): void {
@@ -352,16 +402,16 @@ export class UplinkHealthRuntimeCore {
 
 	/**
 	 * Each streamed link's passive verdict for this round, not yet observed, and
-	 * the links among them the sender reads as carrying nothing on fresh
-	 * evidence (`not_carrying_ifaces`, translator rows folded into their modem).
+	 * the links among them whose rows are fresh and current (no expired
+	 * snapshot, no stale row): only those can be judged quiet.
 	 */
 	#passiveEvidence(now: number): {
 		readonly passive: ReadonlyMap<string, UplinkHealthOutcome>;
-		readonly carryingNothing: ReadonlySet<string>;
+		readonly fresh: ReadonlySet<string>;
 	} {
 		const observations = new Map<string, UplinkHealthOutcome>();
-		const carryingNothing = new Set<string>();
-		const none = { passive: observations, carryingNothing };
+		const fresh = new Set<string>();
+		const none = { passive: observations, fresh };
 		if (!this.#deps.streaming()) {
 			this.#recentNaks.clear();
 			return none;
@@ -372,7 +422,6 @@ export class UplinkHealthRuntimeCore {
 			return none;
 		}
 		const seen = new Set<string>();
-		const notCarrying = new Set(telemetry.not_carrying_ifaces ?? []);
 		const expired =
 			now - telemetry.lastReadMs >= UPLINK_HEALTH_CONFIG.telemetryExpiryMs;
 		// Any stale row of an interface keeps it on the passive path.
@@ -380,11 +429,8 @@ export class UplinkHealthRuntimeCore {
 		for (const link of telemetry.links) {
 			// Stale sender rows must not recreate pruned missing history.
 			if (!this.#deps.interfaces()[link.iface]) continue;
-			// Down paths need active recovery; passive degradation resets the streak.
-			if (this.#engine.get(link.iface)?.state === "down") continue;
 			if (link.stale) staleRow.add(link.iface);
-			if (!expired && notCarrying.has(link.iface))
-				carryingNothing.add(link.iface);
+			if (!expired) fresh.add(link.iface);
 			const key = JSON.stringify([link.iface, link.link_id ?? link.conn_id]);
 			seen.add(key);
 			const entry = this.#deps.interfaces()[link.iface];
@@ -423,8 +469,8 @@ export class UplinkHealthRuntimeCore {
 		for (const key of this.#recentNaks.keys()) {
 			if (!seen.has(key)) this.#recentNaks.delete(key);
 		}
-		for (const iface of staleRow) carryingNothing.delete(iface);
-		return { passive: observations, carryingNothing };
+		for (const iface of staleRow) fresh.delete(iface);
+		return { passive: observations, fresh };
 	}
 
 	#publishIfChanged(): void {

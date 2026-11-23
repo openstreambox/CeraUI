@@ -36,6 +36,8 @@ test('no backend log text puts a word after "bearer"', () => {
 test.each([
 	"Bearer abc123XYZ.token",
 	"Bearer private",
+	"Bearer x",
+	"bearer ab",
 	"bearer alphaword",
 	"BEARER alphaword",
 	"header snapshot: bearer alphaword",
