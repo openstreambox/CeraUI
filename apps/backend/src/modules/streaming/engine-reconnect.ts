@@ -494,8 +494,9 @@ async function tickRecheck(): Promise<void> {
 	announceOffline();
 	// Still unreachable. The same tick lets a waiting carrying line be judged
 	// again, so an engine whose unit has since lost its process releases the
-	// marker and the inhibitor without waiting for a reboot.
-	if (state.deps.awaitsIdleWitness()) {
+	// marker and the inhibitor without waiting for a reboot. Boot recovery only:
+	// a re-armed loop stays publish-only and never reconciles the session.
+	if (!owner.rearmed && state.deps.awaitsIdleWitness()) {
 		try {
 			await state.deps.reconcileSession();
 		} catch (err) {

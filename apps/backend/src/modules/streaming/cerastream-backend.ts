@@ -609,11 +609,11 @@ function defaultOnSessionConnectionLost(site: string): void {
 				"cerastream: engine session retired after a control-connection loss",
 				{ site, stop: stopped.result },
 			);
-			// The engine-loss retirement IS the reconnect event for a SIGKILLed
-			// engine: the reconnect loop settled at boot and never re-arms, so
-			// nothing else notices systemd bringing cerastream back. The run polls
-			// for an authoritative runtime state and is self-serialising, so a
-			// second loss cannot start a second one.
+			// The engine-loss retirement is the restoration trigger for a SIGKILLed
+			// engine: the reconnect loop this loss re-arms only republishes engine
+			// availability and never restores. The run polls for an authoritative
+			// runtime state and is self-serialising, so a second loss cannot start
+			// a second one.
 			const { runStreamRestoration } = await import("./stream-restoration.ts");
 			void runStreamRestoration({}, "engine_restart");
 		} catch (err) {

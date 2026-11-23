@@ -1497,12 +1497,12 @@ function withKnownEngineMetadata(
  * audio list CHANGED. Lazily imported to break the `audio.ts → sources.ts` cycle
  * (the same shape `devices.ts` uses for `onDevicesChanged`); never rejects.
  */
-type EngineAudioChangeHandler = () => void;
+type EngineAudioChangeHandler = (current: () => boolean) => void;
 
-const defaultEngineAudioChangeHandler: EngineAudioChangeHandler = () => {
+const defaultEngineAudioChangeHandler: EngineAudioChangeHandler = (current) => {
 	void import("./audio.ts")
 		.then(({ reresolveAudioForEngineChange }) =>
-			reresolveAudioForEngineChange(),
+			reresolveAudioForEngineChange(current),
 		)
 		.catch((err) =>
 			logger.debug("sources: audio re-resolve after engine change failed", {
@@ -1542,6 +1542,8 @@ function commitEngineDevices(
 	devices: readonly CaptureDevice[],
 	audio?: readonly EngineAudioDevice[],
 	viewSelectionToken: number = sourceSelectionToken,
+	// The committing caller's guard, carried into the queued audio re-resolve.
+	current: () => boolean = () => true,
 ): void {
 	engineDeviceCache = [...devices];
 	engineViewSelectionToken = viewSelectionToken;
@@ -1556,7 +1558,7 @@ function commitEngineDevices(
 	// `timing is invalid` dmesg line raises the notification while the engine's
 	// own view never varies, so a change-gated hook would never retract it.
 	clearHdmiSignalErrorOnRecovery(engineDeviceCache);
-	if (audioChanged) engineAudioChangeHandler();
+	if (audioChanged) engineAudioChangeHandler(current);
 }
 
 /**
@@ -1574,7 +1576,12 @@ export async function tryRefreshEngineDeviceCache(
 	const probe = await probeEngineDevices(deps);
 	// A caller torn down while the probe was in flight commits nothing.
 	if (probe === undefined || !current()) return false;
-	commitEngineDevices(probe.devices, probe.audio, probe.selectionToken);
+	commitEngineDevices(
+		probe.devices,
+		probe.audio,
+		probe.selectionToken,
+		current,
+	);
 	return true;
 }
 

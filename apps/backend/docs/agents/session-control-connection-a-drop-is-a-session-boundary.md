@@ -56,8 +56,13 @@ its socket open is ended by its own watchdog within 90 s; that close is the proo
 | `active` | Deliberately LEFT SET, so `stop()` still recognises the session it must tear down — clearing it makes `stop()` return `false` and trips `reportSessionInvariant`. |
 | Reaction | `deps.onSessionConnectionLost(site)`. Production wiring raises the EXISTING `engine-crashed` lifecycle indicator (before the stop, since the reporter is gated on `isStreaming`), then retires the session via `stopStreamSession()` — its single owner. Fire-and-forget: it runs inside a rejected RPC's catch and must never replace the caller's error. |
 
-Net effect: the board lands in a real `idle` and the next `streaming.start` dials
-a fresh connection and succeeds — no `ceralive.service` restart.
+Net effect, when the retirement's Stop is acknowledged: the board lands in a real
+`idle` and the next `streaming.start` dials a fresh connection and succeeds — no
+`ceralive.service` restart. When the engine is still gone, that Stop fails and the
+session stays `stop_failed` (or `reconciling` once restoration's window lapses):
+Start is refused and the Live view offers the operator's Stop, whose acknowledged
+result re-admits Start. The engine-reconnect re-arm only republishes availability
+and does not clear this state.
 
 **STOP uses a second connection, and success means engine Idle.** The IPC server
 dispatches at most one request per connection. Reusing the session client for
