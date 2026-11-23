@@ -95,8 +95,29 @@ export class UplinkHealthRuntimeCore {
 		const present = new Set(Object.keys(interfaces));
 		this.#engine.removeMissing(present, now);
 		this.#sampleInterfaces(interfaces);
-		const passive = this.#passiveIfaces(now, round);
+		const { passive, carryingNothing } = this.#passiveEvidence(now);
 		const candidates = this.#deps.candidates(interfaces);
+		// A link the sender reads as carrying nothing has no passive evidence
+		// either way: a black hole returns no NAKs, its RTT freezes and its row
+		// stays fresh, so the row alone would keep it `up` for as long as the
+		// stream runs. Its own probe decides instead. A merely idle link (a spare,
+		// or a modem the bond hardly uses at a low bitrate) answers the probe and
+		// stays up; only one that also fails it goes down.
+		const promoted = new Set(
+			candidates
+				.filter(
+					(candidate) =>
+						passive.has(candidate.name) && carryingNothing.has(candidate.name),
+				)
+				.map((candidate) => candidate.name),
+		);
+		for (const [iface, outcome] of passive) {
+			if (promoted.has(iface)) continue;
+			this.#observe(
+				{ iface, ...this.#deps.identity(iface), outcome, now },
+				round,
+			);
+		}
 
 		for (const iface of present) {
 			const entry = interfaces[iface];
@@ -114,7 +135,8 @@ export class UplinkHealthRuntimeCore {
 		}
 
 		const active = candidates.filter(
-			(candidate) => !passive.has(candidate.name),
+			(candidate) =>
+				!passive.has(candidate.name) || promoted.has(candidate.name),
 		);
 		const generations = new Map(
 			active.map((candidate) => [
@@ -146,6 +168,30 @@ export class UplinkHealthRuntimeCore {
 		)) {
 			const target = await this.#deps.resolveTarget(family);
 			if (target !== undefined) targets.set(family, target);
+		}
+		// Without a check address for its family the promoted link keeps its
+		// passive verdict, as long as this round still owns its evidence.
+		const kept = new Set<string>();
+		for (const candidate of active) {
+			const outcome = passive.get(candidate.name);
+			if (
+				kept.has(candidate.name) ||
+				!promoted.has(candidate.name) ||
+				outcome === undefined ||
+				targets.has(candidate.ip.includes(":") ? 6 : 4) ||
+				!isCurrent(candidate)
+			)
+				continue;
+			kept.add(candidate.name);
+			this.#observe(
+				{
+					iface: candidate.name,
+					...this.#deps.identity(candidate.name),
+					outcome,
+					now,
+				},
+				round,
+			);
 		}
 		if (targets.size > 0) {
 			for (
@@ -247,27 +293,41 @@ export class UplinkHealthRuntimeCore {
 		this.#engine.observe(observation);
 	}
 
-	#passiveIfaces(now: number, round: number): ReadonlySet<string> {
-		const passive = new Set<string>();
+	/**
+	 * Each streamed link's passive verdict for this round, not yet observed, and
+	 * the links among them the sender reads as carrying nothing on fresh
+	 * evidence (`not_carrying_ifaces`, translator rows folded into their modem).
+	 */
+	#passiveEvidence(now: number): {
+		readonly passive: ReadonlyMap<string, UplinkHealthOutcome>;
+		readonly carryingNothing: ReadonlySet<string>;
+	} {
+		const observations = new Map<string, UplinkHealthOutcome>();
+		const carryingNothing = new Set<string>();
+		const none = { passive: observations, carryingNothing };
 		if (!this.#deps.streaming()) {
 			this.#recentNaks.clear();
-			return passive;
+			return none;
 		}
 		const telemetry = this.#deps.telemetry();
 		if (!telemetry) {
 			this.#recentNaks.clear();
-			return passive;
+			return none;
 		}
 		const seen = new Set<string>();
-		const observations = new Map<string, UplinkHealthOutcome>();
+		const notCarrying = new Set(telemetry.not_carrying_ifaces ?? []);
+		const expired =
+			now - telemetry.lastReadMs >= UPLINK_HEALTH_CONFIG.telemetryExpiryMs;
+		// Any stale row of an interface keeps it on the passive path.
+		const staleRow = new Set<string>();
 		for (const link of telemetry.links) {
 			// Stale sender rows must not recreate pruned missing history.
 			if (!this.#deps.interfaces()[link.iface]) continue;
 			// Down paths need active recovery; passive degradation resets the streak.
 			if (this.#engine.get(link.iface)?.state === "down") continue;
-			passive.add(link.iface);
-			const expired =
-				now - telemetry.lastReadMs >= UPLINK_HEALTH_CONFIG.telemetryExpiryMs;
+			if (link.stale) staleRow.add(link.iface);
+			if (!expired && notCarrying.has(link.iface))
+				carryingNothing.add(link.iface);
 			const key = JSON.stringify([link.iface, link.link_id ?? link.conn_id]);
 			seen.add(key);
 			const entry = this.#deps.interfaces()[link.iface];
@@ -306,13 +366,8 @@ export class UplinkHealthRuntimeCore {
 		for (const key of this.#recentNaks.keys()) {
 			if (!seen.has(key)) this.#recentNaks.delete(key);
 		}
-		for (const [iface, outcome] of observations) {
-			this.#observe(
-				{ iface, ...this.#deps.identity(iface), outcome, now },
-				round,
-			);
-		}
-		return passive;
+		for (const iface of staleRow) carryingNothing.delete(iface);
+		return { passive: observations, carryingNothing };
 	}
 
 	#publishIfChanged(): void {

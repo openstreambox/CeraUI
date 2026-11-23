@@ -416,8 +416,16 @@ the existing initial-up behavior. These two bounds limit history under interface
 churn without forgetting brief disappearances.
 While streaming, down paths use active probes at the existing five-second cadence
 instead of passive sender metrics. They rejoin only after the existing five-success
-and 15-second hold-down requirements are met. Other streaming paths continue to use
-passive telemetry without active probes.
+and 15-second hold-down requirements are met. A path the sender reads as carrying
+nothing on fresh telemetry (`not_carrying_ifaces`: its byte counter stood still for
+at least 5 s) also uses its active probe instead of its sender row, because a
+black-holed path keeps a fresh row with its last RTT and no NAKs, which would read
+as healthy for the whole stream. An idle but working path, such as a spare or a
+modem the bond hardly uses at a low bitrate, answers the probe and stays up; only
+three failed probe rounds take it down. Without a check address for its family it
+keeps its passive verdict. Other streaming paths continue to use passive telemetry
+without active probes. End-to-end regressions with the dead-bearer recovery live in
+`apps/backend/src/modules/modems/dead-bearer-live-health.test.ts`.
 
 Model and steering-selection regressions live in
 `apps/backend/src/tests/uplink-steering-state.test.ts`; all three recovery paths

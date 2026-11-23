@@ -1,0 +1,434 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+import type { Telemetry } from "@ceraui/srtla-send/telemetry";
+import { resetClatTranslationStateForTest } from "../network/clat-translation.ts";
+import type { ProbeCandidate } from "../network/connectivity-candidates.ts";
+import type { NetworkInterface } from "../network/network-interfaces.ts";
+import {
+	UplinkHealthEngine,
+	type UplinkHealthOutcome,
+	type UplinkHealthRecord,
+} from "../network/uplink-health/model.ts";
+import { UplinkHealthRuntimeCore } from "../network/uplink-health/runtime-core.ts";
+import type { BondEntry } from "../streaming/bind-map.ts";
+import {
+	clearBindMapReport,
+	noteWriterBindMapReport,
+	resetBindMapReportListeners,
+} from "../streaming/bind-map-disposition.ts";
+import { setForwardActive } from "../streaming/forward-activity.ts";
+import { resetLifecycleInterlock } from "../streaming/lifecycle-admission.ts";
+import { setLinkIdentityDetailResolverForTest } from "../streaming/link-registry.ts";
+import {
+	buildLinkTelemetry,
+	ingestTelemetryForTest,
+	registerSrtlaBond,
+	setCarryingClockForTest,
+	setIfaceResolverForTest,
+	setTelemetryClockForTest,
+	startLinkTelemetry,
+	stopLinkTelemetry,
+} from "../streaming/link-telemetry.ts";
+import { resetRecoveryBarrier } from "../streaming/recovery-barrier.ts";
+import {
+	DEAD_BEARER_ALONE_HOLD_MS,
+	DEAD_BEARER_HOLD_MS,
+	runDeadBearerRecovery,
+	setDeadBearerDepsForTest,
+} from "./dead-bearer-recovery.ts";
+import {
+	getModemIds,
+	type Modem,
+	removeModem,
+	setModem,
+} from "./modems-state.ts";
+
+/*
+  Mid-stream recovery end to end: sender snapshots go through the real
+  telemetry module once a second, the real uplink health core runs its 5 s
+  round on that telemetry (the probe is the only fake), and the dead-bearer
+  poll runs every 30 s against the health records the core produced.
+
+  A black-holed bearer looks healthy to the passive path: the sender keeps a
+  fresh row with its last RTT and no NAKs. Only its byte counter stands still.
+  The health record therefore has to come from the link's own probe while the
+  sender reads it as carrying nothing, or #146 never sees an outage.
+*/
+
+const UUID = "9b0c1f3e-4f4f-4a51-9a51-3a0d1b7e2c11";
+const KEY = "platform-xhci-hcd.0.auto-usb-0:1.4";
+const SENDER_EPOCH = 1_790_000_000_000;
+const HEALTH_MS = 5_000;
+const POLL_MS = 30_000;
+
+const MODEM: BondEntry = {
+	ip: "10.64.0.2",
+	iface: "wwan0",
+	linkId: "lnk_modem00000000000",
+};
+const ETH: BondEntry = {
+	ip: "192.168.1.20",
+	iface: "eth0",
+	linkId: "lnk_eth0000000000000",
+};
+
+type Conn = Partial<Telemetry["connections"][number]> & {
+	iface?: string;
+	link_id?: string;
+};
+
+/** Monotonic ms since the test began; drives the poll and the dwell. */
+let now = 0;
+/** Wall clock for health and telemetry timestamps. */
+let wall = 0;
+let calls: string[];
+let engine: UplinkHealthEngine;
+let health: UplinkHealthRuntimeCore;
+let probes: string[];
+/** The probe's answer per interface at the current time. */
+let probeAnswer: (iface: string, t: number) => UplinkHealthOutcome;
+
+const interfaces: Record<string, NetworkInterface> = {
+	wwan0: { ip: MODEM.ip, error: 0, tp: 0, txb: 0 },
+	eth0: { ip: ETH.ip, error: 0, tp: 0, txb: 0 },
+};
+
+function snapshot(connections: Conn[]): Telemetry {
+	return {
+		schema_version: 1,
+		last_updated_ms: SENDER_EPOCH + now,
+		connections: connections.map((c, i) => ({
+			conn_id: String(i),
+			rtt_ms: 80,
+			nak_count: 0,
+			weight_percent: 50,
+			window: 1000,
+			in_flight: 0,
+			bitrate_bps: 0,
+			...c,
+		})),
+	} as Telemetry;
+}
+
+function modem(): Modem {
+	return {
+		ifname: "wwan0",
+		name: "Test modem",
+		sim_network: "Test",
+		network_type: { supported: {}, active: null },
+		config: {
+			conn: UUID,
+			autoconfig: false,
+			apn: "internet",
+			username: "",
+			password: "",
+			roaming: false,
+			network: "",
+		},
+	};
+}
+
+function startStream(entries: readonly BondEntry[]): void {
+	registerSrtlaBond(entries);
+	noteWriterBindMapReport("bind-map-passed", entries);
+	startLinkTelemetry(
+		"/tmp/unused-stats.json",
+		entries.map((e) => e.ip),
+		{ watch: () => ({ stop: () => {} }) },
+	);
+}
+
+const states = new Map<string, string>();
+
+/**
+ * Advance second by second until `until`, feeding the sender snapshot that
+ * `rows(t)` returns, running a health round every 5 s and the dead-bearer
+ * poll every 30 s. Returns the reconnect times; `states` collects each
+ * interface's health state per round ("U", "g" or "D").
+ */
+async function streamUntil(
+	until: number,
+	rows: (t: number) => Conn[],
+): Promise<number[]> {
+	const at: number[] = [];
+	while (now < until) {
+		now += 1_000;
+		wall += 1_000;
+		ingestTelemetryForTest(snapshot(rows(now)));
+		if (now % HEALTH_MS === 0) {
+			await health.tick();
+			for (const iface of Object.keys(interfaces)) {
+				const state = engine.get(iface)?.state;
+				const mark =
+					state === "up"
+						? "U"
+						: state === "down"
+							? "D"
+							: state === "degraded"
+								? "g"
+								: "-";
+				states.set(iface, (states.get(iface) ?? "") + mark);
+			}
+		}
+		if (now % POLL_MS !== 0) continue;
+		const before = calls.length;
+		await runDeadBearerRecovery();
+		if (calls.length > before) at.push(now);
+	}
+	return at;
+}
+
+beforeEach(() => {
+	resetLifecycleInterlock();
+	resetRecoveryBarrier();
+	setForwardActive(false);
+	now = 0;
+	wall = 1_800_000_000_000;
+	calls = [];
+	probes = [];
+	states.clear();
+	probeAnswer = () => "success";
+	resetClatTranslationStateForTest();
+	setTelemetryClockForTest(() => wall);
+	setCarryingClockForTest(() => now);
+	setLinkIdentityDetailResolverForTest(() => ({}));
+	setIfaceResolverForTest(() => undefined);
+	for (const id of getModemIds()) removeModem(id);
+	setModem(2, modem());
+	engine = new UplinkHealthEngine();
+	health = new UplinkHealthRuntimeCore(
+		{
+			now: () => wall,
+			interfaces: () => interfaces,
+			streaming: () => true,
+			telemetry: buildLinkTelemetry,
+			resolveTarget: async (family) =>
+				family === 4 ? "192.0.2.204" : undefined,
+			probe: async (candidate) => {
+				probes.push(`${now / 1000}:${candidate.name}`);
+				return probeAnswer(candidate.name, now);
+			},
+			publish: () => {},
+			exclusionReason: (entry) => (entry?.ip ? undefined : "no address"),
+			candidates: (all) =>
+				Object.entries(all).flatMap(([name, entry]): ProbeCandidate[] =>
+					entry.ip
+						? [
+								{
+									name,
+									ip: entry.ip,
+									binding: { kind: "device", ifname: name },
+								},
+							]
+						: [],
+				),
+			identity: (iface) => ({
+				kind: iface === "eth0" ? "ethernet" : "cellular",
+			}),
+		},
+		engine,
+	);
+	setDeadBearerDepsForTest({
+		now: () => now,
+		wallNow: () => wall,
+		ids: () => getModemIds(),
+		stableKey: (id) => (id === 2 ? KEY : undefined),
+		health: (iface) => engine.get(iface),
+		healthList: () => engine.list(),
+		clatTun: () => undefined,
+		clatParent: () => undefined,
+		streaming: () => true,
+		readAutoconnect: async () => "no",
+		automaticReady: async () => true,
+		nmState: async () => "100",
+		mmState: async () => "connected",
+		lastDial: () => undefined,
+		noteDial: () => {},
+		disconnect: async (uuid) => {
+			calls.push(`down ${uuid}`);
+		},
+		connect: async (uuid) => {
+			calls.push(`up ${uuid}`);
+			return true;
+		},
+	});
+});
+
+afterEach(() => {
+	health.dispose();
+	setDeadBearerDepsForTest(null);
+	stopLinkTelemetry();
+	clearBindMapReport();
+	resetBindMapReportListeners();
+	resetClatTranslationStateForTest();
+	setTelemetryClockForTest(null);
+	setCarryingClockForTest(null);
+	setLinkIdentityDetailResolverForTest(null);
+	setIfaceResolverForTest(null);
+	resetLifecycleInterlock();
+	resetRecoveryBarrier();
+	for (const id of getModemIds()) removeModem(id);
+});
+
+function probedIfaces(): string[] {
+	return [...new Set(probes.map((probe) => probe.split(":")[1]))].sort();
+}
+
+function record(iface: string): UplinkHealthRecord | undefined {
+	return engine.get(iface);
+}
+
+describe("while streaming, a bearer that carries nothing is judged by its own probe", () => {
+	test("a black-holed modem goes down on its probes and is reconnected after the hold", async () => {
+		startStream([MODEM, ETH]);
+		// Black hole from 20 s until the reconnect: the modem's counter stops,
+		// its row stays fresh with the RTT it last had and no NAKs.
+		const blackholeAt = 20_000;
+		const dead = (t: number) => t > blackholeAt && calls.length === 0;
+		probeAnswer = (iface, t) =>
+			iface === "wwan0" && dead(t) ? "failure" : "success";
+		let bytes = 0;
+		const at = await streamUntil(600_000, (t) => {
+			if (!dead(t)) bytes += 200_000;
+			return [
+				{
+					link_id: MODEM.linkId,
+					bytes_sent_total: bytes,
+					bitrate_bps: dead(t) ? 0 : 1_600_000,
+				},
+				{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
+			];
+		});
+		// Not carrying from 25 s, probed from the 25 s round: three failed
+		// rounds (25, 30, 35 s) take it down, six (50 s) make an outage the
+		// 60 s poll sees, and the 60 s hold ends at the 120 s poll.
+		expect(states.get("wwan0")?.slice(0, 8)).toBe("UUUUUUDD");
+		expect(at).toEqual([60_000 + DEAD_BEARER_HOLD_MS]);
+		expect(calls).toEqual([`down ${UUID}`, `up ${UUID}`]);
+		// Down from the 35 s round; after the 120 s reconnect it needs five
+		// clean probe rounds (125–145 s) to come back, then stays up.
+		expect(states.get("wwan0")).toMatch(/^U{6}D{22}U+$/);
+		expect(record("wwan0")).toMatchObject({ state: "up" });
+		// eth0 carried throughout and was never probed while streaming.
+		expect(probedIfaces()).toEqual(["wwan0"]);
+		expect(states.get("eth0")).toMatch(/^U+$/);
+	});
+
+	test("a modem the bond hardly uses at a low bitrate flickers between carrying and not, answers its probe and is never touched", async () => {
+		startStream([MODEM, ETH]);
+		// T1744's live-alt shape: eth0 carries nearly everything and the
+		// healthy modem alternates 8–30 s stretches of a still counter with
+		// bursts of traffic.
+		let bytes = 0;
+		const at = await streamUntil(20 * 60_000, (t) => {
+			const phase = (t / 1000) % 37;
+			if (phase < 9) bytes += 4_000;
+			return [
+				{ link_id: MODEM.linkId, bytes_sent_total: bytes },
+				{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
+			];
+		});
+		expect(at).toEqual([]);
+		expect(states.get("wwan0")).toMatch(/^U+$/);
+		// The quiet stretches were checked by probe, not waved through.
+		expect(probedIfaces()).toEqual(["wwan0"]);
+		expect(record("wwan0")?.probes.failures).toBe(0);
+	});
+
+	test("one lost probe in a quiet stretch does not take a healthy modem down", async () => {
+		startStream([MODEM, ETH]);
+		// Two failures in a row, then success: below the three-round threshold.
+		probeAnswer = (iface, t) =>
+			iface === "wwan0" && (t === 30_000 || t === 35_000)
+				? "failure"
+				: "success";
+		const at = await streamUntil(10 * 60_000, (t) => [
+			{ link_id: MODEM.linkId, bytes_sent_total: 1_332 },
+			{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
+		]);
+		expect(at).toEqual([]);
+		expect(states.get("wwan0")).toMatch(/^U+$/);
+	});
+
+	test("a modem that carries the stream is never probed or reconnected, even if a probe would fail", async () => {
+		startStream([MODEM, ETH]);
+		probeAnswer = (iface) => (iface === "wwan0" ? "failure" : "success");
+		const at = await streamUntil(20 * 60_000, (t) => [
+			{ link_id: MODEM.linkId, bytes_sent_total: t * 300, bitrate_bps: 2e6 },
+			{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
+		]);
+		expect(at).toEqual([]);
+		expect(probes).toEqual([]);
+		expect(states.get("wwan0")).toMatch(/^U+$/);
+	});
+
+	test("the last carrying link is never reconnected: a cut eth0 goes down, the modem carrying alone stays", async () => {
+		startStream([MODEM, ETH]);
+		// eth0 is cut to the LAN at 20 s and stops carrying; the modem carries
+		// the whole stream. Probes from the modem fail anyway (a blocked check
+		// address on that carrier).
+		probeAnswer = (iface, t) =>
+			iface === "eth0" ? (t > 20_000 ? "failure" : "success") : "failure";
+		const at = await streamUntil(20 * 60_000, (t) => [
+			{ link_id: MODEM.linkId, bytes_sent_total: t * 300, bitrate_bps: 2e6 },
+			{
+				link_id: ETH.linkId,
+				bytes_sent_total: Math.min(t, 20_000) * 500,
+			},
+		]);
+		expect(at).toEqual([]);
+		expect(record("eth0")).toMatchObject({
+			state: "down",
+			reason: "probe_failed",
+		});
+		expect(states.get("wwan0")).toMatch(/^U+$/);
+	});
+
+	test("with every link black-holed, the modem waits for the alone hold", async () => {
+		startStream([MODEM, ETH]);
+		probeAnswer = (_iface, t) => (t > 20_000 ? "failure" : "success");
+		const at = await streamUntil(600_000, (t) => [
+			{ link_id: MODEM.linkId, bytes_sent_total: Math.min(t, 20_000) * 200 },
+			{ link_id: ETH.linkId, bytes_sent_total: Math.min(t, 20_000) * 500 },
+		]);
+		expect(record("eth0")?.state).toBe("down");
+		expect(at).toEqual([60_000 + DEAD_BEARER_ALONE_HOLD_MS]);
+	});
+
+	test("without a check address the quiet link keeps its passive verdict", async () => {
+		startStream([MODEM, ETH]);
+		const resolveNone = new UplinkHealthRuntimeCore(
+			{
+				now: () => wall,
+				interfaces: () => interfaces,
+				streaming: () => true,
+				telemetry: buildLinkTelemetry,
+				resolveTarget: async () => undefined,
+				probe: async (candidate) => {
+					probes.push(candidate.name);
+					return "failure";
+				},
+				publish: () => {},
+				exclusionReason: () => undefined,
+				candidates: (all) =>
+					Object.entries(all).map(([name, entry]) => ({
+						name,
+						ip: entry.ip as string,
+						binding: { kind: "device" as const, ifname: name },
+					})),
+				identity: () => ({ kind: "cellular" }),
+			},
+			engine,
+		);
+		health = resolveNone;
+		const at = await streamUntil(120_000, (t) => [
+			{ link_id: MODEM.linkId, bytes_sent_total: 0 },
+			{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
+		]);
+		expect(probes).toEqual([]);
+		expect(at).toEqual([]);
+		// Fresh passive evidence keeps the record current, not stale.
+		expect(record("wwan0")).toMatchObject({ state: "up" });
+		expect((record("wwan0")?.staleAt ?? 0) > wall).toBe(true);
+	});
+});

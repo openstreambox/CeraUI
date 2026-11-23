@@ -5,8 +5,10 @@
   while no packet gets through: a stale gateway after a cell change, a carrier
   that stopped routing the session, an MTU or NAT state the network dropped.
   Uplink health notices (device-bound probes to the connectivity-check address
-  fail and the link reads `down`), but nothing acted on it: the link stayed
-  dead until someone replugged the modem. A NetworkManager down/up of the same
+  fail and the link reads `down`; while streaming, a link the sender reads as
+  carrying nothing is probed the same way instead of being judged by its
+  sender row), but nothing acted on it: the link stayed dead until someone
+  replugged the modem. A NetworkManager down/up of the same
   profile is the one action taken here.
 
   The probe is HTTP to one address, so its failure is weaker evidence than the
