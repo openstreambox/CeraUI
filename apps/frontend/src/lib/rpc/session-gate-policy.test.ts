@@ -122,8 +122,9 @@ describe("reconnect session gate policy", () => {
 	it("holds only reads", () => {
 		for (const procedure of HELD_DURING_REAUTH) {
 			const name = procedure.split(".")[1] ?? "";
+			// updateOutcome is a read: what an install did, from dpkg and the unit state.
 			expect(
-				/^(get|list|kioskStatus$|streamHealth$)/.test(name),
+				/^(get|list|kioskStatus$|streamHealth$|updateOutcome$)/.test(name),
 				procedure,
 			).toBe(true);
 		}

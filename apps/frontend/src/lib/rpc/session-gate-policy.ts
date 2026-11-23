@@ -61,6 +61,7 @@ export const HELD_DURING_REAUTH: ReadonlySet<string> = new Set([
 	"system.getUpdateDetails",
 	"system.getUpdateSettings",
 	"system.kioskStatus",
+	"system.updateOutcome",
 	"wifi.getAdapterModes",
 	"wifi.getStatus",
 ]);
