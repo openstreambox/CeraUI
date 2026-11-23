@@ -22,6 +22,11 @@ export const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
 	// The device bounds a support bundle at 60 s; leave room for delivery.
 	"logs.previewBundle": 75_000,
 	"logs.createBundle": 75_000,
+	// Storage and cleanup: the device bound plus 15 s, rounded up to 5 s (sizing in client.ts).
+	"logs.getStorage": 60_000,
+	"logs.setRetention": 135_000,
+	"logs.deleteLegacyDebug": 75_000,
+	"logs.clearAll": 210_000,
 };
 
 export function rpcCallTimeoutMs(path: string): number {
