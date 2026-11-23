@@ -237,6 +237,34 @@ describe("getCapabilities — list-devices tolerance", () => {
 	});
 });
 
+describe("getCapabilities — device discovery not queried", () => {
+	// A capability read on a session client skips list-devices (apply-now's
+	// refresh); it must not erase the modes the last full read found.
+	test("a read that does not query devices keeps the last device_modes", async () => {
+		await getCapabilities({
+			fetchEngineCapabilities: async () => ({
+				caps: makeCaps(),
+				schemaVersion: SCHEMA_VERSION,
+			}),
+			fetchEngineDevices: async () => structuredClone(CAPS_FULL_DEVICES),
+			logger: silent,
+		});
+		const scanned = getLastCapabilities()?.device_modes;
+		expect(scanned).toBeDefined();
+
+		const result = await getCapabilities({
+			fetchEngineCapabilities: async () => ({
+				caps: makeCaps(),
+				schemaVersion: SCHEMA_VERSION,
+			}),
+			fetchEngineDevices: async () => undefined,
+			logger: silent,
+		});
+
+		expect(result.device_modes).toEqual(scanned);
+	});
+});
+
 describe("getCapabilities — bitrate unit normalization", () => {
 	test("converts a bps bitrate range to kbps before broadcast", async () => {
 		const result = await getCapabilities({

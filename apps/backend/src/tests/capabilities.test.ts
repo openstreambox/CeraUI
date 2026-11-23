@@ -214,6 +214,39 @@ describe("getCapabilities — schema_version skew", () => {
 		expect(result.sources).toEqual(caps.sources);
 	});
 
+	test("an older engine within the same major is logged but not flagged", async () => {
+		const caps = makeCaps();
+		const spy = logSpy();
+
+		const result = await getCapabilities({
+			fetchEngineCapabilities: async () => ({ caps, schemaVersion: "0.1.0" }),
+			fetchEngineDevices: async () => ({ devices: [] }),
+			bindingsSchemaVersion: "0.24.0",
+			logger: spy.logger,
+		});
+
+		// The older engine's fields all parse and newer features are token-gated,
+		// so the UI must not call its capabilities approximate.
+		expect(result.schemaVersionMismatch).toBeUndefined();
+		expect(result.engineUnavailable).toBe(false);
+		expect(spy.warns.some((w) => w.msg.includes("schema_version"))).toBe(true);
+	});
+
+	test("a newer engine schema_version is flagged", async () => {
+		const caps = makeCaps();
+		const spy = logSpy();
+
+		const result = await getCapabilities({
+			fetchEngineCapabilities: async () => ({ caps, schemaVersion: "0.99.0" }),
+			fetchEngineDevices: async () => ({ devices: [] }),
+			bindingsSchemaVersion: "0.24.0",
+			logger: spy.logger,
+		});
+
+		expect(result.schemaVersionMismatch).toBe(true);
+		expect(spy.warns.some((w) => w.msg.includes("schema_version"))).toBe(true);
+	});
+
 	test("a matching schema_version does not warn and sets no mismatch flag", async () => {
 		const caps = makeCaps();
 		const spy = logSpy();
