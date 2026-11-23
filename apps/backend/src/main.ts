@@ -177,6 +177,7 @@ import { initDeviceStats } from "./modules/system/device-stats.ts";
 import { initEncoderLoad } from "./modules/system/encoder-load.ts";
 import { initFan } from "./modules/system/fan.ts";
 import { getHardwareKind } from "./modules/system/hardware-kind.ts";
+import { publishPowerAdmissionStatus } from "./modules/system/power-admission.ts";
 import { initRevisions } from "./modules/system/revisions.ts";
 import {
 	initHardwareMonitoring,
@@ -708,6 +709,9 @@ onHeartbeatTick(() => {
 	void tickCarrying();
 	void tickUplinkShaper();
 });
+
+// The image's power broker: say when a power-off waits for a running update.
+onHeartbeatTick(() => publishPowerAdmissionStatus());
 
 // Network-ingest gateway status (Todo 16): probe the rtmp/srt ingest gateways on
 // the heartbeat cadence and fold the result into the `status` flow on change. The
