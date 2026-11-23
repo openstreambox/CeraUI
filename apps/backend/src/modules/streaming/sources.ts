@@ -1569,9 +1569,11 @@ function commitEngineDevices(
  */
 export async function tryRefreshEngineDeviceCache(
 	deps: EngineDeviceCacheDeps = defaultEngineDeviceCacheDeps,
+	current: () => boolean = () => true,
 ): Promise<boolean> {
 	const probe = await probeEngineDevices(deps);
-	if (probe === undefined) return false;
+	// A caller torn down while the probe was in flight commits nothing.
+	if (probe === undefined || !current()) return false;
 	commitEngineDevices(probe.devices, probe.audio, probe.selectionToken);
 	return true;
 }
@@ -1584,8 +1586,9 @@ export async function tryRefreshEngineDeviceCache(
  */
 export async function refreshEngineDeviceCache(
 	deps: EngineDeviceCacheDeps = defaultEngineDeviceCacheDeps,
+	current: () => boolean = () => true,
 ): Promise<CaptureDevice[]> {
-	await tryRefreshEngineDeviceCache(deps);
+	await tryRefreshEngineDeviceCache(deps, current);
 	return engineDeviceCache;
 }
 
@@ -1794,8 +1797,10 @@ function broadcastSourcesIfChanged(): void {
  */
 export async function refreshAndBroadcastSources(
 	deps: EngineDeviceCacheDeps = defaultEngineDeviceCacheDeps,
+	current: () => boolean = () => true,
 ): Promise<void> {
-	await refreshEngineDeviceCache(deps);
+	await refreshEngineDeviceCache(deps, current);
+	if (!current()) return;
 	broadcastSources();
 }
 

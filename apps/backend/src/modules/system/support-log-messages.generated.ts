@@ -624,7 +624,6 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["cerastream: rollback stop best-effort failed"],
 	["cerastream: runtime-state query unresolved"],
 	["cerastream: session control connection lost; retiring the engine session"],
-	["cerastream: session request timed out"],
 	["cerastream: status broadcast skipped"],
 	[
 		"cerastream: the engine did not close its control socket within the bound; completing the stop anyway",

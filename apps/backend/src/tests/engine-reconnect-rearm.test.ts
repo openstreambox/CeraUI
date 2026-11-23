@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -16,6 +16,13 @@ import {
 	settleEngineReconnect,
 	stopEngineReconnect,
 } from "../modules/streaming/engine-reconnect.ts";
+import {
+	getEngineDeviceCache,
+	refreshAndBroadcastSources,
+	resetEngineDeviceCache,
+} from "../modules/streaming/sources.ts";
+import { streamSessionProductionDeps } from "../modules/streaming/stream-session-production.ts";
+import * as compat from "../rpc/compat.ts";
 
 // The engine's watchdog restart after boot: the reconnect loop settled once at
 // boot, the session then lost its control connection, and nothing asked the
@@ -504,6 +511,7 @@ describe("heal after a re-arm — publishing only", () => {
 
 	test("the default publisher sends capabilities, pipelines and sources, and stops when torn down", async () => {
 		const calls: string[] = [];
+		const passed: Array<() => boolean> = [];
 		const steps = {
 			resolveHardware: async () => {
 				calls.push("hardware");
@@ -514,12 +522,15 @@ describe("heal after a re-arm — publishing only", () => {
 			broadcastPipelines: () => {
 				calls.push("pipelines");
 			},
-			refreshSources: async () => {
-				calls.push("sources");
+			refreshSources: async (_deps: unknown, alive: () => boolean) => {
+				passed.push(alive);
+				calls.push(alive() ? "sources" : "sources-after-teardown");
 			},
 		};
-		await buildDefaultPublishEngineAvailability(undefined, steps)(() => true);
+		const guard = () => true;
+		await buildDefaultPublishEngineAvailability(undefined, steps)(guard);
 		expect(calls).toEqual(["hardware", "capabilities", "pipelines", "sources"]);
+		expect(passed).toEqual([guard]);
 
 		calls.length = 0;
 		let alive = true;
@@ -560,5 +571,100 @@ describe("default wiring of a proven loss", () => {
 		await defaultOnEngineUnreachable("list-devices-poll");
 		expect(h.pending).toBe(1);
 		expect(h.warnings.some((w) => w.includes("list-devices-poll"))).toBe(true);
+	});
+});
+
+describe("sources after teardown", () => {
+	const hdmi = {
+		input_id: "video0",
+		device_path: "/dev/video0",
+		display_name: "HDMI",
+		media_class: "video" as const,
+		kind: "hdmi" as const,
+		caps: [
+			{
+				width: 1920,
+				height: 1080,
+				framerate: "60/1",
+				media_type: "video/x-raw",
+			},
+		],
+	};
+
+	test("the default publisher hands its guard to the real sources refresh", async () => {
+		resetEngineDeviceCache();
+		const sent = spyOn(compat, "broadcastMsg");
+		try {
+			let alive = true;
+			const publish = buildDefaultPublishEngineAvailability(
+				{
+					fetchEngineDevices: async () => {
+						alive = false; // torn down while the probe was in flight
+						return { devices: [hdmi] };
+					},
+				},
+				// Only the hardware and capability steps are stubbed; sources is real.
+				{
+					resolveHardware: async () => {},
+					broadcastCapabilities: () => {},
+					broadcastPipelines: () => {},
+				},
+			);
+			await publish(() => alive);
+			expect(getEngineDeviceCache()).toEqual([]);
+			expect(sent.mock.calls.filter(([type]) => type === "sources")).toEqual(
+				[],
+			);
+		} finally {
+			sent.mockRestore();
+			resetEngineDeviceCache();
+		}
+	});
+
+	test("a teardown during the device probe commits and broadcasts nothing", async () => {
+		resetEngineDeviceCache();
+		const sent = spyOn(compat, "broadcastMsg");
+		try {
+			let alive = true;
+			await refreshAndBroadcastSources(
+				{
+					fetchEngineDevices: async () => {
+						alive = false; // torn down while the probe was in flight
+						return { devices: [hdmi] };
+					},
+				},
+				() => alive,
+			);
+			expect(getEngineDeviceCache()).toEqual([]);
+			expect(sent.mock.calls.filter(([type]) => type === "sources")).toEqual(
+				[],
+			);
+
+			// Control: the same probe with the loop alive commits and publishes.
+			await refreshAndBroadcastSources(
+				{ fetchEngineDevices: async () => ({ devices: [hdmi] }) },
+				() => true,
+			);
+			expect(getEngineDeviceCache()).toHaveLength(1);
+			expect(
+				sent.mock.calls.filter(([type]) => type === "sources").length,
+			).toBe(1);
+		} finally {
+			sent.mockRestore();
+			resetEngineDeviceCache();
+		}
+	});
+});
+
+describe("production binding of a start that cannot reach the engine", () => {
+	test("streamSessionProductionDeps.onEngineUnavailable re-arms the running loop", async () => {
+		const h = await bootedReachable();
+		h.advance(120_000);
+		h.setEngineUp(false);
+		streamSessionProductionDeps.onEngineUnavailable?.();
+		for (let i = 0; i < 20 && h.pending === 0; i++)
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		expect(h.pending).toBe(1);
+		expect(h.warnings.some((w) => w.includes("(start)"))).toBe(true);
 	});
 });

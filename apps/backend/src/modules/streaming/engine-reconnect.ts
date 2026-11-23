@@ -48,8 +48,9 @@
 //      masked/disabled cerastream just gets a cheap periodic poll, never hammering.
 //   3. Re-arm after a later loss — once settled, `rearmEngineReconnect()` starts
 //      the same loop again whenever the engine connection is proven lost after
-//      boot (a session's control connection died or stopped answering, or a
-//      start could not reach the engine). Without it a watchdog restart of
+//      boot (a session's control connection closed or failed, or a start
+//      could not reach the engine). A hung engine is covered too: its watchdog
+//      kills it within 90 s, and that closes the socket. Without it a watchdog restart of
 //      cerastream left the capability snapshot marked unavailable for the rest
 //      of the process: the offline banner stayed and Start stayed blocked until
 //      the backend itself restarted. A loss shortly after a heal keeps the
@@ -201,22 +202,32 @@ export interface EngineConnectionOverrides {
  * null capability snapshot or a sources refresh failure is swallowed by the loop's
  * own catch.
  */
+/** The publishing steps of a heal; each is overridable on its own (tests). */
+export interface PublishEngineAvailabilitySteps {
+	resolveHardware: () => Promise<unknown>;
+	broadcastCapabilities: () => void;
+	broadcastPipelines: () => void;
+	refreshSources: (
+		deps: EngineDeviceCacheDeps | undefined,
+		alive: () => boolean,
+	) => Promise<unknown>;
+}
+
+const DEFAULT_PUBLISH_STEPS: PublishEngineAvailabilitySteps = {
+	resolveHardware: getHardwareKind,
+	broadcastCapabilities: () =>
+		broadcastMsg("capabilities", getLastCapabilities()),
+	broadcastPipelines: () => broadcastMsg("pipelines", getPipelinesMessage()),
+	// The guard reaches the helper, so a teardown during the device probe
+	// neither commits the cache nor broadcasts `sources`.
+	refreshSources: (deps, alive) => refreshAndBroadcastSources(deps, alive),
+};
+
 export function buildDefaultPublishEngineAvailability(
 	sourcesOverride: EngineDeviceCacheDeps | undefined,
-	steps: {
-		resolveHardware: () => Promise<unknown>;
-		broadcastCapabilities: () => void;
-		broadcastPipelines: () => void;
-		refreshSources: (deps?: EngineDeviceCacheDeps) => Promise<unknown>;
-	} = {
-		resolveHardware: getHardwareKind,
-		broadcastCapabilities: () =>
-			broadcastMsg("capabilities", getLastCapabilities()),
-		broadcastPipelines: () => broadcastMsg("pipelines", getPipelinesMessage()),
-		refreshSources: (deps) =>
-			deps ? refreshAndBroadcastSources(deps) : refreshAndBroadcastSources(),
-	},
+	overrides: Partial<PublishEngineAvailabilitySteps> = {},
 ): (alive: () => boolean) => Promise<void> {
+	const steps = { ...DEFAULT_PUBLISH_STEPS, ...overrides };
 	return async (alive) => {
 		// Ordering is load-bearing: re-resolve the hardware kind BEFORE the
 		// pipelines/sources broadcasts, which read the freshly-cached kind live via
@@ -226,7 +237,7 @@ export function buildDefaultPublishEngineAvailability(
 		if (!alive()) return;
 		steps.broadcastCapabilities();
 		steps.broadcastPipelines();
-		await steps.refreshSources(sourcesOverride);
+		await steps.refreshSources(sourcesOverride, alive);
 	};
 }
 

@@ -34,8 +34,9 @@ It is the boot `pipelines` init now (main.ts) and owns ONE self-rescheduling loo
   reconcile, in-flight config change, restoration).
 - **Re-arm after a later loss** — `rearmEngineReconnect(site)` starts the same loop
   again whenever the engine connection is PROVEN lost after boot: a session whose
-  control connection died or stopped answering (`cerastream-backend.ts`
-  `noteConnectionLoss` → `deps.onEngineUnreachable`), or a start classified
+  control connection closed or failed (`cerastream-backend.ts`
+  `noteConnectionLoss` → `deps.onEngineUnreachable`, the re-arm by default), or a
+  start classified
   `engine_unavailable` (`stream-start-retry.ts`, the one place every start origin's
   failure is classified; a cancelled attempt returns before it, so an operator Stop
   closing a pending start never counts). Without it a watchdog restart of cerastream
@@ -49,7 +50,13 @@ It is the boot `pipelines` init now (main.ts) and owns ONE self-rescheduling loo
   probed every second; a loss during an attempt cannot settle on that attempt's
   answer. Rechecks log at info until the backoff caps, once more at the cap, then at
   debug. `stopEngineReconnect()` runs first on SIGTERM/SIGINT (`helpers/shutdown.ts`
-  `stopEngineReconnect` dep) and makes an in-flight heal skip its remaining steps.
+  `stopEngineReconnect` dep) and makes an in-flight heal skip its remaining steps;
+  the guard reaches `refreshAndBroadcastSources`, so nothing is committed or
+  broadcast after teardown. A hung engine is not detected here: its watchdog kills
+  it within 90 s, which closes the socket. Known gap: a session left in
+  `stop_failed` (the engine-loss Stop could not reach the engine) is not cleared by
+  the heal; Start stays refused and the Live view's unconfirmed-stream band offers
+  the operator's Stop until restoration after an engine restart covers it.
 
 Reachability = `getLastCapabilities()?.engineUnavailable === false` (a live snapshot).
 It feeds INTO the existing `engine-unavailable`/`engine-starting` capability tier — it
@@ -69,7 +76,9 @@ Coverage: `tests/engine-reconnect.test.ts` (boot-retry heal, later out-of-band
 reconnect, backoff-ceiling cadence, and the permanently-unavailable case through the
 REAL capability ladder — no regression to `engineUnavailable`/`engineStarting`);
 `tests/engine-reconnect-rearm.test.ts` (re-arm after a loss, long absence, flapping,
-loss during an attempt, publish-only heal, teardown during a heal, SIGTERM wiring,
-logging); `tests/engine-reconnect-start.test.ts` (the start hook);
-`tests/engine-session-connection-loss.test.ts` (session loss and silent timeouts).
+loss during an attempt, publish-only heal, teardown during a heal and during the
+sources probe, SIGTERM wiring, logging, the production start binding);
+`tests/engine-reconnect-start.test.ts` (the start hook);
+`tests/engine-session-connection-loss.test.ts` (session loss, including the
+production re-arm binding).
 
