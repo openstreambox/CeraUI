@@ -496,6 +496,9 @@ class LineConnection {
 	}
 
 	close(): void {
+		// After `onDisconnect` the runtime has already closed the socket and
+		// released its descriptor (pinned by the fd test in index.test.ts), so
+		// there is nothing left to end.
 		if (this.closed) return;
 		this.closed = true;
 		for (const [, waiter] of this.pending) {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { unlinkSync } from "node:fs";
+import { existsSync, readdirSync, unlinkSync } from "node:fs";
 
 import {
 	createControlClient,
@@ -325,6 +325,29 @@ describe("get_stats and the stats-topic projection", () => {
 		expect(Date.now() - started).toBeLessThan(1000);
 		client?.close();
 	});
+
+	test.skipIf(!existsSync("/proc/self/fd"))(
+		"sender restarts leak no descriptor: close() after a disconnect needs no end()",
+		async () => {
+			const fds = () => readdirSync("/proc/self/fd").length;
+			const before = fds();
+			for (let i = 0; i < 20; i++) {
+				const { path } = await startServer(socketPath("fd"), () => null);
+				const client = await createControlClient({
+					socketPath: path,
+					timeoutMs: 500,
+				});
+				expect(client).not.toBeNull();
+				servers.pop()?.stop();
+				await Bun.sleep(20);
+				client?.close();
+			}
+			Bun.gc(true);
+			await Bun.sleep(50);
+			// Twenty leaked sockets would show; allow a little unrelated noise.
+			expect(fds() - before).toBeLessThanOrEqual(3);
+		},
+	);
 
 	test("get_stats parses the snapshot and keeps the ADR-003 pair", async () => {
 		const { path } = await startServer(socketPath("stats"), (frame) => [

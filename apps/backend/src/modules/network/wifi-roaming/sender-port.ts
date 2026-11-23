@@ -136,9 +136,28 @@ export function createSenderPort(deps: SenderPortDeps): SenderPort {
 }
 
 /**
+ * Each radio's source addresses as the sender's IP list writes them. The bond
+ * enters a link by `ip ?? ipv6` (`isBondCandidate`), so an IPv6-only radio's
+ * link carries its IPv6 address; without it that link would land in `others`
+ * and count as a carrying, independent path.
+ */
+export function radioAddressesOf(
+	netif: Readonly<Record<string, { ip?: string; ipv6?: string } | undefined>>,
+	radios: readonly string[],
+): RadioAddresses[] {
+	return radios.map((ifname) => {
+		const { ip, ipv6 } = netif[ifname] ?? {};
+		return {
+			ifname,
+			addresses: [ip, ipv6].filter((a): a is string => !!a),
+		};
+	});
+}
+
+/**
  * The production dependencies: the sender's control socket, the radios'
- * current IPv4 addresses from the network registry, and the engine's applied
- * bitrate. `now` is the coordinator's clock.
+ * current addresses from the network registry (IPv4 and IPv6), and the
+ * engine's applied bitrate. `now` is the coordinator's clock.
  */
 export function defaultSenderPortDeps(
 	radios: readonly string[],
@@ -151,13 +170,7 @@ export function defaultSenderPortDeps(
 				socketPath: controlSocketPath(SRTLA_LISTEN_PORT),
 				timeoutMs: SRTLA_CONTROL_CONNECT_TIMEOUT_MS,
 			}),
-		radios: () => {
-			const netif = getNetworkInterfaces();
-			return radios.map((ifname) => {
-				const ip = netif[ifname]?.ip;
-				return { ifname, addresses: ip ? [ip] : [] };
-			});
-		},
+		radios: () => radioAddressesOf(getNetworkInterfaces(), radios),
 		appliedKbps: () => getEngineBitrateStatus()?.applied_kbps ?? null,
 	};
 }

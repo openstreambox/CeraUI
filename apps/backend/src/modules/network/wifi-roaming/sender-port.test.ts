@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { SenderLinkStats, SenderStats } from "@ceraui/srtla-send/control";
-import { createSenderPort, type SenderPortDeps } from "./sender-port.ts";
+import {
+	createSenderPort,
+	radioAddressesOf,
+	type SenderPortDeps,
+} from "./sender-port.ts";
 
 const link = (over: Partial<SenderLinkStats> = {}): SenderLinkStats => ({
 	conn_id: 0,
@@ -197,5 +201,42 @@ describe("the sender port", () => {
 		port.close();
 		expect(state.closes).toBe(1);
 		expect(port.senderLinks()).toBeUndefined();
+	});
+});
+
+describe("radio addresses for the mapping", () => {
+	test("an IPv6-only radio maps by its IPv6 address, as the bond enters it", () => {
+		const got = radioAddressesOf(
+			{
+				wlan1: { ip: "192.168.1.10" },
+				wlan2: { ipv6: "2001:db8::10" },
+				wlan3: { ip: "10.0.0.5", ipv6: "2001:db8::5" },
+			},
+			["wlan1", "wlan2", "wlan3", "wlan4"],
+		);
+		expect(got).toEqual([
+			{ ifname: "wlan1", addresses: ["192.168.1.10"] },
+			{ ifname: "wlan2", addresses: ["2001:db8::10"] },
+			{ ifname: "wlan3", addresses: ["10.0.0.5", "2001:db8::5"] },
+			{ ifname: "wlan4", addresses: [] },
+		]);
+	});
+
+	test("an IPv6-only radio's link is mapped to it, not to others", async () => {
+		const deps: SenderPortDeps = {
+			now: () => 1_000,
+			connect: async () => ({
+				getStats: async () => stats([link({ ip: "2001:db8::10" })]),
+				close: () => {},
+			}),
+			radios: () =>
+				radioAddressesOf({ wlan2: { ipv6: "2001:db8::10" } }, ["wlan2"]),
+			appliedKbps: () => null,
+		};
+		const port = createSenderPort(deps);
+		await port.poll();
+		const snap = port.senderLinks();
+		expect(snap?.radios.get("wlan2")?.queued).toBe(100);
+		expect(snap?.others.size).toBe(0);
 	});
 });
