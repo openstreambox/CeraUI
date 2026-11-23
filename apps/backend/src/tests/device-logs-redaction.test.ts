@@ -372,3 +372,56 @@ test.each([
 		});
 	},
 );
+
+// A "config loaded" line as the logger wrote it before ssh_pass, its hash and
+// remote_key were redacted by key. None of these values is held any more.
+const oldConfigLine = JSON.stringify({
+	ts: "2026-01-01T00:00:00.000Z",
+	level: "debug",
+	msg: "config loaded",
+	meta: {
+		password: "[REDACTED]",
+		ssh_pass: "old-ssh-pass-91c2",
+		ssh_pass_hash: "$6$oldsalt$oldsshhash91c2",
+		remote_key: "old-remote-key-91c2",
+		pairing_secret: "[REDACTED]",
+		ssh_persistent: false,
+		video_passthrough: "auto",
+	},
+});
+const oldConfigValues = [
+	"old-ssh-pass-91c2",
+	"oldsshhash91c2",
+	"old-remote-key-91c2",
+];
+
+test.each([
+	["text", oldConfigLine],
+	["text", JSON.stringify({ message: oldConfigLine })],
+	["known", oldConfigLine],
+	["known", JSON.stringify({ message: oldConfigLine })],
+] as const)(
+	"%s masks config credential fields by name when their value is no longer held",
+	(method, line) => {
+		const redact = buildRedactor([]);
+		const { text, redactions } =
+			method === "text" ? redact.text(line) : redact.known(line);
+		for (const value of oldConfigValues) expect(text).not.toContain(value);
+		expect(redactions).toBe(3);
+		expect(text.match(/\[REDACTED:ssh\]/g)).toHaveLength(2);
+		expect(text).toContain("[REDACTED:remote_key]");
+		expect(text).toContain("video_passthrough");
+		expect(text).toContain("auto");
+	},
+);
+
+test("named credential masking leaves look-alike fields and masked values alone", () => {
+	const line = JSON.stringify({
+		ssh_pass_hint: "keep-hint",
+		my_remote_key: "keep-mine",
+		ssh_pass: "[REDACTED]",
+		password: "",
+	});
+	expect(buildRedactor([]).text(line)).toEqual({ text: line, redactions: 0 });
+	expect(buildRedactor([]).known(line)).toEqual({ text: line, redactions: 0 });
+});

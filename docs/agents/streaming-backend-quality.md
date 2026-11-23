@@ -190,10 +190,18 @@ issue list, so callers omit the field rather than log an empty record. See
 🚀 server / ▶️ autostart & reconciler) and a final `✅ CeraUI ready on port N in Xms` line.
 
 **Secret redaction (all transports):**
-`redact()` format scrubs every record before it reaches any transport. Keys matching
-`/pin|password|token|secret|paseto|bcrp|auth/i` are replaced with `[REDACTED]`. Value-shaped
-secrets (PASETO `v4.public.*`, JWT `eyJ…`, Bearer credentials) are also scrubbed from string
-values. The `logRedact(value)` helper is exported for call sites building metadata objects.
+`redact()` format scrubs every record before it reaches any transport. A key is replaced with
+`[REDACTED]` when `isSensitiveKey()` accepts it: the substring rule `SENSITIVE_KEY_RE`, the
+whole-word credential rule (`pass`, `pwd`, `psk`, `secret`, … as a word of the key, and `key` or
+`hash` qualified by `remote`, `private`, `ssh`, `stream`, …, so `ssh_pass`, `ssh_pass_hash` and
+`remote_key` are caught while `video_passthrough` and `keyframe` are not), or one of the whole-key
+classes (SMS, USSD, GPS, own number, device login). `logger-config-credentials.test.ts` pins the
+rule to exactly the credential fields of `runtimeConfigSchema`. Value-shaped secrets (PASETO
+`v4.public.*`, JWT `eyJ…`, Bearer credentials) are also scrubbed from string values. The
+`logRedact(value)` helper is exported for call sites building metadata objects. `loadConfig()`
+logs only the key names of `config.json`. Support bundles and log exports also mask the
+config credential fields by name (`device-logs/redaction.ts`), so journal lines written before
+a value was redacted, or holding a value the backend no longer holds, stay out.
 
 **Loop visibility:**
 Streaming and ingest loop modules log entry/exit and error paths via `logger.debug`/`logger.warn`

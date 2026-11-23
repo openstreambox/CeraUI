@@ -33,14 +33,51 @@ const NAMED_PASSPHRASES: readonly RegExp[] = [
 	/(?<=passphrase\\"\s*:\s*\\")(?:\\\\\\\\|\\\\\\"|\\\\[^"\\]|[^"\\])+(?=\\")/gi,
 ];
 
-function namedPassphrase(match: string): string {
+function namedValue(match: string, kind: string): string {
 	// Already masked upstream of the journal, possibly with trailing punctuation.
 	if (match === '""' || /^"?\[REDACTED(?::[a-z0-9_]+)?\]/.test(match))
 		return match;
-	return match.startsWith('"')
-		? '"[REDACTED:srt_passphrase]"'
-		: "[REDACTED:srt_passphrase]";
+	return match.startsWith('"') ? `"[REDACTED:${kind}]"` : `[REDACTED:${kind}]`;
 }
+
+function namedPassphrase(match: string): string {
+	return namedValue(match, "srt_passphrase");
+}
+
+/**
+ * Credential fields of config.json by name, as JSON members and as JSON nested
+ * in a JSON string. Journals written before the logger redacted these keys can
+ * hold a value the backend no longer holds (an SSH password since reset, an old
+ * hash), which the held-secret literals cannot find.
+ */
+const NAMED_CREDENTIAL_FIELDS: ReadonlyArray<readonly [string, string]> = [
+	["ssh_pass", "ssh"],
+	["ssh_pass_hash", "ssh"],
+	["password", "password"],
+	["password_hash", "password"],
+	["remote_key", "remote_key"],
+	["pairing_secret", "pairing"],
+];
+
+const NAMED_CREDENTIALS: ReadonlyArray<{
+	readonly pattern: RegExp;
+	readonly kind: string;
+}> = NAMED_CREDENTIAL_FIELDS.flatMap(([name, kind]) => [
+	{
+		pattern: new RegExp(
+			String.raw`(?<="${name}"\s*:\s*)"(?:[^"\\]|\\.)*"`,
+			"g",
+		),
+		kind,
+	},
+	{
+		pattern: new RegExp(
+			String.raw`(?<=\\"${name}\\"\s*:\s*\\")(?:\\\\\\\\|\\\\\\"|\\\\[^"\\]|[^"\\])+(?=\\")`,
+			"g",
+		),
+		kind,
+	},
+]);
 
 interface Redactor {
 	structured(value: string | number | boolean | null): void;
@@ -113,6 +150,12 @@ export function buildRedactor(
 			for (const pattern of NAMED_PASSPHRASES)
 				text = text.replace(pattern, (match) => {
 					const next = namedPassphrase(match);
+					if (next !== match) redactions++;
+					return next;
+				});
+			for (const { pattern, kind } of NAMED_CREDENTIALS)
+				text = text.replace(pattern, (match) => {
+					const next = namedValue(match, kind);
 					if (next !== match) redactions++;
 					return next;
 				});
@@ -259,6 +302,8 @@ export function buildRedactor(
 				() => "[REDACTED:token]",
 			);
 			for (const pattern of NAMED_PASSPHRASES) mask(pattern, namedPassphrase);
+			for (const { pattern, kind } of NAMED_CREDENTIALS)
+				mask(pattern, (match) => namedValue(match, kind));
 			spans.sort((a, b) => a.start - b.start);
 			const merged: typeof spans = [];
 			for (const span of spans) {
