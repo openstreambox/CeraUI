@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 
 import type {
 	SenderCapabilityDocument,
@@ -603,7 +604,7 @@ describe("cumulative session bytes (srtla_send ADR-002 bytes_sent_total)", () =>
 
 describe("garbage input (corrupt stats file)", () => {
 	test("a corrupt file leaves the backend alive; payload degrades to null/stale", async () => {
-		const path = `/tmp/ceralive-link-telemetry-garbage-${process.pid}.json`;
+		const path = `${tmpdir()}/ceralive-link-telemetry-garbage-${process.pid}.json`;
 		await Bun.write(path, "{ this is not valid json ::::");
 		setIfaceResolverForTest(() => undefined);
 

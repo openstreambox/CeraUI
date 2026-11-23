@@ -1,4 +1,8 @@
 import { afterAll, afterEach, beforeEach, mock, spyOn } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setProcessSignalRunnerForTest } from "@ceraui/srtla-send/process-signals";
 import {
 	installNetworkSafetyGuard,
@@ -6,7 +10,28 @@ import {
 	resetPermittedTargets,
 	takeSafetyViolations,
 } from "../../../../scripts/test-safety.ts";
+import { installTestTempGuard } from "./helpers/test-temp-guard.ts";
 
+// Bun's parallel workers share the filesystem and may skip process exit hooks.
+// Keep fixtures and the process guards' PATH stubs under this worker's root.
+const tempParent = tmpdir();
+const runtimeRoot = mkdtempSync(join(tempParent, "ceraui-backend-test-"));
+const wrapperRoot = process.env.CERAUI_TEST_TEMP_ROOT;
+const previousTmpDir = process.env.TMPDIR;
+const previousTmp = process.env.TMP;
+const previousTemp = process.env.TEMP;
+const previousTempTree = process.env.CERAUI_TEST_TEMP_TREE;
+const previousPath = process.env.PATH;
+process.env.TMPDIR = runtimeRoot;
+process.env.TMP = runtimeRoot;
+process.env.TEMP = runtimeRoot;
+// A plain Bun run has no wrapper to establish the tree for nested replays.
+process.env.CERAUI_TEST_TEMP_TREE ||= runtimeRoot;
+installTestTempGuard(
+	process.env.CERAUI_TEST_TEMP_TREE,
+	wrapperRoot || runtimeRoot,
+	process.env.CERAUI_TEST_TEMP_PARENT || tempParent,
+);
 installProcessSafetyGuard();
 installNetworkSafetyGuard();
 setProcessSignalRunnerForTest(async () => {
@@ -18,10 +43,6 @@ afterEach(() => {
 	if (violations.length) throw new Error(violations.join("\n"));
 });
 
-import { mkdirSync, mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import * as modemControl from "@ceralive/modem-control";
 import { loadJsonConfigSync } from "../helpers/config-loader.ts";
 import {
@@ -32,7 +53,6 @@ import { continuityObserverIo } from "../modules/streaming/continuity-observer.t
 import { setStreamReconciliationCompletedForTest } from "../modules/system/stream-reconciliation-latch.ts";
 
 // Isolated globals still share /run; seed ownership only from this file's sentinel.
-const runtimeRoot = mkdtempSync(join(tmpdir(), "ceraui-backend-test-"));
 const previousContinuityDir = process.env.CERALIVE_CONTINUITY_DIR;
 process.env.CERALIVE_CONTINUITY_DIR = join(runtimeRoot, "continuity");
 continuityObserverIo.directory = process.env.CERALIVE_CONTINUITY_DIR;
@@ -118,6 +138,7 @@ beforeEach(() => {
 });
 
 afterAll(async () => {
+	// File-level teardown can still need its temp paths and PATH stubs.
 	await Bun.sleep(0);
 	await rm("stream.armed.json", { force: true });
 	if (previousStreamingMarker === undefined)
@@ -149,5 +170,24 @@ afterAll(async () => {
 	if (previousProvisionMarker === undefined)
 		delete process.env.CERALIVE_PROVISION_ACTIVE_FLAG;
 	else process.env.CERALIVE_PROVISION_ACTIVE_FLAG = previousProvisionMarker;
-	await rm(runtimeRoot, { recursive: true, force: true });
+	if (previousTmpDir === undefined) delete process.env.TMPDIR;
+	else process.env.TMPDIR = previousTmpDir;
+	if (previousTmp === undefined) delete process.env.TMP;
+	else process.env.TMP = previousTmp;
+	if (previousTemp === undefined) delete process.env.TEMP;
+	else process.env.TEMP = previousTemp;
+	if (previousTempTree === undefined) delete process.env.CERAUI_TEST_TEMP_TREE;
+	else process.env.CERAUI_TEST_TEMP_TREE = previousTempTree;
+	if (previousPath === undefined) delete process.env.PATH;
+	else process.env.PATH = previousPath;
+	// A plain run has no outer wrapper to fail on a caught write error.
+	const tempEscapes = join(runtimeRoot, "temp-escapes.log");
+	let violations: string | undefined;
+	try {
+		if (!wrapperRoot && existsSync(tempEscapes))
+			violations = readFileSync(tempEscapes, "utf8");
+	} finally {
+		await rm(runtimeRoot, { recursive: true, force: true });
+	}
+	if (violations) throw new Error(violations);
 });

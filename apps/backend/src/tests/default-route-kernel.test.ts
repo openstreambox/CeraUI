@@ -9,7 +9,10 @@ import {
 import { cleanupKernelScenarios } from "./helpers/default-route-kernel-cleanup.ts";
 import { oracle4KernelScenarios } from "./helpers/default-route-kernel-oracle4.ts";
 import { rollbackKernelScenarios } from "./helpers/default-route-kernel-rollback.ts";
-import { runTestCommand } from "./helpers/run-test-command.ts";
+import {
+	backendTestRunner,
+	runTestCommand,
+} from "./helpers/run-test-command.ts";
 
 const child = process.env.CERALIVE_ROUTE_KERNEL_CHILD === "1";
 const probe = child
@@ -247,7 +250,7 @@ describe("real kernel host preferences", () => {
 						"unshare",
 						"-Urn",
 						process.execPath,
-						"test",
+						backendTestRunner,
 						fileURLToPath(import.meta.url),
 						"--test-name-pattern",
 						name,

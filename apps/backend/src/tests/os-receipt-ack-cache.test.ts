@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	acknowledgeRetiredReceipt,
@@ -14,7 +15,7 @@ import { acquireTestOsStageControl } from "./helpers/os-stage-test-control.ts";
 
 test("unchanged acknowledged tombstone avoids CONTROL and native fsync on subsequent passes", async () => {
 	// Given a real tombstone and the production store behind the controller ports.
-	const dir = fs.mkdtempSync("/var/tmp/ceraui-ack-cache-");
+	const dir = fs.mkdtempSync(`${tmpdir()}/ceraui-ack-cache-`);
 	const path = join(dir, "os-staged.consumed.json");
 	fs.writeFileSync(path, "{}");
 	const state = initialOrchestratorState(0);
@@ -67,7 +68,7 @@ test("unchanged acknowledged tombstone avoids CONTROL and native fsync on subseq
 
 test("failed native acknowledgement remains pending until a successful retry", () => {
 	// Given a real tombstone and EIO at the native directory syscall.
-	const dir = fs.mkdtempSync("/var/tmp/ceraui-ack-failure-");
+	const dir = fs.mkdtempSync(`${tmpdir()}/ceraui-ack-failure-`);
 	fs.writeFileSync(join(dir, "os-staged.consumed.json"), "{}");
 	const nativeSync = fs.fsyncSync;
 	let syncs = 0;
@@ -93,7 +94,7 @@ test("failed native acknowledgement remains pending until a successful retry", (
 
 test("identical-byte replacement and changed bytes require a fresh acknowledgement", () => {
 	// Given an acknowledged real inode.
-	const dir = fs.mkdtempSync("/var/tmp/ceraui-ack-identity-");
+	const dir = fs.mkdtempSync(`${tmpdir()}/ceraui-ack-identity-`);
 	const path = join(dir, "os-staged.consumed.json");
 	fs.writeFileSync(path, "{}");
 	acknowledgeRetiredReceipt(dir);
@@ -113,7 +114,7 @@ test("identical-byte replacement and changed bytes require a fresh acknowledgeme
 
 test("a new process generation acknowledges an unchanged tombstone again", async () => {
 	// Given a tombstone already acknowledged in this process.
-	const dir = fs.mkdtempSync("/var/tmp/ceraui-ack-restart-");
+	const dir = fs.mkdtempSync(`${tmpdir()}/ceraui-ack-restart-`);
 	fs.writeFileSync(join(dir, "os-staged.consumed.json"), "{}");
 	acknowledgeRetiredReceipt(dir);
 	const store = new URL(

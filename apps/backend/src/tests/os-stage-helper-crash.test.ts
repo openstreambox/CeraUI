@@ -58,6 +58,7 @@ for (const boundary of [
 ]) {
 	const root = await mkdtemp(join(tmpdir(), "os-helper-crash-"));
 	const directory = join(root, "job");
+	// SIGKILL must hit the test VM itself. Its parent test owns the inherited temp tree.
 	const child = Bun.spawn(
 		[
 			process.execPath,
