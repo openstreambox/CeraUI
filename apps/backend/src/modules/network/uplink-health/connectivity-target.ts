@@ -189,11 +189,19 @@ function createFamilyTargetResolver(
 		inflight ??= refresh();
 		return inflight;
 	};
+	// The address after `ip` in the last answer, wrapping around, so repeated
+	// failures walk every address instead of trading the first two.
+	const after = (ip: string): string | undefined => {
+		const others = cachedAddrs.filter((addr) => addr !== ip);
+		if (others.length === 0) return undefined;
+		const at = cachedAddrs.indexOf(ip);
+		return at === -1 ? others[0] : cachedAddrs[(at + 1) % cachedAddrs.length];
+	};
 	return Object.assign(resolve, {
-		alternate: (failed: string) => cachedAddrs.find((ip) => ip !== failed),
+		alternate: (failed: string) => after(failed),
 		failed: (target: string) => {
 			if (target !== cachedAddr) return;
-			cachedAddr = cachedAddrs.find((ip) => ip !== target) ?? cachedAddr;
+			cachedAddr = after(target) ?? cachedAddr;
 			const now = deps.now();
 			if (now - lastFailureRefresh < CONNECTIVITY_TARGET_FAILURE_REFRESH_MS)
 				return;

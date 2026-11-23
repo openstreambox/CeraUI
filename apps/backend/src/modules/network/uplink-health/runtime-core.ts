@@ -76,6 +76,8 @@ export class UplinkHealthRuntimeCore {
 		}
 	>();
 	/** Streaming check tokens per interface (`streamingProbeBudget`). */
+	/** The interface generation each record's last observation was about. */
+	readonly #observedGeneration = new Map<string, number | undefined>();
 	readonly #budget = new Map<
 		string,
 		{ tokens: number; reserve: number; at: number }
@@ -126,28 +128,33 @@ export class UplinkHealthRuntimeCore {
 		// probe budget. A link that sent
 		// payload recently keeps its passive verdict, down or not: it works.
 		// Without a token the round is held: nothing is recorded, so the last
-		// real verdict and its failure streak stand.
+		// real verdict and its failure streak stand. While a stream runs every
+		// check is metered, a link without a sender row included.
+		const streaming = this.#deps.streaming();
 		const promoted = new Set<string>();
 		const held = new Set<string>();
 		for (const candidate of candidates) {
 			const iface = candidate.name;
-			if (!passive.has(iface) || promoted.has(iface) || held.has(iface))
+			if (promoted.has(iface) || held.has(iface)) continue;
+			const record = this.#engine.get(iface);
+			const down = record?.state === "down";
+			const failing = down || (record?.probes.failures ?? 0) > 0;
+			if (!passive.has(iface)) {
+				if (streaming)
+					(this.#takeToken(iface, undefined, failing) ? promoted : held).add(
+						iface,
+					);
 				continue;
+			}
 			const quiet = this.#deps.quietForMs?.(iface);
-			const down = this.#engine.get(iface)?.state === "down";
 			if (quiet !== undefined && quiet < UPLINK_HEALTH_CONFIG.streamingQuietMs)
 				continue;
 			if (!down && !(fresh.has(iface) && quiet !== undefined)) continue;
-			const record = this.#engine.get(iface);
-			const failing = down || (record?.probes.failures ?? 0) > 0;
 			(this.#takeToken(iface, quiet, failing) ? promoted : held).add(iface);
 		}
+		for (const iface of held) this.#hold(iface, now);
 		for (const [iface, outcome] of passive) {
-			if (promoted.has(iface)) continue;
-			if (held.has(iface)) {
-				this.#engine.touch(iface, now);
-				continue;
-			}
+			if (promoted.has(iface) || held.has(iface)) continue;
 			this.#observe(
 				{ iface, ...this.#deps.identity(iface), outcome, now },
 				round,
@@ -171,7 +178,8 @@ export class UplinkHealthRuntimeCore {
 
 		const active = candidates.filter(
 			(candidate) =>
-				!passive.has(candidate.name) || promoted.has(candidate.name),
+				promoted.has(candidate.name) ||
+				(!passive.has(candidate.name) && !held.has(candidate.name)),
 		);
 		const generations = new Map(
 			active.map((candidate) => [
@@ -204,15 +212,8 @@ export class UplinkHealthRuntimeCore {
 			const target = await this.#deps.resolveTarget(family);
 			if (target !== undefined) targets.set(family, target);
 		}
-		// Without a check address for its family a promoted link is held, like
-		// a link without a token: its last real verdict stands.
-		for (const candidate of active) {
-			if (
-				promoted.has(candidate.name) &&
-				!targets.has(candidate.ip.includes(":") ? 6 : 4)
-			)
-				this.#engine.touch(candidate.name, now);
-		}
+		// Without a check address for its family nothing is measured and
+		// nothing is refreshed: the verdict ages out as unknown, never as up.
 		if (targets.size > 0) {
 			for (
 				let offset = 0;
@@ -275,6 +276,7 @@ export class UplinkHealthRuntimeCore {
 		for (const [iface, sample] of this.#samples) {
 			if (!current[iface] && sample.round <= this.#completedRound) {
 				this.#samples.delete(iface);
+				this.#observedGeneration.delete(iface);
 			}
 		}
 		for (const iface of this.#budget.keys()) {
@@ -394,9 +396,34 @@ export class UplinkHealthRuntimeCore {
 		return fromMain || fromReserve;
 	}
 
+	/**
+	 * A round held for want of a token keeps the record's freshness for at
+	 * most `heldFreshMs` past its last real evidence, and only while the
+	 * interface is the one that evidence was about. Anything older ages out.
+	 */
+	#hold(iface: string, now: number): void {
+		const record = this.#engine.get(iface);
+		if (!record) return;
+		if (
+			this.#observedGeneration.get(iface) !==
+			this.#samples.get(iface)?.generation
+		)
+			return;
+		const evidenceAt = Math.max(
+			record.signals.activeAt ?? Number.NEGATIVE_INFINITY,
+			record.signals.passiveAt ?? Number.NEGATIVE_INFINITY,
+		);
+		this.#engine.touch(
+			iface,
+			now,
+			evidenceAt + UPLINK_HEALTH_CONFIG.heldFreshMs,
+		);
+	}
+
 	#observe(observation: UplinkObservation, round: number): void {
 		const sample = this.#samples.get(observation.iface);
 		if (sample) sample.round = round;
+		this.#observedGeneration.set(observation.iface, sample?.generation);
 		this.#engine.observe(observation);
 	}
 

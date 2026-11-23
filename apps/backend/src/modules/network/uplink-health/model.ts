@@ -26,13 +26,15 @@ export const UPLINK_HEALTH_CONFIG = {
 	passiveNakWindowMs: 10_000,
 	/**
 	 * While streaming, a bonded link is checked by probe instead of its sender
-	 * row only after it moved no stream data for this long, and a failed check
-	 * counts only if the link stayed quiet throughout.
+	 * row only after it sent nothing at all for this long, and a failed check
+	 * does not count if the link sent anything during it.
 	 */
 	streamingQuietMs: 10_000,
+	/** How long a round held for want of a token keeps the last evidence fresh. */
+	heldFreshMs: 60_000,
 	/**
-	 * Those checks, and the checks of a streamed link that is already down, are
-	 * metered: each costs about 1 KB on the link (a second one when the first
+	 * While a stream runs every check is metered, of a link with or without a
+	 * sender row: each costs about 1 KB on the link (a second one when the first
 	 * address fails). At most `perHour` per link (one per 15 s on average), with
 	 * up to `burst` in a row; a link with no payload for `reserveQuietMs` may
 	 * also draw on its own reserve, so a black hole that starts after a drained
@@ -157,10 +159,10 @@ export class UplinkHealthEngine {
 	}
 
 	/**
-	 * A round that measured nothing for `iface` (no probe budget, no check
-	 * address) keeps its verdict and streak; only its freshness moves on.
+	 * A round that measured nothing for `iface` (no probe budget) keeps its
+	 * verdict and streak; only its freshness moves on, never past `notAfter`.
 	 */
-	touch(iface: string, now: number): void {
+	touch(iface: string, now: number, notAfter: number): void {
 		const entry = this.#records.get(iface);
 		if (!entry) return;
 		entry.lastSeen = now;
@@ -168,7 +170,7 @@ export class UplinkHealthEngine {
 			...entry.record,
 			staleAt: Math.max(
 				entry.record.staleAt,
-				now + UPLINK_HEALTH_CONFIG.telemetryExpiryMs,
+				Math.min(now + UPLINK_HEALTH_CONFIG.telemetryExpiryMs, notAfter),
 			),
 		};
 	}

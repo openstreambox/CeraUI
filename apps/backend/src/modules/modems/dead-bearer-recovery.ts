@@ -35,14 +35,18 @@
     modem). A link that moves stream data is not dead, whatever the probe
     says, and a row's mere presence proves nothing: the sender keeps a row
     for every uplink in its IP list. When the evidence is missing, stale or
-    too short ("unknown"), nothing happens. The verdict counts duplicate
-    probes and keepalives as traffic and stays latched through short
-    bursts, so what decides is payload (`linkQuietForMs`, single-packet
-    trickles ignored): a "carrying" link with no payload for
-    DEAD_BEARER_PAYLOAD_QUIET_MS counts as carrying nothing, and the link
-    must have sent no payload for the whole outage seen here plus the probe
-    streak before it (DEAD_BEARER_QUIET_LEAD_MS); any burst starts the
-    outage over.
+    too short ("unknown"), nothing happens. "Not carrying" stays latched
+    through short bursts, so the link must also have sent nothing at all
+    (`linkQuietForMs`: a single byte resets it) for the whole outage seen
+    here plus the probe streak before it (DEAD_BEARER_QUIET_LEAD_MS); any
+    burst starts the outage over. The one thing that is not payload is the
+    duplicate-probe trickle of a link the sender reports as stall-gated
+    (out of the payload rotation, control-socket stats only): such a link
+    can read "carrying" while it has sent no payload for
+    DEAD_BEARER_PAYLOAD_QUIET_MS, and then counts as carrying nothing.
+    Without that report (the stats-file path), a black hole whose counter
+    still grows by duplicate probes is never torn down mid-stream; it
+    recovers between streams.
     That is checked once more under the lease, after every other read and
     with nothing awaited before the teardown, so a link that resumed sending
     while the owner reads ran is left alone;
@@ -111,7 +115,7 @@ export const DEAD_BEARER_ALONE_HOLD_MS = 300_000;
 export const DEAD_BEARER_STABLE_MS = 300_000;
 export const DEAD_BEARER_AFTER_DIAL_MS = 60_000;
 export const DEAD_BEARER_MIN_FAILURES = 6;
-/** No payload for this long overrides a "carrying" verdict built on trickles. */
+/** No payload for this long overrides a "carrying" verdict from stall-gated duplicates. */
 export const DEAD_BEARER_PAYLOAD_QUIET_MS = 10_000;
 /** How recent a native IPv6 probe success must be to veto a CLAT modem. */
 export const DEAD_BEARER_NATIVE_PROOF_MS = 60_000;
@@ -375,9 +379,9 @@ function streamState(
 	const quietMs = deps.quiet(iface);
 	// Without a quiet span to check, neither verdict is evidence enough.
 	if (quietMs === undefined) return { stream: "unknown" };
-	// The carrying verdict counts duplicate probes and keepalives as traffic;
-	// a link that moved no payload for DEAD_BEARER_PAYLOAD_QUIET_MS carries
-	// nothing, whatever that verdict says.
+	// A "carrying" verdict with no payload for DEAD_BEARER_PAYLOAD_QUIET_MS can
+	// only come from a stall-gated link's duplicate probes (any other byte
+	// resets the quiet time), and such a link carries no payload.
 	if (stream === "carrying" && quietMs < DEAD_BEARER_PAYLOAD_QUIET_MS)
 		return { stream };
 	return { stream: "not_carrying", quietMs };

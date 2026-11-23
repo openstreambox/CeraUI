@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import type { SenderStats } from "@ceraui/srtla-send/control";
 import type { Telemetry } from "@ceraui/srtla-send/telemetry";
 import { resetClatTranslationStateForTest } from "../network/clat-translation.ts";
 import type { ProbeCandidate } from "../network/connectivity-candidates.ts";
@@ -78,6 +79,8 @@ const ETH: BondEntry = {
 type Conn = Partial<Telemetry["connections"][number]> & {
 	iface?: string;
 	link_id?: string;
+	/** Reported over the control socket; absent on the stats-file path. */
+	stall_gated?: boolean;
 };
 
 /** Monotonic ms since the test began; drives the poll and the dwell. */
@@ -160,7 +163,21 @@ async function streamUntil(
 		now += 1_000;
 		wall += 1_000;
 		const next = rows(now);
-		if (next !== undefined) ingestTelemetryForTest(snapshot(next));
+		if (next !== undefined) {
+			// Rows that say whether they are stall-gated arrive as the sender's
+			// control-socket stats would; others as the stats file.
+			const gated = next.map((row) => row.stall_gated);
+			const plain = next.map(({ stall_gated: _gated, ...row }) => row);
+			ingestTelemetryForTest(
+				snapshot(plain),
+				gated.some((g) => g !== undefined)
+					? ({
+							mode: "enhanced",
+							links: gated.map((g) => ({ stall_gated: g === true })),
+						} as unknown as SenderStats)
+					: null,
+			);
+		}
 		if (now > 90_000 && linkCarryingState("wwan0") === "not_carrying")
 			notCarryingSeen = true;
 		if (now % HEALTH_MS === 0) {
@@ -494,25 +511,124 @@ describe("while streaming, a bearer that carries nothing is judged by its own pr
 		expect((at[0] ?? Infinity) - blackholeAt).toBeLessThanOrEqual(120_000);
 	});
 
-	test("a black hole whose counter still grows by duplicate probes is reconnected", async () => {
-		startStream([MODEM, ETH]);
-		const blackholeAt = 20_000;
-		const dead = (t: number) => t > blackholeAt && calls.length === 0;
-		probeAnswer = (iface, t) =>
-			iface === "wwan0" && dead(t) ? "failure" : "success";
-		let bytes = 0;
-		const at = await streamUntil(300_000, (t) => {
-			// Payload until the fault, then one duplicate probe every 2 s.
-			if (!dead(t)) bytes += 200_000;
-			else if (t % 2_000 === 0) bytes += 1_332;
-			return [
-				{ link_id: MODEM.linkId, bytes_sent_total: bytes },
-				{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
-			];
+	for (const reported of [true, false]) {
+		test(`a black hole whose counter still grows by duplicate probes (stall latch ${reported ? "reported" : "unknown"})`, async () => {
+			startStream([MODEM, ETH]);
+			const blackholeAt = 20_000;
+			const dead = (t: number) => t > blackholeAt && calls.length === 0;
+			probeAnswer = (iface, t) =>
+				iface === "wwan0" && dead(t) ? "failure" : "success";
+			let bytes = 0;
+			const at = await streamUntil(300_000, (t) => {
+				// Payload until the fault, then the sender holds the link out of
+				// the payload rotation and sends one duplicate probe every 2 s.
+				if (!dead(t)) bytes += 200_000;
+				else if (t % 2_000 === 0) bytes += 1_332;
+				const gated = dead(t) && t > blackholeAt + 3_000;
+				return [
+					{
+						link_id: MODEM.linkId,
+						bytes_sent_total: bytes,
+						...(reported ? { stall_gated: gated } : {}),
+					},
+					{
+						link_id: ETH.linkId,
+						bytes_sent_total: t * 500,
+						bitrate_bps: 4e6,
+						...(reported ? { stall_gated: false } : {}),
+					},
+				];
+			});
+			if (reported) {
+				// The sender says those bytes are duplicates: reconnected.
+				expect(at).toHaveLength(1);
+				expect(calls).toEqual([`down ${UUID}`, `up ${UUID}`]);
+			} else {
+				// Without that report any byte is payload, and a link that delivers
+				// payload is never cut mid-stream (documented limit: it recovers
+				// between streams).
+				expect(at).toEqual([]);
+				expect(calls).toEqual([]);
+			}
 		});
-		expect(at).toHaveLength(1);
-		expect(calls).toEqual([`down ${UUID}`, `up ${UUID}`]);
-	});
+	}
+
+	// A low-rate stream split across four links leaves each one a few KB/s.
+	// With its checks failing, a modem that keeps delivering any payload is
+	// never cut (review round 3: 3,000 B/s was cut at 120 s).
+	for (const { name, modemBps, peerBps, checkFails } of [
+		{
+			name: "96 kbit/s audio, even split",
+			modemBps: 24_000,
+			peerBps: 24_000,
+			checkFails: true,
+		},
+		{
+			name: "300 kbit/s, uneven split",
+			modemBps: 24_000,
+			peerBps: 92_000,
+			checkFails: true,
+		},
+		{
+			name: "300 kbit/s, even split",
+			modemBps: 75_000,
+			peerBps: 75_000,
+			checkFails: true,
+		},
+		{
+			name: "500 kbit/s, even split",
+			modemBps: 125_000,
+			peerBps: 125_000,
+			checkFails: true,
+		},
+		{
+			name: "96 kbit/s audio, check answers",
+			modemBps: 24_000,
+			peerBps: 24_000,
+			checkFails: false,
+		},
+		{
+			name: "a few hundred bytes a second",
+			modemBps: 2_400,
+			peerBps: 24_000,
+			checkFails: true,
+		},
+	]) {
+		test(`a modem delivering a low-rate share is never cut: ${name}`, async () => {
+			const entries = [
+				MODEM,
+				ETH,
+				{ ip: "192.0.2.11", iface: "eth1", linkId: "lnk_eth1000000000000" },
+				{ ip: "192.0.2.12", iface: "eth2", linkId: "lnk_eth2000000000000" },
+			];
+			for (const entry of entries.slice(2))
+				interfaces[entry.iface] = { ip: entry.ip, error: 0, tp: 0, txb: 0 };
+			try {
+				startStream(entries);
+				probeAnswer = (iface) =>
+					checkFails && iface === MODEM.iface ? "failure" : "success";
+				const at = await streamUntil(20 * 60_000, (t) =>
+					entries.map((entry) => {
+						const bitrate_bps =
+							entry.iface === MODEM.iface ? modemBps : peerBps;
+						return {
+							link_id: entry.linkId,
+							bytes_sent_total: Math.floor((t * bitrate_bps) / 8_000),
+							bitrate_bps,
+						};
+					}),
+				);
+				expect(linkCarryingState(MODEM.iface)).toBe("carrying");
+				expect(at).toEqual([]);
+				expect(calls).toEqual([]);
+				// It sent something every second: never quiet, never checked.
+				expect(probes.filter((probe) => probe.endsWith(":wwan0"))).toEqual([]);
+			} finally {
+				delete interfaces.eth1;
+				delete interfaces.eth2;
+			}
+		});
+	}
 
 	test("with every link black-holed, the modem waits for the alone hold", async () => {
 		startStream([MODEM, ETH]);
@@ -525,7 +641,7 @@ describe("while streaming, a bearer that carries nothing is judged by its own pr
 		expect(at).toEqual([60_000 + DEAD_BEARER_ALONE_HOLD_MS]);
 	});
 
-	test("without a check address the quiet link keeps its passive verdict", async () => {
+	test("without a check address the quiet link's verdict ages out instead of staying fresh", async () => {
 		startStream([MODEM, ETH]);
 		const resolveNone = new UplinkHealthRuntimeCore(
 			{
@@ -559,8 +675,8 @@ describe("while streaming, a bearer that carries nothing is judged by its own pr
 		]);
 		expect(probes).toEqual([]);
 		expect(at).toEqual([]);
-		// Fresh passive evidence keeps the record current, not stale.
-		expect(record("wwan0")).toMatchObject({ state: "up" });
-		expect((record("wwan0")?.staleAt ?? 0) > wall).toBe(true);
+		// Nothing measured it for 110 s: it is stale, so it reads unknown and
+		// counts as nobody's working alternative.
+		expect((record("wwan0")?.staleAt ?? 0) <= wall).toBe(true);
 	});
 });

@@ -225,7 +225,7 @@ test("the passive fallback is dropped when the link changed while the target res
 	expect(engine.get("wwan0")?.state ?? "up").toBe("up");
 });
 
-test("without a check address the quiet link keeps its last verdict, and stays fresh", async () => {
+test("without a check address the quiet link keeps its last verdict but lets it age out", async () => {
 	let now = 100_000;
 	let quiet: number | undefined = 1_000;
 	const { runtime, engine, probes } = core({
@@ -250,7 +250,8 @@ test("without a check address the quiet link keeps its last verdict, and stays f
 	await runtime.tick();
 	expect(probes).toEqual([]);
 	expect(engine.get("wwan0")).toMatchObject({ state: "degraded" });
-	expect((engine.get("wwan0")?.staleAt ?? 0) > now).toBe(true);
+	// Nothing measured it for 60 s: unknown, not fresh.
+	expect((engine.get("wwan0")?.staleAt ?? 0) <= now).toBe(true);
 });
 
 test("streaming checks of one link stay within the hourly budget", async () => {
@@ -445,4 +446,120 @@ test("after a failed check the resolver serves another address and looks the nam
 	target.failed(4, "192.0.2.204");
 	await target(4);
 	expect(lookups).toBe(3);
+});
+
+test("with no check address for its family, a black hole is never kept fresh, not for a day", async () => {
+	let now = 0;
+	let quiet = 0;
+	const target = createConnectivityTargetResolver({
+		now: () => now,
+		resolve: async () => ({ addrs: ["2001:db8::204"], fromCache: false }),
+	});
+	const { runtime, engine, probes } = core({
+		now: () => now,
+		get quiet() {
+			return quiet;
+		},
+		telemetry: quietTelemetry(() => now),
+		resolveTarget: target,
+	});
+	await runtime.tick();
+	now = 5_000;
+	await runtime.tick();
+	expect(engine.get("wwan0")?.state).toBe("up");
+	let fresh = 0;
+	for (now = 10_000; now <= 86_400_000; now += 5_000) {
+		quiet = now;
+		await runtime.tick();
+		if ((engine.get("wwan0")?.staleAt ?? 0) > now) fresh++;
+	}
+	expect(probes).toEqual([]);
+	// Fresh only for the expiry after the last real evidence.
+	expect(fresh).toBeLessThanOrEqual(
+		UPLINK_HEALTH_CONFIG.telemetryExpiryMs / 5_000,
+	);
+});
+
+for (const changed of [false, true]) {
+	test(`a held round keeps evidence fresh for at most a minute, and not at all after an address change (changed: ${changed})`, async () => {
+		let now = 0;
+		let onChange: (() => void) | undefined;
+		const interfaces: Record<string, NetworkInterface> = {
+			wwan0: { ip: "10.64.0.2", error: 0, tp: 0, txb: 0 },
+		};
+		const { runtime, engine, probes } = core({
+			now: () => now,
+			// Frozen: the bucket never refills, so after the burst every round
+			// is held for want of a token.
+			monotonic: () => 0,
+			interfaces,
+			quiet: 3_600_000,
+			telemetry: quietTelemetry(() => now),
+			onInterfacesChange: (callback) => {
+				onChange = callback;
+				return () => {};
+			},
+			probe: () => "success",
+		});
+		const { burst } = UPLINK_HEALTH_CONFIG.streamingProbeBudget;
+		for (let round = 0; round < burst; round++, now += 5_000)
+			await runtime.tick();
+		expect(probes).toHaveLength(burst);
+		const evidenceAt = now - 5_000;
+		if (changed) {
+			const entry = interfaces.wwan0;
+			if (entry) entry.ip = "10.64.0.3";
+			onChange?.();
+		}
+		for (let round = 0; round < 40; round++, now += 5_000) await runtime.tick();
+		expect(probes).toHaveLength(burst);
+		expect(engine.get("wwan0")?.staleAt).toBe(
+			evidenceAt +
+				(changed
+					? UPLINK_HEALTH_CONFIG.telemetryExpiryMs
+					: UPLINK_HEALTH_CONFIG.heldFreshMs),
+		);
+	});
+}
+
+test("rotation walks every address of the answer", async () => {
+	let now = 0;
+	const addresses = ["192.0.2.204", "192.0.2.205", "192.0.2.206"];
+	const target = createConnectivityTargetResolver({
+		now: () => now,
+		resolve: async () => ({ addrs: addresses, fromCache: false }),
+	});
+	const attempted = new Set<string>();
+	const { runtime, engine } = core({
+		now: () => now,
+		quiet: 60_000,
+		telemetry: quietTelemetry(() => now),
+		resolveTarget: target,
+		alternateTarget: target.alternate,
+		targetFailed: target.failed,
+		probeAt: (ip) => {
+			attempted.add(ip);
+			return ip === addresses[2] ? "success" : "failure";
+		},
+	});
+	for (; now <= 600_000; now += 5_000) await runtime.tick();
+	expect([...attempted].sort()).toEqual(addresses);
+	expect(engine.get("wwan0")?.state).toBe("up");
+});
+
+test("while streaming, a link without a sender row is metered too", async () => {
+	let now = 0;
+	const { runtime, probes } = core({
+		now: () => now,
+		telemetry: () => ({ links: [], measured_bps: 0, lastReadMs: now }),
+		probe: () => "failure",
+		alternateTarget: () => "192.0.2.205",
+	});
+	for (; now < 3_600_000; now += 5_000) await runtime.tick();
+	const { perHour, burst, reservePerHour, reserveBurst } =
+		UPLINK_HEALTH_CONFIG.streamingProbeBudget;
+	// Each check is at most two requests (the retry at another address).
+	expect(probes.length).toBeLessThanOrEqual(
+		2 * (perHour + burst + reservePerHour + reserveBurst),
+	);
 });
