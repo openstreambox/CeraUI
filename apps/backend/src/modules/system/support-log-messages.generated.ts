@@ -1624,7 +1624,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["Reconnect over the changed network before confirming"],
 	["Recovery cannot prepare a new call"],
 	["Recovery cannot start an internal call"],
-	["Refusing an action on ", " ", ""],
+	["Refusing a ", " on ", " ", ""],
 	["Refusing to withdraw ", " ", ""],
 	["Relay already owned"],
 	["Released context still owns an activation"],
