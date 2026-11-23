@@ -63,6 +63,8 @@ const state = {
 	} as EncoderLoadReading,
 	now: 1_800_000_000_000,
 	hardware: "rk3588" as string | undefined,
+	inputVoltage: null as number | null,
+	sensorsStale: false,
 	framesAdvancing: null as boolean | null,
 	engineStarting: false,
 	engineUnavailable: false,
@@ -99,7 +101,8 @@ vi.mock("$lib/stores/hud.svelte", () => ({
 		temp: null,
 		voltage: null,
 		current: null,
-		isStale: false,
+		inputVoltage: state.inputVoltage,
+		isStale: state.sensorsStale,
 	}),
 }));
 
@@ -162,6 +165,8 @@ function reset(): void {
 		simulated: false,
 	};
 	state.hardware = "rk3588";
+	state.inputVoltage = null;
+	state.sensorsStale = false;
 	state.framesAdvancing = null;
 	state.engineStarting = false;
 	state.engineUnavailable = false;
@@ -415,6 +420,44 @@ describe("power rails", () => {
 		expect(byTestId("device-health-power").dataset.powerState).toBe(
 			"no-reading",
 		);
+	});
+
+	it("a measured board input replaces the not-instrumented statement", () => {
+		state.hardware = "rk3588";
+		state.inputVoltage = 12.18;
+		open();
+		const band = byTestId("device-health-power");
+		expect(band.dataset.powerState).toBe("input");
+		expect(band.dataset.inputLevel).toBe("ok");
+		expect(band.textContent).toContain(t.power.inputTitle);
+		expect(band.textContent).not.toContain(t.power.notInstrumented);
+		expect(byTestId("device-health-power-value").textContent?.trim()).toBe(
+			"12.2 V",
+		);
+		expect(byTestId("device-health-power-hint").textContent).toContain(
+			t.power.inputOk,
+		);
+	});
+
+	it.each([
+		[9.1, "low", "inputLow"],
+		[4.87, "very-low", "inputVeryLow"],
+		[15.0, "high", "inputHigh"],
+	] as const)("%s V reads as %s with its own hint", (volts, level, key) => {
+		state.inputVoltage = volts;
+		open();
+		expect(byTestId("device-health-power").dataset.inputLevel).toBe(level);
+		expect(byTestId("device-health-power-hint").textContent).toContain(
+			t.power[key],
+		);
+	});
+
+	it("never mentions a PD contract, current or watts", () => {
+		state.inputVoltage = 12.2;
+		open();
+		const text = byTestId("device-health-power").textContent ?? "";
+		expect(text).not.toMatch(/\d\s*(?:W|A)\b/);
+		expect(text).not.toMatch(/watt|\bamp|contract/i);
 	});
 });
 

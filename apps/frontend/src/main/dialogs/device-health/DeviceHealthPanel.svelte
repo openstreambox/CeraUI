@@ -26,11 +26,13 @@
      core count, which the frontend does not have — `navigator.hardwareConcurrency`
      describes the OPERATOR'S BROWSER. The lane plots the raw figure against a
      printed, self-scaling maximum, so the normalisation is disclosed.
-  3. **Power rails are absent on shipping boards, and it says so.** An em-dash
+  3. **Power rails are absent on most boards, and it says so.** An em-dash
      would read as "still loading". Board detection is fail-soft: only `rk3588`
      and `n100` assert not-instrumented; `generic` and an absent snapshot fall
      back to the weaker "No reading", because absence of evidence is never
-     evidence.
+     evidence. The one exception is a board that publishes its DC-in voltage
+     (ROCK 5B+, `Input voltage`): that reading replaces the statement, with a
+     hint about the expected 12 V. Voltage only, never a PD contract or watts.
 
   Per-core encoder load has its own three-state model — see
   `lib/streaming/encoder-load.ts`.
@@ -82,6 +84,8 @@ import { getSocTelemetry } from '$lib/stores/hud.svelte';
 import { getStreamHealthRollup } from '$lib/stores/stream-health.svelte';
 import { deriveEncoderActivity } from '$lib/streaming/encoder-load';
 import { cn } from '$lib/utils';
+
+import { formatInputVolts, inputVoltageLevel } from './input-voltage';
 
 
 // Shared with DeviceHealthDialog so the shorter lanes, the collapsed now strip,
@@ -231,7 +235,24 @@ const framesVerdict = $derived.by(() => {
 
 const hardware = $derived(getSources()?.hardware);
 const soc = $derived(getSocTelemetry());
+const INPUT_HINT = {
+	'very-low': () => m["settings.deviceHealth.power.inputVeryLow"](),
+	low: () => m["settings.deviceHealth.power.inputLow"](),
+	ok: () => m["settings.deviceHealth.power.inputOk"](),
+	high: () => m["settings.deviceHealth.power.inputHigh"](),
+} as const;
 const powerRails = $derived.by(() => {
+	// A measured board input wins over every board-kind statement below: the
+	// backend publishes it only where the channel is known to be the DC-in.
+	if (soc.inputVoltage !== null) {
+		const level = inputVoltageLevel(soc.inputVoltage);
+		return {
+			kind: 'input' as const,
+			level,
+			text: formatInputVolts(soc.inputVoltage),
+			hint: INPUT_HINT[level](),
+		};
+	}
 	if (hardware === 'rk3588' || hardware === 'n100') {
 		return { kind: 'not-instrumented' as const, text: m["settings.deviceHealth.power.notInstrumented"]() };
 	}
@@ -505,12 +526,15 @@ $effect(() => {
 		class={cn('flex gap-2.5 border-t', isCompact.current ? 'items-baseline pt-3' : 'items-start pt-4')}
 		data-testid="device-health-power"
 		data-power-state={powerRails.kind}
+		data-input-level={powerRails.kind === 'input' ? powerRails.level : undefined}
 	>
 		<Zap
 			aria-hidden={true}
 			class={cn(
 				'text-muted-foreground size-3.5 shrink-0 self-center',
-				!isCompact.current && 'mt-0.5 self-start',
+				// The voltage state wraps to a second line (its hint) even in the
+				// compact profile, so the icon sits on the first line there too.
+				(!isCompact.current || powerRails.kind === 'input') && 'mt-0.5 self-start',
 			)}
 		/>
 		<div
@@ -519,18 +543,38 @@ $effect(() => {
 				isCompact.current ? 'flex flex-wrap items-baseline gap-x-2' : 'space-y-0.5',
 			)}
 		>
-			<span class="block text-xs font-medium">{m["settings.deviceHealth.power.title"]()}</span>
+			<span class="block text-xs font-medium">
+				{powerRails.kind === 'input'
+					? m["settings.deviceHealth.power.inputTitle"]()
+					: m["settings.deviceHealth.power.title"]()}
+			</span>
 			<span
 				class={cn(
 					'block text-xs leading-relaxed',
-					powerRails.kind === 'live'
+					powerRails.kind === 'live' || powerRails.kind === 'input'
 						? 'text-foreground font-mono tabular-nums'
 						: 'text-muted-foreground',
+					powerRails.kind === 'input' && powerRails.level === 'low' && 'text-status-warning',
+					powerRails.kind === 'input' && powerRails.level === 'very-low' && 'text-status-error',
+					powerRails.kind === 'input' && soc.isStale && 'opacity-60',
 				)}
 				data-testid="device-health-power-value"
 			>
 				{powerRails.text}
 			</span>
+			{#if powerRails.kind === 'input'}
+				<span
+					class={cn(
+						'block text-xs leading-relaxed',
+						powerRails.level === 'low' || powerRails.level === 'very-low'
+							? 'text-foreground'
+							: 'text-muted-foreground',
+					)}
+					data-testid="device-health-power-hint"
+				>
+					{powerRails.hint}
+				</span>
+			{/if}
 		</div>
 	</section>
 

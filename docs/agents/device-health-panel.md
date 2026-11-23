@@ -81,3 +81,16 @@ body is 632 px, so the strip keeps three columns and the panel does not scroll.
 `telemetry-grid-fit.spec.ts` sweeps both, the kiosk and the modem detail card,
 in six locales, at a 12 px floor.
 
+
+**The power band shows the board's DC-in voltage where the board can measure
+it, and nothing more.** On a ROCK 5B+ the backend reads SARADC channel 6
+(`fec10000.adc`, or `fec10000.saradc` on the vendor kernel), which sees the
+USB-C input through a 100k/8.2k divider, and publishes it as the `Input
+voltage` sensor (`apps/backend/src/modules/system/input-voltage.ts`). The board
+gate is the exact `radxa,rock-5b-plus` compatible entry: other RK3588 boards
+expose the same ADC with channel 6 wired elsewhere, so they publish nothing and
+keep the not-instrumented statement. A failed read drops the key; it never
+keeps an old number. The band then shows the voltage with a hint keyed to
+the 12 V the boards are built for (`device-health/input-voltage.ts`: below 7 V,
+below 11 V, above 13.5 V). The board cannot see the PD contract or the current,
+so the copy never claims either, nor the supply's wattage.

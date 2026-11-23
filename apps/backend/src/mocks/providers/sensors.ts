@@ -68,5 +68,7 @@ export function getMockSensorData(): Record<string, string> {
 		"SoC temperature": `${sensors.socTemp.toFixed(1)} °C`,
 		"SoC voltage": `${sensors.socVoltage.toFixed(3)} V`,
 		"SoC current": `${sensors.socCurrent.toFixed(3)} A`,
+		// The mock board stands in for a ROCK 5B+, the one board that reads it.
+		"Input voltage": `${sensors.inputVoltage.toFixed(1)} V`,
 	};
 }
