@@ -34,6 +34,7 @@ import {
 	handleWifi,
 	type NmcliRun,
 	setWifiJoinNmcliRunner,
+	wifiDeleteFailedConns,
 	wifiSiblingConnections,
 	wifiUpdateSavedConns,
 } from "../modules/wifi/wifi.ts";
@@ -620,6 +621,86 @@ test("adapter id 0 is a real adapter, not an absent one", async () => {
 	// adapter of every single-radio board — and the procedure's mock branch
 	// fabricates success regardless, which is how it stayed invisible.
 	expect(await join("WPA2")).toHaveLength(1);
+});
+
+// Exercise the same cleanup entrypoint awaited by failed NEW joins.
+describe("wifiDeleteFailedConns", () => {
+	const listed = [
+		"keep-me:802-11-wireless:1712345678",
+		"operator-staged:802-11-wireless:0",
+		"other-radio-pending:802-11-wireless:0",
+		"uncertain-attempt:802-11-wireless:0",
+		"a-modem:gsm:0",
+		"",
+	];
+
+	test("an unlistable nmcli is survived, and deletes nothing", async () => {
+		const deleted: string[] = [];
+
+		await wifiDeleteFailedConns({
+			listConns: async () => undefined,
+			deleteConn: async (uuid) => {
+				deleted.push(uuid);
+				return true;
+			},
+		});
+
+		expect(deleted).toEqual([]);
+	});
+
+	test("retains unowned zero-timestamp profiles without enumeration or deletion", async () => {
+		const deleted: string[] = [];
+		const enumerated: string[] = [];
+
+		await wifiDeleteFailedConns({
+			listConns: async (fields) => {
+				enumerated.push(fields);
+				return listed;
+			},
+			deleteConn: async (uuid) => {
+				deleted.push(uuid);
+				return true;
+			},
+		});
+
+		expect(deleted).toEqual([]);
+		expect(enumerated).toEqual([]);
+	});
+
+	test("overlapping failed joins cannot delete another attempt's pending profile", async () => {
+		const snapshot = Promise.withResolvers<string[]>();
+		const deleted: string[] = [];
+		let reads = 0;
+		const deps = {
+			listConns: async () => {
+				reads++;
+				return snapshot.promise;
+			},
+			deleteConn: async (uuid: string) => {
+				deleted.push(uuid);
+				return true;
+			},
+		};
+		const first = wifiDeleteFailedConns(deps);
+		const second = wifiDeleteFailedConns(deps);
+		snapshot.resolve(listed);
+		await Promise.all([first, second]);
+		expect(deleted).toEqual([]);
+		expect(reads).toBe(0);
+	});
+
+	test("unavailable cleanup transports cannot prevent retention from settling", async () => {
+		await expect(
+			wifiDeleteFailedConns({
+				listConns: async () => {
+					throw new Error("Unavailable list");
+				},
+				deleteConn: async () => {
+					throw new Error("Unavailable delete");
+				},
+			}),
+		).resolves.toBeUndefined();
+	});
 });
 
 test("the SAE field record is the one both halves share", () => {
