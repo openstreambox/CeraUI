@@ -157,6 +157,7 @@ interface Overrides {
 	relays?: RelayMessage | undefined;
 	managedSlots?: readonly ManagedIngestAccount[] | undefined;
 	destinationValidated?: boolean;
+	startPaused?: boolean;
 	rowOptions?: RowOptions;
 }
 
@@ -176,6 +177,7 @@ function renderChain(over: Overrides = {}) {
 		isStreaming: over.isStreaming ?? false,
 		optimismState: over.optimismState ?? ("idle" as StreamingOptimismState),
 		destinationValidated: over.destinationValidated,
+		startPaused: over.startPaused,
 		...h,
 	};
 	const view = render(StreamSetupChain, { props });
@@ -234,6 +236,28 @@ describe("StreamSetupChain — three rows in signal order", () => {
 		expect(
 			within(container).getAllByRole("button", { name: /start stream/i }),
 		).toHaveLength(1);
+	});
+});
+
+describe("StreamSetupChain — unconfirmed stream state", () => {
+	it("pauses Start and points to the band's Stop instead of 'Ready to go live'", () => {
+		const ready = renderChain({
+			config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
+		});
+		expect(ready.container.textContent).toContain("Ready to go live");
+		ready.unmount();
+
+		const { container } = renderChain({
+			config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
+			startPaused: true,
+		});
+		expect(container.textContent).not.toContain("Ready to go live");
+		expect(container.textContent).toContain("Stop the stream above first");
+		const start = within(container).getByRole("button", {
+			name: /start stream/i,
+		});
+		expect((start as HTMLButtonElement).disabled).toBe(true);
+		expect(start.getAttribute("title")).toBe("Stop the stream above first");
 	});
 });
 

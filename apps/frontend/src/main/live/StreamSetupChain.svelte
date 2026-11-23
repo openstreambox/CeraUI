@@ -91,6 +91,11 @@ interface Props {
 	optimismState: StreamingOptimismState;
 	// ── Destination traffic-light: green when the last relay.validate passed ────
 	destinationValidated?: boolean;
+	/**
+	 * The device cannot confirm that an earlier stream has ended: the band above
+	 * offers the Stop, and a Start would be refused until it is pressed.
+	 */
+	startPaused?: boolean;
 	// ── Actions ─────────────────────────────────────────────────────────────────
 	/** Start the stream. `overrides.source` carries the implicit sole-camera id. */
 	onStart: (overrides: { source?: string }) => void;
@@ -115,6 +120,7 @@ const {
 	isStreaming,
 	optimismState,
 	destinationValidated,
+	startPaused = false,
 	onStart,
 	onStop,
 	onOpenSource,
@@ -172,11 +178,15 @@ const readiness = $derived(
 
 // Start gating reads the readiness verdict directly (engine gate included — it is
 // owned by the Start disabled reason + CapabilityTierBanner, not a row).
-const canStart = $derived(!readiness.blocking && optimismState !== 'starting');
+const canStart = $derived(
+	!readiness.blocking && optimismState !== 'starting' && !startPaused,
+);
 const startDisabledReason = $derived(
 	optimismState === 'starting'
 		? m["live.starting"]()
-		: readiness.blocking && readiness.primaryFixGate
+		: startPaused
+			? m["live.unconfirmedStream.startPaused"]()
+			: readiness.blocking && readiness.primaryFixGate
 			? resolveReason(
 					readiness.gates[readiness.primaryFixGate].reasonKey ??
 						READINESS_SOURCE_REASON,

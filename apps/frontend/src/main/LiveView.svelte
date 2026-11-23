@@ -103,7 +103,7 @@ import {
 import { pipelinesFromSources } from '$lib/streaming/sources-view-model';
 import { startFailureMessage, startFailureRetryKey } from '$lib/streaming/start-failure-copy';
 import { buildStartConfig } from '$lib/streaming/startStreaming';
-import { showUnconfirmedStreamStop, startOptimismSuperseded } from '$lib/streaming/unconfirmed-stream';
+import { showUnconfirmedStreamStop, startOptimismSuperseded, streamStateUnconfirmed } from '$lib/streaming/unconfirmed-stream';
 import {
 	lifecycleSinceLostStartReply,
 	noteLostStartReply,
@@ -1193,6 +1193,10 @@ const configRows = $derived<ConfigRow[]>([
 			{isStreaming}
 			optimismState={streamingOptimismState}
 			{destinationValidated}
+			startPaused={streamStateUnconfirmed({
+				lifecycle: streamLifecycle,
+				isStreaming,
+			})}
 			onStart={handleStart}
 			onStop={handleStop}
 			onOpenSource={handleOpenSource}
