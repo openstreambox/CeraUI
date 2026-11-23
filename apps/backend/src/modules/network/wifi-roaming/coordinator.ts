@@ -127,7 +127,7 @@ export const JOIN_REFUSED = "refused";
 /** How long a present radio may be unresolved before it counts as gone. */
 const ABSENT_GRACE_MS = 5_000;
 
-/** The radio was replaced while its join activated; the clone was removed. */
+/** The radio was replaced while its join activated; it was taken off again. */
 const RADIO_REPLACED = "radio-replaced";
 
 /** `ok: false` when another CeraUI operation holds the radio's adapter lock. */
@@ -139,6 +139,20 @@ const RADIO_REPLACED = "radio-replaced";
 export type RadioExpectation = Readonly<{
 	id: string;
 	lifetime: string | null;
+}>;
+
+/**
+ * What every effect port (scan, join, abandon) gets with its call: the radio
+ * it is for, the coordinator's stop, and for a join its last check. The port's
+ * executor reads `live()` right before it dispatches, and binds the effect to
+ * the device incarnation `expected` names.
+ */
+export type ActionGate = Readonly<{
+	expected: RadioExpectation;
+	/** `false` once the coordinator was stopped. */
+	live(): boolean;
+	/** The coordinator's last check, run in the executor's own step. */
+	mayAct?(): Promise<boolean>;
 }>;
 
 export type RadioLockResult<T> =
@@ -165,32 +179,31 @@ export type CoordinatorPorts = Readonly<{
 	/** Scan on this radio only; `undefined` is a failed scan. */
 	scan(
 		ifname: string,
-		expected?: RadioExpectation | null,
+		gate: ActionGate,
 	): Promise<readonly ScanRow[] | undefined>;
 	/** SSIDs this radio has saved, interface-bound profiles for. */
 	savedSsids(ifname: string): Promise<ReadonlySet<string>>;
 	/**
-	 * Activate an owned profile on this radio, locked to `bssid`. `mayActivate`
-	 * runs after the profile work, right before activation; when it says no,
-	 * the profile is removed and the result is {@link JOIN_REFUSED}.
+	 * Activate an owned profile on this radio, locked to `bssid`.
+	 * `gate.mayAct` runs after the profile work, right before activation; when
+	 * it says no, nothing is activated and the result is {@link JOIN_REFUSED}.
 	 */
 	join(
 		ifname: string,
 		ssid: string,
 		bssid: string,
-		mayActivate: () => Promise<boolean>,
-		expected?: RadioExpectation | null,
+		gate: ActionGate,
 	): Promise<JoinResult | typeof JOIN_REFUSED | undefined>;
 	/**
 	 * A dedicated, cheap read of the radio's phy and AP state (`iw dev` only),
 	 * taken late: right before a scan, an activation or a cleanup.
 	 */
 	radioMode(ifname: string): Promise<RadioMode | undefined>;
-	/** Remove the owned profile from `join`. */
+	/** Take the owned profile from `join` off this radio (deactivate it). */
 	abandon(
 		ifname: string,
 		activation: string,
-		expected?: RadioExpectation | null,
+		gate: ActionGate,
 	): Promise<boolean>;
 	/** Gateway and egress of an associated radio's path. */
 	uplinkOf(
@@ -222,11 +235,6 @@ export type CoordinatorPorts = Readonly<{
 		expected: RadioExpectation | null,
 		fn: (confirm: () => Promise<boolean>) => Promise<T>,
 	): Promise<RadioLockResult<T>>;
-	/**
-	 * Delete owned clones an earlier run or an earlier name left behind (never
-	 * an active one). Run once, before the first round.
-	 */
-	sweepOrphans?(): Promise<number>;
 }>;
 
 export type RadioConfig = Readonly<{
@@ -452,7 +460,6 @@ export class RoamingCoordinator {
 	#busy = false;
 	#started = false;
 	#stopped = false;
-	#swept = false;
 	/** The round in progress, so `stop()` can wait for it. */
 	#inflight: Promise<void> | null = null;
 
@@ -568,13 +575,7 @@ export class RoamingCoordinator {
 	async step(): Promise<void> {
 		if (this.#busy || this.#stopped) return;
 		this.#busy = true;
-		const round = (async () => {
-			if (!this.#swept) {
-				this.#swept = true;
-				await this.#ports.sweepOrphans?.();
-			}
-			if (!this.#stopped) await this.#round();
-		})();
+		const round = this.#round();
 		this.#inflight = round;
 		try {
 			await round;
@@ -586,6 +587,15 @@ export class RoamingCoordinator {
 
 	#expect(r: RadioRecord): RadioExpectation {
 		return { id: r.id, lifetime: r.lifetime };
+	}
+
+	/** The gate an effect port gets: this radio, and this coordinator's stop. */
+	#gate(r: RadioRecord, mayAct?: () => Promise<boolean>): ActionGate {
+		return {
+			expected: this.#expect(r),
+			live: () => !this.#stopped,
+			...(mayAct ? { mayAct } : {}),
+		};
 	}
 
 	#holders(): RadioRecord[] {
@@ -714,7 +724,7 @@ export class RoamingCoordinator {
 	 * state, no action. A phy that runs AP and station at once keeps its
 	 * station: an owned clone that is still the active connection (carrying or
 	 * verifying) is left exactly as it is, hold included, and picked up again
-	 * when the AP goes. Only a clone the AP has already replaced is removed.
+	 * when the AP goes. Only a clone the AP has already replaced is let go.
 	 */
 	async #reserve(r: RadioRecord): Promise<void> {
 		if (r.role === "holder") this.#lastOutcome = `holder-lost:${r.ifname}`;
@@ -740,12 +750,14 @@ export class RoamingCoordinator {
 	}
 
 	/**
-	 * Remove an owned clone, under the radio's adapter lock and after a fresh
-	 * look. Nothing is removed while the active-profile listing cannot be read.
-	 * On a protected radio (a holder, a reserved radio, or one with an AP on
-	 * its phy or an unreadable mode) the clone is removed only on positive
-	 * evidence that it is no longer the active connection. Anything that waits
-	 * is retried in a later round.
+	 * Take an owned clone off its radio, under the radio's adapter lock and
+	 * after a fresh look: the port deactivates it if it is still the radio's
+	 * active connection. The clone itself stays recorded, for the next join and
+	 * the boot sweep. Nothing happens while the active-profile listing cannot
+	 * be read. A protected radio (a holder, a reserved radio, or one with an AP
+	 * on its phy or an unreadable mode) is never deactivated: there the port is
+	 * only called on positive evidence that the clone is no longer active.
+	 * Anything that waits is retried in a later round.
 	 */
 	async #abandon(r: RadioRecord, activation: string): Promise<void> {
 		const done = await this.#ports.withRadioLock(
@@ -760,7 +772,7 @@ export class RoamingCoordinator {
 					r.role === "hotspot-reserved" ||
 					mode?.apOnPhy !== false;
 				if (protectedRadio && now.activation === activation) return false;
-				await this.#ports.abandon(r.ifname, activation, this.#expect(r));
+				await this.#ports.abandon(r.ifname, activation, this.#gate(r));
 				return true;
 			},
 		);
@@ -1597,7 +1609,7 @@ export class RoamingCoordinator {
 		);
 		// The radio leaves the bond only once the lock has admitted it (#act).
 		const scan = await this.#act(radio, "scan", () =>
-			this.#ports.scan(radio.ifname, this.#expect(radio)),
+			this.#ports.scan(radio.ifname, this.#gate(radio)),
 		);
 		const rows = scan.value;
 		if (scan.stop !== null || rows === undefined) {
@@ -1668,22 +1680,21 @@ export class RoamingCoordinator {
 				radio.ifname,
 				pick.ssid,
 				bssid,
-				async () => {
+				this.#gate(radio, async () => {
 					if (!(await confirm())) {
 						replaced = true;
 						return false;
 					}
 					const may = await this.#mayActNow(radio);
 					return may && !this.#stopped;
-				},
-				this.#expect(radio),
+				}),
 			);
 			if (result === JOIN_REFUSED && replaced) return RADIO_REPLACED;
 			if (result && result !== JOIN_REFUSED && !(await confirm())) {
 				await this.#ports.abandon(
 					radio.ifname,
 					result.activation,
-					this.#expect(radio),
+					this.#gate(radio),
 				);
 				return RADIO_REPLACED;
 			}

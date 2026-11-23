@@ -46,10 +46,16 @@ export function lifetimeKey(l: {
 }
 
 /**
- * Run `fn` under the radio's adapter lock. With `expected`, the radio that
- * answers to `ifname` now must be that identity and lifetime: a replacement
- * that took the name since the round resolved it is refused before any effect.
+ * The kernel ifindex inside a lifetime key: the radio's incarnation, which
+ * the NetworkManager effects bind to. A replugged radio gets a new one.
  */
+export function lifetimeIfindex(key: string | null): number | undefined {
+	const raw = key?.split(":", 1)[0];
+	if (!raw || !/^\d+$/.test(raw)) return undefined;
+	const n = Number(raw);
+	return n > 0 && Number.isSafeInteger(n) ? n : undefined;
+}
+
 /** The admission for `ifname`, if it is the expected identity and lifetime. */
 function admitExpected(
 	ifname: string,

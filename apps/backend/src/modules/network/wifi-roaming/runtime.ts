@@ -5,6 +5,9 @@
  *
  * Each round (once a second): one sender read, one coordinator step, then the
  * status file in /run and, when something changed, one journal line.
+ *
+ * Owned clones are deleted only by `sweepRoamingClones`, which boot runs
+ * before any of CeraUI's Wi-Fi code starts, whether roaming is enabled or not.
  */
 
 import {
@@ -24,14 +27,23 @@ import {
 	type NetworkInterface,
 } from "../network-interfaces.ts";
 import { holdOutOfBond, releaseBondHold } from "./bond-hold.ts";
-import { fileCloneRegistry } from "./clone-registry.ts";
+import {
+	type CloneRegistry,
+	fileCloneRegistry,
+	rememberOwnedClones,
+} from "./clone-registry.ts";
 import {
 	type CoordinatorPorts,
 	type CoordinatorStatus,
 	type RadioObservation,
 	RoamingCoordinator,
 } from "./coordinator.ts";
-import { createSearchNm } from "./nm-port.ts";
+import {
+	createSearchNm,
+	type Runner,
+	type SearchNmDeps,
+	sweepOwnedClones,
+} from "./nm-port.ts";
 import type { HolderHealth } from "./policy.ts";
 import { confirmRadio, lifetimeKey, withRadioLock } from "./radio-lock.ts";
 
@@ -45,6 +57,10 @@ import {
 
 export const WIFI_ROAMING_RUN_DIR = "/run/ceralive/wifi-roaming";
 export const ROUND_MS = 1_000;
+/** Shutdown waits at most this long for roaming to stop. */
+export const STOP_DEADLINE_MS = 5_000;
+/** The boot sweep starts no deletion after this. */
+export const SWEEP_DEADLINE_MS = 5_000;
 /** The journal keeps at most this many lines; older ones are dropped. */
 export const JOURNAL_MAX_LINES = 2_000;
 
@@ -176,11 +192,14 @@ export function fileIo(dir = WIFI_ROAMING_RUN_DIR): RuntimeIo {
 export function productionPorts(
 	now: () => number,
 	currentNames: () => readonly string[],
+	/** Test seams: a clone record and profile-MAC reader instead of /run and sysfs. */
+	overrides: Pick<SearchNmDeps, "clones" | "macOf"> = {},
 ): { ports: CoordinatorPorts; sender: SenderPort } {
 	const nm = createSearchNm({
 		run,
-		clones: fileCloneRegistry(),
+		clones: overrides.clones ?? fileCloneRegistry(),
 		identity: confirmRadio,
+		...(overrides.macOf ? { macOf: overrides.macOf } : {}),
 	});
 	const lastObs = new Map<string, RadioObservation | undefined>();
 	const sender = createSenderPort(defaultSenderPortDeps(currentNames, now));
@@ -198,12 +217,11 @@ export function productionPorts(
 			lastObs.set(ifname, o);
 			return o;
 		},
-		scan: (ifname) => nm.scan(ifname),
+		scan: (ifname, gate) => nm.scan(ifname, gate),
 		savedSsids: (ifname) => nm.savedSsids(ifname),
-		join: (ifname, ssid, bssid, mayActivate) =>
-			nm.join(ifname, ssid, bssid, mayActivate),
+		join: (ifname, ssid, bssid, gate) => nm.join(ifname, ssid, bssid, gate),
 		radioMode: (ifname) => nm.radioMode(ifname),
-		abandon: (ifname, activation) => nm.abandon(ifname, activation),
+		abandon: (ifname, activation, gate) => nm.abandon(ifname, activation, gate),
 		uplinkOf: (ifname, o) => nm.uplinkOf(ifname, o),
 		holderHealth: (ifname): HolderHealth => ({
 			signalDbm: lastObs.get(ifname)?.signalDbm ?? null,
@@ -222,14 +240,6 @@ export function productionPorts(
 		holdOutOfBond,
 		releaseBondHold,
 		withRadioLock,
-		sweepOrphans: async () => {
-			const removed = await nm.sweepOrphans();
-			if (removed > 0)
-				logger.info(
-					`wifi-roaming: removed ${removed} orphaned search profile(s)`,
-				);
-			return removed;
-		},
 	};
 	return { ports, sender };
 }
@@ -359,8 +369,52 @@ export async function initWifiRoaming(
 	);
 }
 
-export async function stopWifiRoaming(): Promise<void> {
+/**
+ * Stop roaming for shutdown, within one overall deadline. The coordinator is
+ * fenced at once (no effect dispatches after this call); the wait is only for
+ * a round in flight and its status write. Clones stay for the boot sweep.
+ */
+export async function stopWifiRoaming(
+	deadlineMs = STOP_DEADLINE_MS,
+): Promise<void> {
 	const r = running;
 	running = null;
-	await r?.stop();
+	if (!r) return;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const stopped = r.stop().catch((error) => {
+		logger.warn("wifi-roaming: stop failed", { error });
+	});
+	const late = new Promise<"late">((resolve) => {
+		timer = setTimeout(() => resolve("late"), deadlineMs);
+	});
+	try {
+		if ((await Promise.race([stopped, late])) === "late")
+			logger.warn("wifi-roaming: stop deadline passed; not waiting further");
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/**
+ * Boot: delete the owned clones an earlier CeraUI process left behind. Boot
+ * runs this before any of CeraUI's Wi-Fi code and before the coordinator, so
+ * nothing in this process can have activated one; at runtime nothing deletes
+ * a clone. Never throws.
+ */
+export async function sweepRoamingClones(
+	runner: Runner = run,
+	clones: CloneRegistry = fileCloneRegistry(),
+	deadlineMs = SWEEP_DEADLINE_MS,
+): Promise<number> {
+	try {
+		const removed = await sweepOwnedClones(runner, clones, deadlineMs);
+		// Whatever the sweep could not delete stays hidden from CeraUI.
+		rememberOwnedClones(await clones.list());
+		if (removed > 0)
+			logger.info(`wifi-roaming: removed ${removed} search profile(s) at boot`);
+		return removed;
+	} catch (error) {
+		logger.warn("wifi-roaming: boot sweep failed", { error });
+		return 0;
+	}
 }

@@ -53,8 +53,8 @@ function fakeWorld() {
 			return [{ ssid: "venue", bssid: target, quality: 95, channel: 36 }];
 		},
 		savedSsids: async () => new Set(["venue"]),
-		join: async (name, _ssid, _bssid, mayActivate) => {
-			if (!(await mayActivate())) return "refused";
+		join: async (name, _ssid, _bssid, gate) => {
+			if (gate.mayAct && !(await gate.mayAct())) return "refused";
 			joined.push(ownerOf(name) ?? "unknown");
 			return { activation: "owned-clone" };
 		},

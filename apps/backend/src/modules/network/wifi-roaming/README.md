@@ -32,13 +32,13 @@ A phy that runs AP and station at once keeps its station. When an AP leg
 appears next to a station the coordinator joined, that station is left
 exactly as it is, carrying or still verifying, and is picked up again when
 the AP goes; meanwhile the other radios search as usual. Only a clone the AP
-has already replaced is removed. Every removal of an owned clone runs under
-the adapter lock after a fresh look. Nothing is removed while the
-active-profile listing cannot be read: unreadable is never treated as "not
-active". On a holder, a reserved radio or a radio with an AP on its phy, a
-clone is removed only on positive evidence that it is no longer the active
-connection. A join removes the radio's earlier clone only after its last
-check before activation. Anything that has to wait is retried later. A clone is treated as gone only when
+has already replaced is let go. Taking an owned clone off a radio
+(deactivating it) runs under the adapter lock after a fresh look. Nothing
+happens while the active-profile listing cannot be read: unreadable is never
+treated as "not active". A holder, a reserved radio or a radio with an AP on
+its phy is never deactivated; there a clone is only let go on positive
+evidence that it is no longer the active connection. Anything that has to
+wait is retried later. A clone is treated as gone only when
 its BSSID or activation changed, never because a lease renewal left it
 briefly without an address; a holder keeps its role through that too, and a
 radio associated without an address is not idle.
@@ -61,32 +61,40 @@ reservation) belongs to the identity:
   does not resolve keeps everything, and the coordinator pauses all effects
   until it resolves again or the 5 s pass. While a discovery pass runs
   (`publicationPending`) the round pauses too.
-- Every scan, join and clone removal names the identity and lifetime the round
-  resolved. The adapter lock refuses before any effect when another radio
-  answers to the name by then.
+- Every scan, join and deactivation carries the identity and lifetime the
+  round resolved (an `ActionGate`, with the coordinator's stop). The adapter
+  lock refuses before any effect when another radio answers to the name by
+  then, and the effect itself is bound to that incarnation (below).
 - Without the port (tests), a radio's identity is its configured name.
 - A join confirms the identity again under the adapter lock right before
-  activation (no clone on a replaced radio) and right after (a radio replaced
-  while its join activated has the clone removed at once). Both end as
+  activation (no activation on a replaced radio) and right after (a radio
+  replaced while its join activated is taken off again at once). Both end as
   `radio-replaced`, not as a failure of the BSSID.
 
 ## NetworkManager effects
 
-Every change to NetworkManager state (a scan, an activation, a deletion) goes
-through one executor in `nm-port.ts`:
+Every change to NetworkManager state (a scan, an activation, a deactivation)
+goes through one executor in `nm-port.ts`, and over D-Bus to one device
+incarnation (`nm-bus.ts`):
 
 - Effects run one at a time, process-wide, so none of the coordinator's own
   activations can land between a check and a command.
-- Right before the command, in the same step, it re-reads the radio's identity
-  and lifetime (the expected one the round resolved) and, for a profile, that it
-  is a recorded clone and not active anywhere but where the effect allows. A
-  caller's own last check (mode, stop) runs first, so these reads come last.
-- Commands name profiles with `nmcli`'s `uuid` selector.
-- Anything unreadable or changed: nothing is done (`skipped`). After an identity
-  change a clone is never deleted; the record keeps it for the sweep.
-
-Outside this model: something other than CeraUI activating a temporary
-`ceraui-search-*` profile (autoconnect off) between the re-read and the command.
+- In the effect's own step, in this order: the coordinator's stop, the
+  registry's view of the radio (the expected identity and lifetime), that a
+  profile is a recorded clone, and the caller's last check (mode, identity
+  under the lock). Then the device is bound and stop is read once more right
+  before the command.
+- Binding finds NetworkManager's device by the kernel ifindex in the radio's
+  lifetime and confirms its permanent MAC. Every call then goes to that
+  device's object path at NetworkManager's unique bus name: `RequestScan`,
+  `ActivateConnection` with that device, `DeactivateConnection` of its active
+  connection. No effect takes an interface name. A replugged radio has a new
+  ifindex and a new device object; a restarted NetworkManager has a new unique
+  name; either way NetworkManager has nothing at the old address and the call
+  fails instead of reaching another radio.
+- Reads stay by name (`iw`, `ip`, `nmcli` listings). A read of the wrong radio
+  can only produce a candidate, never an effect.
+- Anything stopped, unreadable or changed: nothing is done (`skipped`).
 
 A scan's bond hold starts only after the adapter lock admitted the radio and
 its identity was confirmed again after the mode read.
@@ -94,21 +102,34 @@ its identity was confirmed again after the mode read.
 ## Lifecycle
 
 - **Clone provenance.** Every clone's UUID is recorded
-  (`clone-registry.ts`, `/run/ceralive/wifi-roaming/clones.json`) when it is
-  created and dropped when it is deleted. Nothing deletes a profile the record
-  does not name: CeraUI names saved station profiles after their SSID, so a
+  (`clone-registry.ts`, `/run/ceralive/wifi-roaming/clones.json`) with the
+  radio and source profile it was made for, right after it is created. A
+  radio reuses its clone of a source profile for every later join, so their
+  number stays bounded. Nothing deletes a profile the record does not name:
+  CeraUI names saved station profiles after their SSID, so a
   `ceraui-search-*` name proves nothing.
-- **Start.** Before the first round the coordinator sweeps recorded clones an
-  earlier run or an earlier name left behind. Each is deleted only if it is
-  still named `ceraui-search-*` and not active, read again right before the
-  deletion. An unreadable listing deletes nothing; a record whose profile is gone
-  is dropped.
+- **Invisible to CeraUI.** CeraUI's saved-network list leaves recorded clones
+  out, and does not commit a listing taken while a clone is being created and
+  recorded. Saved Connect and the network-diversity check only ever act on that
+  list, and Connect refuses a recorded clone outright. Clones have autoconnect
+  off, so only the coordinator activates one.
+- **Deletion only at boot.** Nothing deletes a clone at runtime: giving one up
+  only deactivates it. Boot deletes every recorded clone an earlier process
+  left (`sweepRoamingClones`), active or not, before the control server and
+  any other Wi-Fi code start, whether roaming is enabled or not. This is
+  ordering, not timing: nothing in the new process can have activated one. An
+  unreadable listing deletes nothing; a record whose profile is gone is
+  dropped; the sweep starts no deletion after 5 s and leaves the rest for the
+  next boot.
 - **Stop.** `stop()` is fenced: no scan, join or bond hold starts after it,
   checked again after the last await before an effect, and the promise it
   returns settles only after a round in flight has finished, with every gate
   (bond holds, scan protection, ownership) released again after that round.
-  Shutdown awaits it before the streaming processes stop. Radios keep whatever
-  association they have.
+  Every effect port reads the same fence right before it dispatches, so a
+  scan or activation whose checks were running when `stop()` came never
+  starts. Shutdown waits for it at most 5 s in all, before the streaming
+  processes stop. Radios keep whatever association they have; clones stay
+  for the boot sweep.
 
 ## What runs today
 
@@ -139,13 +160,14 @@ its identity was confirmed again after the mode read.
   really observed: filling a missing neighbour entry from it never makes it
   younger, and a MAC older than 30 minutes is not used.
 - **Join** (`nm-port.ts`). The coordinator makes an in-memory clone of the
-  radio's own profile, locks it to the BSSID, turns autoconnect off and
-  activates it on that interface. With a BSSID set, NetworkManager adds no
+  radio's own profile (or reuses the one it made before), locks it to the
+  BSSID, turns autoconnect off and activates it on that radio's device. With a BSSID set, NetworkManager adds no
   background scan and the supplicant does not roam. The operator's profiles
   are not changed.
 - **Verification.** The joined radio must show the BSSID, its owned
   activation, a lease, a gateway and a default route within 15 s. Otherwise
-  the clone is removed and joins cool down for 20, 40, 80, then 120 s.
+  the clone is taken off the radio and joins cool down for 20, 40, 80, then
+  120 s.
 - **Losing the holder mid-search.** A holder that loses its AP while another
   radio scans, joins or verifies does not cost that replacement. The search
   goes on, the joined radio is verified at once and promoted to holder. Only a

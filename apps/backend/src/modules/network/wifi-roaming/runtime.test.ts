@@ -268,6 +268,24 @@ describe("boot entry and loop hygiene", () => {
 		expect(log).toEqual(["started", "stopped"]);
 	});
 
+	test("shutdown waits for a hung stop no longer than its deadline", async () => {
+		let stopCalled = false;
+		await initWifiRoaming(twoRadios, false, () => ({
+			coordinator: {} as RoamingHandle["coordinator"],
+			round: async () => {},
+			stop: () => {
+				stopCalled = true;
+				return new Promise<void>(() => {
+					// A round stuck in a NetworkManager call never settles.
+				});
+			},
+		}));
+		const started = performance.now();
+		await stopWifiRoaming(30);
+		expect(stopCalled).toBe(true);
+		expect(performance.now() - started).toBeLessThan(1_000);
+	});
+
 	const quietPorts = (): CoordinatorPorts => ({
 		now: () => 0,
 		resolve: (id) => ({

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+	type ActionGate,
 	type CoordinatorPorts,
 	type RadioObservation,
 	RoamingCoordinator,
@@ -224,7 +225,7 @@ class World {
 					}));
 			},
 			savedSsids: async (ifname) => this.saved.get(ifname) ?? new Set(),
-			join: async (ifname, ssid, bssid, mayActivate) => {
+			join: async (ifname, ssid, bssid, gate) => {
 				this.calls.push(`join:${ifname}`);
 				this.joins.push(`${ifname}>${bssid}`);
 				this.now += this.joinMs;
@@ -233,7 +234,7 @@ class World {
 				// The real port joins only through a profile bound to this radio.
 				if (!this.saved.get(ifname)?.has(ssid)) return undefined;
 				this.beforeActivate?.();
-				if (!(await mayActivate())) return "refused" as const;
+				if (gate.mayAct && !(await gate.mayAct())) return "refused" as const;
 				const activation = `00000000-0000-4000-8000-${String(this.nextUuid++).padStart(12, "0")}`;
 				const s = this.st(ifname);
 				s.bssid = this.landOn ?? bssid;
@@ -1661,33 +1662,35 @@ describe("lifecycle", () => {
 		expect(w.calls).toEqual([]);
 	});
 
-	test("owned clones left by an earlier run are swept once, before the first round", async () => {
+	test("every effect gets its radio's expectation and the stop fence; a join also its last check", async () => {
 		const w = new World();
 		w.station("wlan1", AP1, -50);
 		w.station("wlan2", AP1, -56);
-		const order: string[] = [];
-		const ports = {
-			...w.ports(),
-			sweepOrphans: async () => {
-				order.push("sweep");
-				return 0;
-			},
-		};
-		const observe = ports.observe;
+		const gates: Array<[string, ActionGate]> = [];
+		const base = w.ports();
 		const c = new RoamingCoordinator(
 			{
-				...ports,
-				observe: async (ifname: string) => {
-					order.push(`observe:${ifname}`);
-					return observe(ifname);
+				...base,
+				scan: (ifname, gate) => {
+					gates.push(["scan", gate]);
+					return base.scan(ifname, gate);
+				},
+				join: (ifname, ssid, bssid, gate) => {
+					gates.push(["join", gate]);
+					return base.join(ifname, ssid, bssid, gate);
 				},
 			},
 			{ radios: radios("wlan1", "wlan2") },
 		);
 		await c.step();
-		await c.step();
-		expect(order.filter((x) => x === "sweep")).toEqual(["sweep"]);
-		expect(order[0]).toBe("sweep");
+		expect(gates.map(([k]) => k)).toEqual(["scan", "join"]);
+		for (const [, gate] of gates) {
+			expect(gate.expected).toEqual({ id: "wlan2", lifetime: null });
+			expect(gate.live()).toBe(true);
+		}
+		expect(typeof gates[1]?.[1].mayAct).toBe("function");
 		await c.stop();
+		// The fence is the coordinator's own: a gate handed out earlier closes.
+		for (const [, gate] of gates) expect(gate.live()).toBe(false);
 	});
 });

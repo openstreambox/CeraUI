@@ -20,6 +20,10 @@ import {
 	refreshWifiApClientZones,
 } from "../network/network-interfaces.ts";
 import { hotspotSteeringPending } from "../network/uplink-steering/readiness.ts";
+import {
+	cloneCreationEpoch,
+	isOwnedClone,
+} from "../network/wifi-roaming/clone-registry.ts";
 
 /* NetworkManager / nmcli based Wifi Manager */
 
@@ -516,6 +520,10 @@ export async function wifiUpdateSavedConns(
 	if (signal?.aborted) return;
 	const refresh = Symbol();
 	savedConnectionsRefresh = refresh;
+	// The Wi-Fi roaming coordinator's clones never enter the saved list, so
+	// nothing here (Connect, diversity) can activate one. A listing taken
+	// while a clone is being created and recorded is not committed.
+	const cloneEpoch = cloneCreationEpoch();
 	const snapshots = Object.entries(getWifiInterfacesByMacAddress()).map(
 		([macAddress, original]) => ({
 			macAddress,
@@ -531,6 +539,8 @@ export async function wifiUpdateSavedConns(
 		return (
 			!signal?.aborted &&
 			savedConnectionsRefresh === refresh &&
+			cloneEpoch !== null &&
+			cloneCreationEpoch() === cloneEpoch &&
 			Object.keys(current).length === snapshots.length &&
 			snapshots.every(
 				({ macAddress, original }) => current[macAddress] === original,
@@ -564,7 +574,7 @@ export async function wifiUpdateSavedConns(
 				string,
 			];
 
-			if (type !== "802-11-wireless") continue;
+			if (type !== "802-11-wireless" || isOwnedClone(uuid)) continue;
 
 			// Get the device the connection is bound to and the ssid
 			const fields = await nmConnGetFields(uuid, [
@@ -1012,6 +1022,8 @@ async function runWifiNew(
 async function wifiConnect(conn: MessageSocket, uuid: ConnectionUUID) {
 	const deviceId = wifiSearchConnection(uuid);
 	if (deviceId === undefined) return;
+	// A roaming clone is never in the saved list; refuse one regardless.
+	if (isOwnedClone(uuid)) return;
 
 	const senderId = getSocketSenderId(conn);
 	const macAddress = getMacAddressForWifiInterface(
