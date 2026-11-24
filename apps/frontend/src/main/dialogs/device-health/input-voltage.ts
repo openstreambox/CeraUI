@@ -5,7 +5,9 @@
  *
  * The ROCK 5B+ boxes are built for a 12 V USB-C PD supply. Measured on boxes in
  * use: 12.1-12.3 V on a 12 V supply, idle and under encode load; 4.7-4.9 V on a
- * supply that gave no 12 V. Thresholds sit well clear of both.
+ * supply that gave no 12 V. Thresholds sit well clear of both. The copy for
+ * each level says only how the reading compares with the expected 12 V: the
+ * board measures volts, nothing about the supply or what follows from it.
  */
 
 export type InputVoltageLevel = "very-low" | "low" | "ok" | "high";

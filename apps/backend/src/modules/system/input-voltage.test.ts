@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+	ADC_FULL_SCALE_RAW,
+	applyInputVoltage,
 	BOARD_INPUT_PROFILES,
 	createInputVoltageReader,
 	formatInputVoltage,
+	INPUT_VOLTAGE_SENSOR,
 	type InputVoltageDeps,
 	inputProfileFor,
 	inputVoltsFromAdc,
@@ -92,6 +95,30 @@ describe("inputVoltsFromAdc", () => {
 		).toBeCloseTo(5.0, 1);
 	});
 
+	test("a saturated 12-bit read is no reading, one count below is a reading", () => {
+		expect(
+			inputVoltsFromAdc(
+				String(ADC_FULL_SCALE_RAW),
+				SCALE,
+				ROCK_5B_PLUS_DIVIDER,
+			),
+		).toBeNull();
+		expect(inputVoltsFromAdc("5000", SCALE, ROCK_5B_PLUS_DIVIDER)).toBeNull();
+		const top = inputVoltsFromAdc(
+			String(ADC_FULL_SCALE_RAW - 1),
+			SCALE,
+			ROCK_5B_PLUS_DIVIDER,
+		);
+		expect(top).not.toBeNull();
+		expect(top as number).toBeCloseTo(23.7, 1);
+	});
+
+	test("the 0.5 V floor: just below is no reading, just above is", () => {
+		// 86 counts = 0.4987 V at the input, 87 counts = 0.5045 V.
+		expect(inputVoltsFromAdc("86", SCALE, ROCK_5B_PLUS_DIVIDER)).toBeNull();
+		expect(inputVoltsFromAdc("87", SCALE, ROCK_5B_PLUS_DIVIDER)).not.toBeNull();
+	});
+
 	test("an implausible or garbled read is no reading", () => {
 		expect(inputVoltsFromAdc("0", SCALE, ROCK_5B_PLUS_DIVIDER)).toBeNull();
 		expect(inputVoltsFromAdc("4095", "10", ROCK_5B_PLUS_DIVIDER)).toBeNull();
@@ -147,12 +174,22 @@ describe("createInputVoltageReader", () => {
 		},
 	);
 
-	test("an unreadable device tree is not a ROCK 5B+", async () => {
-		const deps = board({});
+	test("an unreadable device tree is no reading and never touches the ADC; the next read asks again", async () => {
+		const deps = board({
+			[dev(0, "name")]: "fec10000.adc",
+			[dev(0, "in_voltage6_raw")]: "2104",
+			[dev(0, "in_voltage_scale")]: SCALE,
+		});
+		let fail = true;
 		deps.readCompatible = async () => {
-			throw new Error("ENOENT");
+			if (fail) throw new Error("ENOENT");
+			return ROCK_5B_PLUS;
 		};
-		expect(await createInputVoltageReader(deps)()).toBeNull();
+		const read = createInputVoltageReader(deps);
+		expect(await read()).toBeNull();
+		expect(deps.reads).toEqual([]);
+		fail = false;
+		expect((await read()) as number).toBeCloseTo(12.2, 1);
 	});
 
 	test("no matching ADC is no reading, and the lookup retries", async () => {
@@ -178,6 +215,36 @@ describe("createInputVoltageReader", () => {
 		expect(await read()).not.toBeNull();
 		delete files[dev(0, "in_voltage6_raw")];
 		expect(await read()).toBeNull();
+	});
+
+	test("after a failed channel read the ADC is looked up again, at its new place", async () => {
+		const files: Record<string, string> = {
+			[dev(0, "name")]: "fec10000.adc",
+			[dev(0, "in_voltage6_raw")]: "2104",
+			[dev(0, "in_voltage_scale")]: SCALE,
+		};
+		const read = createInputVoltageReader(board(files));
+		expect(await read()).not.toBeNull();
+		// The driver rebinds as another IIO device.
+		delete files[dev(0, "name")];
+		delete files[dev(0, "in_voltage6_raw")];
+		delete files[dev(0, "in_voltage_scale")];
+		files[dev(1, "name")] = "fec10000.adc";
+		files[dev(1, "in_voltage6_raw")] = "862";
+		files[dev(1, "in_voltage_scale")] = SCALE;
+		expect(await read()).toBeNull();
+		expect((await read()) as number).toBeCloseTo(5.0, 1);
+	});
+});
+
+describe("applyInputVoltage", () => {
+	test("sets the formatted reading, and deletes the key when there is none", () => {
+		const sensors: Record<string, string> = { "SoC temperature": "50.0 °C" };
+		applyInputVoltage(sensors, 12.18);
+		expect(sensors[INPUT_VOLTAGE_SENSOR]).toBe("12.2 V");
+		applyInputVoltage(sensors, null);
+		expect(Object.hasOwn(sensors, INPUT_VOLTAGE_SENSOR)).toBe(false);
+		expect(sensors["SoC temperature"]).toBe("50.0 °C");
 	});
 });
 

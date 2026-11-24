@@ -51,9 +51,8 @@ import {
 } from "./hdmi-signal-notification.ts";
 
 import {
+	applyInputVoltage,
 	createInputVoltageReader,
-	formatInputVoltage,
-	INPUT_VOLTAGE_SENSOR,
 } from "./input-voltage.ts";
 import { getPowerSensors, initPowerMonitoring } from "./power-monitor.ts";
 
@@ -116,9 +115,7 @@ async function updateSensorsRk3588() {
 	// Only boards whose profile wires an ADC channel to the power input (the
 	// ROCK 5B+ today; see input-voltage.ts). A failed read drops the key rather
 	// than keeping an old number on screen.
-	const volts = await readInputVoltage();
-	if (volts === null) delete sensors[INPUT_VOLTAGE_SENSOR];
-	else sensors[INPUT_VOLTAGE_SENSOR] = formatInputVoltage(volts);
+	applyInputVoltage(sensors, await readInputVoltage());
 }
 
 async function isServiceEnabled(service: string) {

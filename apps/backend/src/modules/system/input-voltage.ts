@@ -75,9 +75,15 @@ export const BOARD_INPUT_PROFILES: readonly BoardInputProfile[] = [
 const IIO_ROOT = "/sys/bus/iio/devices";
 const ADC_NAME_RE = /^fec10000\.(?:sar)?adc$/;
 
-/** Plausible DC-in range; anything outside is a bad read, not a reading. */
+/** Below this the input is off or the read is bad, not a reading. */
 const MIN_VOLTS = 0.5;
-const MAX_VOLTS = 30;
+/**
+ * The RK3588 SARADC is 12-bit: 4095 is full scale, and a full-scale read means
+ * the pin is at or above the reference, so the true input is unknown (on the
+ * ROCK 5B+ divider that is anything from about 23.7 V up). Rejected, never
+ * shown as a number.
+ */
+export const ADC_FULL_SCALE_RAW = 4095;
 
 export type InputVoltageDeps = {
 	readCompatible: () => Promise<string>;
@@ -106,7 +112,7 @@ export function inputProfileFor(
 
 /**
  * Convert one ADC read to volts at the board input, or null when the read is
- * not a plausible DC-in voltage.
+ * not a plausible DC-in voltage: garbled, saturated, or below MIN_VOLTS.
  */
 export function inputVoltsFromAdc(
 	raw: string,
@@ -118,15 +124,17 @@ export function inputVoltsFromAdc(
 	if (!Number.isFinite(r) || !Number.isFinite(s) || r < 0 || s <= 0) {
 		return null;
 	}
+	if (r >= ADC_FULL_SCALE_RAW) return null;
 	const volts = (r * s * ratio) / 1000;
-	return volts >= MIN_VOLTS && volts <= MAX_VOLTS ? volts : null;
+	return volts >= MIN_VOLTS ? volts : null;
 }
 
 /**
  * Reader with the board profile and the ADC lookup resolved once. A board with
  * no ADC input sense (or none in the table) stays off for the life of the
- * process; a missing ADC is looked up again on the next read (the driver can
- * bind late).
+ * process. An unreadable device tree, a missing ADC and a failed channel read
+ * are each retried on the next read (the driver can bind late, and the IIO
+ * device number can change when it rebinds).
  */
 export function createInputVoltageReader(
 	deps: InputVoltageDeps = defaultInputVoltageDeps,
@@ -163,7 +171,9 @@ export function createInputVoltageReader(
 					kind: "none",
 				};
 			} catch {
-				sense = { kind: "none" };
+				// Unknown board for now: no reading, and ask again next time
+				// rather than deciding the board for the life of the process.
+				return null;
 			}
 		}
 		if (sense.kind !== "adc") return null;
@@ -185,4 +195,16 @@ export function createInputVoltageReader(
 /** Wire format of the sensor value: one decimal and a unit, e.g. "12.2 V". */
 export function formatInputVoltage(volts: number): string {
 	return `${volts.toFixed(1)} V`;
+}
+
+/**
+ * Put one reading into the sensors record: the formatted value, or no key at
+ * all when there is no reading, so an old number never stays on screen.
+ */
+export function applyInputVoltage(
+	sensors: Record<string, string>,
+	volts: number | null,
+): void {
+	if (volts === null) delete sensors[INPUT_VOLTAGE_SENSOR];
+	else sensors[INPUT_VOLTAGE_SENSOR] = formatInputVoltage(volts);
 }
