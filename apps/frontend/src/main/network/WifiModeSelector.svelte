@@ -33,12 +33,18 @@
      `hybrid` opens `HotspotActivationConfirm` instead of the consequence band:
      it states the same disconnect risk AND the exact credentials the AP will
      broadcast, and dispatches only after the operator acknowledges them.
+
+  6. A SAVED HYBRID THIS RADIO CANNOT RUN IS STATED, NOT HIDDEN. The device keeps
+     the preference and stays a station; `WifiSavedHybridBand` says so and its
+     switch goes through the same `request('hotspot')` gate as the rung. It
+     follows `errorPlacement`: a host that withholds the band renders it itself
+     and can reopen this control with `initialRequest` to reach the gate.
 -->
 <script lang="ts">
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import type { WifiAdapterMode } from '@ceraui/rpc/schemas';
 import { Ban, Loader2, RadioTower, Waypoints, Wifi } from '@lucide/svelte';
-import { onDestroy, untrack } from 'svelte';
+import { onDestroy, onMount, untrack } from 'svelte';
 
 import { Button } from '$lib/components/ui/button';
 import { classifyWifiMutation } from '$lib/helpers/wifi-mode-outcome';
@@ -49,6 +55,7 @@ import { cn } from '$lib/utils';
 
 import HotspotActivationConfirm from './HotspotActivationConfirm.svelte';
 import WifiModeErrorBand from './WifiModeErrorBand.svelte';
+import WifiSavedHybridBand from './WifiSavedHybridBand.svelte';
 import {
 	actionableWifiModeConsequence,
 	deriveWifiModeConsequence,
@@ -87,6 +94,8 @@ interface Props {
 	 * control has been dismissed. Never both — see rule 4 in the header.
 	 */
 	errorPlacement?: 'inline' | 'host';
+	/** A mode the host asked for when it opened this control (rule 6). */
+	initialRequest?: WifiAdapterMode;
 }
 
 let {
@@ -98,6 +107,7 @@ let {
 	lockedReason,
 	compact = false,
 	errorPlacement = 'inline',
+	initialRequest,
 }: Props = $props();
 
 // The glyph vocabulary `WifiModeBadge` renders, carried here by the SELECTED rung
@@ -221,6 +231,15 @@ async function apply(mode: WifiAdapterMode, incarnation = view.incarnation) {
 		silent: true,
 	});
 }
+
+function offered(mode: WifiAdapterMode): boolean {
+	return !view.pending && lockedReason === undefined &&
+		view.options.some((option) => option.mode === mode && option.available);
+}
+
+onMount(() => {
+	if (initialRequest !== undefined && offered(initialRequest)) request(initialRequest);
+});
 
 function request(mode: WifiAdapterMode) {
 	if (mode === view.displayMode || (consentBlocked && mode !== 'station')) return;
@@ -393,6 +412,16 @@ function request(mode: WifiAdapterMode) {
 				</Button>
 			</div>
 		</div>
+	{/if}
+
+	{#if view.savedHybridRefused && errorPlacement === 'inline'}
+		<WifiSavedHybridBand
+			device={view.device}
+			onSwitch={view.options.some((option) => option.mode === 'hotspot' && option.available)
+				? () => request('hotspot')
+				: undefined}
+			switchDisabled={!offered('hotspot')}
+		/>
 	{/if}
 
 	{#if view.errorKey && errorPlacement === 'inline'}
