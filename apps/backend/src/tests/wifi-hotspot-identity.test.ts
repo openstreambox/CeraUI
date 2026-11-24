@@ -644,6 +644,12 @@ describe("hotspot prepare — credentials before activation", () => {
 				channel: "auto",
 			}),
 		});
+		// Upstream adopts only a profile the store records as this radio's.
+		rec.store.set(PERM_MAC, {
+			ssid: "CERALIVE_791c",
+			password: "old-secret",
+			conn: "profile-uuid",
+		});
 		const checked: Array<string | undefined> = [];
 		const remember = rec.deps.credentials.rememberChecked;
 		rec.deps.credentials = {
@@ -678,6 +684,12 @@ describe("hotspot prepare — credentials before activation", () => {
 				password: "old-secret",
 				channel: "auto",
 			}),
+		});
+		// Upstream adopts only a profile the store records as this radio's.
+		rec.store.set(PERM_MAC, {
+			ssid: "CERALIVE_791c",
+			password: "old-secret",
+			conn: "profile-uuid",
 		});
 		rec.deps.credentials = {
 			...rec.deps.credentials,
