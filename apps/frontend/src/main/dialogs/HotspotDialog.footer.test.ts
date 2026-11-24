@@ -1,15 +1,6 @@
 // @vitest-environment jsdom
-/**
- * HotspotDialog footer: order and weight on a phone.
- *
- * The footer used to stack Save (primary), Forget, Enable Hotspot and Close as
- * four full-width buttons, with the destructive Forget between Save and the
- * action the dialog was opened for. While the hotspot is off, Turn on hotspot
- * is now the primary, Save is secondary, Forget is a separated destructive text
- * button, and the sheet's close icon is the only Close.
- */
 import type { WifiAdapterModeStatus, WifiInterface } from "@ceraui/rpc/schemas";
-import { render } from "@testing-library/svelte";
+import { fireEvent, render } from "@testing-library/svelte";
 import { tick } from "svelte";
 import {
 	afterEach,
@@ -82,6 +73,7 @@ const SAVED_OFF: WifiInterface = {
 	supports_hotspot: true,
 	supports_ap_sta_concurrency: false,
 	mode: "station",
+	incarnation: "radio-2",
 	radio_identity: {
 		id: "00:c0:ca:00:00:01",
 		permanent_mac: "00:c0:ca:00:00:01",
@@ -120,24 +112,6 @@ function dialog(): HTMLElement {
 	const el = document.querySelector<HTMLElement>('[role="dialog"]');
 	if (!el) throw new Error("dialog not open");
 	return el;
-}
-
-function buttonLabels(): string[] {
-	return [...dialog().querySelectorAll("button")].map(
-		(b) => b.textContent?.trim() ?? "",
-	);
-}
-
-/** The status row's one-word state, the first line beside the radio icon. */
-function statusWord(): string | undefined {
-	return dialog()
-		.querySelector('[data-testid="hotspot-status"]')
-		?.textContent?.trim();
-}
-
-function modeBadge(): string | undefined {
-	return dialog().querySelector<HTMLElement>('[data-testid="wifi-mode-badge"]')
-		?.dataset.mode;
 }
 
 beforeAll(() => {
@@ -181,10 +155,6 @@ function footerLabels(): string[] {
 function isPrimary(b: HTMLElement): boolean {
 	return b.classList.contains("bg-primary");
 }
-function isOutline(b: HTMLElement): boolean {
-	return b.classList.contains("border-border") && !isPrimary(b);
-}
-
 function footerButton(label: string): HTMLButtonElement {
 	const button = [...footer().querySelectorAll("button")].find(
 		(b) => b.textContent?.trim() === label,
@@ -194,30 +164,17 @@ function footerButton(label: string): HTMLButtonElement {
 }
 
 describe("HotspotDialog footer — the action the dialog was opened for comes first", () => {
-	it("while off: Turn on hotspot is the primary, Save is secondary, Forget is a destructive text button", async () => {
+	it("keeps Turn on hotspot primary and uses the bound editor to save while off", async () => {
 		setWifiAdapterModesForTest(adapterModes("station"));
-		render(HotspotDialog, {
+		const view = render(HotspotDialog, {
 			props: { open: true, deviceId: "2", iface: SAVED_OFF },
 		});
 		await tick();
 
 		expect(isPrimary(footerButton("Turn on hotspot"))).toBe(true);
-		expect(isOutline(footerButton("Save"))).toBe(true);
-		const forget = footerButton("Forget");
-		expect(isPrimary(forget) || isOutline(forget)).toBe(false);
-		expect(forget.classList.contains("text-destructive")).toBe(true);
-	});
-
-	it("stacks Turn on hotspot, then Save, then Forget on a phone", async () => {
-		setWifiAdapterModesForTest(adapterModes("station"));
-		render(HotspotDialog, {
-			props: { open: true, deviceId: "2", iface: SAVED_OFF },
-		});
-		await tick();
-
-		// The footer is `flex-col-reverse` below `sm`, so the phone reads the DOM
-		// bottom-up: DOM order Forget, Save, Turn on hotspot.
-		expect(footerLabels()).toEqual(["Forget", "Save", "Turn on hotspot"]);
+		expect(footerLabels()).toEqual(["Turn on hotspot"]);
+		await fireEvent.click(view.getByTestId("hotspot-off-edit"));
+		expect(await view.findByTestId("hotspot-off-save")).toBeTruthy();
 	});
 
 	it("has no Close button of its own: the sheet's close icon closes", async () => {
