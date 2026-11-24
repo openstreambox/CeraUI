@@ -102,6 +102,7 @@ import {
 	wifiOperationGuard,
 } from "./wifi-operation-binding.ts";
 import { wifiAdapterKeyMac } from "./wifi-permanent-mac.ts";
+import { isProvisioningSetupHeld } from "./wifi-provisioning-ap.ts";
 
 export {
 	reconcileWifiAdapterModes,
@@ -281,6 +282,13 @@ export async function setWifiAdapterMode(
 				wifiInterface.degradedReason === "permanent-mac-unresolved")
 		)
 			return refuse(id, "radio-unverified", publishRefusal);
+		// While the image's setup marker exists, the setup radio is the image's.
+		if (target !== "station" && isProvisioningSetupHeld(wifiInterface.ifname)) {
+			logger.warn(
+				`wifi mode switch: the device image's setup is in progress on ${wifiInterface.ifname}`,
+			);
+			return refuse(id, "DEVICE_BUSY", publishRefusal, "setup-in-progress");
+		}
 		const rawCapability = (
 			deps.readCapabilities ?? getWifiCapabilitiesForInterface
 		)(wifiInterface.ifname);
