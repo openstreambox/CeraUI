@@ -97,6 +97,14 @@ export interface LinkTelemetryEntry {
 	 * SENDER reported none, which is UNKNOWN, never zero.
 	 */
 	bytes_sent_total?: number;
+	/**
+	 * Whether stream data is going out on this link (`link-progress.ts`): true
+	 * when it made progress recently, false when its byte counter stayed still
+	 * across distinct fresh snapshots for the dwell. Absent makes no claim (no
+	 * stream, stale or silent sender, a link seen too briefly, no counter, a
+	 * counter reset).
+	 */
+	carrying?: boolean;
 	/** True when the underlying snapshot is stale/absent but links are known. */
 	stale: boolean;
 }
@@ -116,6 +124,12 @@ export interface LinkTelemetryMessage {
 	 * Absent means the SENDER reported none: UNKNOWN, never zero.
 	 */
 	bytes_sent_total?: number;
+	/**
+	 * Device interfaces (CLAT translators folded into their modem) whose every
+	 * row is `carrying: false`, sorted. The per-device answer for a surface that
+	 * shows one card per device; absent when the snapshot is stale.
+	 */
+	not_carrying_ifaces?: string[];
 	/**
 	 * CeraUI-side wall-clock ms of the last SUCCESSFUL read — derived here, not
 	 * from the frozen srtla snapshot. Advances on a fresh tick, freezes when reads

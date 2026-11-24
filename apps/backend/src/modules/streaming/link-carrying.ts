@@ -12,6 +12,7 @@
   telemetry is "can't tell", which never counts as "none carrying".
 */
 
+import { linkMadeProgress } from "./link-progress.ts";
 import type { LinkTelemetryMessage } from "./link-telemetry-rows.ts";
 
 export type CarryVerdict = "others_carrying" | "none_carrying" | "unknown";
@@ -36,12 +37,10 @@ export function createCarryTracker(
 			}
 			freshSince ??= at;
 			for (const row of rows) {
-				const previous = lastBytes.get(row.iface);
+				const moved = linkMadeProgress(row, lastBytes.get(row.iface));
 				const bytes = row.bytes_sent_total;
-				const moved =
-					bytes !== undefined && previous !== undefined && bytes > previous;
 				if (bytes !== undefined) lastBytes.set(row.iface, bytes);
-				if (row.bitrate_bps > 0 || moved) lastCarriedAt.set(row.iface, at);
+				if (moved) lastCarriedAt.set(row.iface, at);
 			}
 		},
 		/**
