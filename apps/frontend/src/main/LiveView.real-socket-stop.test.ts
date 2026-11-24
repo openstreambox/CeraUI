@@ -186,10 +186,7 @@ import {
 	resetState,
 } from "../lib/rpc/subscriptions.svelte";
 import { beginSession, setAuthStatus } from "../lib/stores/auth-status.svelte";
-import {
-	clearNotifications,
-	getActive as getActiveNotifications,
-} from "../lib/stores/notifications.svelte";
+import { clearNotifications } from "../lib/stores/notifications.svelte";
 import { sendCompositionWrite } from "../lib/streaming/compositionWrites.svelte";
 import { dispatchStart } from "../lib/streaming/dispatch-start";
 import {
@@ -4004,31 +4001,43 @@ describe("F6 request causality and action lifetime over the real socket", () => 
 		await settle();
 	}
 
-	it("a Stop pressed while the new socket is being signed in goes out once, as soon as the session is back", async () => {
+	// The Live bar asks before Stop and takes only this socket's admitted stream
+	// facts as its authority. A press while the new socket is still signing in
+	// is therefore not held for replay: the bar's Stop is inert until the status
+	// read after sign-in confirms the stream, then it asks again.
+	it("a Live bar Stop pressed while the new socket is being signed in is not held; once the session is back it asks, and End goes out once", async () => {
 		const container = await liveThenReconnecting();
+		const stop = getByTestId(container, "live-bar-stop");
+		expect(stop.getAttribute("aria-disabled")).toBe("true");
 
-		await fireEvent.click(button(container, "Stop Stream"));
+		await fireEvent.click(stop);
 		await settle();
 		expect(sentCount("streaming.stop")).toBe(0);
-		expect(controls(container)).toEqual([
-			{ label: "Stopping...", disabled: true },
-		]);
+		expect(queryByTestId(document.body, "live-stop-confirm")).toBeNull();
 
 		await signedInStillLive();
+		expect(sentCount("streaming.stop")).toBe(0);
+		expect(stop.getAttribute("aria-disabled")).toBeNull();
+
+		await endLiveStream(container);
+		await settle();
 		expect(sentCount("streaming.stop")).toBe(1);
 		expect(outstanding("streaming.stop")).toHaveLength(1);
 	});
 
-	it("a Stop pressed during a first stalled sign-in goes out once after the next socket signs in", async () => {
+	it("a Live bar Stop pressed during a first stalled sign-in is not replayed after the next socket signs in", async () => {
 		const container = await liveThenReconnecting();
-		await fireEvent.click(button(container, "Stop Stream"));
+		await fireEvent.click(getByTestId(container, "live-bar-stop"));
 		await settle();
 
 		// The first socket's sign-in never answers; the tab replaces the socket.
 		await elapse(30_000);
 		await restoreLink();
 		await signedInStillLive();
+		expect(sentCount("streaming.stop")).toBe(0);
 
+		await endLiveStream(container);
+		await settle();
 		expect(sentCount("streaming.stop")).toBe(1);
 		const [stop] = socket().sent.filter(
 			(request) => request.path === "streaming.stop",
@@ -4040,20 +4049,17 @@ describe("F6 request causality and action lifetime over the real socket", () => 
 		expect(login).toBeDefined();
 	});
 
-	it("a Stop pressed before the sign-in is refused is never sent, and the operator is told", async () => {
+	it("a Live bar Stop pressed before the sign-in is refused is never sent", async () => {
 		const container = await liveThenReconnecting();
-		await fireEvent.click(button(container, "Stop Stream"));
+		const stop = getByTestId(container, "live-bar-stop");
+		await fireEvent.click(stop);
 		await settle();
 
 		answer("auth.login", { success: false });
 		await settle();
 
 		expect(sentCount("streaming.stop")).toBe(0);
-		expect(
-			getActiveNotifications().some(
-				(notification) => notification.name === "stop-not-sent",
-			),
-		).toBe(true);
+		expect(queryByTestId(document.body, "live-stop-confirm")).toBeNull();
 	});
 
 	it("a Stop pressed during the sign-in is not sent when the device is no longer live", async () => {
