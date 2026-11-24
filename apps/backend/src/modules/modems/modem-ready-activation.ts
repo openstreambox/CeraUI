@@ -26,6 +26,8 @@ interface ActivationIntent {
 	state: "pending" | "consumed";
 	/** Park and re-arm (gsm-sim-swap.ts) ran for this registration. */
 	swapSettled: boolean;
+	/** The device was seen up on another SIM's profile (logged once). */
+	takeoverNoticed: boolean;
 	simReadable: boolean;
 	lateConfigPending: boolean;
 	lateConfigRunning: boolean;
@@ -151,6 +153,7 @@ export function armModemReadyActivation(id: ModemId): void {
 	intents.set(id, {
 		state: "pending",
 		swapSettled: false,
+		takeoverNoticed: false,
 		simReadable: false,
 		lateConfigPending: false,
 		lateConfigRunning: false,
@@ -230,6 +233,15 @@ async function readReadiness(
 		takeover = await carriesAnotherSim(id, device, uuid);
 		if (!isPending(id, intent) || getModem(id)?.config?.conn !== uuid)
 			return undefined;
+		if (takeover && !intent.takeoverNoticed) {
+			// Once per registration: the takeover can wait out the dial cooldown
+			// or a busy lease over many polls.
+			intent.takeoverNoticed = true;
+			logger.warn(
+				"modem is up on a profile for another SIM; activating its own",
+				{ module: "modems", id },
+			);
+		}
 		if (!takeover) {
 			intent.state = "consumed";
 			return "connected";
@@ -279,12 +291,7 @@ async function carriesAnotherSim(
 	const iccid = getModem(id)?.iccid?.trim();
 	if (!iccid) return false;
 	const activeSim = (await deps.readProfileSimId(active))?.trim();
-	if (!activeSim || activeSim === iccid) return false;
-	logger.warn("modem is up on a profile for another SIM; activating its own", {
-		module: "modems",
-		id,
-	});
-	return true;
+	return activeSim !== undefined && activeSim !== "" && activeSim !== iccid;
 }
 
 function redialDelay(failures: number): number {

@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { logger } from "../helpers/logger.ts";
 import * as runner from "../helpers/run.ts";
 import { resetGsmAutoconfigProbe } from "../modules/modems/gsm-autoconfig.ts";
 import { resetGsmConnections } from "../modules/modems/gsm-connections.ts";
@@ -447,6 +448,33 @@ test("a takeover waits while another mutation of the modem runs", async () => {
 	lease.release();
 	await runModemStatusPoll();
 	expect(activations()).toHaveLength(1);
+});
+
+test("a takeover held back by the dial cooldown is logged once", async () => {
+	modemIccid = SIM_ID;
+	nmState = "100 (connected)";
+	mmState = "connected";
+	activeUuid = OTHER_UUID;
+	activeSimId = OTHER_SIM_ID;
+	// A dial 10 s ago on the same physical modem starts the cooldown.
+	await runModemStatusPoll();
+	roster = [];
+	await runModemStatusPoll();
+	roster = [9];
+	now = 10_000;
+	const warn = spyOn(logger, "warn");
+	try {
+		for (let poll = 0; poll < 4; poll++) await runModemStatusPoll();
+		const notices = warn.mock.calls.filter(
+			([message]) =>
+				message ===
+				"modem is up on a profile for another SIM; activating its own",
+		);
+		expect(notices).toHaveLength(1);
+		expect(activations()).toHaveLength(1);
+	} finally {
+		warn.mockRestore();
+	}
 });
 
 test("the settle step parks another SIM's profile under the lease, once per registration", async () => {
