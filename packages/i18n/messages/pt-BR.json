@@ -2392,6 +2392,7 @@
 	"settings.dialogs.addressLinkLocal": "Endereço link-local automático, mantido para acesso local mesmo sem DHCP.",
 	"settings.dialogs.addressNone": "Nenhum endereço atribuído",
 	"settings.dialogs.blockedStreaming": "Pare a transmissão antes de reiniciar.",
+	"settings.dialogs.blockedStreamingPower": "Você está ao vivo. Pare a transmissão para reiniciar ou desligar.",
 	"settings.dialogs.blockedUpdating": "Atualização em andamento. Aguarde antes de reiniciar.",
 	"settings.dialogs.confirmPassword": "Confirmar senha",
 	"settings.dialogs.enableInterface": "Usar na agregação",

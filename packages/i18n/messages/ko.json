@@ -2168,6 +2168,7 @@
 	"settings.dialogs.addressLinkLocal": "자동 링크로컬 주소로, DHCP가 없어도 로컬 접속을 위해 유지됩니다.",
 	"settings.dialogs.addressNone": "할당된 주소 없음",
 	"settings.dialogs.blockedStreaming": "재시작하기 전에 스트리밍을 중지하세요.",
+	"settings.dialogs.blockedStreamingPower": "스트리밍 중입니다. 재시작하거나 전원을 끄려면 스트리밍을 중지하세요.",
 	"settings.dialogs.blockedUpdating": "업데이트가 진행 중입니다. 재시작하기 전에 기다려 주세요.",
 	"settings.dialogs.confirmPassword": "비밀번호 확인",
 	"settings.dialogs.enableInterface": "본딩에 사용",
