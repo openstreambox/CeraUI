@@ -2381,6 +2381,7 @@
 	"settings.dialogs.addressLinkLocal": "Automatic link-local address, kept for local access even without DHCP.",
 	"settings.dialogs.addressNone": "No address assigned",
 	"settings.dialogs.blockedStreaming": "Stop streaming before rebooting.",
+	"settings.dialogs.blockedStreamingPower": "You're live. Stop the stream to restart or power off.",
 	"settings.dialogs.blockedUpdating": "Update in progress. Wait before rebooting.",
 	"settings.dialogs.confirmPassword": "Confirm password",
 	"settings.dialogs.enableInterface": "Use for bonding",
