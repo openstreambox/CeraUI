@@ -8,6 +8,7 @@
 import type { WifiInterface } from "@ceraui/rpc/schemas";
 import { fireEvent, render } from "@testing-library/svelte";
 import { tick } from "svelte";
+import { toast } from "svelte-sonner";
 import {
 	afterEach,
 	beforeAll,
@@ -41,9 +42,16 @@ vi.mock("$lib/rpc/client", () => ({
 	},
 }));
 vi.mock("svelte-sonner", () => ({
-	toast: { error: vi.fn(), success: vi.fn() },
+	toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
 }));
 vi.mock("qrcode", () => ({ default: { toDataURL: vi.fn(async () => "") } }));
+const status = vi.hoisted(() => ({
+	next: undefined as { incarnation?: string } | undefined,
+}));
+vi.mock("$lib/rpc/wifi-status-receipt", async (importOriginal) => ({
+	...(await importOriginal<typeof import("$lib/rpc/wifi-status-receipt")>()),
+	waitForWifiStatus: vi.fn(async () => status.next),
+}));
 
 const prepare = vi.mocked(rpc.wifi.hotspotPrepare);
 
@@ -190,19 +198,56 @@ describe("HotspotDialog — edit while off", () => {
 		expect(prepare).toHaveBeenCalledTimes(1);
 	});
 
-	it("a changed radio reloads the editor for the new lifetime", async () => {
+	it("a changed radio closes the dialog and loads nothing for the new lifetime", async () => {
 		const view = await openEditor();
 		await choose("Rig Cam", "my own pass");
 		await view.rerender({ iface: { ...OFF, incarnation: "radio-B" } });
-		await vi.waitFor(() =>
-			expect(q("hotspot-off-editor")?.dataset.phase).toBe("ready"),
-		);
-		expect(q("hotspot-off-reloaded")).not.toBeNull();
+		await vi.waitFor(() => expect(q("hotspot-status")).toBeNull());
+		expect(toast.warning).toHaveBeenCalled();
+		expect(prepare).toHaveBeenCalledTimes(1);
 		expect(prepare).toHaveBeenLastCalledWith({
 			device: "0",
-			incarnation: "radio-B",
+			incarnation: "radio-A",
 		});
-		expect(input("hotspot-off-name").value).toBe("Saved Rig");
+	});
+
+	it("resends an unobserved save only when the same token returns", async () => {
+		await openEditor();
+		await choose("Rig Cam", "my own pass");
+		status.next = { incarnation: "radio-A" };
+		prepare.mockResolvedValueOnce({
+			success: false,
+			error: "radio-changed",
+			reason: "current-unobserved",
+		});
+		await fireEvent.click(q("hotspot-off-save") as HTMLElement);
+		await vi.waitFor(() => expect(q("hotspot-off-saved")).not.toBeNull());
+		expect(prepare).toHaveBeenCalledTimes(3);
+		expect(prepare).toHaveBeenLastCalledWith({
+			device: "0",
+			incarnation: "radio-A",
+			name: "Rig Cam",
+			password: "my own pass",
+		});
+	});
+
+	it("refuses an unobserved save when a different token returns", async () => {
+		await openEditor();
+		await choose("Rig Cam", "my own pass");
+		status.next = { incarnation: "radio-B" };
+		prepare.mockResolvedValueOnce({
+			success: false,
+			error: "radio-changed",
+			reason: "current-unobserved",
+		});
+		await fireEvent.click(q("hotspot-off-save") as HTMLElement);
+		await vi.waitFor(() =>
+			expect(document.body.textContent).toContain(
+				"The Wi-Fi adapter changed, so these settings weren't saved.",
+			),
+		);
+		expect(prepare).toHaveBeenCalledTimes(2);
+		expect(q("hotspot-off-saved")).toBeNull();
 	});
 
 	it("a radio-changed save refusal is shown and nothing is claimed", async () => {
