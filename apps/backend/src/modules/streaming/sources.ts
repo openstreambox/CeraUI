@@ -1385,10 +1385,14 @@ interface EngineDeviceProbe {
  */
 async function probeEngineDevices(
 	deps: EngineDeviceCacheDeps,
+	current: () => boolean = () => true,
 ): Promise<EngineDeviceProbe | undefined> {
 	const selectionToken = sourceSelectionToken;
 	try {
 		const result = await deps.fetchEngineDevices();
+		// A caller torn down while the probe was in flight keeps nothing, not
+		// even the identities a later failed probe would fall back to.
+		if (!current()) return undefined;
 		const devices = result.devices.map((d) => {
 			return fromEngineDevice({
 				input_id: d.input_id,
@@ -1573,7 +1577,7 @@ export async function tryRefreshEngineDeviceCache(
 	deps: EngineDeviceCacheDeps = defaultEngineDeviceCacheDeps,
 	current: () => boolean = () => true,
 ): Promise<boolean> {
-	const probe = await probeEngineDevices(deps);
+	const probe = await probeEngineDevices(deps, current);
 	// A caller torn down while the probe was in flight commits nothing.
 	if (probe === undefined || !current()) return false;
 	commitEngineDevices(

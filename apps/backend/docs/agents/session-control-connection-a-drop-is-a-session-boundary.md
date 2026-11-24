@@ -59,10 +59,12 @@ its socket open is ended by its own watchdog within 90 s; that close is the proo
 Net effect, when the retirement's Stop is acknowledged: the board lands in a real
 `idle` and the next `streaming.start` dials a fresh connection and succeeds — no
 `ceralive.service` restart. When the engine is still gone, that Stop fails and the
-session stays `stop_failed` (or `reconciling` once restoration's window lapses):
-Start is refused and the Live view offers the operator's Stop, whose acknowledged
-result re-admits Start. The engine-reconnect re-arm only republishes availability
-and does not clear this state.
+session stays `stop_failed`. Restoration's reconcile adopts the restarted engine's
+idle if it answers within restoration's window; otherwise the session stays
+unconfirmed (`stop_failed`, or `reconciling` once that window lapses): Start is
+refused and the Live view offers the operator's Stop, whose acknowledged result
+re-admits Start. The engine-reconnect re-arm only republishes availability and does
+not clear this state.
 
 **STOP uses a second connection, and success means engine Idle.** The IPC server
 dispatches at most one request per connection. Reusing the session client for

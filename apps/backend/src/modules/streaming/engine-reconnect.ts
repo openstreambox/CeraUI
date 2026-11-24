@@ -46,7 +46,7 @@
 //      slow (~30s) health-recheck that keeps running so a device self-heals even
 //      minutes/hours later. It is BOUNDED (a fixed ceiling, never a tight loop): a
 //      masked/disabled cerastream just gets a cheap periodic poll, never hammering.
-//   3. Re-arm after a later loss — once settled, `rearmEngineReconnect()` starts
+//   3. Re-arm after a later loss: once settled, `rearmEngineReconnect()` starts
 //      the same loop again whenever the engine connection is proven lost after
 //      boot (a session's control connection closed or failed, or a start
 //      could not reach the engine). A hung engine is covered too: its watchdog
@@ -381,17 +381,30 @@ async function runAttempt(broadcastOnHeal: boolean): Promise<boolean> {
 		);
 	}
 	if (!alive()) return false;
+	// A loss reported since this attempt started makes its answer stale: report
+	// and publish nothing, and let the next recheck ask again. A Start that could
+	// not reach the engine leaves the snapshot as it was, so the refresh may have
+	// stored a stale "available" that a page connecting now would read; the next
+	// recheck that finds the engine gone tells clients again.
+	if (owner.lossDuringAttempt) {
+		if (deps.isEngineReachable()) owner.offlineAnnounced = false;
+		return false;
+	}
 	const reachable = deps.isEngineReachable();
 	const streaming = getIsStreaming();
 	if (!reachable || !broadcastOnHeal) {
 		deps.reportEngineState(reachable, streaming);
 		return reachable;
 	}
+	const current = () => alive() && !owner.lossDuringAttempt;
 	try {
 		await (owner.rearmed
-			? deps.publishEngineAvailability(alive)
-			: deps.broadcastEngineState(alive));
+			? deps.publishEngineAvailability(current)
+			: deps.broadcastEngineState(current));
 		if (!alive()) return false;
+		// Lost again while publishing: the steps after the loss were skipped,
+		// and the caller reschedules instead of settling.
+		if (owner.lossDuringAttempt) return true;
 		deps.logger.info(
 			"engine reconnect: engine reachable again; re-broadcast capabilities/pipelines/sources to clients",
 		);
@@ -407,7 +420,10 @@ async function runAttempt(broadcastOnHeal: boolean): Promise<boolean> {
 	}
 }
 
-/** Tell connected clients the engine is offline, once per outage. */
+/**
+ * Tell connected clients the engine is offline, once per outage (again after a
+ * stale available snapshot, see `runAttempt`).
+ */
 function announceOffline(): void {
 	if (!state || state.offlineAnnounced) return;
 	if (state.deps.isEngineReachable()) return;
@@ -574,7 +590,8 @@ export async function initEngineConnection(
  * healed state and settles again.
  *
  * Idempotent: a loop that is already running keeps its schedule (the loss is
- * remembered so an attempt in flight cannot settle on a stale answer). A no-op
+ * remembered so an attempt in flight neither publishes nor settles on a stale
+ * answer). A no-op
  * before `initEngineConnection` and after `stopEngineReconnect`, so it never
  * starts work during shutdown.
  */

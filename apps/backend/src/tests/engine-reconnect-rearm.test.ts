@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
 	handleTerminationSignal,
 	resetShutdownForTest,
 } from "../helpers/shutdown.ts";
+import * as emitter from "../modules/events/emit.ts";
 import { defaultOnEngineUnreachable } from "../modules/streaming/cerastream-backend.ts";
 import {
 	buildDefaultPublishEngineAvailability,
@@ -18,6 +19,7 @@ import {
 } from "../modules/streaming/engine-reconnect.ts";
 import {
 	getEngineDeviceCache,
+	mergeObservedWithProbe,
 	refreshAndBroadcastSources,
 	resetEngineDeviceCache,
 } from "../modules/streaming/sources.ts";
@@ -196,11 +198,20 @@ async function bootedReachable() {
 	return h;
 }
 
-afterEach(() => {
-	stopEngineReconnect();
+// Boot-loss and signal cases would otherwise reach the real event store and
+// leave its coalescing timers behind.
+let emitSpy: ReturnType<typeof spyOn> | undefined;
+beforeEach(() => {
+	emitSpy = spyOn(emitter, "emitEvent").mockImplementation(() => {});
 });
 
-describe("rearmEngineReconnect — drop and recovery", () => {
+afterEach(() => {
+	stopEngineReconnect();
+	emitSpy?.mockRestore();
+	emitter.resetEventEmitterForTest();
+});
+
+describe("rearmEngineReconnect: drop and recovery", () => {
 	test("a loss after boot is rechecked until the engine answers, then clients are healed", async () => {
 		const h = await bootedReachable();
 		h.advance(120_000);
@@ -265,7 +276,7 @@ describe("rearmEngineReconnect — drop and recovery", () => {
 	});
 });
 
-describe("rearmEngineReconnect — engine absent for a long time", () => {
+describe("rearmEngineReconnect: engine absent for a long time", () => {
 	test("backoff caps at the ceiling, one timer at a time, no extra broadcasts", async () => {
 		const h = await bootedReachable();
 		h.advance(120_000);
@@ -298,7 +309,7 @@ describe("rearmEngineReconnect — engine absent for a long time", () => {
 	});
 });
 
-describe("rearmEngineReconnect — flapping engine", () => {
+describe("rearmEngineReconnect: flapping engine", () => {
 	test("a loss soon after a heal keeps the previous backoff; a quiet minute resets it", async () => {
 		const h = await bootedReachable();
 		h.advance(120_000);
@@ -335,7 +346,7 @@ describe("rearmEngineReconnect — flapping engine", () => {
 	});
 });
 
-describe("rearmEngineReconnect — first loss soon after boot", () => {
+describe("rearmEngineReconnect: first loss soon after boot", () => {
 	test("is not taken for a flap: it starts at the base delay", async () => {
 		const h = await bootedReachable();
 		h.advance(5_000);
@@ -345,7 +356,7 @@ describe("rearmEngineReconnect — first loss soon after boot", () => {
 	});
 });
 
-describe("rearmEngineReconnect — loss during an attempt (reconnect during a Start)", () => {
+describe("rearmEngineReconnect: loss during an attempt (reconnect during a Start)", () => {
 	test("an attempt that read the engine before it went away does not settle", async () => {
 		const h = await bootedReachable();
 		h.advance(120_000);
@@ -363,12 +374,14 @@ describe("rearmEngineReconnect — loss during an attempt (reconnect during a St
 		await tick;
 
 		expect(h.pending).toBe(1); // still reconnecting, not settled
-		expect(
-			h.warnings.some((w) => w.includes("lost again during the recheck")),
-		).toBe(true);
+		// The stale answer is not published and no recovery is reported.
+		expect(h.healSteps).toEqual([]);
+		expect(h.recovered).toBe(0);
+		expect(h.offline).toBe(1);
 
-		// The next recheck finds it gone and tells the clients again, since the
-		// heal above had told them it was back.
+		// The refresh stored that stale answer, so a page connecting meanwhile
+		// read the engine as available; the next recheck that finds it gone
+		// tells the clients again.
 		await h.fire();
 		expect(h.offline).toBe(2);
 		expect(h.pending).toBe(1);
@@ -377,20 +390,53 @@ describe("rearmEngineReconnect — loss during an attempt (reconnect during a St
 		await h.fire();
 		expect(h.pending).toBe(0);
 		expect(h.reachable).toBe(true);
+		expect(h.heals).toBe(1);
+	});
+
+	test("a loss while the heal publishes skips the rest and reports no recovery", async () => {
+		const h = await bootedReachable();
+		h.advance(120_000);
+		h.lose();
+
+		// A Start finds the engine gone while the heal is publishing. That path
+		// leaves the capability snapshot as it was.
+		const release = h.holdHeal();
+		const tick = h.fire();
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		expect(h.healSteps).toEqual(["publish-start"]);
+		rearmEngineReconnect("start");
+		release();
+		await tick;
+
+		expect(h.healSteps).toEqual(["publish-start"]);
+		expect(h.heals).toBe(0);
+		expect(h.recovered).toBe(0);
+		expect(h.pending).toBe(1); // still reconnecting, not settled
+		expect(
+			h.warnings.some((w) => w.includes("lost again during the recheck")),
+		).toBe(true);
 	});
 
 	test("a loss while the boot attempt is in flight is not taken as reachable", async () => {
 		const h = harness();
+		const reports: boolean[] = [];
 		const release = h.holdRefresh();
-		const boot = initEngineConnection(h.deps);
+		const boot = initEngineConnection({
+			...h.deps,
+			reportEngineState: (reachable: boolean) => {
+				reports.push(reachable);
+			},
+		});
 		rearmEngineReconnect("list-devices-poll");
 		release();
 		await boot;
 		expect(h.pending).toBe(1);
+		// The stale answer never reaches the engine-state reporter either.
+		expect(reports).toEqual([]);
 	});
 });
 
-describe("rearmEngineReconnect — shutdown", () => {
+describe("rearmEngineReconnect: shutdown", () => {
 	test("shutting down while reconnecting clears the timer and nothing runs after", async () => {
 		const h = await bootedReachable();
 		h.advance(120_000);
@@ -481,7 +527,7 @@ describe("rearmEngineReconnect — shutdown", () => {
 	});
 });
 
-describe("heal after a re-arm — publishing only", () => {
+describe("heal after a re-arm: publishing only", () => {
 	test("the boot heal settles the boot race; a heal after a re-arm only publishes", async () => {
 		const h = harness();
 		h.setEngineUp(false);
@@ -546,7 +592,7 @@ describe("heal after a re-arm — publishing only", () => {
 	});
 });
 
-describe("rearmEngineReconnect — logging during a long outage", () => {
+describe("rearmEngineReconnect: logging during a long outage", () => {
 	test("rechecks log at info until the backoff caps, once more at the cap, then at debug", async () => {
 		const h = await bootedReachable();
 		h.advance(120_000);
@@ -639,6 +685,15 @@ describe("sources after teardown", () => {
 			expect(sent.mock.calls.filter(([type]) => type === "sources")).toEqual(
 				[],
 			);
+			// Nor are its identities kept for a later failed probe to fall back on.
+			const observed = {
+				input_id: "video0",
+				device_path: "/dev/video0",
+				display_name: "HDMI",
+				media_class: "video" as const,
+				kind: "usb" as const,
+			};
+			expect(mergeObservedWithProbe([observed], [])[0]?.kind).toBe("usb");
 
 			// Control: the same probe with the loop alive commits and publishes.
 			await refreshAndBroadcastSources(
@@ -649,6 +704,7 @@ describe("sources after teardown", () => {
 			expect(
 				sent.mock.calls.filter(([type]) => type === "sources").length,
 			).toBe(1);
+			expect(mergeObservedWithProbe([observed], [])[0]?.kind).toBe("hdmi");
 		} finally {
 			sent.mockRestore();
 			resetEngineDeviceCache();
