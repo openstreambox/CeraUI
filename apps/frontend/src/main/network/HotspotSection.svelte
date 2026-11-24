@@ -30,6 +30,7 @@ import { signalTextClass } from '$lib/helpers/signal';
 import { getOperationPhase, getOperationTarget } from '$lib/rpc/async-operation.svelte';
 import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
 import { deriveHotspotClientsView, formatClientRatePair } from './hotspot-clients-view';
+import { hotspotCapableRadios, hotspotRadioLabel } from './hotspot-radio-target';
 import NetworkRow from './NetworkRow.svelte';
 import WifiModeBadge from './WifiModeBadge.svelte';
 import { deriveWifiAdapterModeView, wifiModeFrom, wifiModeTarget } from './wifi-adapter-mode-view';
@@ -41,9 +42,14 @@ interface Props {
 	onSetup: () => void;
 	radios?: [string, WifiInterface][];
 	onSelect?: (id: string) => void;
+	/** The operator's earlier pick expired (restart, replug, changed radio). */
+	selectionLost?: boolean;
 }
 
-const { hotspotInterfaces, hotspotTarget, onSetup, radios = [], onSelect }: Props = $props();
+const { hotspotInterfaces, hotspotTarget, onSetup, radios = [], onSelect, selectionLost = false }: Props =
+	$props();
+
+const capableRadios = $derived(hotspotCapableRadios(radios));
 
 /**
  * A representative percent inside each of `getSignalCategory`'s bands.
@@ -76,13 +82,23 @@ const CATEGORY_PROBE_PERCENT = { excellent: 80, good: 60, fair: 40, weak: 10 } a
 	</div>
 	<div class="px-4 py-3">
 		<label for="hotspot-radio" class="text-sm font-medium">{m["network.view.hotspotRadio"]()}</label>
+		<!-- No default with several radios: the operator picks, and a pick that
+		     expired (restart, replug, changed radio) has to be made again. -->
 		<select id="hotspot-radio" class="bg-background mt-1 block w-full rounded border p-2 text-sm"
 			value={hotspotTarget ? hotspotTarget[0] : ''}
 			onchange={(event) => onSelect?.(event.currentTarget.value)}>
-			{#each radios.filter(([, radio]) => (radio.supports_hotspot || radio.hotspot) && !radio.degraded_reason) as [id, radio] (id)}
-				<option value={id}>{radio.hw} · {radio.ifname}</option>
+			{#if !hotspotTarget}
+				<option value="" disabled>{m["network.view.hotspotRadioChoose"]()}</option>
+			{/if}
+			{#each capableRadios as [id, radio] (id)}
+				<option value={id}>{hotspotRadioLabel(radio)}</option>
 			{/each}
 		</select>
+		{#if selectionLost && !hotspotTarget}
+			<p class="text-muted-foreground mt-1 text-xs" role="status" data-testid="hotspot-radio-lost">
+				{m["network.view.hotspotRadioLost"]()}
+			</p>
+		{/if}
 	</div>
 	<div class="divide-y">
 		{#if hotspotInterfaces.length === 0}
