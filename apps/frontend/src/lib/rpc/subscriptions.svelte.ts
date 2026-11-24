@@ -63,6 +63,7 @@ import { markSessionExpired } from "$lib/stores/connection-ux.svelte";
 import {
 	dismiss as dismissNotification,
 	getPersistent as getPersistentNotifications,
+	getActive as getActiveNotifications,
 	push as pushNotification,
 	pushReplayed as pushReplayedNotification,
 } from "$lib/stores/notifications.svelte";
@@ -808,6 +809,15 @@ function handleMessage(
 				modems: modemsState ?? {},
 			} as Exclude<typeof statusState, undefined>;
 			statusState = preserveWireIdentity(statusState, nextStatus);
+			if (statusState?.phone_box)
+				for (const notice of getActiveNotifications()) {
+					if (
+						/^(encoder-mode-clamped|hdmi_error|capture|cerastream)/.test(
+							notice.name,
+						)
+					)
+						dismissNotification(notice.name);
+				}
 			if ("stream_lifecycle" in statusData) {
 				noteLifecycleDelivered(received);
 				// Invalidate even if a replacement live frame arrives before render
@@ -1254,6 +1264,13 @@ function handleMessage(
 				}
 			}
 			for (const notification of message.show ?? []) {
+				if (
+					statusState?.phone_box &&
+					/^(encoder-mode-clamped|hdmi_error|capture|cerastream)/.test(
+						notification.name,
+					)
+				)
+					continue;
 				if (message.replay) pushReplayedNotification(notification);
 				else pushNotification(notification);
 			}
