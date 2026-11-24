@@ -496,6 +496,11 @@ export async function wifiUpdateScanResult(): Promise<boolean> {
 		}),
 	);
 
+	// SSIDs each radio has reported itself. Another radio's row is only a
+	// stand-in until then: an open join verifies the chosen access point on the
+	// selected radio, so the BSSID offered there must be one that radio heard.
+	const heardBy = new Map<WifiInterface, Set<string>>();
+
 	for (const wifiNetwork of wifiNetworks) {
 		const parsed = parseWifiScanRow(wifiNetwork);
 		if (!parsed) continue;
@@ -516,7 +521,12 @@ export async function wifiUpdateScanResult(): Promise<boolean> {
 			const own = device === undefined || device === wifiInterface.ifname;
 			if (!own && device !== undefined && ownAps.has(device)) continue;
 			const inUse = active && own;
-			if (!inUse && wifiInterface.available.has(ssid)) continue;
+			const heard = heardBy.get(wifiInterface) ?? new Set<string>();
+			heardBy.set(wifiInterface, heard);
+			const shown = wifiInterface.available.get(ssid);
+			if (!inUse && shown && (shown.active || !own || heard.has(ssid)))
+				continue;
+			if (own) heard.add(ssid);
 
 			wifiInterface.available.set(ssid, {
 				active: inUse,
