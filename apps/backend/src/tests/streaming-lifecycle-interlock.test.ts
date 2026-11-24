@@ -14,6 +14,7 @@ import {
 	beforeEach,
 	describe,
 	expect,
+	spyOn,
 	test,
 } from "bun:test";
 
@@ -400,6 +401,37 @@ describe("lifecycle interlock — streaming admission (both race orders)", () =>
 		expect(
 			START_LINK_TEARDOWN_WAIT_MS + DEFAULT_START_RETRY_POLICY.totalBudgetMs,
 		).toBeLessThan(START_RPC_DEADLINE_MS);
+	});
+
+	test("a forward wall-clock step during the wait does not end it while the hold is live", async () => {
+		const teardown = tryAcquireLinkTeardown(60_000);
+		if (teardown === undefined) throw new Error("expected the teardown hold");
+		const orchestrator = interlockedOrchestrator({
+			linkTeardown: { ...realLinkTeardown, budgetMs: 5_000 },
+		});
+		const realNow = Date.now;
+		let reads = 0;
+		// An NTP step lands right after the wait starts.
+		const clock = spyOn(Date, "now").mockImplementation(
+			() => realNow() + (reads++ === 0 ? 0 : 3_600_000),
+		);
+		let launches = 0;
+		try {
+			const starting = orchestrator.start({
+				origin: "ui",
+				launch: async () => {
+					launches += 1;
+				},
+			});
+			await settleMicrotasks();
+			expect(launches).toBe(0);
+			teardown.release();
+			expect((await starting).result).toBe("started");
+			expect(launches).toBe(1);
+		} finally {
+			clock.mockRestore();
+			teardown.release();
+		}
 	});
 
 	test("a teardown hold releases itself at its bound", async () => {

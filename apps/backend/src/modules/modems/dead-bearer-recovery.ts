@@ -49,16 +49,20 @@
     lifecycle interlock is free. That background lease is journal-only and does
     not refuse a Stream Start, so a start could otherwise be admitted during
     the owner reads and launch onto a link that goes down a moment later. A
-    skip, or a stream admitted since the outage began, restarts the outage
-    hold, at most DEAD_BEARER_MAX_HOLD_RESTARTS times per outage.
+    skip caused by stream activity, or a stream admitted since the outage
+    began, restarts the outage hold, at most DEAD_BEARER_MAX_HOLD_RESTARTS
+    times per outage; a skip because another modem change holds the
+    interlock does neither.
 
   The interlock is held from just before the `down` until NetworkManager shows
   the device has let go of the connection, at most LINK_TEARDOWN_MAX_HOLD_MS,
   and the link is marked pending (`network/link-teardown-pending.ts`) so the
   bond leaves it out. A Start that arrives meanwhile waits. A teardown that has
-  not settled by the bound keeps the mark and gets no `up`; each status poll
-  lifts the mark once the device no longer reads deactivating, and a startup
-  scan marks a link NetworkManager still shows deactivating. The `up` follows
+  not settled by the bound is re-marked and gets no `up`; a status poll (they
+  can overlap, so it skips links still in flight) lifts the mark once the
+  device no longer reads deactivating, or when no profiled modem or NM device
+  owns it any more, and a startup scan marks a link NetworkManager still shows
+  deactivating. The `up` follows
   only onto a free device (disconnected, no active connection), so a profile
   that activated after the `down` is left alone; it is an ordinary background
   dial and not held.
@@ -88,6 +92,7 @@ import type { UplinkHealthRecord } from "../network/uplink-health/model.ts";
 import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
 import {
 	LINK_TEARDOWN_MAX_HOLD_MS,
+	linkTeardownRefusal,
 	streamingAdmissionCount,
 	tryAcquireLinkTeardown,
 } from "../streaming/lifecycle-admission.ts";
@@ -230,11 +235,11 @@ export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 		return { action: "none", reason: "link up", memory };
 	}
 	memory = without(memory, "upSince");
-	const none = (reason: string): DeadBearerDecision => ({
-		action: "none",
-		reason,
-		memory: without(memory, "downSince"),
-	});
+	// No outage now: the next one starts with a fresh restart count.
+	const none = (reason: string): DeadBearerDecision => {
+		const { holdRestarts: _restarts, ...rest } = without(memory, "downSince");
+		return { action: "none", reason, memory: rest };
+	};
 	if (!input.owned) return none("profile not owned by preparation");
 	if (input.nativeAnswers) return none("native path answers");
 	if (!outageRecord(record)) return none("no failed-probe outage");
@@ -308,6 +313,8 @@ export interface DeadBearerDeps {
 	readonly mutate: typeof withBackgroundModemLease;
 	/** The interlock across the `down`; undefined when a stream or transition holds it. */
 	readonly holdTeardown: typeof tryAcquireLinkTeardown;
+	/** Why the hold was refused: stream activity, or another modem change. */
+	readonly teardownRefusal: typeof linkTeardownRefusal;
 	readonly streamCycle: typeof streamingAdmissionCount;
 	/** The NM device that carries a connection UUID. */
 	readonly resolveDevice: (uuid: string) => Promise<string | undefined>;
@@ -374,6 +381,7 @@ const defaultDeps: DeadBearerDeps = {
 	connect: nmConnect,
 	mutate: withBackgroundModemLease,
 	holdTeardown: tryAcquireLinkTeardown,
+	teardownRefusal: linkTeardownRefusal,
 	streamCycle: streamingAdmissionCount,
 	resolveDevice: resolveModemNmDeviceForConnection,
 	deviceState: readDeviceState,
@@ -391,6 +399,7 @@ export function setDeadBearerDepsForTest(
 	deps = overrides === null ? defaultDeps : { ...defaultDeps, ...overrides };
 	memories.clear();
 	pendingSeeded = false;
+	teardownsInFlight.clear();
 }
 
 /** Another physical uplink is up: not a translator, tunnel or this modem. */
@@ -480,42 +489,38 @@ type TeardownOutcome = "left" | "kept" | "unsettled";
 function teardownOutcome(
 	state: NmDeviceState | undefined,
 	uuid: string,
-	downFinished: boolean,
+	atBound: boolean,
 ): TeardownOutcome | undefined {
 	if (state === undefined || state.state === "110") return undefined;
 	if (Number(state.state) < 40 || state.connection !== uuid) return "left";
-	return downFinished && state.state === "100" ? "kept" : undefined;
+	// Still activated with this connection. An `nmcli` that gave up (exit 3)
+	// can leave NetworkManager about to deactivate, so only the bound decides
+	// that the `down` did not take.
+	return atBound && state.state === "100" ? "kept" : undefined;
 }
 
 /**
  * Issue the `down` and wait, while the interlock is held, until NetworkManager
- * shows the device has let go of the connection. `unsettled` when that did not
- * happen within LINK_TEARDOWN_MAX_HOLD_MS (an `nmcli` that timed out, a device
- * stuck deactivating): the caller keeps the link out of the bond.
+ * shows the device has let go of the connection. `kept` when it still shows
+ * this connection activated at LINK_TEARDOWN_MAX_HOLD_MS; `unsettled` when it
+ * is deactivating or unreadable then (an `nmcli` that timed out, a stuck
+ * device): the caller keeps the link out of the bond.
  */
 async function takeDown(
 	uuid: string,
 	device: string,
 ): Promise<TeardownOutcome> {
-	let downFinished = false;
-	void deps.disconnect(uuid).then(
-		() => {
-			downFinished = true;
-		},
-		() => {
-			downFinished = true;
-		},
-	);
+	void deps.disconnect(uuid).catch(() => undefined);
 	const started = deps.now();
 	for (;;) {
-		const finished = downFinished;
+		const atBound = deps.now() - started >= LINK_TEARDOWN_MAX_HOLD_MS;
 		const outcome = teardownOutcome(
 			await deps.deviceState(device),
 			uuid,
-			finished,
+			atBound,
 		);
 		if (outcome !== undefined) return outcome;
-		if (deps.now() - started >= LINK_TEARDOWN_MAX_HOLD_MS) return "unsettled";
+		if (atBound) return "unsettled";
 		await deps.sleep(DEAD_BEARER_SETTLE_POLL_MS);
 	}
 }
@@ -527,19 +532,28 @@ async function takeDown(
  * A link stays excluded while its device reads deactivating or cannot be read.
  */
 async function reconcilePendingTeardowns(): Promise<void> {
-	const pending = new Set(deps.pendingIfnames());
+	// A teardown in flight owns its mark until its own outcome.
+	const pending = new Set(
+		deps.pendingIfnames().filter((ifname) => !teardownsInFlight.has(ifname)),
+	);
 	const scan = !pendingSeeded;
 	pendingSeeded = true;
 	if (pending.size === 0 && !scan) return;
+	const owned = new Set<string>();
 	for (const id of deps.ids()) {
 		const modem = getModem(id);
 		const uuid = modem?.config?.conn;
 		if (!modem?.ifname || !uuid) continue;
+		owned.add(modem.ifname);
 		const marked = pending.has(modem.ifname);
 		if (!marked && !scan) continue;
 		const device = await deps.resolveDevice(uuid);
-		const state =
-			device === undefined ? undefined : await deps.deviceState(device);
+		// No device carries the profile any more: nothing is deactivating it.
+		if (device === undefined) {
+			if (marked) deps.markPending([modem.ifname], false);
+			continue;
+		}
+		const state = await deps.deviceState(device);
 		const deactivating = state === undefined || state.state === "110";
 		if (marked && !deactivating) deps.markPending([modem.ifname], false);
 		if (!marked && state?.state === "110") {
@@ -550,9 +564,17 @@ async function reconcilePendingTeardowns(): Promise<void> {
 			});
 		}
 	}
+	// A mark no profiled modem owns (re-enumerated without a profile, or gone)
+	// would otherwise exclude that name forever.
+	const stale = [...pending].filter(
+		(ifname) => !owned.has(ifname) && !teardownsInFlight.has(ifname),
+	);
+	if (stale.length > 0) deps.markPending(stale, false);
 }
 
 let pendingSeeded = false;
+/** Interfaces whose teardown is between its mark and its outcome. */
+const teardownsInFlight = new Set<string>();
 
 /** Seed the bond exclusion from NetworkManager at startup, before the first poll. */
 export async function seedPendingTeardowns(): Promise<void> {
@@ -651,11 +673,19 @@ export async function runDeadBearerRecovery(
 				}
 				const teardown = deps.holdTeardown(LINK_TEARDOWN_MAX_HOLD_MS);
 				if (teardown === undefined) {
-					skipped(
-						"modem reconnect skipped: a stream or transition holds the link set",
-					);
+					// Only stream activity restarts the hold; another modem's change
+					// says nothing about this link.
+					if (deps.teardownRefusal() === "transition") {
+						logger.info(
+							"modem reconnect skipped: another modem change holds the link set",
+							{ id, stableKey: key },
+						);
+						return;
+					}
+					skipped("modem reconnect skipped: a stream holds the link set");
 					return;
 				}
+				teardownsInFlight.add(ifname);
 				deps.markPending([ifname], true);
 				let outcome: TeardownOutcome = "unsettled";
 				try {
@@ -671,7 +701,9 @@ export async function runDeadBearerRecovery(
 					});
 					outcome = await takeDown(fresh.uuid, device);
 				} finally {
-					if (outcome !== "unsettled") deps.markPending([ifname], false);
+					// Re-marked when unsettled: nothing else may have lifted it.
+					deps.markPending([ifname], outcome === "unsettled");
+					teardownsInFlight.delete(ifname);
 					teardown.release();
 				}
 				if (outcome === "unsettled") {

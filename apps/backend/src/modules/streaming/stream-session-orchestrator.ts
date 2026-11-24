@@ -485,14 +485,15 @@ export function createStreamSessionOrchestrator(
 		const teardown = deps.linkTeardown;
 		if (teardown?.settled() !== undefined) {
 			const endWait = teardown.beginWait();
-			const deadline = Date.now() + teardown.budgetMs;
+			// Monotonic: an NTP step at boot must not end the wait early.
+			const deadline = performance.now() + teardown.budgetMs;
 			try {
 				for (
 					let pending = teardown.settled();
-					pending !== undefined && Date.now() < deadline;
+					pending !== undefined && performance.now() < deadline;
 					pending = teardown.settled()
 				)
-					await settledWithin(pending, deadline - Date.now());
+					await settledWithin(pending, deadline - performance.now());
 			} finally {
 				endWait();
 			}

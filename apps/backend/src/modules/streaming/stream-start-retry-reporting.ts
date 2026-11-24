@@ -134,7 +134,7 @@ const TERMINAL_FALLBACK_MESSAGES: Partial<Record<StartFailureClass, string>> = {
 	audio_source_unavailable:
 		"Stream failed to start: the selected audio input is not available. Reconnect it or choose another audio source.",
 	modem_transition_active:
-		"Stream failed to start: a modem is switching USB mode and its link is about to change. Wait for the switch to finish, then start again.",
+		"Stream failed to start: a modem is switching USB mode or reconnecting, and its link is about to change. Wait for it to finish, then start again.",
 	recovery_pending:
 		"Stream failed to start: the device is still finishing modem recovery after a restart. Try again in a moment.",
 	mutation_blocked:

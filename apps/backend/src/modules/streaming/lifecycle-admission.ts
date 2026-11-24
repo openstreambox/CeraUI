@@ -262,6 +262,23 @@ export function tryAcquireLinkTeardown(
 	return { holder: "modem-transition", release };
 }
 
+/**
+ * Why `tryAcquireLinkTeardown` would refuse now: `"stream"` for a Start being
+ * admitted or waiting, or forwarding; `"transition"` for another modem change
+ * (a USB switch, an operator mutation, another modem's teardown); undefined
+ * when it would not refuse.
+ */
+export function linkTeardownRefusal(): "stream" | "transition" | undefined {
+	if (startsWaiting > 0 || isForwardActive() || held?.holder === "streaming")
+		return "stream";
+	if (
+		held !== undefined ||
+		[...activeMutations.values()].some((holder) => !holder.journalOnly)
+	)
+		return "transition";
+	return undefined;
+}
+
 let linkTeardown: ReturnType<typeof Promise.withResolvers<void>> | undefined;
 let teardownExpiry: ReturnType<typeof setTimeout> | undefined;
 let startsWaiting = 0;

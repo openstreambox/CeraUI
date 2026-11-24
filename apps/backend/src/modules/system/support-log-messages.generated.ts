@@ -898,6 +898,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["modem readiness poll did not complete"],
 	["modem ready activation"],
 	["modem reconnect left the device to its new state"],
+	["modem reconnect skipped: another modem change holds the link set"],
 	["modem reconnect skipped: its device is not resolved"],
 	["modem return reconciliation incomplete"],
 	["modem roster rebroadcast degraded: ", ""],

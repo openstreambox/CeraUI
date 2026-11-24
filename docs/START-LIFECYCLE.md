@@ -142,13 +142,14 @@ the hold (`linkTeardownSettled`) instead of failing with
 `modem_transition_active`, because no start origin retries that refusal and
 restoration would lose the stream it exists to bring back. No new teardown begins
 while a Start waits (`beginLinkTeardownWait`), so the wait is at most one hold.
-It is budgeted at `START_LINK_TEARDOWN_WAIT_MS` (8 s), which with the launch's
+It is budgeted at `START_LINK_TEARDOWN_WAIT_MS` (8 s) on the monotonic clock, so
+an NTP step at boot cannot end it early; with the launch's
 60 s retry budget stays inside the 75 s `streaming.start` RPC deadline. During the
 wait the Start request is simply still pending, as for any slow start. If the
 budget ran out with the interlock still held (not reachable while the hold
 releases itself), admission refuses the Start as today: class
-`modem_transition_active`, whose copy asks the operator to wait for the modem and
-start again. The wait comes after the reconciliation awaits and before the
+`modem_transition_active`, whose copy now says a modem is switching USB mode or
+reconnecting and asks the operator to wait for it and start again. The wait comes after the reconciliation awaits and before the
 duplicate-start check; it is asked again after each wake, and the last ask, the
 end of the wait and the admission run with no await between them, so a new
 teardown cannot slip in. Operator Stop intent is read after the wait, so a Stop

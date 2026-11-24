@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
 	isLinkTeardownPending,
 	resetLinkTeardownPendingForTest,
+	setLinkTeardownPending,
 } from "../network/link-teardown-pending.ts";
 import type { UplinkHealthRecord } from "../network/uplink-health/model.ts";
 import { setForwardActive } from "../streaming/forward-activity.ts";
@@ -530,6 +531,9 @@ describe("runDeadBearerRecovery", () => {
 			});
 			expect(await pollUntil(75_000)).toEqual([]);
 			transition?.release();
+			// Another modem's change is not stream activity: no hold restart, so
+			// the next poll reconnects.
+			expect(await pollUntil(90_000)).toEqual([90_000]);
 		});
 
 		test("a bookkeeping failure after the hold still releases it", async () => {
@@ -667,6 +671,70 @@ describe("runDeadBearerRecovery", () => {
 			expect(calls).toEqual([`down ${UUID}`]);
 		});
 
+		test("an overlapping status poll during the down neither lifts the mark nor lets it lapse (exit 3, then deactivating)", async () => {
+			others = [eth()];
+			health = dead();
+			// nmcli gives up at once while NM still reads the connection activated.
+			afterDown = { state: "100", connection: UUID };
+			let overlapped = false;
+			setDeadBearerDepsForTest({
+				...deps(),
+				sleep: async (ms) => {
+					now += ms;
+					if (!overlapped) {
+						overlapped = true;
+						// The next 30 s poll is not awaited by the previous one.
+						await runDeadBearerRecovery();
+						expect(isLinkTeardownPending("wwan0")).toBe(true);
+						device = { state: "110", connection: UUID };
+					}
+				},
+			});
+			await pollUntil(75_000);
+			expect(currentLifecycleHolder()).toBeUndefined();
+			expect(device?.state).toBe("110");
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+			expect(calls).toEqual([`down ${UUID}`]);
+		});
+
+		test("an unsettled teardown re-marks its link even if the mark was lifted meanwhile", async () => {
+			others = [eth()];
+			health = dead();
+			afterDown = { state: "110", connection: UUID };
+			let lifted = false;
+			setDeadBearerDepsForTest({
+				...deps(),
+				sleep: async (ms) => {
+					now += ms;
+					if (!lifted) {
+						lifted = true;
+						setLinkTeardownPending(["wwan0"], false);
+					}
+				},
+			});
+			await pollUntil(75_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+		});
+
+		test("a mark no profiled modem owns is lifted", async () => {
+			setLinkTeardownPending(["wwan0", "wwan5"], true);
+			// wwan0 re-enumerated without a profile; wwan5 belongs to no modem.
+			setModem(2, { ...modem(), config: undefined });
+			await pollUntil(15_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(false);
+			expect(isLinkTeardownPending("wwan5")).toBe(false);
+		});
+
+		test("a mark whose profile no device carries any more is lifted", async () => {
+			setLinkTeardownPending(["wwan0"], true);
+			setDeadBearerDepsForTest({
+				...deps(),
+				resolveDevice: async () => undefined,
+			});
+			await pollUntil(15_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(false);
+		});
+
 		test("a device that frees up just after the bound still gets no up", async () => {
 			others = [eth()];
 			health = dead();
@@ -751,6 +819,25 @@ describe("runDeadBearerRecovery", () => {
 			if (admitted.admitted) admitted.lease.release();
 			// Seen again at 75 s, so the 60 s hold ends at 135 s.
 			expect(await pollUntil(150_000)).toEqual([135_000]);
+		});
+
+		test("the restart count starts again with each outage", async () => {
+			others = [eth()];
+			health = dead();
+			const flap = () => {
+				const admitted = tryAcquireLifecycle("streaming");
+				if (admitted.admitted) admitted.lease.release();
+			};
+			duringLeasedReads(flap, DEAD_BEARER_MAX_HOLD_RESTARTS + 1);
+			// Three flaps (75, 150, 225 s) use up this outage's restarts.
+			expect(await pollUntil(240_000)).toEqual([]);
+			// The bearer drops for a poll: no outage, the count resets.
+			nmState = "20";
+			expect(await pollUntil(255_000)).toEqual([]);
+			nmState = "100";
+			// New outage from 270 s; the fourth flap at 330 s restarts it again,
+			// so the reconnect waits for the hold from 345 s.
+			expect(await pollUntil(420_000)).toEqual([405_000]);
 		});
 
 		test("a stream flapping at every eligible poll defers recovery at most the cap", async () => {

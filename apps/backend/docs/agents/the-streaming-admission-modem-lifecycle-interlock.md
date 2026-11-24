@@ -63,21 +63,32 @@ admitted during those reads launched onto a link that went down a moment later.
 - **Until it settles.** The hold lasts until NetworkManager shows the device has
   let go of the connection (disconnected, or carrying another one), at most
   `LINK_TEARDOWN_MAX_HOLD_MS` (6 s), and releases itself at that bound whatever is
-  still awaited. Settled: the pending mark is lifted. Not settled (an `nmcli`
-  timeout, a device stuck deactivating, an unreadable device): the link stays
-  marked, no `up` follows, and each status poll lifts the mark only once it reads
-  the device no longer deactivating. At startup, right after modem discovery, a
-  scan marks any modem link NetworkManager still shows deactivating, so a backend
-  that restarted mid-teardown does not offer it to the bond either.
+  still awaited. A device still activated with this connection counts as "the
+  `down` did not take" only at the bound, because an `nmcli` that gave up
+  (exit 3) can leave NetworkManager about to deactivate. Settled or not taken:
+  the pending mark is lifted. Not settled (an `nmcli` timeout, a device stuck
+  deactivating, an unreadable device): the link is re-marked at the outcome, no
+  `up` follows, and a status poll lifts the mark only once it reads the device no
+  longer deactivating. Status polls are not serialized, so a poll skips links
+  whose teardown is still in flight. A poll also lifts marks no profiled modem
+  owns (re-enumerated without a profile, or gone) and marks whose profile no NM
+  device carries any more. At startup, right after modem discovery, a scan marks
+  any modem link NetworkManager still shows deactivating, so a backend that
+  restarted mid-teardown does not offer it to the bond either. Accepted residual:
+  a Start in the seconds before that scan finishes at boot.
 - **The `up`** follows only onto a free device (disconnected, no active
   connection), checked right before; another profile that activated after the
   `down` is left alone, as is a device that is not yet free. The `up` itself is
-  not held: it is an ordinary background dial.
-- **The outage hold** restarts after a skip and whenever a stream was admitted
-  since the outage began, so a stream that came and went between two polls is
-  not counted as quiet time. At most `DEAD_BEARER_MAX_HOLD_RESTARTS` (3) times per
-  outage: a stream flapping at every eligible poll would otherwise keep a dead
-  link dead. Past the cap only the checks before the `down` still apply.
+  not held: it is an ordinary background dial. Accepted residual: an NM
+  autoconnect between that check and the `up`.
+- **The outage hold** restarts after a skip caused by stream activity and
+  whenever a stream was admitted since the outage began, so a stream that came
+  and went between two polls is not counted as quiet time. A skip because another
+  modem change holds the interlock (`linkTeardownRefusal() === "transition"`)
+  neither restarts nor counts. At most `DEAD_BEARER_MAX_HOLD_RESTARTS` (3) restarts
+  per outage, counted afresh when the outage ends: a stream flapping at every
+  eligible poll would otherwise keep a dead link dead. Past the cap only the
+  checks before the `down` still apply.
 - **A waiting Start.** A Stream Start that meets the hold waits for it
   (`linkTeardownSettled`, budgeted, see START-LIFECYCLE.md) rather than failing,
   because no start origin retries the refusal, and no new teardown begins while
@@ -104,7 +115,8 @@ under a throw, the idempotent/stale release, and the production `streaming.start
 wiring driven through the REAL procedure. The same suite pins that a Start during a
 link teardown waits and is then admitted, that it asks again after every wake,
 that no teardown begins while it waits, that a spent budget refuses it as
-`modem_transition_active`, that a hold releases itself at its bound, that the test
+`modem_transition_active`, that a wall-clock step does not end the wait, that a hold
+releases itself at its bound, that the test
 reset wakes waiters, that a teardown is refused during an admission, and that an
 operator Stop during the wait cancels the Start.
 `modules/modems/dead-bearer-recovery.test.ts` pins a Start admitted, a stream gone
