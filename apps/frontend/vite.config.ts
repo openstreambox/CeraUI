@@ -147,6 +147,10 @@ export default defineConfig(({ mode }) => {
 
 						// Vendor chunks for external dependencies
 						if (id.includes("node_modules")) {
+							// The eSIM image decoder is requested only after choosing a QR image.
+							// Keep it out of the vendor group loaded during startup.
+							if (id.includes("/jsqr/")) return "vendor-qr-reader";
+
 							// Only the lazy Raw logs list uses the virtualizer; matching "svelte" below would put it on the initial route.
 							if (
 								/\/node_modules\/@tanstack\/(?:svelte-virtual|virtual-core)\//.test(
