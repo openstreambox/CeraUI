@@ -2,25 +2,36 @@
 import { m } from '@ceraui/i18n/svelte';
 import { onMount } from 'svelte';
 import { rpc } from '$lib/rpc/client';
-import { getConfig, getWifi } from '$lib/rpc/subscriptions.svelte';
+import { getConfig, getUplinks, getWifi } from '$lib/rpc/subscriptions.svelte';
 
 let phase = $state('idle');
 let now = $state(Date.now());
 let expiresAt = $state<number | undefined>();
 let error = $state('');
 let radio = $state('');
+// The published identity of the row as it was chosen; a rotated row must be chosen again.
+let incarnation = $state('');
 let busy = $state(false);
 const active = $derived(phase === 'signing_in' || phase === 'checking' || phase === 'cleanup_unknown');
-// Every AP-capable radio carries a `hotspot` capability object; only the radio
-// currently running the hotspot is excluded.
-const radios = $derived(Object.entries(getWifi() ?? {}).filter(([, r]) => r.conn && r.mode !== 'hotspot'));
+const result = $derived(phase === 'web_available' || phase === 'needs_sign_in');
+const captive = $derived(new Set((getUplinks() ?? []).filter((u) => u.reason === 'captive_portal').map((u) => u.iface)));
+// A venue is a station holding a connection that currently reads captive.
+// Every AP-capable radio carries a `hotspot` capability object, and a hybrid
+// row (station plus the box's own AP) also runs one; both stay eligible. The
+// radio running the box's AP only, a degraded radio or a row without a
+// published identity does not.
+const radios = $derived(Object.entries(getWifi() ?? {}).filter(([, r]) => r.mode === 'station' && r.conn && r.incarnation && !r.degraded_reason && captive.has(r.ifname)));
+function choose(id: string) {
+ radio = id;
+ incarnation = radios.find(([key]) => key === id)?.[1].incarnation ?? '';
+}
 async function act(action: 'start' | 'finish' | 'status') {
  if (busy) return;
  busy = true;
  const popup = action === 'start' ? window.open('about:blank', '_blank') : null;
  if (popup) popup.opener = null;
  try {
-  const status = await rpc.wifi.portal({action, ...(action === 'start' ? {radio: Number(radio)} : {})});
+  const status = await rpc.wifi.portal({action, ...(action === 'start' ? {radio: Number(radio), incarnation} : {})});
   phase = status.phase;
   expiresAt = status.expiresAt;
   error = '';
@@ -33,7 +44,7 @@ async function act(action: 'start' | 'finish' | 'status') {
  case 'experimental_disabled': error = m['network.portal.experimentalDisabled'](); break;
  case 'ipv4_required': error = m['network.portal.ipv4_required'](); break;
  case 'not_captive': error = m['network.portal.not_captive'](); break;
- case 'wifi_changed': error = m['network.portal.wifi_changed'](); break;
+ case 'wifi_changed': error = m['network.portal.wifi_changed'](); choose(''); break;
  case 'identity_unavailable': error = m['network.portal.identity_unavailable'](); break;
  case 'cleanup_required': error = m['network.portal.cleanup_required'](); break;
  case "Sign in from the box's Wi-Fi.":
@@ -49,7 +60,7 @@ async function act(action: 'start' | 'finish' | 'status') {
 onMount(() => { if (getConfig()?.captive_portal_enabled !== true) return; void act('status'); const timer = setInterval(() => { now = Date.now(); void act('status'); }, 3000); return () => clearInterval(timer); });
 </script>
 
-{#if active || (getConfig()?.captive_portal_enabled === true && radios.length > 0)}
+{#if active || (getConfig()?.captive_portal_enabled === true && (radios.length > 0 || result))}
 <section aria-label={m['network.portal.title']()} class="rounded-lg border p-4 space-y-2">
  <h3>{m['network.portal.title']()}</h3>
  <p>{m['network.portal.intro']()}</p>
@@ -67,9 +78,9 @@ onMount(() => { if (getConfig()?.captive_portal_enabled !== true) return; void a
  {:else}
   {#if phase === 'needs_sign_in'}<p>{m['network.portal.closed']()}</p>{/if}
   {#if phase === 'web_available'}<p>{m['network.portal.available']()}</p>{/if}
-  <label>{m['network.portal.venue']()} <select bind:value={radio}><option value="">{m['network.portal.choose']()}</option>{#each radios as [id, r] (id)}<option value={id}>{r.hw || `${m['network.sharing.kind.wifi']()} ${id}`}</option>{/each}</select></label>
+  <label>{m['network.portal.venue']()} <select value={radio} onchange={(event) => choose(event.currentTarget.value)}><option value="">{m['network.portal.choose']()}</option>{#each radios as [id, r] (id)}<option value={id}>{r.hw || `${m['network.sharing.kind.wifi']()} ${id}`}</option>{/each}</select></label>
   <p>{m['network.portal.duration']()}</p>
-  <button type="button" disabled={busy || radio === ''} onclick={() => act('start')}>{m['network.portal.open']()}</button>
+  <button type="button" disabled={busy || radio === '' || incarnation === ''} onclick={() => act('start')}>{m['network.portal.open']()}</button>
  {/if}
  {#if expiresAt && expiresAt > now && (phase === 'signing_in' || phase === 'cleanup_unknown')}
  <p>{m['network.portal.expires']({time: new Date(expiresAt).toLocaleTimeString()})}</p>

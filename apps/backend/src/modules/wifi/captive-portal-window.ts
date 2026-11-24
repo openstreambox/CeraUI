@@ -1,6 +1,14 @@
 export interface WindowDeps {
-	/** `via` is the proven receiving interface when the front door named one. */
-	open(peer: string, radio: string, via?: string): Promise<void>;
+	/**
+	 * `incarnation` is the published token the phone chose `radio` by; `via` is
+	 * the proven receiving interface when the front door named one.
+	 */
+	open(
+		peer: string,
+		radio: string,
+		incarnation: string,
+		via?: string,
+	): Promise<void>;
 	close(): Promise<void>;
 	check(): Promise<boolean>;
 	unchanged(): Promise<boolean>;
@@ -64,7 +72,12 @@ export function createSignInWindow(deps: WindowDeps) {
 	return {
 		status,
 		finish,
-		async start(peer: string, radio: string, via?: string) {
+		async start(
+			peer: string,
+			radio: string,
+			incarnation: string,
+			via?: string,
+		) {
 			if (busy || phase === "signing_in" || phase === "cleanup_unknown")
 				throw Error("busy_other_phone");
 			busy = true;
@@ -73,7 +86,7 @@ export function createSignInWindow(deps: WindowDeps) {
 			const ticket = ++generation;
 			expiresAt = Date.now() + 600000;
 			try {
-				await deps.open(peer, radio, via);
+				await deps.open(peer, radio, incarnation, via);
 				expiresAt = Date.now() + 600000;
 				phase = "signing_in";
 				disarm = deps.arm(
