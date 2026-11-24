@@ -458,9 +458,11 @@ it("explains retained encryption refusal without rendering raw diagnostics", asy
 	};
 	render(LiveView);
 	await tick();
+	// The refusal now ends in its next step, stream setup, where the saved
+	// encryption settings are cleared.
 	expect(toastError).toHaveBeenCalledWith(
-		`Saved SRT encryption settings are not supported. Clear them before starting. ${startFailure.notRetriable}`,
-		VIEW_LOGS,
+		`Saved SRT encryption settings are not supported. Clear them before starting. ${startFailure.next.openSetup}`,
+		nextStep(startFailure.action.openSetup),
 	);
 	expect(JSON.stringify(toastError.mock.calls)).not.toContain(
 		"synthetic-secret",
