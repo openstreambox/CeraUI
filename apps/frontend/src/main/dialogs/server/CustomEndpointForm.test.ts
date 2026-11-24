@@ -56,3 +56,17 @@ describe("CustomEndpointForm — SRTLA-only minimal endpoint", () => {
 		).toBeNull();
 	});
 });
+
+for (const family of ["IPv4", "IPv6"]) {
+	it(`shows ${family} as the family that answered`, () => {
+		const { container } = render(CustomEndpointForm, {
+			props: {
+				...baseProps(),
+				validation: { state: "pass", stage: "probe", reason: family },
+			},
+		});
+		expect(container.querySelector('[role="status"]')?.textContent).toContain(
+			`(${family})`,
+		);
+	});
+}
