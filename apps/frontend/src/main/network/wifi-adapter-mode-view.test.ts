@@ -215,6 +215,24 @@ describe("the interface fallback — before getAdapterModes answers", () => {
 	});
 
 	it("derives hybrid from a live AP on a proven radio (the wire says station)", () => {
+		// Live: the device reads clients only from an AP that is up.
+		const v = view({
+			iface: iface({
+				mode: "station",
+				supports_hotspot: true,
+				supports_ap_sta_concurrency: true,
+				hotspot: {
+					name: "AP",
+					password: "pw",
+					available_channels: {},
+					clients: { count: 0, stations: [] },
+				},
+			} as Partial<WifiInterface>),
+		});
+		expect(v.displayMode).toBe("hybrid");
+	});
+
+	it("a saved setup on a proven radio is NOT a live AP (configured off reads station)", () => {
 		const v = view({
 			iface: iface({
 				mode: "station",
@@ -223,7 +241,17 @@ describe("the interface fallback — before getAdapterModes answers", () => {
 				hotspot: { name: "AP", password: "pw", available_channels: {} },
 			} as Partial<WifiInterface>),
 		});
-		expect(v.displayMode).toBe("hybrid");
+		expect(v.displayMode).toBe("station");
+	});
+
+	it("a backend without `mode` keeps reading hotspot presence as a live AP", () => {
+		const v = view({
+			iface: iface({
+				supports_hotspot: true,
+				hotspot: { name: "AP", password: "pw", available_channels: {} },
+			} as Partial<WifiInterface>),
+		});
+		expect(v.displayMode).toBe("hotspot");
 	});
 
 	it("an AP-mode radio reads hotspot", () => {
@@ -232,9 +260,61 @@ describe("the interface fallback — before getAdapterModes answers", () => {
 	});
 
 	it("the device's answer OUTRANKS the interface fallback", () => {
+		// The wire cannot tell hybrid from station (both `mode: "station"`), so
+		// the device's own answer decides between them.
+		const v = view({
+			iface: iface({ mode: "station", supports_ap_sta_concurrency: true }),
+			entry: entry({ mode: "hybrid" }),
+		});
+		expect(v.displayMode).toBe("hybrid");
+		expect(
+			view({
+				iface: iface({
+					mode: "station",
+					supports_ap_sta_concurrency: true,
+					hotspot: {
+						name: "AP",
+						password: "pw",
+						available_channels: {},
+						clients: { count: 0, stations: [] },
+					},
+				} as Partial<WifiInterface>),
+				entry: entry({ mode: "station" }),
+			}).displayMode,
+		).toBe("station");
+	});
+});
+
+describe("a stale pulled answer never outlives the wire", () => {
+	// getAdapterModes is a pull; the wifi snapshot is every tick. A Start or Stop
+	// from the API, another client or the device moves the wire first.
+	it("an external Start: wire says hotspot, the pull still says station → hotspot", () => {
 		const v = view({
 			iface: iface({ mode: "hotspot" }),
 			entry: entry({ mode: "station" }),
+		});
+		expect(v.displayMode).toBe("hotspot");
+		expect(v.observedMode).toBe("hotspot");
+	});
+
+	it("an external Stop: wire says station, the pull still says hotspot → station", () => {
+		const v = view({
+			iface: iface({
+				mode: "station",
+				supports_hotspot: true,
+				hotspot: { name: "AP", password: "pw", available_channels: {} },
+			} as Partial<WifiInterface>),
+			entry: entry({ mode: "hotspot" }),
+		});
+		expect(v.displayMode).toBe("station");
+	});
+
+	it("a pending transition still holds the prior mode over a moved wire", () => {
+		const v = view({
+			iface: iface({ mode: "hotspot" }),
+			entry: entry({ mode: "station", desired: "station" }),
+			phase: "pending",
+			target: "hotspot",
 		});
 		expect(v.displayMode).toBe("station");
 	});
