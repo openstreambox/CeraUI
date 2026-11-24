@@ -7,7 +7,11 @@ import {
 	CerastreamRpcError,
 	CerastreamTimeoutError,
 } from "@ceralive/cerastream";
-import type { LifecycleState } from "@ceraui/rpc/schemas";
+import {
+	COMPOSITION_FEATURE,
+	COMPOSITION_GEOMETRY_FEATURE,
+	type LifecycleState,
+} from "@ceraui/rpc/schemas";
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { ENGINE_STATE_RECONCILE_TIMEOUT } from "../../helpers/timing-constants.ts";
 import { CerastreamBackend } from "../../modules/streaming/cerastream-backend.ts";
@@ -180,6 +184,16 @@ export function evidenceHarness(
 					bitrate_range: { min: 1, max: 8000, unit: "kbps" },
 				},
 				sources: [],
+				// The train authorizes gated Start fields against the receiving
+				// engine's own answer, so this engine advertises the ones tests send.
+				features: [COMPOSITION_FEATURE, COMPOSITION_GEOMETRY_FEATURE],
+				audio_mix: {
+					max_inputs: 4,
+					max_tracks: 4,
+					gain_db_min: -60,
+					gain_db_max: 12,
+					delay_ms_max: 2_000,
+				},
 			}),
 			changeConfig: unused,
 			previewSession: unused,
