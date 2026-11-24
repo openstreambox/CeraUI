@@ -32,6 +32,10 @@ export const POWER_COPY = {
 	restingWeak: "Bank {bank} is weak and resting.",
 	resting: "Bank {bank} is resting.",
 	peer: "Bank {bank} powers the box.",
+	restLost:
+		"Bank {bank} stopped answering while it rested. It may have switched itself off: press its button or replug it.",
+	restLostHot:
+		"Bank {bank} stopped answering while it rested. It may have switched itself off: let it cool, then press its button or replug it.",
 	bench: "Power protection is in bench mode: it only reports.",
 	protection: "The power board reports reduced protection. It needs a check.",
 	calibration:
