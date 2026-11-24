@@ -298,11 +298,6 @@ function splitNmValues(stdout: string): string[] {
 	return (stdout.endsWith("\n") ? stdout.slice(0, -1) : stdout).split("\n");
 }
 
-/** nmcli ends its output with one newline; drop it so one value is one entry. */
-function splitNmValues(stdout: string): string[] {
-	return (stdout.endsWith("\n") ? stdout.slice(0, -1) : stdout).split("\n");
-}
-
 export async function nmConnGetFields<Tupel extends Readonly<Array<string>>>(
 	uuid: ConnectionUUID,
 	fields: Tupel,
