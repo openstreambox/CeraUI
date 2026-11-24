@@ -77,12 +77,6 @@ export interface LinkProgressRow {
 	readonly iface: string;
 	readonly bytes_sent_total?: number;
 	readonly bitrate_bps?: number;
-	/**
-	 * The sender reports this link's stall latch engaged (control-socket
-	 * stats only): out of the payload rotation, its counter grows by
-	 * duplicate probes alone. Undefined when unknown.
-	 */
-	readonly stall_gated?: boolean;
 }
 
 interface LinkTrack {
@@ -95,7 +89,7 @@ interface LinkTrack {
 	lastProgressMs: number | undefined;
 	progressSinceMs: number | undefined;
 	notCarrying: boolean;
-	/** Start of the current quiet span: the baseline or the last payload. */
+	/** Start of the current quiet span: the baseline or the last progress. */
 	quietSinceMs: number;
 }
 
@@ -151,19 +145,15 @@ function observeRow(
 ): void {
 	const bytes = counterOf(row);
 	const moved = linkMadeProgress(row, track.bytes);
-	// Any progress is payload, however small, unless the sender says the link
-	// is out of the payload rotation and sends duplicate probes only.
-	const payload = moved && row.stall_gated !== true;
 	if (
 		bytes === undefined ||
 		(track.bytes !== undefined && bytes < track.bytes)
 	) {
-		// A rebuilt or missing counter starts the quiet span over.
-		track.quietSinceMs = nowMs;
 		// No comparable evidence: forget the baseline, any verdict and the
 		// progress the old counter showed. A measured rate below can still
 		// make the link carrying again on its own.
 		track.notCarrying = false;
+		track.quietSinceMs = nowMs;
 		track.progressSinceMs = undefined;
 		track.lastProgressMs = undefined;
 	}
@@ -177,8 +167,8 @@ function observeRow(
 		track.bytesSinceMs = nowMs;
 		track.unchangedSamples = 1;
 	}
-	if (payload) track.quietSinceMs = nowMs;
 	if (moved) {
+		track.quietSinceMs = nowMs;
 		track.lastProgressMs = nowMs;
 		track.progressSinceMs ??= nowMs;
 	} else {
@@ -279,12 +269,9 @@ export class LinkProgressTracker {
 	/**
 	 * How long no row of `iface` has moved anything, on the tracker's clock:
 	 * since its latest progress of any size, or since the start of the
-	 * comparable evidence when there was none. `undefined` without current
-	 * evidence for every row. Unlike `not_carrying`, which clears only after
-	 * sustained progress, a single byte resets it, so it is what "nothing went
-	 * out" means for an action that would cut the link. The one exception is a
-	 * row the sender reports as stall-gated: out of the payload rotation, its
-	 * counter grows by duplicate probes only, and that is not payload.
+	 * comparable evidence. `undefined` without current evidence for every row.
+	 * Diagnostic: uplink health uses it to decide when a streamed link's own
+	 * check is worth a look, never to judge the link.
 	 */
 	quietForIface(iface: string, nowMs: number): number | undefined {
 		if (!this.current(nowMs)) return undefined;
@@ -292,8 +279,10 @@ export class LinkProgressTracker {
 		for (const track of this.tracks.values()) {
 			if (track.iface !== iface) continue;
 			if (track.bytes === undefined) return undefined;
-			const since = track.quietSinceMs;
-			quietSince = Math.max(quietSince ?? since, since);
+			quietSince = Math.max(
+				quietSince ?? track.quietSinceMs,
+				track.quietSinceMs,
+			);
 		}
 		return quietSince === undefined ? undefined : nowMs - quietSince;
 	}

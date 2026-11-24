@@ -47,12 +47,11 @@ export interface UplinkHealthRuntimeCoreDeps {
 	readonly identity: (iface: string) => UplinkIdentity;
 	readonly notify?: (records: readonly UplinkHealthRecord[]) => void;
 	/**
-	 * Milliseconds since stream data last went out on the interface
-	 * (`linkQuietForMs`), `undefined` without fresh evidence. Without this port
-	 * no streamed link is promoted to an active check.
+	 * Milliseconds since anything went out on the interface (`linkQuietForMs`),
+	 * `undefined` without fresh evidence. Without it no diagnostic check runs.
 	 */
 	readonly quietForMs?: (iface: string) => number | undefined;
-	/** Monotonic milliseconds for the probe budget (default `performance.now`). */
+	/** Monotonic milliseconds for the diagnostic budget (default `performance.now`). */
 	readonly monotonicNow?: () => number;
 	/** Another address of the family than `failed`, when the resolver has one. */
 	readonly alternateTarget?: (
@@ -61,6 +60,20 @@ export interface UplinkHealthRuntimeCoreDeps {
 	) => string | undefined;
 	/** A check at `target` failed: the resolver may look the name up again. */
 	readonly targetFailed?: (family: 4 | 6, target: string) => void;
+	/** A streamed link's diagnostic check answered differently than before. */
+	readonly logDiagnostic?: (diagnostic: StreamingDiagnostic) => void;
+}
+
+/**
+ * The answer of a diagnostic check of a streamed link that sent nothing for
+ * `streamingQuietMs`. Kept and logged only: it never changes the link's
+ * verdict, steering or any recovery decision.
+ */
+export interface StreamingDiagnostic {
+	readonly iface: string;
+	readonly outcome: UplinkHealthOutcome;
+	readonly at: number;
+	readonly quietMs: number;
 }
 
 export class UplinkHealthRuntimeCore {
@@ -75,13 +88,11 @@ export class UplinkHealthRuntimeCore {
 			counter: RecentNaks;
 		}
 	>();
-	/** Streaming check tokens per interface (`streamingProbeBudget`). */
-	/** The interface generation each record's last observation was about. */
-	readonly #observedGeneration = new Map<string, number | undefined>();
-	readonly #budget = new Map<
-		string,
-		{ tokens: number; reserve: number; at: number }
-	>();
+	/** Diagnostic check tokens per interface (`streamingProbeBudget`). */
+	readonly #budget = new Map<string, { tokens: number; at: number }>();
+	readonly #diagnostics = new Map<string, StreamingDiagnostic>();
+	/** Streamed interfaces whose rows this round are current and not stale. */
+	readonly #freshRows = new Set<string>();
 	#round = 0;
 	#completedRound = 0;
 	#generation = 0;
@@ -117,49 +128,8 @@ export class UplinkHealthRuntimeCore {
 		const present = new Set(Object.keys(interfaces));
 		this.#engine.removeMissing(present, now);
 		this.#sampleInterfaces(interfaces);
-		const { passive, fresh } = this.#passiveEvidence(now);
+		const passive = this.#passiveIfaces(now, round);
 		const candidates = this.#deps.candidates(interfaces);
-		// A streamed link that sends no payload has no passive evidence either
-		// way: a black hole returns no NAKs, its RTT freezes and its row stays
-		// fresh, so the row alone would keep it `up` for as long as the stream
-		// runs. Once no payload went out on it for `streamingQuietMs` (on fresh,
-		// current rows; duplicate probes and keepalives are no payload), or once
-		// health has it down, its own probe decides instead, within the link's
-		// probe budget. A link that sent
-		// payload recently keeps its passive verdict, down or not: it works.
-		// Without a token the round is held: nothing is recorded, so the last
-		// real verdict and its failure streak stand. While a stream runs every
-		// check is metered, a link without a sender row included.
-		const streaming = this.#deps.streaming();
-		const promoted = new Set<string>();
-		const held = new Set<string>();
-		for (const candidate of candidates) {
-			const iface = candidate.name;
-			if (promoted.has(iface) || held.has(iface)) continue;
-			const record = this.#engine.get(iface);
-			const down = record?.state === "down";
-			const failing = down || (record?.probes.failures ?? 0) > 0;
-			if (!passive.has(iface)) {
-				if (streaming)
-					(this.#takeToken(iface, undefined, failing) ? promoted : held).add(
-						iface,
-					);
-				continue;
-			}
-			const quiet = this.#deps.quietForMs?.(iface);
-			if (quiet !== undefined && quiet < UPLINK_HEALTH_CONFIG.streamingQuietMs)
-				continue;
-			if (!down && !(fresh.has(iface) && quiet !== undefined)) continue;
-			(this.#takeToken(iface, quiet, failing) ? promoted : held).add(iface);
-		}
-		for (const iface of held) this.#hold(iface, now);
-		for (const [iface, outcome] of passive) {
-			if (promoted.has(iface) || held.has(iface)) continue;
-			this.#observe(
-				{ iface, ...this.#deps.identity(iface), outcome, now },
-				round,
-			);
-		}
 
 		for (const iface of present) {
 			const entry = interfaces[iface];
@@ -177,9 +147,7 @@ export class UplinkHealthRuntimeCore {
 		}
 
 		const active = candidates.filter(
-			(candidate) =>
-				promoted.has(candidate.name) ||
-				(!passive.has(candidate.name) && !held.has(candidate.name)),
+			(candidate) => !passive.has(candidate.name),
 		);
 		const generations = new Map(
 			active.map((candidate) => [
@@ -201,19 +169,41 @@ export class UplinkHealthRuntimeCore {
 				this.#deps.exclusionReason(entry) === undefined
 			);
 		};
+		// Diagnostic checks of quiet streamed links, decided before any await.
+		const diagnostic = this.#deps.streaming()
+			? candidates.filter((candidate) =>
+					this.#wantsDiagnostic(candidate.name, passive),
+				)
+			: [];
+		const diagnosticGenerations = new Map(
+			diagnostic.map((candidate) => [
+				candidate.name,
+				this.#samples.get(candidate.name)?.generation,
+			]),
+		);
+		const isCurrentDiagnostic = (candidate: ProbeCandidate): boolean => {
+			const entry = this.#deps.interfaces()[candidate.name];
+			return (
+				this.#deps.streaming() &&
+				diagnosticGenerations.get(candidate.name) ===
+					this.#samples.get(candidate.name)?.generation &&
+				(entry?.ip ?? entry?.ipv6) === candidate.ip &&
+				this.#deps.exclusionReason(entry) === undefined
+			);
+		};
 		// An unresolvable check address is a statement about DNS, not about any
 		// uplink, so the ACTIVE round is skipped whole rather than recording a
 		// failure nothing measured. The passive telemetry and address-loss
 		// observations above are independent evidence and still stand.
 		const targets = new Map<4 | 6, string>();
 		for (const family of new Set(
-			active.map((candidate): 4 | 6 => (candidate.ip.includes(":") ? 6 : 4)),
+			[...active, ...diagnostic].map((candidate): 4 | 6 =>
+				candidate.ip.includes(":") ? 6 : 4,
+			),
 		)) {
 			const target = await this.#deps.resolveTarget(family);
 			if (target !== undefined) targets.set(family, target);
 		}
-		// Without a check address for its family nothing is measured and
-		// nothing is refreshed: the verdict ages out as unknown, never as up.
 		if (targets.size > 0) {
 			for (
 				let offset = 0;
@@ -227,9 +217,6 @@ export class UplinkHealthRuntimeCore {
 							isCurrent(candidate) &&
 							targets.has(candidate.ip.includes(":") ? 6 : 4),
 					);
-				// Timed only for streamed links: the clock port may count its reads.
-				const timed = batch.some((candidate) => promoted.has(candidate.name));
-				const sentAt = timed ? this.#deps.now() : 0;
 				const outcomes = await Promise.all(
 					batch.map((candidate) =>
 						this.#checkOnce(
@@ -238,55 +225,56 @@ export class UplinkHealthRuntimeCore {
 						),
 					),
 				);
-				const elapsed = timed ? Math.max(0, this.#deps.now() - sentAt) : 0;
 				for (const [index, candidate] of batch.entries()) {
 					if (!isCurrent(candidate)) continue;
-					let outcome = outcomes[index] ?? "failure";
-					let probed = true;
-					// A failed check of a streamed link does not count when the
-					// sender saw payload go out on it during the check: the path
-					// works, and its passive verdict stands.
-					const quiet = this.#deps.quietForMs?.(candidate.name);
-					if (
-						promoted.has(candidate.name) &&
-						outcome !== "success" &&
-						quiet !== undefined &&
-						quiet < UPLINK_HEALTH_CONFIG.streamingQuietMs + elapsed
-					) {
-						const fallback = passive.get(candidate.name);
-						if (fallback === undefined) continue;
-						outcome = fallback;
-						probed = false;
-					}
 					this.#observe(
 						{
 							iface: candidate.name,
 							...this.#deps.identity(candidate.name),
-							outcome,
+							outcome: outcomes[index] ?? "failure",
 							now,
-							probed,
+							probed: true,
 						},
 						round,
 					);
 				}
 			}
 		}
+		for (const candidate of diagnostic) {
+			const target = targets.get(candidate.ip.includes(":") ? 6 : 4);
+			if (target === undefined || !isCurrentDiagnostic(candidate)) continue;
+			const outcome = await this.#checkOnce(candidate, target);
+			const quietMs = this.#deps.quietForMs?.(candidate.name);
+			if (quietMs === undefined || !isCurrentDiagnostic(candidate)) continue;
+			this.#noteDiagnostic({
+				iface: candidate.name,
+				outcome,
+				at: now,
+				quietMs,
+			});
+		}
 		this.#completedRound = Math.max(this.#completedRound, round);
 		const current = this.#deps.interfaces();
 		for (const [iface, sample] of this.#samples) {
 			if (!current[iface] && sample.round <= this.#completedRound) {
 				this.#samples.delete(iface);
-				this.#observedGeneration.delete(iface);
 			}
 		}
-		for (const iface of this.#budget.keys()) {
-			if (!current[iface]) this.#budget.delete(iface);
+		for (const iface of [...this.#budget.keys(), ...this.#diagnostics.keys()]) {
+			if (current[iface]) continue;
+			this.#budget.delete(iface);
+			this.#diagnostics.delete(iface);
 		}
 		this.#publishIfChanged();
 	}
 
 	records(): readonly UplinkHealthRecord[] {
 		return this.#engine.list();
+	}
+
+	/** The latest diagnostic answer per streamed link (never a verdict). */
+	diagnostics(): readonly StreamingDiagnostic[] {
+		return [...this.#diagnostics.values()];
 	}
 
 	isClientSteeringEligible(iface: string): boolean {
@@ -335,9 +323,9 @@ export class UplinkHealthRuntimeCore {
 	}
 
 	/**
-	 * One check, retried once at another address of the same family when it
+	 * One check, retried once at the next address of the same family when it
 	 * fails: a cached check address can stop answering on its own, and that is
-	 * no verdict on the link. A failure also asks the resolver to look again.
+	 * no verdict on the link. A failure also asks the resolver to move on.
 	 */
 	async #checkOnce(
 		candidate: ProbeCandidate,
@@ -354,110 +342,68 @@ export class UplinkHealthRuntimeCore {
 	}
 
 	/**
-	 * Spend one streaming check token for `iface`. The main bucket refills per
-	 * hour on the monotonic clock; when it is empty, a link that is already
-	 * failing its checks and quiet for `reserveQuietMs` may draw on a small
-	 * reserve of its own, so a black hole that starts after a drained bucket
-	 * still reaches a recovery decision. A healthy quiet link never touches it.
+	 * A streamed link on fresh telemetry that sent nothing for
+	 * `streamingQuietMs`, not already down (a down link is checked for its
+	 * verdict anyway), and within its diagnostic budget.
 	 */
-	#takeToken(
-		iface: string,
-		quiet: number | undefined,
-		failing: boolean,
-	): boolean {
-		const budget = UPLINK_HEALTH_CONFIG.streamingProbeBudget;
-		const at = (this.#deps.monotonicNow ?? performance.now.bind(performance))();
-		const entry = this.#budget.get(iface) ?? {
-			tokens: budget.burst,
-			reserve: budget.reserveBurst,
-			at,
-		};
-		const elapsed = Math.max(0, at - entry.at);
-		const tokens = Math.min(
-			budget.burst,
-			entry.tokens + (elapsed * budget.perHour) / 3_600_000,
-		);
-		const reserve = Math.min(
-			budget.reserveBurst,
-			entry.reserve + (elapsed * budget.reservePerHour) / 3_600_000,
-		);
-		const fromMain = tokens >= 1;
-		const fromReserve =
-			!fromMain &&
-			failing &&
-			reserve >= 1 &&
-			quiet !== undefined &&
-			quiet >= budget.reserveQuietMs;
-		this.#budget.set(iface, {
-			tokens: fromMain ? tokens - 1 : tokens,
-			reserve: fromReserve ? reserve - 1 : reserve,
-			at,
-		});
-		return fromMain || fromReserve;
+	#wantsDiagnostic(iface: string, passive: ReadonlySet<string>): boolean {
+		if (!passive.has(iface) || !this.#freshRows.has(iface)) return false;
+		if (this.#engine.get(iface)?.state === "down") return false;
+		const quiet = this.#deps.quietForMs?.(iface);
+		if (quiet === undefined || quiet < UPLINK_HEALTH_CONFIG.streamingQuietMs)
+			return false;
+		return this.#takeToken(iface);
 	}
 
-	/**
-	 * A round held for want of a token keeps the record's freshness for at
-	 * most `heldFreshMs` past its last real evidence, and only while the
-	 * interface is the one that evidence was about. Anything older ages out.
-	 */
-	#hold(iface: string, now: number): void {
-		const record = this.#engine.get(iface);
-		if (!record) return;
-		if (
-			this.#observedGeneration.get(iface) !==
-			this.#samples.get(iface)?.generation
-		)
-			return;
-		const evidenceAt = Math.max(
-			record.signals.activeAt ?? Number.NEGATIVE_INFINITY,
-			record.signals.passiveAt ?? Number.NEGATIVE_INFINITY,
+	/** Spend one diagnostic token for `iface`, refilled on the monotonic clock. */
+	#takeToken(iface: string): boolean {
+		const { perHour, burst } = UPLINK_HEALTH_CONFIG.streamingProbeBudget;
+		const at = (this.#deps.monotonicNow ?? performance.now.bind(performance))();
+		const entry = this.#budget.get(iface) ?? { tokens: burst, at };
+		const tokens = Math.min(
+			burst,
+			entry.tokens + (Math.max(0, at - entry.at) * perHour) / 3_600_000,
 		);
-		this.#engine.touch(
-			iface,
-			now,
-			evidenceAt + UPLINK_HEALTH_CONFIG.heldFreshMs,
-		);
+		this.#budget.set(iface, { tokens: tokens >= 1 ? tokens - 1 : tokens, at });
+		return tokens >= 1;
+	}
+
+	#noteDiagnostic(diagnostic: StreamingDiagnostic): void {
+		const previous = this.#diagnostics.get(diagnostic.iface);
+		this.#diagnostics.set(diagnostic.iface, diagnostic);
+		if (previous?.outcome !== diagnostic.outcome)
+			this.#deps.logDiagnostic?.(diagnostic);
 	}
 
 	#observe(observation: UplinkObservation, round: number): void {
 		const sample = this.#samples.get(observation.iface);
 		if (sample) sample.round = round;
-		this.#observedGeneration.set(observation.iface, sample?.generation);
 		this.#engine.observe(observation);
 	}
 
-	/**
-	 * Each streamed link's passive verdict for this round, not yet observed, and
-	 * the links among them whose rows are fresh and current (no expired
-	 * snapshot, no stale row): only those can be judged quiet.
-	 */
-	#passiveEvidence(now: number): {
-		readonly passive: ReadonlyMap<string, UplinkHealthOutcome>;
-		readonly fresh: ReadonlySet<string>;
-	} {
-		const observations = new Map<string, UplinkHealthOutcome>();
-		const fresh = new Set<string>();
-		const none = { passive: observations, fresh };
+	#passiveIfaces(now: number, round: number): ReadonlySet<string> {
+		const passive = new Set<string>();
+		this.#freshRows.clear();
 		if (!this.#deps.streaming()) {
 			this.#recentNaks.clear();
-			return none;
+			return passive;
 		}
 		const telemetry = this.#deps.telemetry();
 		if (!telemetry) {
 			this.#recentNaks.clear();
-			return none;
+			return passive;
 		}
 		const seen = new Set<string>();
-		const expired =
-			now - telemetry.lastReadMs >= UPLINK_HEALTH_CONFIG.telemetryExpiryMs;
-		// Any stale row of an interface keeps it on the passive path.
+		const observations = new Map<string, UplinkHealthOutcome>();
 		const staleRow = new Set<string>();
 		for (const link of telemetry.links) {
 			// Stale sender rows must not recreate pruned missing history.
 			if (!this.#deps.interfaces()[link.iface]) continue;
-			if (link.stale) staleRow.add(link.iface);
-			if (!expired) fresh.add(link.iface);
+			// Down paths need active recovery; passive degradation resets the streak.
+			if (this.#engine.get(link.iface)?.state === "down") continue;
+			passive.add(link.iface);
+			const expired =
+				now - telemetry.lastReadMs >= UPLINK_HEALTH_CONFIG.telemetryExpiryMs;
 			const key = JSON.stringify([link.iface, link.link_id ?? link.conn_id]);
 			seen.add(key);
 			const entry = this.#deps.interfaces()[link.iface];
@@ -474,6 +420,8 @@ export class UplinkHealthRuntimeCore {
 					? sample.counter.observe(telemetry.lastReadMs, link.nak_count)
 					: false;
 			if (expired || link.stale) this.#recentNaks.delete(key);
+			if (expired || link.stale) staleRow.add(link.iface);
+			else this.#freshRows.add(link.iface);
 			const degraded =
 				link.stale ||
 				link.rtt_ms >= UPLINK_HEALTH_CONFIG.passiveRttDegradedMs ||
@@ -496,8 +444,14 @@ export class UplinkHealthRuntimeCore {
 		for (const key of this.#recentNaks.keys()) {
 			if (!seen.has(key)) this.#recentNaks.delete(key);
 		}
-		for (const iface of staleRow) fresh.delete(iface);
-		return { passive: observations, fresh };
+		for (const iface of staleRow) this.#freshRows.delete(iface);
+		for (const [iface, outcome] of observations) {
+			this.#observe(
+				{ iface, ...this.#deps.identity(iface), outcome, now },
+				round,
+			);
+		}
+		return passive;
 	}
 
 	#publishIfChanged(): void {

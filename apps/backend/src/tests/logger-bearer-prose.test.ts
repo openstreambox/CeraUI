@@ -14,7 +14,6 @@ import { SUPPORT_LOG_TEMPLATES } from "../modules/system/support-log-messages.ge
 const DATA_SESSION_LINES = [
 	"modem data session carries no traffic; reconnecting",
 	"modem data session reconnect finished",
-	"modem data session reconnect withdrawn",
 	"data session check did not complete",
 	"automatic data session IP family reconciliation deferred",
 ];

@@ -859,7 +859,6 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["modem credentials: loaded ", " device record(s)"],
 	["modem data session carries no traffic; reconnecting"],
 	["modem data session reconnect finished"],
-	["modem data session reconnect withdrawn"],
 	["modem decommission did not commit"],
 	["modem id-path refresh failed; retaining previous map"],
 	["modem mutation acknowledgement did not commit"],
@@ -1268,6 +1267,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["update-orchestrator: wire-state publish failed"],
 	["updated the relays cache"],
 	["updated wifi devices"],
+	["uplink check while streaming"],
 	["uplink shaper unavailable; client sharing remains unshaped"],
 	[
 		"uplink steering Wi-Fi zones readiness deadline expired; bypassing classification",

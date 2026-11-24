@@ -123,18 +123,20 @@ describe("decideDeadBearer", () => {
 		expect(run(0, 3_600_000, () => ({ stream: "unknown" })).times).toEqual([]);
 	});
 
-	test("while streaming, a link the sender reports as carrying nothing is reconnected after the hold", () => {
-		expect(
-			run(0, DEAD_BEARER_HOLD_MS, () => ({ stream: "not_carrying" })).times,
-		).toEqual([DEAD_BEARER_HOLD_MS]);
-	});
+	for (const stream of ["not_carrying", "carrying", "unknown"] as const) {
+		test(`while a stream runs nothing is reconnected, even when the link reads ${stream}`, () => {
+			// Mid-stream recovery is parked: the sender cannot yet tell a held-out
+			// link that still carries the stream from a dead one.
+			expect(run(0, 3_600_000, () => ({ stream })).times).toEqual([]);
+		});
+	}
 
-	for (const between of ["carrying", "unknown"] as const) {
-		test(`the outage restarts when the link's traffic reads ${between} in between`, () => {
+	for (const during of ["not_carrying", "carrying", "unknown"] as const) {
+		test(`the outage counts from the first poll after a stream that read ${during}`, () => {
 			const { times } = run(0, 130_000, (now) => ({
-				stream: now === 50_000 ? between : "not_carrying",
+				stream: now <= 50_000 ? during : "idle",
 			}));
-			// Seen again at 60 s, so the 60 s hold ends at 120 s, not at 60 s.
+			// First seen without a stream at 60 s: the 60 s hold ends at 120 s.
 			expect(times).toEqual([120_000]);
 		});
 	}
@@ -218,8 +220,6 @@ describe("runDeadBearerRecovery", () => {
 	let tunHealth: UplinkHealthRecord | undefined;
 	let streaming: boolean;
 	let carrying: Record<string, LinkCarryingState>;
-	/** Monotonic time of the link's last stream progress. */
-	let lastSent: number;
 	/** The native IPv6 path answered a real probe at every poll. */
 	let nativeProbed: boolean;
 	let autoconnect: string;
@@ -263,17 +263,15 @@ describe("runDeadBearerRecovery", () => {
 				...(tunHealth ? [tunHealth] : []),
 				...others,
 			],
-			lastProbe: (iface) =>
-				iface === "wwan0" && nativeProbed
-					? { outcome: "success" as const, at: wall }
-					: undefined,
 			clatParent: (iface) => clatParents[iface],
 			clatTun: (parent) =>
 				Object.keys(clatParents).find((tun) => clatParents[tun] === parent),
 			streaming: () => streaming,
 			carrying: (iface) => carrying[iface] ?? "unknown",
-			// A carrying link moved payload just now unless a test says otherwise.
-			quiet: (iface) => (carrying[iface] === "carrying" ? 0 : now - lastSent),
+			lastProbe: (iface) =>
+				iface === "wwan0" && nativeProbed
+					? { outcome: "success" as const, at: wall }
+					: undefined,
 			readAutoconnect: async () => {
 				ownerReads++;
 				return autoconnect;
@@ -336,7 +334,6 @@ describe("runDeadBearerRecovery", () => {
 		tunHealth = undefined;
 		streaming = false;
 		carrying = {};
-		lastSent = -3_600_000;
 		nativeProbed = false;
 		autoconnect = "no";
 		grant = true;
@@ -383,50 +380,25 @@ describe("runDeadBearerRecovery", () => {
 		expect(await pollUntil(3_600_000)).toEqual([]);
 	});
 
-	test("while streaming, a link the sender reports as carrying nothing is reconnected", async () => {
+	test("while a stream runs, a link the sender reports as carrying nothing is not reconnected", async () => {
 		others = [eth()];
 		health = dead();
 		streaming = true;
 		carrying = { wwan0: "not_carrying" };
-		expect(await pollUntil(120_000)).toEqual([75_000]);
+		expect(await pollUntil(3_600_000)).toEqual([]);
+		expect(calls).toEqual([]);
 	});
 
-	test("while streaming, a burst during the outage starts it over", async () => {
+	test("a stream that starts during the owner reads stops the reconnect", async () => {
 		others = [eth()];
 		health = dead();
-		streaming = true;
-		carrying = { wwan0: "not_carrying" };
-		// "Not carrying" stays latched through a single burst at 50 s.
-		lastSent = 50_000;
-		// Quiet for the 30 s streak lead from 80 s: seen at 90 s, hold to 150 s.
-		expect(await pollUntil(200_000)).toEqual([150_000]);
-	});
-
-	test("while streaming, a link whose only traffic is duplicates is not protected by the carrying verdict", async () => {
-		others = [eth()];
-		health = dead();
-		streaming = true;
-		// The verdict reads carrying from duplicate probes, but no payload moved.
-		carrying = { wwan0: "carrying" };
-		setDeadBearerDepsForTest({ ...deps(), quiet: () => 3_600_000 });
-		expect(await pollUntil(120_000)).toEqual([75_000]);
-	});
-
-	test("while streaming, data resuming during the owner reads withdraws the reconnect", async () => {
-		others = [eth()];
-		health = dead();
-		streaming = true;
-		carrying = { wwan0: "not_carrying" };
 		let reads = 0;
 		const base = deps();
 		setDeadBearerDepsForTest({
 			...base,
 			mmState: async (id) => {
 				// The second owner read is the one under the lease at 75 s.
-				if (++reads === 6) {
-					lastSent = now;
-					carrying = { wwan0: "carrying" };
-				}
+				if (++reads === 6) streaming = true;
 				return (await base.mmState?.(id)) ?? mmState;
 			},
 		});

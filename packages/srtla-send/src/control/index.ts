@@ -178,13 +178,6 @@ export const senderLinkStatsSchema = z.object({
 	base_score: z.number().int(),
 	/** Enhanced-mode quality multiplier, ~0.35..1.1. */
 	quality_multiplier: z.number(),
-	/**
-	 * The link's stall latch is engaged: it is out of the payload rotation and
-	 * carries only keepalives and a 1-in-N duplicate-packet probe trickle, so
-	 * its byte counter grows without any new payload. Present since sender
-	 * 4.1.0; the stats file does not carry it.
-	 */
-	stall_gated: z.boolean().optional(),
 });
 
 export const senderStatsSchema = z.object({
@@ -324,13 +317,7 @@ export class ControlRpcError extends Error {
  */
 export interface TelemetryControlClient {
 	getCapabilities(): Promise<SenderCapabilityDocument | null>;
-	/**
-	 * `stats` is the raw snapshot the telemetry was projected from, for the
-	 * per-link fields the frozen telemetry shape does not carry.
-	 */
-	subscribeStats(
-		onEvent: (snapshot: Telemetry | null, stats?: SenderStats | null) => void,
-	): () => void;
+	subscribeStats(onEvent: (snapshot: Telemetry | null) => void): () => void;
 	close(): void;
 }
 
@@ -632,9 +619,7 @@ export async function createControlClient(
 		 * consumer re-arms its file poll on that signal, so it must fire on the
 		 * failure paths too — not only on a parse error.
 		 */
-		subscribeStats(
-			onEvent: (snapshot: Telemetry | null, stats?: SenderStats | null) => void,
-		): () => void {
+		subscribeStats(onEvent: (snapshot: Telemetry | null) => void): () => void {
 			let stopped = false;
 			let subscriptionId: string | null = null;
 
@@ -642,10 +627,7 @@ export async function createControlClient(
 				if (method !== topicNotificationMethod(STATS_TOPIC)) return;
 				const envelope = params as { data?: unknown } | undefined;
 				const parsed = senderStatsSchema.safeParse(envelope?.data);
-				onEvent(
-					parsed.success ? senderStatsToTelemetry(parsed.data) : null,
-					parsed.success ? parsed.data : null,
-				);
+				onEvent(parsed.success ? senderStatsToTelemetry(parsed.data) : null);
 			});
 			open.setDisconnectHandler(() => {
 				if (!stopped) onEvent(null);

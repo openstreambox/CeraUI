@@ -43,6 +43,10 @@ import {
   srtla_send snapshots, one per second, and the dead-bearer poll runs every
   15 s against whatever the shared carrying predicate makes of them. The
   probe-dead modem is wwan0; eth0 is up, so the 60 s hold applies.
+
+  Mid-stream recovery is parked: while a stream runs nothing is reconnected,
+  whatever the link's own traffic says. Once the stream stops, the outage
+  counts from the first poll without it.
 */
 
 const UUID = "9b0c1f3e-4f4f-4a51-9a51-3a0d1b7e2c11";
@@ -71,6 +75,7 @@ let now = 0;
 /** Wall clock for health and telemetry timestamps. */
 let wall = 0;
 let calls: string[];
+let streaming = true;
 
 function snapshot(connections: Conn[]): Telemetry {
 	return {
@@ -169,6 +174,7 @@ beforeEach(() => {
 	now = 0;
 	wall = 1_800_000_000_000;
 	calls = [];
+	streaming = true;
 	// Another file's translation must not make wwan0 look translated here.
 	resetClatTranslationStateForTest();
 	setTelemetryClockForTest(() => wall);
@@ -194,7 +200,7 @@ beforeEach(() => {
 			record("clat0", "other", "down"),
 			record("eth0", "ethernet", "up"),
 		],
-		streaming: () => true,
+		streaming: () => streaming,
 		readAutoconnect: async () => "no",
 		automaticReady: async () => true,
 		nmState: async () => "100",
@@ -226,18 +232,28 @@ afterEach(() => {
 	for (const id of getModemIds()) removeModem(id);
 });
 
-describe("while a stream runs, the dead-bearer veto follows the link's own traffic", () => {
-	test("a bonded link whose row is fresh but sends nothing is reconnected after the hold", async () => {
+describe("while a stream runs, nothing is reconnected (mid-stream recovery parked)", () => {
+	test("a bonded link whose row is fresh but sends nothing is not reconnected", async () => {
 		startStream([MODEM, ETH]);
-		const at = await streamUntil(120_000, (t) => [
+		const at = await streamUntil(20 * 60_000, (t) => [
 			{ link_id: MODEM.linkId, bytes_sent_total: 0 },
 			{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
 		]);
-		// "Not carrying" from the first poll, but the link must also have sent
-		// nothing for the probe streak (30 s, DEAD_BEARER_QUIET_LEAD_MS) before
-		// the outage counts: its counter stands from 1 s, so the outage is first
-		// seen at 45 s and the 60 s hold ends at 105 s.
-		expect(at).toEqual([45_000 + DEAD_BEARER_HOLD_MS]);
+		expect(at).toEqual([]);
+		expect(calls).toEqual([]);
+	});
+
+	test("once the stream stops, the dead link is reconnected after the hold", async () => {
+		startStream([MODEM, ETH]);
+		const at = await streamUntil(130_000, (t) => {
+			if (t === 60_000) streaming = false;
+			return [
+				{ link_id: MODEM.linkId, bytes_sent_total: 0 },
+				{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
+			];
+		});
+		// The first poll without a stream is at 60 s; the 60 s hold ends at 120 s.
+		expect(at).toEqual([60_000 + DEAD_BEARER_HOLD_MS]);
 		expect(calls).toEqual([`down ${UUID}`, `up ${UUID}`]);
 	});
 
@@ -250,7 +266,7 @@ describe("while a stream runs, the dead-bearer veto follows the link's own traff
 		expect(at).toEqual([]);
 	});
 
-	test("a link that stops carrying is reconnected only after the hold from then", async () => {
+	test("a link that stops carrying is not reconnected while the stream runs", async () => {
 		startStream([MODEM, ETH]);
 		const stopAt = 60_000;
 		const at = await streamUntil(200_000, (t) => [
@@ -260,10 +276,7 @@ describe("while a stream runs, the dead-bearer veto follows the link's own traff
 			},
 			{ link_id: ETH.linkId, bytes_sent_total: t * 500 },
 		]);
-		// Not carrying from 65 s (5 s of a still counter), but quiet only from
-		// 60 s: the outage counts once it has been quiet for the 30 s streak
-		// (the 90 s poll), so the hold ends at 150 s.
-		expect(at).toEqual([90_000 + DEAD_BEARER_HOLD_MS]);
+		expect(at).toEqual([]);
 	});
 
 	test("no sender snapshot yet is unknown, and unknown never reconnects", async () => {
@@ -319,14 +332,13 @@ describe("an IPv6-only modem's CLAT translator counts for the modem", () => {
 		expect(at).toEqual([]);
 	});
 
-	test("a translator that sends nothing lets the parent modem be reconnected", async () => {
+	test("a translator that sends nothing does not get the parent reconnected while the stream runs", async () => {
 		translate();
 		startStream([]);
 		const at = await streamUntil(120_000, (t) => [
 			{ iface: "clat0", bytes_sent_total: 0 },
 			{ iface: "eth0", bytes_sent_total: t * 500 },
 		]);
-		// As for a native modem: quiet for the 30 s streak from 1 s, seen at 45 s.
-		expect(at).toEqual([45_000 + DEAD_BEARER_HOLD_MS]);
+		expect(at).toEqual([]);
 	});
 });

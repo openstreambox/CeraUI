@@ -25,29 +25,17 @@ export const UPLINK_HEALTH_CONFIG = {
 	passiveNakDegradedCount: 25,
 	passiveNakWindowMs: 10_000,
 	/**
-	 * While streaming, a bonded link is checked by probe instead of its sender
-	 * row only after it sent nothing at all for this long, and a failed check
-	 * does not count if the link sent anything during it.
+	 * While streaming, a bonded link that sent nothing for this long gets a
+	 * diagnostic check of its own. Its answer is logged and kept apart; it never
+	 * changes the link's verdict, steering or any recovery decision.
 	 */
 	streamingQuietMs: 10_000,
-	/** How long a round held for want of a token keeps the last evidence fresh. */
-	heldFreshMs: 60_000,
 	/**
-	 * While a stream runs every check is metered, of a link with or without a
-	 * sender row: each costs about 1 KB on the link (a second one when the first
-	 * address fails). At most `perHour` per link (one per 15 s on average), with
-	 * up to `burst` in a row; a link with no payload for `reserveQuietMs` may
-	 * also draw on its own reserve, so a black hole that starts after a drained
-	 * bucket still gets its checks. Together at most about 0.6 MB per link per
-	 * hour. Without a token the round is held and the last verdict stands.
+	 * Those diagnostic checks are metered on the monotonic clock: each costs
+	 * about 1 KB on the link (a second one when the first address fails), at
+	 * most `perHour` per link with up to `burst` in a row.
 	 */
-	streamingProbeBudget: {
-		perHour: 240,
-		burst: 24,
-		reservePerHour: 60,
-		reserveBurst: 6,
-		reserveQuietMs: 60_000,
-	},
+	streamingProbeBudget: { perHour: 240, burst: 24 },
 } as const;
 
 export type UplinkHealthOutcome =
@@ -156,23 +144,6 @@ export class UplinkHealthEngine {
 	/** The last real probe answer for `iface`, if one was recorded. */
 	lastProbe(iface: string): UplinkProbeEvidence | undefined {
 		return this.#records.has(iface) ? this.#probes.get(iface) : undefined;
-	}
-
-	/**
-	 * A round that measured nothing for `iface` (no probe budget) keeps its
-	 * verdict and streak; only its freshness moves on, never past `notAfter`.
-	 */
-	touch(iface: string, now: number, notAfter: number): void {
-		const entry = this.#records.get(iface);
-		if (!entry) return;
-		entry.lastSeen = now;
-		entry.record = {
-			...entry.record,
-			staleAt: Math.max(
-				entry.record.staleAt,
-				Math.min(now + UPLINK_HEALTH_CONFIG.telemetryExpiryMs, notAfter),
-			),
-		};
 	}
 
 	restartRecovery(iface: string, now: number): void {

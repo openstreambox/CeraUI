@@ -414,34 +414,21 @@ At most 32 missing records are retained; excess records are evicted in order of
 longest absence. A pruned interface that reappears is treated as brand-new, using
 the existing initial-up behavior. These two bounds limit history under interface
 churn without forgetting brief disappearances.
-While streaming, a down path rejoins only after the existing five-success and
-15-second hold-down requirements are met. A streamed path that sent nothing at all
-for at least 10 s (`streamingQuietMs`, on fresh, non-stale sender rows; a single byte
-resets it, except the duplicate-probe trickle of a path the sender reports as
-stall-gated over its control socket), or one health already has down, uses its active
-probe instead of its sender row: a black-holed path keeps a fresh row with its last RTT
-and no NAKs, which would read as healthy for the whole stream. A path that sent anything
-recently takes its passive verdict, down or not, because it delivers payload. A failed
-probe does not count when the sender saw the path send during it, and is retried once at
-the next address of the answer before it counts; the resolver then moves on through
-every address and looks the name up again at most once a minute. An idle but working
-path, such as a spare, answers the probe and stays up; three counted failures take it
-down. While a stream runs every probe is metered on the monotonic clock, paths without
-a sender row included: about 1 KB each, at most 240 per path per hour with bursts of up
-to 24 (`streamingProbeBudget`), and a path that is already failing and quiet for 60 s
-may draw on a reserve of 60 per hour (burst 6); each downloads at most 1 MiB. A round
-held for want of a token records nothing, so the last real verdict and its failure
-streak stand, and keeps it fresh for at most a minute after that evidence, never after
-an address change. Without a check address nothing is measured or refreshed: the
-verdict ages out as unknown. Each source family is probed at an address of its own
-family. The dead-bearer reconnect adds its own guards: it never tears down a path that
-sent anything during the outage plus the probe streak, checked again just before
-teardown, and a translated modem's native IPv6 vetoes it only with a real probe answer
-from the last minute. Without the sender's stall report (the stats-file path), a black
-hole whose counter still grows by duplicate probes is never torn down mid-stream; it
-recovers between streams.
-End-to-end regressions with the dead-bearer recovery live in
-`apps/backend/src/modules/modems/dead-bearer-live-health.test.ts`.
+While streaming, down paths use active probes at the existing five-second cadence
+instead of passive sender metrics. They rejoin only after the existing five-success
+and 15-second hold-down requirements are met. Other streaming paths continue to use
+passive telemetry without active probes. A streamed path that sent nothing at all for
+10 s on fresh, non-stale sender rows (`streamingQuietMs`) also gets a diagnostic probe,
+metered on the monotonic clock (at most 240 per path per hour, bursts of 24, about 1 KB
+each, at most 1 MiB downloaded). Its answer is logged when it changes and kept apart
+(`diagnostics()`); it never changes the path's verdict, steering or any recovery
+decision. Mid-stream recovery of a dead modem bearer is parked: the dead-bearer
+reconnect does nothing while a stream runs.
+
+Every probe that fails is retried once at the next address of the connectivity-check
+answer before it counts. The resolver then moves on through every address, and looks
+the name up again at most once a minute, also while DNS is down. Each source family is
+probed at an address of its own family.
 
 Model and steering-selection regressions live in
 `apps/backend/src/tests/uplink-steering-state.test.ts`; all three recovery paths

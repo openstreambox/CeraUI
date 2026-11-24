@@ -5,10 +5,8 @@
   while no packet gets through: a stale gateway after a cell change, a carrier
   that stopped routing the session, an MTU or NAT state the network dropped.
   Uplink health notices (device-bound probes to the connectivity-check address
-  fail and the link reads `down`; while streaming, a link the sender reads as
-  carrying nothing is probed the same way instead of being judged by its
-  sender row), but nothing acted on it: the link stayed dead until someone
-  replugged the modem. A NetworkManager down/up of the same
+  fail and the link reads `down`), but nothing acted on it: the link stayed
+  dead until someone replugged the modem. A NetworkManager down/up of the same
   profile is the one action taken here.
 
   The probe is HTTP to one address, so its failure is weaker evidence than the
@@ -29,27 +27,18 @@
     DEAD_BEARER_NATIVE_PROOF_MS is not reconnected (a record that reads `up`
     only from passive evidence, or because no IPv6 check address exists, is
     no such answer), and one whose TUN has no record yet is left alone;
-  - while a stream runs, the sender's own per-link evidence says this
+  - no stream runs. Mid-stream recovery is parked: the sender's per-link
+    evidence cannot yet tell a link that is held out but still carries the
+    stream from a dead one, nor veto for a sibling whose row went missing,
+    so nothing is torn down while a stream runs (checked again right before
+    the teardown). Kept for when it returns: while a stream runs, the
+    sender's own per-link evidence says this
     interface carries nothing (`linkCarryingState`: its byte counter stood
     still across fresh snapshots, CLAT translator traffic counted for its
     modem). A link that moves stream data is not dead, whatever the probe
     says, and a row's mere presence proves nothing: the sender keeps a row
     for every uplink in its IP list. When the evidence is missing, stale or
-    too short ("unknown"), nothing happens. "Not carrying" stays latched
-    through short bursts, so the link must also have sent nothing at all
-    (`linkQuietForMs`: a single byte resets it) for the whole outage seen
-    here plus the probe streak before it (DEAD_BEARER_QUIET_LEAD_MS); any
-    burst starts the outage over. The one thing that is not payload is the
-    duplicate-probe trickle of a link the sender reports as stall-gated
-    (out of the payload rotation, control-socket stats only): such a link
-    can read "carrying" while it has sent no payload for
-    DEAD_BEARER_PAYLOAD_QUIET_MS, and then counts as carrying nothing.
-    Without that report (the stats-file path), a black hole whose counter
-    still grows by duplicate probes is never torn down mid-stream; it
-    recovers between streams.
-    That is checked once more under the lease, after every other read and
-    with nothing awaited before the teardown, so a link that resumed sending
-    while the owner reads ran is left alone;
+    too short ("unknown"), nothing happens;
   - NetworkManager reports the device connected (state 100) and ModemManager
     the modem registered or connected;
   - this module has seen the outage continuously for 60 s while an
@@ -86,10 +75,7 @@ import type {
 } from "../network/uplink-health/model.ts";
 import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
 import type { LinkCarryingState } from "../streaming/link-progress.ts";
-import {
-	linkCarryingState,
-	linkQuietForMs,
-} from "../streaming/link-telemetry.ts";
+import { linkCarryingState } from "../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import { automaticActivationReady } from "./cellular-preparation.ts";
 import {
@@ -115,12 +101,8 @@ export const DEAD_BEARER_ALONE_HOLD_MS = 300_000;
 export const DEAD_BEARER_STABLE_MS = 300_000;
 export const DEAD_BEARER_AFTER_DIAL_MS = 60_000;
 export const DEAD_BEARER_MIN_FAILURES = 6;
-/** No payload for this long overrides a "carrying" verdict from stall-gated duplicates. */
-export const DEAD_BEARER_PAYLOAD_QUIET_MS = 10_000;
 /** How recent a native IPv6 probe success must be to veto a CLAT modem. */
 export const DEAD_BEARER_NATIVE_PROOF_MS = 60_000;
-/** The probe streak before an outage is first seen: six 5 s health rounds. */
-export const DEAD_BEARER_QUIET_LEAD_MS = DEAD_BEARER_MIN_FAILURES * 5_000;
 export const DEAD_BEARER_SPACING_MS = [
 	60_000, 120_000, 240_000, 480_000, 900_000,
 ] as const;
@@ -149,14 +131,6 @@ export interface DeadBearerInput {
 	 * stream data goes out on this interface (`linkCarryingState`).
 	 */
 	readonly stream: "idle" | LinkCarryingState;
-	/**
-	 * While streaming: milliseconds since stream data last went out on this
-	 * interface (`linkQuietForMs`). A `not_carrying` link must have been quiet
-	 * for the outage seen so far plus DEAD_BEARER_QUIET_LEAD_MS. Production
-	 * always supplies it with `not_carrying` (missing evidence reads
-	 * `unknown`); omitted, only the latched verdict is used.
-	 */
-	readonly quietMs?: number;
 	/** NetworkManager device state code of the modem's profile. */
 	readonly nmState: string | undefined;
 	/** ModemManager `modem.generic.state`. */
@@ -196,16 +170,6 @@ function without(
 	return rest;
 }
 
-/** No burst on a streamed link since its probe streak began. */
-function quietThroughOutage(
-	input: Pick<DeadBearerInput, "stream" | "quietMs">,
-	outageMs: number,
-): boolean {
-	if (input.stream !== "not_carrying" || input.quietMs === undefined)
-		return true;
-	return input.quietMs >= outageMs + DEAD_BEARER_QUIET_LEAD_MS;
-}
-
 /** Pure: what to do about one modem's path this poll. */
 export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 	const { now, record } = input;
@@ -225,20 +189,14 @@ export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 		reason,
 		memory: without(memory, "downSince"),
 	});
+	if (input.stream !== "idle") return none("no reconnect while a stream runs");
 	if (!input.owned) return none("profile not owned by preparation");
 	if (input.nativeAnswers) return none("native path answers");
 	if (!outageRecord(record)) return none("no failed-probe outage");
-	// Only positive evidence of no traffic lets a live link go; "unknown" is
-	// not that evidence.
-	if (input.stream === "carrying") return none("carrying stream traffic");
-	if (input.stream === "unknown")
-		return none("stream traffic on this link unknown");
 	if (input.nmState !== "100") return none("bearer not connected");
 	if (input.mmState !== "registered" && input.mmState !== "connected")
 		return none("modem not registered");
 	const downSince = memory.downSince ?? now;
-	if (!quietThroughOutage(input, now - downSince))
-		return none("stream data moved on this link during the outage");
 	memory = { ...memory, downSince };
 	const hold = input.otherUplinkUp
 		? DEAD_BEARER_HOLD_MS
@@ -285,8 +243,6 @@ export interface DeadBearerDeps {
 	readonly streaming: () => boolean;
 	/** The sender's per-link verdict; CLAT translator rows count for the modem. */
 	readonly carrying: (iface: string) => LinkCarryingState;
-	/** Milliseconds since stream data last went out (`linkQuietForMs`). */
-	readonly quiet: (iface: string) => number | undefined;
 	/** Wall clock, only to compare with health record timestamps. */
 	readonly wallNow: () => number;
 	readonly readAutoconnect: (uuid: string) => Promise<string | undefined>;
@@ -321,7 +277,6 @@ const defaultDeps: DeadBearerDeps = {
 	clatTun: clatTunForParent,
 	streaming: getIsStreaming,
 	carrying: linkCarryingState,
-	quiet: linkQuietForMs,
 	wallNow: Date.now,
 	readAutoconnect: async (uuid) =>
 		(await nmConnGetFields(uuid, ["connection.autoconnect"] as const))?.[0],
@@ -364,27 +319,13 @@ function independentUplinkUp(iface: string, wallNow: number): boolean {
 function nativeAnswered(iface: string, wallNow: number): boolean {
 	const probe = deps.lastProbe(iface);
 	return (
-		deps.health(iface)?.state === "up" &&
 		probe?.outcome === "success" &&
 		wallNow - probe.at <= DEAD_BEARER_NATIVE_PROOF_MS
 	);
 }
 
-function streamState(
-	iface: string,
-): Pick<DeadBearerInput, "stream" | "quietMs"> {
-	if (!deps.streaming()) return { stream: "idle" };
-	const stream = deps.carrying(iface);
-	if (stream === "unknown") return { stream };
-	const quietMs = deps.quiet(iface);
-	// Without a quiet span to check, neither verdict is evidence enough.
-	if (quietMs === undefined) return { stream: "unknown" };
-	// A "carrying" verdict with no payload for DEAD_BEARER_PAYLOAD_QUIET_MS can
-	// only come from a stall-gated link's duplicate probes (any other byte
-	// resets the quiet time), and such a link carries no payload.
-	if (stream === "carrying" && quietMs < DEAD_BEARER_PAYLOAD_QUIET_MS)
-		return { stream };
-	return { stream: "not_carrying", quietMs };
+function streamState(iface: string): DeadBearerInput["stream"] {
+	return deps.streaming() ? deps.carrying(iface) : "idle";
 }
 
 /** Inputs read fresh; undefined when the modem is not a candidate at all. */
@@ -413,8 +354,11 @@ async function readInput(
 		now,
 		record,
 		otherUplinkUp: independentUplinkUp(modem.ifname, wallNow),
-		nativeAnswers: tun !== undefined && nativeAnswered(modem.ifname, wallNow),
-		...streamState(modem.ifname),
+		nativeAnswers:
+			tun !== undefined &&
+			native?.state === "up" &&
+			nativeAnswered(modem.ifname, wallNow),
+		stream: streamState(modem.ifname),
 		lastDial: deps.lastDial(key),
 		memory,
 	};
@@ -459,30 +403,11 @@ export async function runDeadBearerRecovery(
 				if (!fresh || fresh.uuid !== first.uuid) return;
 				const again = decideDeadBearer(fresh.input);
 				if (again.action !== "reconnect") return;
-				// The owner reads above awaited: read the stream evidence once
-				// more and tear down with nothing awaited in between.
-				const iface = getModem(id)?.ifname;
-				const outageMs =
-					deps.now() - (fresh.input.memory.downSince ?? fresh.input.now);
-				const last = iface === undefined ? undefined : streamState(iface);
-				if (
-					last === undefined ||
-					(fresh.input.stream === "idle") !== (last.stream === "idle") ||
-					(last.stream !== "idle" &&
-						(last.stream !== "not_carrying" ||
-							!quietThroughOutage(last, outageMs)))
-				) {
-					memories.set(key, without(fresh.input.memory, "downSince"));
-					logger.info("modem data session reconnect withdrawn", {
-						id,
-						stableKey: key,
-						iface,
-						stream: last?.stream,
-					});
-					return;
-				}
+				// The owner reads above awaited: a stream may have started since.
+				if (deps.streaming()) return;
 				memories.set(key, again.memory);
 				deps.noteDial(key);
+				const iface = getModem(id)?.ifname;
 				logger.warn("modem data session carries no traffic; reconnecting", {
 					id,
 					stableKey: key,

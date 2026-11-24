@@ -46,7 +46,6 @@
 import {
 	type ControlClientOptions,
 	createControlClient,
-	type SenderStats,
 	supportsStatsSubscription,
 	type TelemetryControlClient,
 } from "@ceraui/srtla-send/control";
@@ -176,8 +175,6 @@ let carryingNowFn: () => number = monotonicNow;
 // re-reads an unchanged file every tick until it ages out, and a repeat must
 // not count as another sample.
 let lastFedSnapshotMs: number | undefined;
-// conn_id -> stall latch engaged, from the latest control-socket snapshot.
-let stallGated: ReadonlyMap<string, boolean> | undefined;
 
 /** Feed a fresh snapshot to the carrying tracker once, in sender order. */
 function feedCarrying(telemetry: Telemetry): void {
@@ -188,10 +185,7 @@ function feedCarrying(telemetry: Telemetry): void {
 		carrying.markGap();
 	lastFedSnapshotMs = stamp;
 	carrying.observe(
-		buildLinkRows(telemetry, false, isBondMappingActive()).map((row) => {
-			const gated = stallGated?.get(row.conn_id);
-			return gated === undefined ? row : { ...row, stall_gated: gated };
-		}),
+		buildLinkRows(telemetry, false, isBondMappingActive()),
 		carryingNowFn(),
 	);
 }
@@ -245,21 +239,7 @@ export function setControlClientFactoryForTest(
  * / stale (> 5000 ms) reads to `null`, so a `null` here while watching means the
  * snapshot went stale or vanished.
  */
-function ingestTelemetry(
-	telemetry: Telemetry | null,
-	stats: SenderStats | null = null,
-): void {
-	// Only the control-socket subscription knows which links are stall-gated;
-	// on the file poll this is unknown, and gated links count like any other.
-	stallGated =
-		stats === null
-			? undefined
-			: new Map(
-					stats.links.map((link, index) => [
-						String(index),
-						link.stall_gated === true,
-					]),
-				);
+function ingestTelemetry(telemetry: Telemetry | null): void {
 	if (telemetry) {
 		recordSenderTelemetry(telemetry);
 		lastSnapshot = telemetry;
@@ -276,11 +256,8 @@ function ingestTelemetry(
 }
 
 /** Test seam: feed a snapshot as if a watch tick fired. */
-export function ingestTelemetryForTest(
-	telemetry: Telemetry | null,
-	stats: SenderStats | null = null,
-): void {
-	ingestTelemetry(telemetry, stats);
+export function ingestTelemetryForTest(telemetry: Telemetry | null): void {
+	ingestTelemetry(telemetry);
 }
 
 /**
@@ -408,14 +385,14 @@ async function attemptSubscriptionCutover(
 			return;
 		}
 
-		subscriptionCleanup = client.subscribeStats((snapshot, stats) => {
+		subscriptionCleanup = client.subscribeStats((snapshot) => {
 			if (snapshot === null && !handle) {
 				logger.warn(
 					"link-telemetry: subscription disconnected, falling back to file-poll",
 				);
 				startFilePollWatcher(watch, statsFile, watchOpts);
 			}
-			ingestTelemetry(snapshot, stats ?? null);
+			ingestTelemetry(snapshot);
 		});
 
 		// Subscription confirmed live — retire the redundant file-poll.
@@ -520,9 +497,8 @@ export function linkCarryingState(iface: string): LinkCarryingState {
 }
 
 /**
- * Milliseconds since stream data last went out on `iface` (any row, CLAT
- * translator rows folded into their modem), or `undefined` without live,
- * fresh telemetry. A single burst resets it.
+ * Milliseconds since anything went out on `iface` (any row, CLAT translator
+ * rows folded into their modem), or `undefined` without live, fresh telemetry.
  */
 export function linkQuietForMs(iface: string): number | undefined {
 	if (!isLinkTelemetryActive() || !lastTickFresh) return undefined;

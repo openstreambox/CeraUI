@@ -87,6 +87,8 @@ const defaultDeps: UplinkHealthRuntimeDeps = {
 		resolveUplinkHealthTarget(undefined, undefined, family),
 	alternateTarget: (family, failed) => sharedTarget?.alternate(family, failed),
 	targetFailed: (family, target) => sharedTarget?.failed(family, target),
+	logDiagnostic: ({ iface, outcome, quietMs }) =>
+		logger.info("uplink check while streaming", { iface, outcome, quietMs }),
 	probe: async (iface, remoteAddr) => {
 		const result = await portalHealthProbe(iface, () =>
 			probeConnectivityViaDevice(remoteAddr, iface),
