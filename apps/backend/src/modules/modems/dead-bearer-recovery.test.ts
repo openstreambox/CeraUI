@@ -40,6 +40,7 @@ import {
 	removeModem,
 	setModem,
 } from "./modems-state.ts";
+import { withBackgroundModemLease } from "./mutation-lease.ts";
 
 const UUID = "9b0c1f3e-4f4f-4a51-9a51-3a0d1b7e2c11";
 const KEY = "platform-xhci-hcd.0.auto-usb-0:1.4";
@@ -947,6 +948,93 @@ describe("runDeadBearerRecovery", () => {
 			// The outage from 240 s is still the same outage, and the cap is used up.
 			expect(await pollUntil(330_000)).toEqual([315_000]);
 		});
+
+		test("traffic carried on the link during the owner reads ends the outage, also past the cap", async () => {
+			others = [eth()];
+			health = dead();
+			let flaps = 0;
+			duringLeasedReads(() => {
+				const admitted = tryAcquireLifecycle("streaming");
+				if (admitted.admitted) admitted.lease.release();
+				if (++flaps > DEAD_BEARER_MAX_HOLD_RESTARTS) {
+					// Past the cap: live, and the sender sees data go out on this link.
+					streaming = true;
+					carrying = { wwan0: "carrying" };
+				}
+			}, DEAD_BEARER_MAX_HOLD_RESTARTS + 1);
+			expect(await pollUntil(300_000)).toEqual([]);
+			streaming = false;
+			carrying = {};
+			// The link carried traffic at 300 s: a new outage from 315 s.
+			expect(await pollUntil(390_000)).toEqual([375_000]);
+		});
+
+		/** `before` runs as each lease begins, `during` in its owner reads; `n` counts leases from 1. */
+		function aroundLeases(
+			before: (n: number) => void,
+			during: (n: number) => void,
+		): void {
+			let leases = 0;
+			const base = deps();
+			setDeadBearerDepsForTest({
+				...base,
+				mutate: (key, run) => {
+					before(++leases);
+					return withBackgroundModemLease(key, run);
+				},
+				mmState: async (id) => {
+					if (isModemMutationHeld(KEY)) during(leases);
+					return (await base.mmState?.(id)) ?? mmState;
+				},
+			});
+		}
+
+		test("traffic the lease saw first ends the outage even if the stream stops during the reads", async () => {
+			others = [eth()];
+			health = dead();
+			const last = DEAD_BEARER_MAX_HOLD_RESTARTS + 1;
+			aroundLeases(
+				(n) => {
+					if (n === last) {
+						streaming = true;
+						carrying = { wwan0: "carrying" };
+					}
+				},
+				(n) => {
+					if (n < last) {
+						const admitted = tryAcquireLifecycle("streaming");
+						if (admitted.admitted) admitted.lease.release();
+					} else if (n === last) {
+						streaming = false;
+						carrying = {};
+					}
+				},
+			);
+			expect(await pollUntil(300_000)).toEqual([]);
+			expect(await pollUntil(390_000)).toEqual([375_000]);
+		});
+	});
+
+	test("a native answer the lease saw first ends the outage even if it is gone after the reads", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = dead();
+		let leases = 0;
+		const base = deps();
+		setDeadBearerDepsForTest({
+			...base,
+			mutate: (key, run) => {
+				if (++leases === 1) health = record({ state: "up" }, wall);
+				return withBackgroundModemLease(key, run);
+			},
+			mmState: async (id) => {
+				if (isModemMutationHeld(KEY) && leases === 1) health = dead();
+				return (await base.mmState?.(id)) ?? mmState;
+			},
+		});
+		// The native path answered at 75 s: the outage restarts from 90 s.
+		expect(await pollUntil(165_000)).toEqual([150_000]);
 	});
 
 	test("an outage that ends during the owner reads is forgotten even when the device lookup fails", async () => {

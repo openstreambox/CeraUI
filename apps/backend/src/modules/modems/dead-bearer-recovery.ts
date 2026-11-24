@@ -288,6 +288,18 @@ export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 	};
 }
 
+/**
+ * The decision on a sample's evidence alone: unknown stream traffic is no
+ * evidence either way, so it is read as no stream. `none` here means the
+ * sample shows the outage over (or the modem no candidate), whatever the
+ * stream does.
+ */
+function onLinkEvidence(input: DeadBearerInput): DeadBearerDecision {
+	return decideDeadBearer(
+		input.stream === "unknown" ? { ...input, stream: "idle" } : input,
+	);
+}
+
 export interface DeadBearerDeps {
 	/** Monotonic milliseconds, the same base as the shared dial clock. */
 	readonly now: () => number;
@@ -664,28 +676,33 @@ export async function runDeadBearerRecovery(
 						holdRestarts: memory.holdRestarts,
 					});
 				};
-				const again = decideDeadBearer({ ...fresh.input, ...observed });
+				const final = { ...fresh.input, ...observed };
+				// Evidence either sample under the lease saw (the link or its native
+				// path answering, stream traffic carried, no failed-probe outage, the
+				// bearer or profile changing) ends the outage, as in an ordinary poll.
+				// Saved also when the device lookup failed or a Start holds the
+				// interlock: the identity checked out above.
+				const ended = [final, fresh.input]
+					.map(onLinkEvidence)
+					.find((decision) => decision.action === "none");
+				if (ended) {
+					memories.set(key, ended.memory);
+					return;
+				}
+				const again = decideDeadBearer(final);
 				if (again.action !== "reconnect") {
-					// A stream that went live with unknown traffic still vetoes the
-					// `down`, but it is stream activity, not the end of the outage, so
-					// the outage is judged on the earlier stream sample: one that would
-					// have reconnected restarts the hold within the cap, and one still
-					// waiting keeps its age (the next poll sees the new stream cycle).
+					// Still an outage. Unknown traffic vetoes the `down` but is no
+					// evidence about the link, so judge it on the earlier stream
+					// sample: one still waiting keeps its age (the next poll sees any
+					// new stream cycle); anything else is stream activity.
 					const prior = streamChanged
-						? decideDeadBearer({
-								...fresh.input,
-								...observed,
-								stream: fresh.input.stream,
-							})
+						? decideDeadBearer({ ...final, stream: fresh.input.stream })
 						: again;
-					if (prior.action === "reconnect") {
-						skipped("modem reconnect skipped: the stream changed");
+					if (prior.action === "wait") {
+						memories.set(key, prior.memory);
 						return;
 					}
-					// The identity checked out. Saved also when the device lookup
-					// failed or a Start holds the interlock, so an outage that ended
-					// during the reads does not keep its age.
-					memories.set(key, prior.memory);
+					skipped("modem reconnect skipped: the stream changed");
 					return;
 				}
 				if (streamChanged) {
