@@ -37,6 +37,13 @@ down a link that carries traffic, so the trigger is deliberately strict.
   never written to a radio that replaced it, even under the same name and MAC.
   A replacement starts with no back-off, parking or pending choice. Limited and
   Unverified radios are never tracked or written.
+- **Only the current publication.** A radio is projected only while its
+  identity publication is current (`projectWifiRadioIncarnation`). While a
+  discovery pass has any sampled row's publication invalidated, the tick is
+  deferred with all its state kept, and an operator choice waits in place.
+  Right before an activation or a profile write, a fresh bracketed sysfs sample
+  of the netif must still show the projected lifetime and MAC, so a replug
+  under the same name that discovery has not published yet is never acted on.
 - **Truth is NetworkManager's device table**, read each tick and again under
   the adapter lock right before acting (`nmcli device status`, by ifname and
   connection UUID). The registry's `conn` is patched from monitor events by
@@ -65,10 +72,15 @@ down a link that carries traffic, so the trigger is deliberately strict.
   5 minutes (never a move by itself). After a
   long outage without such a hint, the return can take up to about 10 minutes;
   the slow cadence waits for a measured forced-scan freeze on hardware.
-- **Upgraded boxes.** Within the first 10 minutes after start, if no radio has
-  a mark and every connected radio has sat on its own distinct network (bound
-  profile) for 2 minutes, each active profile is marked once. Otherwise an
-  unmarked radio is left alone; there is no in-memory "last network" guess.
+- **Upgraded boxes.** Within the first 10 minutes after start, if every
+  connected radio has sat on its own distinct network (bound profile) for 2
+  minutes and no radio has a mark other than the one profile it is connected
+  on, each unmarked radio's active profile is marked. Migration is done only
+  when every connected radio carries its mark; a radio that vanishes, a busy
+  lock or a failed write leaves the rest for a later tick, and a restart part
+  way resumes from the marks already written. Any other mark is an operator's
+  choice and ends migration. Otherwise an unmarked radio is left alone; there
+  is no in-memory "last network" guess.
 - **Never touched:** single-radio boxes, radios in AP mode or running a
   concurrent hotspot (moving the station would drag the AP's channel), and
   radios whose preferred network is the shared one.
@@ -81,5 +93,5 @@ logged, not yet shown in the UI.
 
 Tests: `tests/wifi-network-diversity.test.ts`,
 `tests/wifi-network-diversity-ownership.test.ts` (operator join racing a
-move-back and an AP reconciliation on one owner lock, replacement radios,
-Limited radios).
+move-back and an AP reconciliation on one owner lock, discovery in flight,
+same-name replug before an effect, replacement radios, Limited radios).
