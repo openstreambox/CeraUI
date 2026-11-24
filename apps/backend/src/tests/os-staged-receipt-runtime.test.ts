@@ -6,6 +6,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OsStageRecovery } from "@ceraui/rpc/schemas";
 import {
@@ -79,7 +80,7 @@ describe("runtime manual check on the Rock's failed record", () => {
 		},
 	];
 	async function rockCheck(other: "good" | "bad") {
-		const dir = mkdtempSync("/var/tmp/ceraui-receipt-runtime-bound-");
+		const dir = mkdtempSync(`${tmpdir()}/ceraui-receipt-runtime-bound-`);
 		dirs.push(dir);
 		await recoveryHarness({
 			readPersistedState: async () => structuredClone(getOrchestratorState()),

@@ -9,7 +9,10 @@ import { naturalUplinkRecovery } from "../modules/network/natural-uplink-recover
 import { NETIF_ERR_HOTSPOT } from "../modules/network/network-interfaces.ts";
 import { deriveVerdict } from "../modules/system/apt-reachability.ts";
 import { networkEventsFixture } from "./events-network-fixture.ts";
-import { runTestCommand } from "./helpers/run-test-command.ts";
+import {
+	backendTestRunner,
+	runTestCommand,
+} from "./helpers/run-test-command.ts";
 
 beforeEach(() => resetEventEmitterForTest({ bootId: () => undefined }));
 
@@ -52,7 +55,7 @@ test("healthy startup does not invent an internet restoration event", async () =
 	const result = await runTestCommand(
 		[
 			process.execPath,
-			"test",
+			backendTestRunner,
 			"--timeout",
 			"30000",
 			import.meta.path,

@@ -95,7 +95,7 @@ nsenter -t "$wan1_pid" -n ip route add default via 198.51.100.1
 ip route add default via 192.0.2.2 dev wan0
 ip route add default via 198.51.100.2 dev wan1 metric 200
 # Exercise production planning/provisioning against genuinely absent FIB tables.
-CERALIVE_STEERING_FIXTURE_MARKS="$mark0,$mark1" bun test "$(dirname "$0")/provision-steering-routes.fixture.test.ts" >&2
+CERALIVE_STEERING_FIXTURE_MARKS="$mark0,$mark1" bun "$(dirname "$0")/../../../scripts/test-with-temp.mjs" "$(dirname "$0")/provision-steering-routes.fixture.test.ts" >&2
 table0=$((30000 + ((mark0 >> 8) & 65535)))
 table1=$((30000 + ((mark1 >> 8) & 65535)))
 sysctl -q -w net.ipv4.ip_forward=1

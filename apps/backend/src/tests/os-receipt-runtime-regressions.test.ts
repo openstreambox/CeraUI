@@ -6,6 +6,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	type OsStageReceipt,
@@ -51,7 +52,7 @@ afterEach(() => {
 
 test("Check keeps the receipt when local failed memory trails authoritative os-verifying", async () => {
 	// Given real receipt/agent files and stale local failed memory.
-	const dir = mkdtempSync("/var/tmp/ceraui-receipt-runtime-");
+	const dir = mkdtempSync(`${tmpdir()}/ceraui-receipt-runtime-`);
 	dirs.push(dir);
 	const bytes = JSON.stringify(receipt);
 	let diskAuthority = false;
