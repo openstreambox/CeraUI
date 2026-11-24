@@ -30,6 +30,8 @@ import {
 
 export const MAC = "dc:a6:32:aa:bb:c0";
 export const OTHER_UUID = "11111111-1111-4111-8111-111111111111";
+/** A radio other than the device image's setup radio, where arming is allowed. */
+export const OTHER_RADIO = "wlan2";
 
 export async function firstAp(
 	failure?:
@@ -44,8 +46,10 @@ export async function firstAp(
 		| "post-up-throw"
 		| "add-after-create",
 	hybrid = false,
+	/** Arming cases use a radio other than the device image's setup radio. */
+	radioIfname = "wlan0",
 ) {
-	const state = await wifiFrameFixture(false);
+	const state = await wifiFrameFixture(false, true, radioIfname);
 	if (hybrid) mockQualifiedHybridDriver();
 	const secret = `synthetic-${crypto.randomUUID()}`;
 	delete state.row.hotspot.conn;
@@ -263,7 +267,7 @@ export async function firstAp(
 				active,
 				pending: faults.confirmationPending,
 				mode: faults.observedMode,
-				ifname: hybrid ? "clap-wlan0" : "wlan0",
+				ifname: hybrid ? `clap-${radioIfname}` : radioIfname,
 			});
 			if (args.includes("device")) faults.afterDeviceRead();
 			return { stdout, stderr: "" };
@@ -293,7 +297,7 @@ export async function firstAp(
 		readCapabilities: () => ({ staApCombo: { supported: hybrid } }),
 		preferConcurrentAp: () => hybrid,
 		ensureConcurrentInterface: async () => ({
-			ifname: "clap-wlan0",
+			ifname: `clap-${radioIfname}`,
 			created: false,
 		}),
 		credentials: {
@@ -377,7 +381,7 @@ export async function firstAp(
 			};
 		},
 		restore: async () => {
-			await settlePending("wlan0", false);
+			await settlePending(radioIfname, false);
 			await state.restore();
 			instances.files.close();
 		},

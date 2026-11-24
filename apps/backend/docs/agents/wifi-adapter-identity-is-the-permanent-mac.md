@@ -205,6 +205,52 @@ owner keys and `wifi_modes`.
 Hybrid profiles explicitly remain autoconnect off. Direct Starts retain their
 mode intent even when no safe autoconnect path exists; B2 restores that intent.
 
+The device image's setup radio (`PROVISIONING_AP_IFNAME`, `wlan0`, mirroring
+the image's first-boot setup script) is never armed: neither Start nor the
+discovery policy leaves an owned AP profile with autoconnect on while its radio
+carries that name. A pinned profile there first gains durable `hotspot` intent,
+then autoconnect is disabled, and B2 restore starts the AP once CeraUI runs.
+Other radios, including a rename away from `wlan0`, keep the rule above.
+
+`wifi-provisioning-ap.ts` keeps the image's own setup AP outside CeraUI. A
+profile is that AP only on positive NM evidence: AP mode and connection name
+`ceralive-ap`; its `CeraLive-Setup-*` SSID alone is not enough. Discovery,
+lookup, credential readback, the store, the owner policy, limited restore and
+cleanup never adopt, repin, re-prioritise, remember, disarm, stop or delete it.
+Its activity stays visible as the row's active AP, while Start and Stop on that
+radio refuse with `DEVICE_BUSY` (Start adds `setup-ap-active`). A persisted
+claim from an older build grants no authority either.
+
+The image's setup marker (`PROVISIONING_ACTIVE_MARKER`,
+`/data/ceralive/provision/portal-active`, mirroring the script's
+`ACTIVE_FLAG`) is the second witness and the interlock. While it exists, the AP
+active on `wlan0` is the setup AP whatever its connection name, and its UUID
+stays excluded until the marker is gone. A same-named AP seen without the
+marker keeps only the conservative name exemption. Under the marker, Start and
+mode switches to `hotspot` or `hybrid` on `wlan0` refuse with `DEVICE_BUSY`
+and `setup-in-progress`; Start checks again under the adapter lock right before
+NM activation, as limited restore does. B2 restore defers on the marker (the
+marker state is part of its signature) and resumes on the edge the marker
+watch publishes when the file disappears.
+
+The setup hands `wlan0` back as a station on its `ceralive-wifi` profile and
+the setup join wins: before restore reads the intent for `wlan0`, a station
+there whose UUID is a `ceralive-wifi` profile not yet listed in
+`wifi_setup_stations` turns that radio's `hotspot`/`hybrid` intent (its owner
+and intent keys and keys sharing its permanent MAC) into `station`, in the same
+config write that records the UUID. The portal re-creates the profile for each
+submission, so a new UUID is the handoff witness. The first run (no
+`wifi_setup_stations` yet) cannot tell a join that just completed from an older
+one, so it is conservative: a `ceralive-wifi` station active on `wlan0` counts
+as a fresh handoff, and only without one are the existing profiles recorded as
+a baseline that clears nothing. Once a station is recorded, a later boot on it
+restores whatever intent was chosen after the handoff. Without a new station on
+`wlan0` the intent is kept. A live unaccounted station is never displaced on
+unknown evidence: while the profile inventory cannot be read, or the station
+changes during the read, restore for `wlan0` holds and retries on the bounded
+discovery schedule. A failed write leaves both unchanged and restore also
+waits.
+
 Start retains the verified row and lifetime obtained at lock entry. A rowless
 refresh that proves the same identity at the same ifname can preserve that
 exact operation binding without restoring the public token. Start still
