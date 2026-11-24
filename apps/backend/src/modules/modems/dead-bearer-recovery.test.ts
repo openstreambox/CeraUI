@@ -612,6 +612,61 @@ describe("runDeadBearerRecovery", () => {
 			expect(isLinkTeardownPending("wwan0")).toBe(false);
 		});
 
+		test("an nmcli down that times out (exit 3) with deactivation pending: restoration waits out the hold, then bonds without the link, and no up follows", async () => {
+			others = [eth()];
+			health = dead();
+			streaming = true;
+			carrying = { wwan0: "not_carrying" };
+			// nmcli gives up and nmDisconnect answers false; NM is still deactivating.
+			afterDown = { state: "110", connection: UUID };
+			const events: string[] = [];
+			setDeadBearerDepsForTest({
+				...deps(),
+				disconnect: async (uuid) => {
+					calls.push(`down ${uuid}`);
+					device = afterDown;
+					// Engine loss: retirement clears the flag, restoration tries to start.
+					streaming = false;
+					const during = tryAcquireLifecycle("streaming");
+					events.push(
+						`restoration admitted during the hold: ${during.admitted}`,
+					);
+					return false;
+				},
+			});
+			await pollUntil(75_000);
+			const after = tryAcquireLifecycle("streaming");
+			events.push(`restoration admitted after the bound: ${after.admitted}`);
+			if (after.admitted) after.lease.release();
+			expect(events).toEqual([
+				"restoration admitted during the hold: false",
+				"restoration admitted after the bound: true",
+			]);
+			// The bond leaves the still-deactivating link out, and nothing dials it.
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+			expect(calls).toEqual([`down ${UUID}`]);
+		});
+
+		test("a down whose nmcli child hangs still releases the hold at the bound", async () => {
+			others = [eth()];
+			health = dead();
+			afterDown = { state: "110", connection: UUID };
+			setDeadBearerDepsForTest({
+				...deps(),
+				disconnect: (uuid) => {
+					calls.push(`down ${uuid}`);
+					device = afterDown;
+					return new Promise(() => {});
+				},
+			});
+			await pollUntil(75_000);
+			expect(now - 75_000).toBeGreaterThanOrEqual(LINK_TEARDOWN_MAX_HOLD_MS);
+			expect(currentLifecycleHolder()).toBeUndefined();
+			expect(linkTeardownSettled()).toBeUndefined();
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+			expect(calls).toEqual([`down ${UUID}`]);
+		});
+
 		test("a device that frees up just after the bound still gets no up", async () => {
 			others = [eth()];
 			health = dead();

@@ -28,18 +28,21 @@ import {
 	beginLinkTeardownWait,
 	currentLifecycleHolder,
 	isLifecycleHeld,
+	LINK_TEARDOWN_MAX_HOLD_MS,
 	type LifecycleAdmission,
 	type LifecycleLease,
 	leaseRefusal,
 	linkTeardownSettled,
 	MODEM_TRANSITION_ACTIVE,
 	resetLifecycleInterlock,
+	START_LINK_TEARDOWN_WAIT_MS,
 	STREAMING_ACTIVE,
 	streamingAdmissionCount,
 	tryAcquireLifecycle,
 	tryAcquireLinkTeardown,
 	withLifecycleLock,
 } from "../modules/streaming/lifecycle-admission.ts";
+import { DEFAULT_START_RETRY_POLICY } from "../modules/streaming/start-failure-taxonomy.ts";
 import { createStreamSessionOrchestrator } from "../modules/streaming/stream-session-orchestrator.ts";
 import { updateStatus } from "../modules/streaming/streaming.ts";
 import { streamingStartProcedure } from "../rpc/procedures/streaming.procedure.ts";
@@ -388,6 +391,15 @@ describe("lifecycle interlock — streaming admission (both race orders)", () =>
 		if (result.result === "failed")
 			expect(result.failure.class).toBe("modem_transition_active");
 		teardown.release();
+	});
+
+	test("a Start's teardown wait plus its launch budget stays inside the Start RPC deadline", () => {
+		// apps/frontend/src/lib/rpc/rpc-timeouts.ts: "streaming.start": 75_000.
+		const START_RPC_DEADLINE_MS = 75_000;
+		expect(LINK_TEARDOWN_MAX_HOLD_MS).toBeLessThan(START_LINK_TEARDOWN_WAIT_MS);
+		expect(
+			START_LINK_TEARDOWN_WAIT_MS + DEFAULT_START_RETRY_POLICY.totalBudgetMs,
+		).toBeLessThan(START_RPC_DEADLINE_MS);
 	});
 
 	test("a teardown hold releases itself at its bound", async () => {
