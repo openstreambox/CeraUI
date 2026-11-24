@@ -157,3 +157,6 @@ export const createFormatters = (locale: LocaleArg): AppFormatters => ({
 	percent: formatPercent(locale),
 	relativeTime: formatRelativeTime(locale),
 });
+
+export type { PowerCopyKey } from "./power-copy.js";
+export { localizePowerText, POWER_COPY, powerText } from "./power-copy.js";
