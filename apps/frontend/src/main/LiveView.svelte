@@ -13,7 +13,6 @@ import {
 	SWITCH_INPUT_ERRORS,
 } from '@ceraui/rpc/schemas';
 import { Cpu, Loader2, Server } from '@lucide/svelte';
-import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
 import { LazyDialog, LazyDialogFallback, lazyDialog } from '$lib/components/dialogs';
 import { platformCapsForHardware } from '$lib/components/streaming/ValidationAdapter';
@@ -187,9 +186,15 @@ const optimisticIsStreaming = $derived(
 
 const configChangeApplying = $derived(isConfigChangeInFlight(getConfigChange()));
 
-// Reconcile optimism to authoritative is_streaming broadcast.
+// A supervised connection restart (the stale-link tap, or the device's own
+// restart when nothing else carried the stream) is between Stop and Start.
+const connectionRestarting = $derived(getStatus()?.connection_restarting === true);
+
+// Reconcile optimism to authoritative is_streaming broadcast. A connection
+// restart is still the operator's session: a Stop pressed during it settles
+// once the restart has ended without starting, not on the restart's own Stop.
 $effect(() => {
-	reconcileStreamingOptimism(isStreaming);
+	reconcileStreamingOptimism(isStreaming || connectionRestarting);
 });
 
 // The device's own lifecycle outranks a local `starting` (FIX-16-C3). A start
@@ -251,13 +256,19 @@ let showingSummary = $state(false);
 let summaryTimer: ReturnType<typeof setTimeout> | undefined;
 let lastStreamingState = false;
 
+// A supervised connection restart is part of the session it restarts: the
+// stream did not end, so the summary window opens only when the stream stops
+// and no restart is holding it, and the cockpit stays live through the gap.
+const sessionHeld = $derived(isStreaming || connectionRestarting);
+const restartHolding = $derived(connectionRestarting && !isStreaming);
+
 // `$effect.pre` (not `$effect`): the window flag must flip BEFORE the cockpit
 // gate renders. A post-render `$effect` lags one tick, so on the stop edge the
 // template would render once with `showLiveCockpit` false (unmounting LiveCockpit)
 // before the flag flips it back true — remounting a fresh IngestStats and wiping
 // the session rollup the summary reads.
 $effect.pre(() => {
-	const streamingNow = isStreaming;
+	const streamingNow = sessionHeld;
 	if (streamingNow === lastStreamingState) return;
 	lastStreamingState = streamingNow;
 	clearTimeout(summaryTimer);
@@ -290,8 +301,8 @@ function closeSummary() {
 // LiveCockpit stays mounted while streaming/starting OR through the bounded
 // post-stream summary window; `summaryMode` collapses it to summary-only chrome
 // once the stream has actually stopped (never during the optimistic start edge).
-const showLiveCockpit = $derived(optimisticIsStreaming || showingSummary);
-const summaryMode = $derived(showingSummary && !optimisticIsStreaming);
+const showLiveCockpit = $derived(optimisticIsStreaming || restartHolding || showingSummary);
+const summaryMode = $derived(showingSummary && !optimisticIsStreaming && !restartHolding);
 // Where the idle Live bar offers Start: the idle cockpit is up, no Stop is left
 // unresolved and no Start is in flight. Try again on a refusal toast is held to
 // the same admission.
@@ -1229,7 +1240,7 @@ const configRows = $derived<ConfigRow[]>([
 </script>
 
 <div class="mx-auto w-full max-w-3xl space-y-6 p-4 sm:p-6 lg:max-w-6xl" class:short-live={isStreaming}>
-	<LiveHeader {isStreaming} unconfirmed={streamOutcomeUnknown} />
+	<LiveHeader {isStreaming} unconfirmed={streamOutcomeUnknown} restarting={connectionRestarting} />
 
 	<!-- Capability-tier state: calm banner when the engine is offline/starting or
 	     reports a schema mismatch. Renders nothing in the normal tier. -->
@@ -1343,6 +1354,7 @@ const configRows = $derived<ConfigRow[]>([
 			{isStreaming}
 			optimismState={streamingOptimismState}
 			{summaryMode}
+			restarting={restartHolding}
 			onStop={handleStop}
 			onCloseSummary={closeSummary}
 		/>
