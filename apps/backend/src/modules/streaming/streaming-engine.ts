@@ -40,9 +40,12 @@ export function resolveStreamingBackend(
 	return cerastreamBackend;
 }
 
-/** The configured engine; always "cerastream" (legacy values are coerced). */
+/** Encoder-backend compatibility selector. The explicit no-encoder image role
+ * is retained in setup and projected separately; it is not a second encoder. */
 export function getConfiguredEngine(): StreamingEngine {
-	return setup.engine ?? DEFAULT_STREAMING_ENGINE;
+	return setup.engine === "none"
+		? DEFAULT_STREAMING_ENGINE
+		: (setup.engine ?? DEFAULT_STREAMING_ENGINE);
 }
 
 /** The active backend every streaming call site drives. */

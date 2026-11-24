@@ -36,3 +36,12 @@ export function setUplinkHealthEngineForTest(
 ): void {
 	engine = next ?? new UplinkHealthEngine();
 }
+
+export function getPhoneLinkCounts() {
+	return {
+		ready: getUplinksMessage().filter(
+			(link) => link.state === "up" && link.staleAt > Date.now(),
+		).length,
+		sending: null,
+	};
+}

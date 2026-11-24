@@ -86,6 +86,8 @@ import type {
 	PowerResponse,
 	PortalWindowInput,
 	PortalWindowStatus,
+	PhoneBoxSettings,
+	PhoneWay,
 	PreviewTokenOutput,
 	RelayValidateInput,
 	RelayValidateOutput,
@@ -975,6 +977,8 @@ export interface TypedRPC {
 		) => Promise<BluetoothMutationOutput>;
 	};
 	system: {
+		getPhoneBox: () => Promise<PhoneBoxSettings>;
+		setPhoneWay: (input: PhoneWay) => Promise<PhoneWay>;
 		getRevisions: () => Promise<Revisions>;
 		getSensors: () => Promise<unknown>;
 		getLog: (input?: LogInput) => Promise<unknown>;
