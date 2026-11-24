@@ -1380,6 +1380,9 @@ describe("hotspot deletion reservation", () => {
 					"802-11-wireless-security.pmf": "1",
 					"connection.interface-name": "",
 					"802-11-wireless.mac-address": SECOND_PERM_MAC,
+					// Read in the same call to recognise the device image's setup AP.
+					"connection.id": "Hotspot",
+					"802-11-wireless.mode": "ap",
 				};
 				const read = spyOn(runner, "run").mockImplementation(
 					async (bin, args) => {
@@ -1510,6 +1513,8 @@ describe("hotspot deletion reservation", () => {
 				"802-11-wireless-security.pmf": "1",
 				"connection.interface-name": "",
 				"802-11-wireless.mac-address": p.mac,
+				"connection.id": "Hotspot",
+				"802-11-wireless.mode": "ap",
 			};
 			const snapshot = nmcliFieldOutput(args, (field) => {
 				if (!(field in fields)) throw new Error(`Unexpected field ${field}`);
@@ -1633,6 +1638,8 @@ describe("hotspot deletion reservation", () => {
 				"802-11-wireless-security.pmf": "1",
 				"connection.interface-name": "",
 				"802-11-wireless.mac-address": p.mac,
+				"connection.id": "Hotspot",
+				"802-11-wireless.mode": "ap",
 			};
 			return nmcliFieldOutput(args, (field) => {
 				if (!(field in fields)) throw new Error(`Unexpected field ${field}`);
