@@ -77,6 +77,8 @@ async function readGsmProfiles(
 
 	const audits: Array<GsmProfileAudit> = [];
 	for (const row of rows) {
+		// nmcli ends the inventory with LF, which leaves one blank row.
+		if (row.trim() === "") continue;
 		const [uuid, type, state] = nmcliParseSep(row) as [string, string, string];
 		if (!uuid) {
 			if (complete) return undefined;
@@ -90,6 +92,7 @@ async function readGsmProfiles(
 			if (complete) return undefined;
 			continue;
 		}
+		if (complete && fields.length !== GSM_AUDIT_FIELDS.length) return undefined;
 
 		audits.push({
 			uuid,

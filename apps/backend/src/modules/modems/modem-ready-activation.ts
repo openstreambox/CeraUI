@@ -7,6 +7,7 @@ import {
 	resolveModemNmDeviceForConnection,
 } from "./modem-nm-device.ts";
 import {
+	isUsbModem,
 	type ModemId,
 	readModemRegistrationState,
 	readReadyModemSim,
@@ -61,6 +62,7 @@ export interface ModemReadyActivationDeps {
 	/** The redial's lease: same-modem exclusion that never refuses a Stream Start. */
 	readonly backgroundMutate: typeof withBackgroundModemLease;
 	readonly readSim: typeof readReadyModemSim;
+	readonly isUsb: typeof isUsbModem;
 	readonly resolveConfig: typeof resolveLateModemConfig;
 }
 
@@ -83,6 +85,7 @@ const defaultDeps: ModemReadyActivationDeps = {
 	settleSwap: settleModemSimSwap,
 	backgroundMutate: withBackgroundModemLease,
 	readSim: readReadyModemSim,
+	isUsb: isUsbModem,
 	resolveConfig: resolveLateModemConfig,
 };
 
@@ -258,7 +261,7 @@ async function readReadiness(
 			// or a busy lease over many polls.
 			intent.takeoverNoticed = true;
 			logger.warn(
-				"modem is up on a profile for another SIM; its own profile will be activated when the modem is free",
+				"modem is up on a profile for another SIM; a switch to its own is pending",
 				{ module: "modems", id },
 			);
 		}
@@ -459,13 +462,17 @@ const TAKEOVER_SETTLE_STEP_MS = 2_000;
  * registration ended; the next one decides again) or "unsettled".
  */
 async function settleTakeover(
-	uuid: string,
+	device: string,
 	registered: () => boolean,
 ): Promise<"settled" | "stale" | "unsettled"> {
+	// One state read per step on the device resolved before the dial, and the
+	// deadline checked before each, so the wait ends within one read of it.
 	const deadline = deps.now() + TAKEOVER_SETTLE_MS;
 	for (;;) {
 		if (!registered()) return "stale";
-		const code = await readDeviceState(uuid);
+		const code = singleDeviceValue(
+			await deps.readDevice(device, "GENERAL.STATE"),
+		)?.match(/^(\d+)(?: \([^()\r\n]+\))?$/)?.[1];
 		if (!registered()) return "stale";
 		if (code !== undefined && SETTLED_STATES.has(code)) return "settled";
 		if (deps.now() >= deadline) return "unsettled";
@@ -508,6 +515,8 @@ async function takeOver(
 		return; // The bus could not be read: try again on a later poll.
 	}
 	if (preState === undefined) {
+		// Only a modem positively off USB is given up on; otherwise try again.
+		if ((await deps.isUsb(id)) !== false) return;
 		if (isPending(id, intent)) intent.state = "consumed";
 		logger.warn("modem takeover skipped: the modem is not on USB", {
 			module: "modems",
@@ -524,6 +533,9 @@ async function takeOver(
 		if (!current()) return { confirmed: true, value: undefined };
 		if ((await readReadiness(id, intent, uuid)) !== "takeover" || !current())
 			return { confirmed: true, value: undefined };
+		const device = await deps.resolveDevice(uuid);
+		if (device === undefined || !current())
+			return { confirmed: true, value: undefined };
 		await mutation.markExecuting();
 		if (!current()) return { confirmed: true, value: undefined };
 		// No await between consumption and dispatch; failure never rearms it.
@@ -534,7 +546,7 @@ async function takeOver(
 			result === true
 				? "settled"
 				: await settleTakeover(
-						uuid,
+						device,
 						() => intents.get(id) === intent && deps.stableKey(id) === key,
 					);
 		const currentModem = getModem(id);

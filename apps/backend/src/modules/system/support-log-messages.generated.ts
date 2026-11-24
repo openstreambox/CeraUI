@@ -890,9 +890,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["modem credentials: loaded ", " device record(s)"],
 	["modem decommission did not commit"],
 	["modem id-path refresh failed; retaining previous map"],
-	[
-		"modem is up on a profile for another SIM; its own profile will be activated when the modem is free",
-	],
+	["modem is up on a profile for another SIM; a switch to its own is pending"],
 	["modem link deactivation did not settle; kept out of the bond"],
 	["modem link found deactivating; kept out of the bond"],
 	["modem link stayed connected after the down"],

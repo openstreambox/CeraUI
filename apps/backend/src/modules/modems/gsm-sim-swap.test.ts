@@ -489,7 +489,7 @@ describe("an incomplete settle", () => {
 		const run = spyOn(runner, "run").mockImplementation(
 			async (_binary, args) => {
 				if (args.includes("uuid,type,state"))
-					return `${uuid(1)}:gsm:\n${uuid(2)}:gsm:`;
+					return `${uuid(1)}:gsm:\n${uuid(2)}:gsm:\n`;
 				if (args.at(-1) === uuid(2)) throw new Error("profile unreadable");
 				return `${RM520}\n${DARK}\nyes\n300`;
 			},
@@ -498,6 +498,28 @@ describe("an incomplete settle", () => {
 			expect(await auditGsmProfilesComplete()).toBeUndefined();
 			// The cleanup's own audit keeps skipping it, as before.
 			expect((await auditGsmProfiles()).map((a) => a.uuid)).toEqual([uuid(1)]);
+		} finally {
+			run.mockRestore();
+		}
+	});
+
+	test("the complete audit reads nmcli's LF-terminated inventory and refuses a truncated record", async () => {
+		let truncated = false;
+		const run = spyOn(runner, "run").mockImplementation(
+			async (_binary, args) => {
+				if (args.includes("uuid,type,state"))
+					return `${uuid(1)}:gsm:\n${uuid(2)}:802-11-wireless:\n`;
+				return truncated
+					? `${RM520}\n${DARK}\n`
+					: `${RM520}\n${DARK}\nyes\n300\n`;
+			},
+		);
+		try {
+			expect((await auditGsmProfilesComplete())?.map((a) => a.uuid)).toEqual([
+				uuid(1),
+			]);
+			truncated = true;
+			expect(await auditGsmProfilesComplete()).toBeUndefined();
 		} finally {
 			run.mockRestore();
 		}

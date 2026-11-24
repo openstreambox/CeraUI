@@ -453,6 +453,30 @@ export async function readSysfsUsbDevices(
 	}
 }
 
+/**
+ * Is this modem a USB device? true or false only on positive evidence: its
+ * ModemManager physdev resolves to a sysfs device that has (or has no) USB
+ * ids. Undefined when the modem or its path cannot be read: a USB modem udev
+ * has not finished with must not be mistaken for one that is not on USB.
+ */
+export async function isUsbModem(id: ModemId): Promise<boolean | undefined> {
+	const modemInfo = await mmGetModem(id);
+	const device = (
+		modemInfo?.["modem.generic.physdev"] ?? modemInfo?.["modem.generic.device"]
+	)?.trim();
+	if (!device) return undefined;
+	const path = await presentSimDeps.resolvePath(device);
+	if (path === undefined) return undefined;
+	try {
+		await readFile(join(path, "idVendor"), "utf8");
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT"
+			? false
+			: undefined;
+	}
+}
+
 const defaultPresentSimDeps: PresentSimDeps = {
 	usbDevices: () => readSysfsUsbDevices(),
 	resolvePath: async (path) => {
@@ -657,11 +681,12 @@ export async function resolveLateModemConfig(
  * every write, and the registration, physical key, device id and SIM are
  * fenced across every await.
  *
- * "done" means both steps finished, or the modem is not a USB device we can
- * capture (nothing is journaled or parked for it); "retry" (refused, stale, a
- * SIM or profile we could not see, a store fault or a failed write) leaves the
- * work for a later poll of the same registration. It never throws, and it
- * always confirms its entry, so it never blocks the modem.
+ * "done" means both steps finished, or the modem is positively not on USB
+ * (nothing is journaled or parked for it); "retry" (refused, stale, a
+ * descriptor, SIM or profile we could not read, a store fault or a failed
+ * write) leaves the work for a later poll of the same registration. It never
+ * throws and always confirms its entry; like any journaled mutation, only a
+ * journal write that fails blocks the modem.
  */
 export async function settleModemSimSwap(
 	id: ModemId,
@@ -676,6 +701,8 @@ export async function settleModemSimSwap(
 		const preState = await captureModemState(stableKey);
 		if (!isCurrent()) return "retry";
 		if (preState === undefined) {
+			// Only a modem positively off USB settles without a capture.
+			if ((await isUsbModem(id)) !== false) return "retry";
 			logger.info("gsm profile parking skipped: the modem is not on USB", {
 				module: "modems",
 				id,

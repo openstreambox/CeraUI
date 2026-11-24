@@ -60,8 +60,8 @@
   Both steps need a complete profile audit: a profile we could not read may
   be a parked one or the sibling that decides a skip. A skipped step, an
   incomplete audit, a store fault or a failed write leaves the settle
-  INCOMPLETE: the status poll tries again later in the same registration, and
-  nothing blocks the modem.
+  INCOMPLETE: the status poll tries again later in the same registration.
+  None of these blocks the modem.
 
   Both steps run under the modem's identity lease with an armed journal entry
   (modem-registration.ts, settleModemSimSwap): an autoconnect change decides

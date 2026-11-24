@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logger } from "../helpers/logger.ts";
@@ -269,10 +269,13 @@ modem.generic.ports.value[1] : wwan0 (net)`;
 			if (args.includes("connection.autoconnect")) return autoconnect;
 			if (args.includes("uuid,type,state")) {
 				if (profileReadFails) throw new Error("Profile lookup failed");
+				// Like nmcli, every record ends with LF, the last one included.
 				return [
 					...(existingProfile ? [`${UUID}:gsm:`] : []),
 					...(otherProfile ? [`${OTHER_UUID}:gsm:`] : []),
-				].join("\n");
+				]
+					.map((row) => `${row}\n`)
+					.join("");
 			}
 			if (args.includes("add")) {
 				if (profileAddFails) throw new Error("Profile creation failed");
@@ -651,7 +654,7 @@ test("a takeover held back by the dial cooldown is logged once", async () => {
 		const notices = warn.mock.calls.filter(
 			([message]) =>
 				message ===
-				"modem is up on a profile for another SIM; its own profile will be activated when the modem is free",
+				"modem is up on a profile for another SIM; a switch to its own is pending",
 		);
 		expect(notices).toHaveLength(1);
 		expect(activations()).toHaveLength(1);
@@ -745,6 +748,51 @@ test("the settle step journals a descriptor pre-state and retires it", async () 
 	expect((await readdir(dir)).filter((name) => name.endsWith(".json"))).toEqual(
 		[],
 	);
+});
+
+test("a USB modem whose descriptor cannot be captured yet settles later", async () => {
+	modemIccid = SIM_ID;
+	otherProfile = true;
+	const sysfs = await mkdtemp(join(dir, "usb-"));
+	await writeFile(join(sysfs, "idVendor"), "2c7c\n");
+	setPresentSimDepsForTest({
+		usbDevices: async () => [
+			{ vidPid: DESCRIPTOR.vidPid as string, sysfsPath: USB_PATH },
+		],
+		resolvePath: async (path) => (path === USB_PATH ? sysfs : path),
+	});
+	setMutationCaptureDeps({ enumerate: async () => [] });
+	await runModemStatusPoll();
+	expect(modifies).toEqual([]);
+	setMutationCaptureDeps({ enumerate: async () => [USB_DEVICE] });
+	setPresentSimDepsForTest({
+		usbDevices: async () => [
+			{ vidPid: DESCRIPTOR.vidPid as string, sysfsPath: USB_PATH },
+		],
+		resolvePath: async (path) => path,
+	});
+	now += 30_000;
+	await runModemStatusPoll();
+	expect(modifies).toEqual([[OTHER_UUID, "connection.autoconnect", "no"]]);
+});
+
+test("a takeover on a USB modem whose descriptor cannot be captured yet stays pending", async () => {
+	modemIccid = SIM_ID;
+	nmState = "100 (connected)";
+	mmState = "connected";
+	activeUuid = OTHER_UUID;
+	activeSimId = OTHER_SIM_ID;
+	let descriptor: Record<string, unknown> | undefined;
+	setModemReadyActivationDepsForTest({
+		...baseDeps,
+		captureState: async () => descriptor,
+		isUsb: async () => true,
+	});
+	await runModemStatusPoll();
+	expect(activations()).toEqual([]);
+	descriptor = DESCRIPTOR;
+	await runModemStatusPoll();
+	expect(activations()).toEqual([["nmcli", "-w", "45", "conn", "up", UUID]]);
 });
 
 test("a modem that is not on USB settles without parking or a journal entry", async () => {

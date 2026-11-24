@@ -53,11 +53,14 @@ journaled mutation. If the dial does not report success, the lease is held
 until NM reports a state that ends the activation (10, 20, 30, 100 or 120;
 0 and unreadable reads do not count) or the registration ends. Nothing is
 taken down, because `nmcli conn down` would block the profile's autoconnect;
-an activation that has not ended after 180 s journals `failed` and stays
-visible until acknowledged. A Stream Start is therefore never admitted while
-the takeover is still changing the bearer. A modem whose descriptor cannot be
-captured (not a USB device) is not taken over: its intent is consumed as
-before. The status poll handles modems one after another, so a takeover that
+the device is resolved once before the dial and its state read once per
+2 s step, so the wait ends within one state read of 180 s; an activation
+that has not ended by then journals `failed` and stays visible until
+acknowledged. A Stream Start is therefore never admitted while
+the takeover is still changing the bearer. A modem whose MM physdev is
+positively not a USB device is not taken over: its intent is consumed as
+before. A USB modem whose descriptor cannot be captured yet keeps its intent
+pending for a later poll. The status poll handles modems one after another, so a takeover that
 waits delays the next modem's poll work by that wait. An unreadable active profile or SIM id
 keeps the intent pending for the next poll; another active profile without a
 SIM id, the same SIM or an unknown modem ICCID consumes intent as before. The
@@ -105,8 +108,11 @@ no present modem with that device id holds, writing the park record first.
   device id that MM has not listed (`readPresentSimIds`). USB devices are read
   from `/sys/bus/usb/devices` (no subprocess, no wait for udev properties) and
   matched by `modem.generic.physdev`, since `modem.generic.device` is the udev
-  UID, which a rule may set to a label. A modem that is not on USB is not
-  parked at all: its settle ends without a write.
+  UID, which a rule may set to a label. The NM inventory is read whole (its
+  trailing LF ends the last record; a truncated record counts as unread). A
+  modem whose MM physdev is positively not a USB device is not parked at all:
+  its settle ends without a write. A USB modem whose descriptor cannot be
+  captured yet is retried.
 - It does not park a never-activated profile (timestamp 0) that has a sibling
   for the same device id and SIM: once disarmed, an older build's duplicate
   cleanup, which knows nothing of park records, would prune it as its own
@@ -117,7 +123,9 @@ no present modem with that device id holds, writing the park record first.
   failed write leaves it incomplete, and the poll tries again 30, 60, 120,
   240, then every 300 s, also after the intent was consumed, until it
   finishes or the registration ends. It never throws and always confirms its
-  journal entry, so it never blocks the modem.
+  journal entry; like any journaled mutation, only a journal write that fails
+  can leave the modem blocked. Each attempt that reaches the lease writes and
+  retires one entry.
 - Replay of an interrupted settle finds nothing to undo: the park records
   describe themselves (a crash between record and write is converged by the
   next pass), and an unchanged descriptor reports `restored` on every build.
