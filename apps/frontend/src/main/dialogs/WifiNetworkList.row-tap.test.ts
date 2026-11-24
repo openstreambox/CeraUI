@@ -38,6 +38,8 @@ function iface(networks: AvailableWifiNetwork[]): WifiInterface {
 		conn: "uuid-home",
 		hw: "",
 		saved: { HomeNetwork: "uuid-home", "Cafe-Guest": "uuid-cafe" },
+		// A saved profile is reused only with its reported key management.
+		saved_key_mgmt: { "uuid-home": "wpa-psk", "uuid-cafe": "wpa-psk" },
 		available: networks,
 	};
 }
