@@ -218,7 +218,8 @@ new admission even if an idle observation arrives.
 
 **OTA invariant:** the owner requests `/run/ceralive/streaming` whenever a live or
 possibly-effectful session requires protection, not for a silent observation of an
-unprotected baseline. A failed write cannot establish physical protection: the latch
+unprotected baseline. A marker held only by the carrying owner does not end that
+baseline (see `CARRYING.md`). A failed write cannot establish physical protection: the latch
 remains unconfirmed and the next current streaming status or protection call retries. It is cleared only by
 positive idle evidence (including acknowledged transactional rollback Stop), never
 local rollback completion, Stop intent, `start_cleanup_timeout`,
