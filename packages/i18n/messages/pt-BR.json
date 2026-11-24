@@ -3181,6 +3181,7 @@
 	"network.sharing.policy.healthTitle": "Saúde do uplink",
 	"network.sharing.policy.healthBody": "{usable} de uplinks {total} são saudáveis o suficiente para serem considerados. A política de roteamento de dispositivos clientes pode excluí-los.",
 	"notifications.clientCarrying": "A caixa transporta tráfego de clientes. Atualizações, reinícios, desligamento e mudanças de links por inatividade aguardam.",
+	"notifications.bootFatFault": "A caixa iniciou normalmente. Os arquivos de inicialização precisam de uma verificação na próxima manutenção. Nada a fazer agora.",
 	"notifications.powerWaitingForUpdate": "O equipamento será desligado assim que a atualização terminar.",
 	"notifications.powerStuckOnUpdate": "A atualização continua em andamento após 15 minutos. O equipamento será desligado assim que ela terminar.",
 	"notifications.powerShuttingDown": "Desligando.",

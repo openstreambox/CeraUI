@@ -13,6 +13,7 @@ import {
 } from "../modules/modems/physical-identity.ts";
 import * as routers from "../modules/network/router-cellular-scan.ts";
 import * as relays from "../modules/remote/remote-relays.ts";
+import * as bootFat from "../modules/system/boot-fat-fault.ts";
 import * as stats from "../modules/system/device-stats-snapshot.ts";
 import * as hardware from "../modules/system/hardware-kind.ts";
 import * as updates from "../modules/system/update-settings.ts";
@@ -57,6 +58,9 @@ beforeEach(() => {
 			pairing_secret: "pairing-key",
 			autostart: false,
 		}),
+	);
+	restore(
+		spyOn(bootFat, "readBootFatFault").mockResolvedValue({ state: "absent" }),
 	);
 	restore(
 		spyOn(relays, "getRelays").mockReturnValue({
@@ -194,6 +198,7 @@ test.each([false, true])(
 			autostart: false,
 			hardwareKind: "rk3588",
 			data: { used: 123, total: 456 },
+			bootFat: { state: "absent" },
 		});
 		const facts = JSON.stringify({ ...result, secrets: undefined });
 		for (const secret of [
@@ -265,4 +270,34 @@ test("the credential snapshot returns copies without private identity or verific
 	expect(credentials.getStoredModemCredentials()).toEqual([
 		{ username: "router-user", password: "router-pass" },
 	]);
+});
+
+test("the /boot FAT fault marker's classification goes into the bundle settings", async () => {
+	for (const fault of [
+		{ state: "present", reason: "fsck_findings", exit: 1, errno: null },
+		{ state: "present", reason: "os_error", exit: null, errno: "EBUSY" },
+		{ state: "unreadable", errno: "EIO" },
+	] as const) {
+		restore(spyOn(bootFat, "readBootFatFault").mockResolvedValue(fault));
+		expect((await collectBundleData()).settings.bootFat).toEqual(fault);
+	}
+});
+
+test("a boot FAT fact that matches a held credential is left out, and the bundle still collects", async () => {
+	restore(
+		spyOn(hotspots, "getAllHotspotCredentials").mockReturnValue([
+			{ ssid: "private-network", password: "geometry" },
+		]),
+	);
+	restore(
+		spyOn(bootFat, "readBootFatFault").mockResolvedValue({
+			state: "present",
+			reason: "geometry",
+			exit: null,
+			errno: null,
+		}),
+	);
+	const result = await collectBundleData();
+	expect(result.settings).not.toHaveProperty("bootFat");
+	expect(result.secrets).toContainEqual({ kind: "hotspot", value: "geometry" });
 });

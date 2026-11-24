@@ -2957,6 +2957,7 @@
 	"network.sharing.policy.healthTitle": "上行链路健康状况",
 	"network.sharing.policy.healthBody": "{total} 上行链路的 {usable} 足够健康，可以考虑。客户端设备路由策略可能会排除它们。",
 	"notifications.clientCarrying": "本机正在转发客户端流量。更新、重启、关机和空闲链路更改将等待。",
+	"notifications.bootFatFault": "本机已正常启动。启动文件需要在下次检修时检查。现在无需任何操作。",
 	"notifications.powerWaitingForUpdate": "当前更新完成后，本机将关机。",
 	"notifications.powerStuckOnUpdate": "15 分钟过去了，更新仍未完成。更新完成后，本机将关机。",
 	"notifications.powerShuttingDown": "正在关机。",

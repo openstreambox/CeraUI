@@ -2957,6 +2957,7 @@
 	"network.sharing.policy.healthTitle": "アップリンクの健全性",
 	"network.sharing.policy.healthBody": "{total} アップリンクのうちの {usable} は、検討するのに十分なほど健全です。クライアント デバイスのルーティング ポリシーによってこれらが除外される場合があります。",
 	"notifications.clientCarrying": "本機はクライアント通信を中継中です。更新、再起動、電源オフ、アイドル時の回線変更は待機します。",
+	"notifications.bootFatFault": "本機は正常に起動しました。起動用ファイルは次回の点検時に確認が必要です。今は何もする必要はありません。",
 	"notifications.powerWaitingForUpdate": "更新が完了すると、本機の電源が切れます。",
 	"notifications.powerStuckOnUpdate": "15分経過しても更新が完了していません。更新が完了すると、本機の電源が切れます。",
 	"notifications.powerShuttingDown": "電源を切っています。",

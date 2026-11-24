@@ -41,6 +41,7 @@ import {
 	notificationRemove,
 } from "../ui/notifications.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
+import { initBootFatFaultMonitoring } from "./boot-fat-fault.ts";
 import { getHardwareKindCached } from "./hardware-kind.ts";
 import {
 	EMI_ADVISORY_MSG,
@@ -303,6 +304,7 @@ export function initHardwareMonitoring(
 		broadcastMsg("sensors", data);
 		publishPowerRemote?.(data);
 	});
+	initBootFatFaultMonitoring();
 	// Use mock sensors in development mode
 	if (shouldMockSensors()) {
 		const updateMockSensors = () => {
