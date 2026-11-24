@@ -83,6 +83,7 @@ import type {
 	NetifConfigOutput,
 	OpenRouterAdminInput,
 	OpenRouterAdminOutput,
+	PowerResponse,
 	PreviewTokenOutput,
 	RelayValidateInput,
 	RelayValidateOutput,
@@ -975,8 +976,8 @@ export interface TypedRPC {
 		getSensors: () => Promise<unknown>;
 		getLog: (input?: LogInput) => Promise<unknown>;
 		getSyslog: (input?: SyslogInput) => Promise<unknown>;
-		poweroff: () => Promise<SuccessResponse>;
-		reboot: () => Promise<SuccessResponse>;
+		poweroff: () => Promise<PowerResponse>;
+		reboot: () => Promise<PowerResponse>;
 		startUpdate: () => Promise<SuccessResponse>;
 		updateOutcome: (input: UpdateOutcomeInput) => Promise<UpdateOutcome>;
 		checkForUpdates: () => Promise<SuccessResponse>;
