@@ -24,10 +24,10 @@ collects current versions, the current and previous available journal boots'
 stored versions, retained events and boot records, and an allowlist of facts:
 log settings/state, effective update channel, autostart, cached hardware kind,
 the cached used/total bytes for `/data` and the image's `/boot` FAT fault marker
-(`bootFat`: `absent`, `present` with the checker's one line or null when the
-file is not in its format, or `unreadable` with the errno code; see
-`modules/system/boot-fat-fault.ts`). Only a line in the checker's own format is
-copied, so other file contents never enter the bundle. Missing
+(`bootFat`: `absent`, `present` with a closed reason code plus fsck's exit
+status or an errno name, or `unreadable` with the errno name; see
+`modules/system/boot-fat-fault.ts`). No text from the marker is copied, because
+its reason can carry a device path or any OS error message. Missing
 historical versions stay null. No config dump, password hash, authentication-token file, Wi-Fi PSK or
 NetworkManager profile is included. `readUpdateChannel()` reuses the update
 owner's validated readers without migrating or writing settings.

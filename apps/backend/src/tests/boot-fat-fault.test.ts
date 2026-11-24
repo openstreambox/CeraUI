@@ -1,22 +1,21 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	BOOT_FAT_FAULT_KEY,
 	BOOT_FAT_FAULT_MESSAGE,
-	BOOT_FAT_FAULT_NOTICE,
 	type BootFatFault,
-	bootFatFaultDetail,
+	classifyBootFatFault,
 	createBootFatFaultMonitor,
 	readBootFatFault,
 } from "../modules/system/boot-fat-fault.ts";
 
-// The checker's exact output for a lost cluster and for its own fault.
-const LOST_CLUSTER =
-	"Shared /boot FAT check needs attention: read-only fsck.fat reported filesystem diagnostics (exit 1)\n";
-const CHECKER_FAULT =
-	"Shared /boot FAT check needs attention: [Errno 16] Device or resource busy: '/dev/disk/by-partlabel/boot'\n";
+const PREFIX = "Shared /boot FAT check needs attention: ";
+// The checker's exact lines for a lost cluster and for its own faults.
+const LOST_CLUSTER = `${PREFIX}read-only fsck.fat reported filesystem diagnostics (exit 1)\n`;
+const BUSY = `${PREFIX}[Errno 16] Device or resource busy: '/dev/disk/by-partlabel/boot'\n`;
 
 let dir: string;
 beforeAll(async () => {
@@ -25,47 +24,111 @@ beforeAll(async () => {
 afterAll(async () => {
 	await rm(dir, { recursive: true, force: true });
 });
-async function marker(name: string, contents: string | Uint8Array) {
-	const path = join(dir, name);
+let count = 0;
+async function marker(contents: string | Uint8Array) {
+	const path = join(dir, `marker-${count++}`);
 	await writeFile(path, contents);
 	return path;
 }
+const encode = (text: string) => new TextEncoder().encode(text);
 
-test("a lost-cluster marker reads as present with the checker's line", async () => {
-	expect(await readBootFatFault(await marker("lost", LOST_CLUSTER))).toEqual({
+test("a lost-cluster marker reads as present with its fsck reason and exit status", async () => {
+	expect(await readBootFatFault(await marker(LOST_CLUSTER))).toEqual({
 		state: "present",
-		detail: LOST_CLUSTER.trimEnd(),
+		reason: "fsck_findings",
+		exit: 1,
+		errno: null,
 	});
-	expect(await readBootFatFault(await marker("busy", CHECKER_FAULT))).toEqual({
-		state: "present",
-		detail: CHECKER_FAULT.trimEnd(),
-	});
+});
+
+test("every checker reason maps to a code, and OS errors keep only the errno name", () => {
+	const cases: Array<[string, Partial<BootFatFault>]> = [
+		["invalid FAT boot sector", { reason: "boot_sector" }],
+		["unexpected FAT geometry", { reason: "geometry" }],
+		["unexpected FAT16 cluster count", { reason: "fat16_clusters" }],
+		[
+			"dirty report did not match the FAT geometry",
+			{ reason: "dirty_geometry" },
+		],
+		["dirty byte did not match the read-only check", { reason: "dirty_byte" }],
+		[
+			"FAT table reports a dirty shutdown or an I/O error",
+			{ reason: "fat_flags" },
+		],
+		["short write while clearing the dirty byte", { reason: "short_write" }],
+		[
+			"expected a block device or a regular FAT image",
+			{ reason: "not_block_device" },
+		],
+		[
+			"read-only fsck.fat status disagreed with its report (exit 0)",
+			{ reason: "fsck_status_mismatch", exit: 0 },
+		],
+		[
+			"Command '['/usr/sbin/fsck.fat', '-n', '/proc/self/fd/3']' timed out after 12 seconds",
+			{ reason: "timeout" },
+		],
+		[
+			"[Errno 16] Device or resource busy: '/dev/disk/by-partlabel/boot'",
+			{ reason: "os_error", errno: "EBUSY" },
+		],
+		[
+			"[Errno 2] No such file or directory: '/usr/sbin/fsck.fat'",
+			{ reason: "os_error", errno: "ENOENT" },
+		],
+	];
+	for (const [reason, expected] of cases)
+		expect(classifyBootFatFault(encode(`${PREFIX}${reason}\n`))).toEqual({
+			state: "present",
+			exit: null,
+			errno: null,
+			...expected,
+		} as BootFatFault);
+	// Nothing of the path or message survives classification.
+	expect(JSON.stringify(classifyBootFatFault(encode(BUSY)))).not.toContain(
+		"/dev",
+	);
 });
 
 test("no marker, or no /run/ceralive directory, reads as absent", async () => {
 	expect(await readBootFatFault(join(dir, "missing"))).toEqual({
 		state: "absent",
 	});
-	const file = await marker("plain-file", "x");
+	const file = await marker("x");
 	expect(await readBootFatFault(join(file, "boot-fat-fault"))).toEqual({
 		state: "absent",
 	});
 });
 
-test("an unreadable marker keeps only the errno code", async () => {
-	expect(await readBootFatFault(dir)).toEqual({
+test("an unreadable marker keeps only the errno name", async () => {
+	const link = join(dir, "link");
+	await symlink(await marker(LOST_CLUSTER), link);
+	expect(await readBootFatFault(link)).toEqual({
 		state: "unreadable",
-		code: "EISDIR",
+		errno: "ELOOP",
 	});
 	// Root reads any mode, so the permission case only exists for other users.
 	if (process.getuid?.() !== 0) {
-		const locked = await marker("locked", LOST_CLUSTER);
+		const locked = await marker(LOST_CLUSTER);
 		await chmod(locked, 0o000);
 		expect(await readBootFatFault(locked)).toEqual({
 			state: "unreadable",
-			code: "EACCES",
+			errno: "EACCES",
 		});
 	}
+});
+
+test("a directory or a FIFO with no writer is reported without blocking", async () => {
+	const fifo = join(dir, "fifo");
+	execFileSync("mkfifo", [fifo]);
+	const expected: BootFatFault = {
+		state: "present",
+		reason: "not_regular_file",
+		exit: null,
+		errno: null,
+	};
+	expect(await readBootFatFault(fifo)).toEqual(expected);
+	expect(await readBootFatFault(dir)).toEqual(expected);
 });
 
 test("garbage is still a marker, but none of its contents are kept", async () => {
@@ -73,35 +136,31 @@ test("garbage is still a marker, but none of its contents are kept", async () =>
 		"",
 		"\n",
 		"something else entirely\n",
-		"Shared /boot FAT check needs attention: \n",
-		"Shared /boot FAT check needs attention: two\nlines\n",
-		"Shared /boot FAT check needs attention: bell\u0007\n",
-		"Shared /boot FAT check needs attention: \u202eoverride\n",
-		`Shared /boot FAT check needs attention: ${"x".repeat(600)}\n`,
-		`Shared /boot FAT check needs attention: ${"x".repeat(5000)}\n`,
+		`${PREFIX}\n`,
+		`${PREFIX}a new reason naming /media/card/boot.img\n`,
+		`${PREFIX}invalid FAT boot sector\nsecond line\n`,
+		`${PREFIX}[Errno x] not a number\n`,
+		`${PREFIX}${"x".repeat(5000)}\n`,
 		new Uint8Array([0xff, 0xfe, 0x00, 0x53]),
 	];
-	for (const [index, contents] of cases.entries()) {
-		const fault = await readBootFatFault(
-			await marker(`garbage-${index}`, contents),
-		);
-		expect(fault).toEqual({ state: "present", detail: null });
-	}
-	expect(bootFatFaultDetail(new TextEncoder().encode(LOST_CLUSTER))).toBe(
-		LOST_CLUSTER.trimEnd(),
-	);
+	for (const contents of cases)
+		expect(await readBootFatFault(await marker(contents))).toEqual({
+			state: "present",
+			reason: "unrecognized",
+			exit: null,
+			errno: null,
+		});
 });
 
-function harness(initial: BootFatFault, bootId: string | null = "b1") {
+function harness(initial: BootFatFault) {
 	let fault = initial;
 	let accept = true;
-	const shown: Array<string | undefined> = [];
+	let shown = 0;
 	let removed = 0;
 	const tick = createBootFatFaultMonitor({
 		read: async () => fault,
-		bootId: () => bootId ?? undefined,
-		show: (key) => {
-			shown.push(key);
+		show: () => {
+			shown++;
 			return accept;
 		},
 		remove: () => {
@@ -113,11 +172,8 @@ function harness(initial: BootFatFault, bootId: string | null = "b1") {
 		set(next: BootFatFault) {
 			fault = next;
 		},
-		refuse() {
-			accept = false;
-		},
-		allow() {
-			accept = true;
+		accept(value: boolean) {
+			accept = value;
 		},
 		get shown() {
 			return shown;
@@ -127,12 +183,13 @@ function harness(initial: BootFatFault, bootId: string | null = "b1") {
 		},
 	};
 }
+const FAULT = classifyBootFatFault(encode(LOST_CLUSTER));
 
-test("a marker present at start raises one notice, dismissable for this boot only", async () => {
-	const h = harness({ state: "present", detail: LOST_CLUSTER.trimEnd() });
+test("a marker present at start raises one notice", async () => {
+	const h = harness(FAULT);
 	await h.tick();
 	await h.tick();
-	expect(h.shown).toEqual([`${BOOT_FAT_FAULT_NOTICE}:b1`]);
+	expect(h.shown).toBe(1);
 	expect(h.removed).toBe(0);
 });
 
@@ -140,50 +197,44 @@ test("no marker raises nothing and removes nothing", async () => {
 	const h = harness({ state: "absent" });
 	await h.tick();
 	await h.tick();
-	expect(h.shown).toEqual([]);
+	expect(h.shown).toBe(0);
 	expect(h.removed).toBe(0);
 });
 
 test("unreadable and garbage markers still raise the notice", async () => {
 	for (const fault of [
-		{ state: "unreadable", code: "EIO" },
-		{ state: "present", detail: null },
+		{ state: "unreadable", errno: "EIO" },
+		classifyBootFatFault(encode("garbage")),
 	] as const) {
 		const h = harness(fault);
 		await h.tick();
-		expect(h.shown).toHaveLength(1);
+		expect(h.shown).toBe(1);
 	}
 });
 
 test("a marker written after start raises the notice, and a later clean check removes it", async () => {
 	const h = harness({ state: "absent" });
 	await h.tick();
-	h.set({ state: "present", detail: CHECKER_FAULT.trimEnd() });
+	h.set(FAULT);
 	await h.tick();
-	expect(h.shown).toEqual([`${BOOT_FAT_FAULT_NOTICE}:b1`]);
+	expect(h.shown).toBe(1);
 	h.set({ state: "absent" });
 	await h.tick();
 	await h.tick();
 	expect(h.removed).toBe(1);
-	h.set({ state: "present", detail: null });
+	h.set(FAULT);
 	await h.tick();
-	expect(h.shown).toHaveLength(2);
+	expect(h.shown).toBe(2);
 });
 
 test("a notice that was not taken is offered again on the next poll", async () => {
-	const h = harness({ state: "present", detail: null });
-	h.refuse();
+	const h = harness(FAULT);
+	h.accept(false);
 	await h.tick();
-	h.allow();
+	h.accept(true);
 	await h.tick();
 	await h.tick();
-	expect(h.shown).toHaveLength(2);
-});
-
-test("without a boot ID the notice carries no durable dismissal", async () => {
-	const h = harness({ state: "present", detail: null }, null);
-	await h.tick();
-	expect(h.shown).toEqual([undefined]);
+	expect(h.shown).toBe(2);
 });
 
 test("the notice copy is calm and names its catalog key", () => {

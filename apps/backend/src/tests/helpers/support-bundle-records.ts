@@ -40,9 +40,17 @@ const settingsRow = z.strictObject({
 			z.strictObject({ state: z.literal("absent") }),
 			z.strictObject({
 				state: z.literal("present"),
-				detail: z.string().nullable(),
+				reason: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),
+				exit: z.number().int().nullable(),
+				errno: z
+					.string()
+					.regex(/^E[A-Z0-9]{1,15}$|^unknown$/)
+					.nullable(),
 			}),
-			z.strictObject({ state: z.literal("unreadable"), code: z.string() }),
+			z.strictObject({
+				state: z.literal("unreadable"),
+				errno: z.string().regex(/^E[A-Z0-9]{1,15}$|^unknown$/),
+			}),
 		])
 		.optional(),
 });

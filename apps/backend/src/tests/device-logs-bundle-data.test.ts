@@ -272,13 +272,11 @@ test("the credential snapshot returns copies without private identity or verific
 	]);
 });
 
-test("the /boot FAT fault marker's line goes into the bundle settings", async () => {
-	const detail =
-		"Shared /boot FAT check needs attention: read-only fsck.fat reported filesystem diagnostics (exit 1)";
+test("the /boot FAT fault marker's classification goes into the bundle settings", async () => {
 	for (const fault of [
-		{ state: "present", detail },
-		{ state: "present", detail: null },
-		{ state: "unreadable", code: "EIO" },
+		{ state: "present", reason: "fsck_findings", exit: 1, errno: null },
+		{ state: "present", reason: "os_error", exit: null, errno: "EBUSY" },
+		{ state: "unreadable", errno: "EIO" },
 	] as const) {
 		restore(spyOn(bootFat, "readBootFatFault").mockResolvedValue(fault));
 		expect((await collectBundleData()).settings.bootFat).toEqual(fault);
