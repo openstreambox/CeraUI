@@ -1,14 +1,18 @@
 /**
- * The join tracker behind "A new device joined": the first reading of an access
- * point is the baseline, a device is new only the first time this page sees it,
- * and an absent roster (hotspot stopped, not read yet) forgets nothing.
+ * The join tracker behind "A new device joined": the first reading of each AP
+ * lifetime is the baseline, a device is new only the first time this page sees
+ * it on that lifetime, an unread roster on a live AP forgets nothing, and a
+ * Stop, another radio or a replaced AP starts a new lifetime from nothing.
  */
 import type { WifiInterface, WifiStatus } from "@ceraui/rpc/schemas";
 import { describe, expect, it } from "vitest";
 
 import { createHotspotJoinTracker, HOTSPOT_SEEN_CAP } from "./hotspot-joins";
 
-function ap(macs: readonly string[] | undefined): WifiInterface {
+function ap(
+	macs: readonly string[] | undefined,
+	overrides: Partial<WifiInterface> = {},
+): WifiInterface {
 	return {
 		ifname: "wlan0",
 		conn: "hotspot-uuid",
@@ -29,6 +33,18 @@ function ap(macs: readonly string[] | undefined): WifiInterface {
 						},
 					}),
 		},
+		...overrides,
+	};
+}
+
+/** The same radio with its AP stopped: a station row, no hotspot block. */
+function stopped(): WifiInterface {
+	return {
+		ifname: "wlan0",
+		conn: "",
+		hw: "58:02:05:e1:79:1c",
+		saved: {},
+		mode: "station",
 	};
 }
 
@@ -75,7 +91,8 @@ describe("createHotspotJoinTracker", () => {
 		tracker.observe(wifi(["0", []]));
 		expect(tracker.observe(wifi(["0", ["aa:aa:aa:aa:aa:01"]]))).toBe(1);
 		expect(tracker.observe(wifi(["0", []]))).toBe(0);
-		// The hotspot restarted (new password): its roster is absent for a while.
+		// The AP is still up (a hotspot block) but its roster is unread for a
+		// while, for example while it reapplies a new password: same lifetime.
 		expect(tracker.observe(wifi(["0", undefined]))).toBe(0);
 		expect(tracker.observe(wifi(["0", ["aa:aa:aa:aa:aa:01"]]))).toBe(0);
 	});
@@ -136,6 +153,101 @@ describe("createHotspotJoinTracker", () => {
 					["bb:bb:bb:bb:bb:01"],
 				),
 			),
-		).toEqual([{ device: "0", incarnation: "radio-A", count: 1 }]);
+		).toEqual([
+			{
+				device: "0",
+				incarnation: "radio-A",
+				lifetime: tracker.lifetimeOf("0", snapshot([], [])["0"]),
+				count: 1,
+			},
+		]);
+	});
+});
+
+describe("AP lifetimes", () => {
+	const A1 = "aa:aa:aa:aa:aa:01";
+	const A2 = "aa:aa:aa:aa:aa:02";
+	const A3 = "aa:aa:aa:aa:aa:03";
+
+	it("a Stop and Start is a new lifetime with its own baseline and roster", () => {
+		const tracker = createHotspotJoinTracker();
+		tracker.observe({ "0": ap([A1]) });
+		const first = tracker.lifetimeOf("0", ap([A1]));
+		expect(first).toBeTypeOf("number");
+		expect(tracker.observe({ "0": stopped() })).toEqual([]);
+		expect(tracker.lifetimeOf("0", stopped())).toBeUndefined();
+		// The restarted AP's first reading is a baseline, even with a phone on it
+		// that the previous lifetime never saw.
+		expect(tracker.observe({ "0": ap([A2]) })).toEqual([]);
+		const second = tracker.lifetimeOf("0", ap([A2]));
+		expect(second).not.toBe(first);
+		// Its roster starts from nothing: A1 joining now is this lifetime's join.
+		expect(tracker.observe({ "0": ap([A2, A1]) })).toEqual([
+			{ device: "0", incarnation: undefined, lifetime: second, count: 1 },
+		]);
+	});
+
+	it("another radio under the same key starts over instead of diffing against the old one", () => {
+		const tracker = createHotspotJoinTracker();
+		tracker.observe({ "0": ap([A1], { incarnation: "radio-A" }) });
+		// Radio B already has two phones on it: nothing is announced.
+		expect(
+			tracker.observe({ "0": ap([A2, A3], { incarnation: "radio-B" }) }),
+		).toEqual([]);
+		expect(
+			tracker.lifetimeOf("0", ap([], { incarnation: "radio-A" })),
+		).toBeUndefined();
+	});
+
+	it("a late frame from an earlier AP never announces against the current one", () => {
+		const tracker = createHotspotJoinTracker();
+		tracker.observe({ "0": ap([A1], { incarnation: "radio-A" }) });
+		tracker.observe({ "0": ap([A2], { incarnation: "radio-B" }) });
+		// A frame that still names radio A, now with a phone it never had.
+		expect(
+			tracker.observe({ "0": ap([A1, A3], { incarnation: "radio-A" }) }),
+		).toEqual([]);
+		// Back on B: a new lifetime again, so B's earlier roster is not diffed.
+		expect(
+			tracker.observe({ "0": ap([A2, A3], { incarnation: "radio-B" }) }),
+		).toEqual([]);
+	});
+
+	it("a renamed interface under the same radio token is the same AP", () => {
+		const tracker = createHotspotJoinTracker();
+		tracker.observe({ "0": ap([A1], { incarnation: "radio-A" }) });
+		const renamed = { incarnation: "radio-A", ifname: "wlx00c0ca000001" };
+		expect(tracker.observe({ "0": ap([A1, A2], renamed) })).toHaveLength(1);
+	});
+
+	it("a replaced AP (other profile, other mode) is a new lifetime", () => {
+		for (const replaced of [
+			{ conn: "other-uuid" },
+			{ mode: "station" as const },
+		]) {
+			const tracker = createHotspotJoinTracker();
+			tracker.observe({ "0": ap([A1]) });
+			expect(tracker.observe({ "0": ap([A1, A2], replaced) })).toEqual([]);
+			expect(tracker.lifetimeOf("0", ap([]))).toBeUndefined();
+		}
+	});
+
+	it("a profile UUID that only became known is the same AP", () => {
+		const tracker = createHotspotJoinTracker();
+		tracker.observe({ "0": ap([A1], { conn: "" }) });
+		expect(tracker.observe({ "0": ap([A1, A2]) })).toHaveLength(1);
+		// A hybrid AP's conn is the station's and never splits the lifetime.
+		const hybrid = createHotspotJoinTracker();
+		hybrid.observe({ "0": ap([A1], { mode: "station", conn: "sta-1" }) });
+		expect(
+			hybrid.observe({ "0": ap([A1, A2], { mode: "station", conn: "sta-2" }) }),
+		).toHaveLength(1);
+	});
+
+	it("a radio that leaves the snapshot ends its lifetime", () => {
+		const tracker = createHotspotJoinTracker();
+		tracker.observe({ "0": ap([A1]) });
+		tracker.observe({});
+		expect(tracker.observe({ "0": ap([A1, A2]) })).toEqual([]);
 	});
 });

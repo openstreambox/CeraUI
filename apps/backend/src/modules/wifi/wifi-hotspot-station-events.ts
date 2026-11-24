@@ -171,7 +171,11 @@ export class HotspotStationEvents {
 		const delays = event.kind === "new" ? JOIN_FOLLOW_UP_MS : [0];
 		const timers = delays.map((ms) =>
 			this.deps.setTimeout(() => {
-				if (!this.#wanted) return;
+				// A follow-up belongs to the AP the event came from: once that
+				// interface no longer hosts an AP (Stop, or it became a station
+				// leg), its dump would name the router it joined, so nothing is
+				// read. A restarted AP gets its own events and its own poll.
+				if (!this.#wanted || !this.deps.apIfnames().includes(ifname)) return;
 				void this.deps.refresh([ifname]).catch((err) => {
 					logger.debug(`hotspot station events: read failed: ${err}`);
 				});
