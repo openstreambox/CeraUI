@@ -322,6 +322,8 @@ describe("ingestion + mapping + payload shape", () => {
 			nak_count: 2,
 			weight_percent: 100,
 			bitrate_bps: 2_500_000,
+			// A measured rate above zero is progress on the first report.
+			carrying: true,
 			stale: false,
 		});
 	});
@@ -757,6 +759,8 @@ describe("control-socket subscription cutover + airtight file-poll fallback", ()
 				nak_count: 4,
 				weight_percent: 100,
 				bitrate_bps: 1_800_000,
+				// A measured rate above zero is progress on the first report.
+				carrying: true,
 				stale: false,
 			},
 		]);
