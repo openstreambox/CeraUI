@@ -65,6 +65,10 @@ import {
 	SRTLA_CONTROL_CONNECT_TIMEOUT_MS,
 	SRTLA_LISTEN_PORT,
 } from "./constants.ts";
+import {
+	clearContinuityTelemetry,
+	recordSenderTelemetry,
+} from "./continuity-observer.ts";
 import { isForwardActive } from "./forward-activity.ts";
 import {
 	buildBondMapping,
@@ -100,7 +104,7 @@ export {
 // srtla_send listens for the local SRT encoder on this port; the stats file path
 // is derived from it (mirrors the receiver's /tmp/srtla-group-<PORT> convention).
 
-/** Canonical stats-file path passed to srtla_send `--stats-file` and read back. */
+/** Canonical stats-file path passed to the sender and read back. */
 export function srtlaStatsFile(listenPort: number = SRTLA_LISTEN_PORT): string {
 	return senderTelemetryPath(listenPort);
 }
@@ -203,6 +207,7 @@ function ingestTelemetry(
 	activeLinks?: number,
 ): void {
 	if (telemetry) {
+		recordSenderTelemetry(telemetry);
 		lastSnapshot = telemetry;
 		observedActiveLinks = activeLinks;
 		lastTickFresh = true;
@@ -397,6 +402,7 @@ async function attemptSubscriptionCutover(
 /** Stop consuming telemetry (poll + subscription) and clear both registries. */
 export function stopLinkTelemetry(forwardOwner = false): void {
 	if (isForwardActive() && !forwardOwner) return;
+	clearContinuityTelemetry();
 	if (subscriptionCleanup) {
 		subscriptionCleanup();
 		subscriptionCleanup = null;
