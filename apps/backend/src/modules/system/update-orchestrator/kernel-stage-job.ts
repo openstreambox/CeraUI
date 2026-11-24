@@ -44,6 +44,9 @@ export function kernelStageCommand(attempt: KernelAttempt): string[] {
 		"--property=StandardOutput=null",
 		"--property=StandardError=journal",
 		"--property=RuntimeMaxSec=1800",
+		// A shutdown waits for a running stage: the image's write drain stops
+		// first and holds until this unit is no longer executing.
+		"--property=Before=ceralive-write-drain.service",
 		...kernelStageGuardArgv(attempt),
 	];
 }
