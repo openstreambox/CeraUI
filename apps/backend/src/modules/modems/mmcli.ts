@@ -1294,8 +1294,6 @@ export async function readRadioNas(id: number): Promise<{
 	signal: string;
 	band: string;
 	tx?: string;
-	/** The listed RM520N-GL firmware: its serving cell may be read on the released AT port. */
-	listed?: boolean;
 }> {
 	if (shouldMockModems()) return { signal: "", band: "" };
 	let ports: ModemInfo | undefined;
@@ -1313,8 +1311,7 @@ export async function readRadioNas(id: number): Promise<{
 		/* No retry or state change for optional diagnostics. */
 	}
 	if (
-		!ports ||
-		ports["modem.generic.model"] !== "RM520N-GL" ||
+		ports?.["modem.generic.model"] !== "RM520N-GL" ||
 		!ports["modem.generic.revision"]?.endsWith("A08M4G")
 	)
 		return { signal: "", band: "" };
@@ -1342,6 +1339,5 @@ export async function readRadioNas(id: number): Promise<{
 		signal: await read("--nas-get-signal-info"),
 		band: await read("--nas-get-rf-band-info"),
 		tx: await read("--nas-get-tx-rx-info=lte"),
-		listed: true,
 	};
 }
