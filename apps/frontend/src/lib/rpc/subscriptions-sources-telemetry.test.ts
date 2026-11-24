@@ -30,6 +30,8 @@ vi.mock("$lib/rpc/client", () => ({
 		},
 		connect: () => {},
 		getSocket: () => null,
+		// No socket of this page is waiting to be signed in again.
+		isAwaitingSignIn: () => false,
 		sendLegacy: () => {},
 	},
 }));
