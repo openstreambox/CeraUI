@@ -429,8 +429,8 @@ export async function runDeadBearerRecovery(
 				// owner reads' start to the `down` the stream must be unchanged, and
 				// nothing awaits from here, so this check and the interlock hold see
 				// the state the `down` meets.
-				const iface = fresh.iface;
-				const streamNow = streamState(iface);
+				const ifname = fresh.iface;
+				const streamNow = streamState(ifname);
 				if (streamNow !== fresh.input.stream) {
 					logger.info("modem reconnect skipped: the stream changed", {
 						id,
@@ -456,7 +456,7 @@ export async function runDeadBearerRecovery(
 				logger.warn("modem bearer carries no traffic; reconnecting", {
 					id,
 					stableKey: key,
-					iface,
+					iface: fresh.iface,
 					reason: again.reason,
 					attempt: again.memory.reconnects,
 					nextSpacingS: deadBearerSpacing(again.memory.reconnects - 1) / 1000,
