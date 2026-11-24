@@ -1,6 +1,7 @@
 /**
  * New Wi-Fi password changes ONLY the password of the live hotspot, through the
- * dialog's own reconfigure and keyed op, and never sends a partial setup.
+ * dialog's own bound config write (`{device, incarnation}`, keyed op, terminal
+ * receipt), and never sends a partial setup or renews a stopped hotspot.
  */
 import type { StatusResponse, WifiInterface } from "@ceraui/rpc/schemas";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,11 +21,15 @@ vi.mock("svelte-sonner", () => ({
 }));
 
 import {
+	confirmOperation,
 	destroyAsyncOperations,
+	failOperation,
 	getOperationAttempt,
 	getOperationPhase,
 	initAsyncOperations,
 } from "$lib/rpc/async-operation.svelte";
+import { noteLinkState } from "$lib/rpc/session-epoch.svelte";
+import { noteWifiConfig } from "$lib/rpc/wifi-status-receipt";
 
 import {
 	canRenewHotspotPassword,
@@ -42,7 +47,6 @@ function iface(overrides: Partial<WifiInterface> = {}): WifiInterface {
 		saved: {},
 		mode: "hotspot",
 		incarnation: "inc-1",
-		radio_identity: { id: "radio-1" },
 		hotspot: {
 			name: "Box",
 			password: "old-password",
@@ -53,7 +57,12 @@ function iface(overrides: Partial<WifiInterface> = {}): WifiInterface {
 	} as WifiInterface;
 }
 
-beforeEach(() => initAsyncOperations());
+beforeEach(() => {
+	initAsyncOperations();
+	// A fresh link, so no earlier test's dispatch can own this test's terminal.
+	noteLinkState("disconnected");
+	noteLinkState("connected");
+});
 afterEach(() => {
 	destroyAsyncOperations();
 	hotspotConfigure.mockClear();
@@ -64,7 +73,6 @@ describe("newHotspotPasswordInput", () => {
 		expect(newHotspotPasswordInput("0", iface(), "n3wPassw0rd")).toEqual({
 			device: "0",
 			incarnation: "inc-1",
-			radio_id: "radio-1",
 			name: "Box",
 			password: "n3wPassw0rd",
 			channel: "auto_50",
@@ -87,6 +95,9 @@ describe("newHotspotPasswordInput", () => {
 			iface({ incarnation: undefined }),
 			iface({ hotspot: { password: "x", channel: "auto" } }),
 			iface({ hotspot: { name: "Box", password: "x" } }),
+			// Stopped: no live AP to renew (a hotspot block means the AP is up).
+			iface({ hotspot: undefined, mode: "station" }),
+			iface({ degraded_reason: "permanent-mac-unresolved" }),
 		]) {
 			expect(
 				newHotspotPasswordInput("0", broken, "n3wPassw0rd"),
@@ -120,51 +131,108 @@ describe("mayCarryStream", () => {
 	});
 });
 
+/** The device's terminal `hotspot.config` frame, routed as the subscription layer does. */
+function terminal(success: boolean, incarnation = "inc-1", error?: string) {
+	const config = {
+		device: "0",
+		incarnation,
+		success,
+		...(error !== undefined ? { error } : {}),
+	} as Parameters<typeof noteWifiConfig>[0];
+	const owned = noteWifiConfig(config);
+	const key = newHotspotPasswordKey("0", iface({ incarnation }));
+	if (owned && success) confirmOperation(key);
+	else if (owned && error !== "radio-changed")
+		failOperation(key, error ?? "failed");
+	return owned;
+}
+
+const flush = async () => {
+	for (let i = 0; i < 4; i++) await Promise.resolve();
+};
+
 describe("renewHotspotPassword", () => {
-	it("dispatches one reconfigure under the dialog's Save key and stays pending", async () => {
-		const sent = await renewHotspotPassword(
-			"0",
-			iface(),
-			() => "fresh-password",
-		);
-		expect(sent).toBe("fresh-password");
+	it("dispatches one bound write under the dialog's Save key, pending until the device's terminal", async () => {
+		const renewal = renewHotspotPassword("0", iface(), {
+			generate: () => "fresh-password",
+		});
+		await flush();
 		expect(hotspotConfigure).toHaveBeenCalledTimes(1);
-		expect(hotspotConfigure).toHaveBeenCalledWith(
-			expect.objectContaining({
-				password: "fresh-password",
-				name: "Box",
-				channel: "auto_50",
-			}),
-		);
-		// The device's later hotspot.config reply settles it, not the dispatch ack.
+		expect(hotspotConfigure).toHaveBeenCalledWith({
+			device: "0",
+			incarnation: "inc-1",
+			name: "Box",
+			password: "fresh-password",
+			channel: "auto_50",
+			security: "wpa2",
+		});
+		// The dispatch ack settles nothing: the device's terminal frame does.
 		expect(getOperationPhase(newHotspotPasswordKey("0", iface()))).toBe(
 			"pending",
 		);
 		// A second press while pending sends nothing.
 		expect(
-			await renewHotspotPassword("0", iface(), () => "another-password"),
+			await renewHotspotPassword("0", iface(), {
+				generate: () => "another-password",
+			}),
 		).toBeUndefined();
 		expect(hotspotConfigure).toHaveBeenCalledTimes(1);
+
+		// The terminal is owned by this dispatch's receipt and confirms the op.
+		expect(terminal(true)).toBe(true);
+		expect(await renewal).toBe("fresh-password");
+		expect(getOperationPhase(newHotspotPasswordKey("0", iface()))).toBe(
+			"confirmed",
+		);
 	});
 
-	it("sends nothing without a complete hotspot", async () => {
-		expect(
-			await renewHotspotPassword("0", iface({ incarnation: undefined })),
-		).toBeUndefined();
+	it("a radio-changed terminal turns the accepted dispatch into a refusal", async () => {
+		const renewal = renewHotspotPassword("0", iface(), {
+			generate: () => "fresh-password",
+		});
+		await flush();
+		terminal(false, "inc-1", "radio-changed");
+		expect(await renewal).toBeUndefined();
+		expect(getOperationPhase(newHotspotPasswordKey("0", iface()))).toBe(
+			"failed",
+		);
+	});
+
+	it("a terminal for another radio is not this renewal's", async () => {
+		const renewal = renewHotspotPassword("0", iface(), {
+			generate: () => "fresh-password",
+		});
+		await flush();
+		terminal(true, "inc-other");
+		expect(getOperationPhase(newHotspotPasswordKey("0", iface()))).toBe(
+			"pending",
+		);
+		terminal(true);
+		expect(await renewal).toBe("fresh-password");
+	});
+
+	it("sends nothing without a complete live hotspot", async () => {
+		for (const broken of [
+			iface({ incarnation: undefined }),
+			iface({ hotspot: undefined, mode: "station" }),
+		]) {
+			expect(await renewHotspotPassword("0", broken)).toBeUndefined();
+		}
 		expect(hotspotConfigure).not.toHaveBeenCalled();
 	});
 
 	it("names its own attempt once the op has begun", async () => {
 		const seen: Array<symbol | undefined> = [];
-		await renewHotspotPassword(
-			"0",
-			iface(),
-			() => "fresh-password",
-			(attempt) => seen.push(attempt),
-		);
+		const renewal = renewHotspotPassword("0", iface(), {
+			generate: () => "fresh-password",
+			onDispatch: (attempt) => seen.push(attempt),
+		});
+		await flush();
 		const current = getOperationAttempt(newHotspotPasswordKey("0", iface()));
 		expect(current).toBeTypeOf("symbol");
 		expect(seen).toEqual([current]);
+		terminal(true);
+		await renewal;
 	});
 
 	it("reports nothing sent when the device refuses the dispatch", async () => {
@@ -172,10 +240,27 @@ describe("renewHotspotPassword", () => {
 			JSON.parse('{"success":false,"error":"saving"}'),
 		);
 		expect(
-			await renewHotspotPassword("0", iface(), () => "fresh-password"),
+			await renewHotspotPassword("0", iface(), {
+				generate: () => "fresh-password",
+			}),
 		).toBeUndefined();
 		expect(getOperationPhase(newHotspotPasswordKey("0", iface()))).toBe(
 			"failed",
+		);
+	});
+
+	it("an aborted wait releases the receipt without a terminal", async () => {
+		const controller = new AbortController();
+		const renewal = renewHotspotPassword("0", iface(), {
+			generate: () => "fresh-password",
+			signal: controller.signal,
+		});
+		await flush();
+		controller.abort();
+		// The accepted ack stands; the op stays pending for its own valve.
+		expect(await renewal).toBe("fresh-password");
+		expect(getOperationPhase(newHotspotPasswordKey("0", iface()))).toBe(
+			"pending",
 		);
 	});
 });
