@@ -344,7 +344,6 @@ test("live refresh withdraws the last link while a new launch still refuses an e
 		undefined,
 		undefined,
 		undefined,
-		undefined,
 		new Map([[MODEM, 11]]),
 	);
 	const restart = await startLive();
@@ -359,7 +358,6 @@ test("live refresh withdraws the last link while a new launch still refuses an e
 	);
 	processIfconfigOutput(
 		output,
-		undefined,
 		undefined,
 		undefined,
 		undefined,
