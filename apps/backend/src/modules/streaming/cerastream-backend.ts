@@ -1599,7 +1599,7 @@ export class CerastreamBackend implements StreamingBackend {
 			};
 		} catch (err) {
 			// No engine connection now; the next one reports its skew afresh.
-			forgetEngineSchemaSkew();
+			if (isEngineControlLoss(err)) forgetEngineSchemaSkew();
 			if (transportOnly && !isEngineControlLoss(err))
 				return { status: "error", detail: probeErrorMessage(err) };
 			return classifyEngineProbeError(err);

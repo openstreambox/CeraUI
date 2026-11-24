@@ -15,7 +15,10 @@ import {
 
 import { logger } from "../../helpers/logger.ts";
 import type { StreamStartUpdateAdmission } from "../system/update-orchestrator/runtime.ts";
-import type { StreamStopCause } from "./armed-stream-marker.ts";
+import {
+	RESTORATION_UNKNOWN_DEADLINE_MS,
+	type StreamStopCause,
+} from "./armed-stream-marker.ts";
 import { classifyConfigChangeDispatchError as classifyDispatchError } from "./config-change-bridge.ts";
 import { withRuntimeObservationOwner } from "./engine-runtime-observation.ts";
 import {
@@ -176,6 +179,12 @@ export type StreamSessionOrchestratorDeps = {
 	readonly pendingGateRemainingMs?: () => number;
 	readonly retryPolicy?: RetryPolicy;
 	readonly now?: () => number;
+	/**
+	 * How long after a control-connection loss the lost generation's own
+	 * session may still be Stopped automatically; defaults to the one-shot
+	 * restoration window.
+	 */
+	readonly lossStopWindowMs?: number;
 	readonly suppressionContext?: () => SuppressionContext;
 	readonly reportRetry?: (diagnostic: StartRetryDiagnostic) => void;
 	readonly reportTerminalFailure?: (diagnostic: StartRetryDiagnostic) => void;
@@ -357,6 +366,13 @@ export function createStreamSessionOrchestrator(
 	// control connection was lost. Its engine session is this process's own,
 	// even though the retirement ended the sender that carried it.
 	let lossRetiredGeneration: number | undefined;
+	// When that loss was retired. The Stop it authorizes is bounded by the
+	// one-shot restoration window: later evidence of a streaming session no
+	// longer shows the same session, so it stays protected.
+	let lossRetiredAt = 0;
+	const now = deps.now ?? Date.now;
+	const lossStopWindowMs =
+		deps.lossStopWindowMs ?? RESTORATION_UNKNOWN_DEADLINE_MS;
 	const stopDeadlineMs = deps.stopDeadlineMs ?? STOP_DEADLINE_MS;
 	const reconfigureDeadlineMs =
 		deps.reconfigureDeadlineMs ?? RECONFIGURE_DEADLINE_MS;
@@ -934,6 +950,7 @@ export function createStreamSessionOrchestrator(
 			active?.launchAdmitted === true && active.generation === owner.generation
 				? owner.generation
 				: undefined;
+		lossRetiredAt = now();
 		const retirement = deps.retireRuntime?.(owner.generation);
 		lossRetirement = retirement;
 		try {
@@ -1161,6 +1178,8 @@ export function createStreamSessionOrchestrator(
 			// an armed marker survives) lets restoration relaunch it, as before
 			// the retirement existed. A restarted process has no such record and
 			// still keeps the session protected below.
+			if (now() - lossRetiredAt > lossStopWindowMs)
+				lossRetiredGeneration = undefined;
 			if (
 				lossRetiredGeneration !== undefined &&
 				lossRetiredGeneration === owner.generation &&
