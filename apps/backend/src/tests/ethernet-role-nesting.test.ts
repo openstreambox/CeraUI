@@ -39,6 +39,7 @@ function harness() {
 		readPersistedRole: (name) => roles[name],
 		publishOutcome: () => {},
 		refreshInterfaces: () => {},
+		networkChangeTouches: async () => false,
 	};
 	return { roles, applied, deps };
 }
