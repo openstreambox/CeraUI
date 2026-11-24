@@ -82,6 +82,10 @@ sent if another transition has taken over that key.
 An open Start or mode confirmation, including the inline warning before dropping
 an uplink, keeps the dialog's consent slot; the other action cannot open a
 second confirmation while it is occupied.
+The hotspot dialog itself is bound to the radio lifetime it was opened on: a
+changed or missing token closes it with a notice instead of reloading, so a
+replacement radio needs a fresh pick before any reload or acknowledgement. A
+Start already sent keeps its receipt and reports its own refusal as a notice.
 
 Configure keeps this same recovery owner alive after the RPC dispatch
 acknowledgement until its captured config terminal arrives. A deferred
