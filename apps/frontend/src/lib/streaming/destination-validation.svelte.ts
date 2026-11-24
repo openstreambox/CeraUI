@@ -117,9 +117,7 @@ export function resolveValidationEndpoint(
 		return {
 			addr: server.addr,
 			port: server.port,
-			...(config.relay_streamid_override
-				? { streamid: config.relay_streamid_override }
-				: {}),
+
 			...(config.relay_protocol ? { protocol: config.relay_protocol } : {}),
 		};
 	}
@@ -129,7 +127,7 @@ export function resolveValidationEndpoint(
 		return {
 			addr: config.srtla_addr,
 			port: config.srtla_port,
-			...(config.srt_streamid ? { streamid: config.srt_streamid } : {}),
+
 			...(config.relay_protocol ? { protocol: config.relay_protocol } : {}),
 		};
 	}
@@ -164,7 +162,12 @@ export function fingerprintForValidation(
 	const source = config as Record<string, unknown> | undefined;
 	const subset: Record<string, unknown> = {};
 	for (const key of ENDPOINT_FINGERPRINT_KEYS) {
-		const value = source?.[key];
+		const value =
+			key === "srt_streamid"
+				? config?.srt_streamid_configured
+				: key === "relay_streamid_override"
+					? config?.relay_streamid_override_configured
+					: source?.[key];
 		if (value !== undefined) subset[key] = value;
 	}
 	const endpoint = resolveValidationEndpoint(config, relays, managedAccounts);
