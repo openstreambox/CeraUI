@@ -38,7 +38,11 @@
     holds is disarmed (`connection.autoconnect=no`). The original value is
     recorded first, durably, so a crash between the two leaves something to
     restore. A profile without `gsm.sim-id` matches any SIM by design and is
-    never touched. Nothing is deleted.
+    never touched. Nothing is deleted. An active profile is included: one
+    bound to this device id for a SIM none of its modems hold can only be up
+    as the hijack described above, and turning its autoconnect off does not
+    take it down (the takeover replaces it). Skipping it would leave it armed
+    for the next boot, where it wins the window again.
   - RE-ARM: when that SIM is back and its profile is the one selected for
     the modem, the recorded value is restored and the record dropped. A record
     found next to an armed profile is dropped without a write.
@@ -149,7 +153,6 @@ export function isOtherSimCandidate(
 		audit.deviceId === deviceId &&
 		audit.simId.trim() !== "" &&
 		audit.simId !== simId &&
-		audit.state.trim() === "" &&
 		audit.autoconnect.trim() === "yes"
 	);
 }

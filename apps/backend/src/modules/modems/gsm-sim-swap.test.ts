@@ -291,10 +291,26 @@ describe("settleSimSwapProfiles", () => {
 		).toBe(0);
 	});
 
-	test("an active profile is never parked", async () => {
+	test("a profile up on this modem for an absent SIM is parked too", async () => {
 		const profiles = swappedBox();
 		byName(profiles, "gsm").activeOn = "cdc-wdm1";
 		const { deps } = harness(profiles);
+		expect(
+			(await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps)).parked,
+		).toBe(1);
+		// Still up (autoconnect does not take a connection down); not armed for
+		// the next boot's window.
+		expect(byName(profiles, "gsm").activeOn).toBe("cdc-wdm1");
+		expect(nmAutoconnectChoice(profiles, { deviceId: RM520 })).toBe("generic");
+	});
+
+	test("a profile up on a twin modem that holds its SIM is left alone", async () => {
+		const profiles = swappedBox();
+		byName(profiles, "gsm").activeOn = "cdc-wdm2";
+		const { deps } = harness(profiles, {
+			...present,
+			[RM520]: new Set([LIGHT, DARK]),
+		});
 		expect(
 			(await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps)).parked,
 		).toBe(0);
