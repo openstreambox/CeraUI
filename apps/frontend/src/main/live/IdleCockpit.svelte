@@ -62,6 +62,8 @@ interface Props {
 	configRows: ConfigRow[];
 	isStreaming: boolean;
 	destinationValidated?: boolean;
+	/** The bar points to the unconfirmed-state band's Stop (StreamSetupChain). */
+	stopFirst?: boolean;
 	// ── StreamSetupChain: actions (callbacks owned by LiveView) ────────────────
 	onStart: () => void;
 	/** Source-gate fix + sole-camera "Change" — LiveView scrolls/focuses the list. */
@@ -99,6 +101,7 @@ const {
 	configRows,
 	isStreaming,
 	destinationValidated,
+	stopFirst = false,
 	onStart,
 	onOpenSource,
 	onGoNetwork,
@@ -222,6 +225,7 @@ const audioEmbeddedComingSoon = $derived(
 			{configRows}
 			{isStreaming}
 			{destinationValidated}
+			{stopFirst}
 			{onStart}
 			{onOpenSource}
 			{onGoNetwork}
