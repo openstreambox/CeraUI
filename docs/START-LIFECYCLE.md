@@ -1076,3 +1076,25 @@ handover requires an owner decision rather than a claimed host-test pass.
 These are host proofs on the real handler bodies (local procedures and the remote
 router's confirm flow); the physical effects on a board are inferred, not
 exercised.
+
+### Failed Start rollback connection
+
+Failed Start rollback uses the same independent connection and deadlines as
+explicit Stop. A pending session request must not serialize rollback behind
+itself. The independent Stop is dispatched before closing the session connection;
+only an idle acknowledgement confirms cleanup. Connect/Stop timeout preserves the
+original Start failure with unknown liveness, so replacement admission stays
+closed. Socket close is bounded, including acquisition failures before Start
+submission, and the rollback closes each acquired session only once.
+
+The control-owner regression injects a refused Start and an unresponsive session
+Stop, then verifies independent idle acknowledgement, socket retirement and a
+successful next Start on a fresh client. Separate connect, Stop and socket-close
+faults verify bounded settlement and honest liveness. These tests qualify the
+control owner; they do not prove driver or engine pipeline teardown on hardware.
+
+Explicit Stop and `confirmStop` use that same idle acknowledgement rule. A
+`starting`, `streaming` or `stopping` reply fails confirmation: explicit Stop
+calls its failure callback instead of its success callback, and `confirmStop`
+rejects. Deadline tests await the fake's fault signal before expiring a timer;
+the rollback trace also checks Stop dispatch precedes session socket close.
