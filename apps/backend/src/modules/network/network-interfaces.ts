@@ -869,6 +869,15 @@ function isNetifDownState(state: string): boolean {
 }
 
 /**
+ * Interfaces that are never uplinks: loopback, container bridges, and VPN
+ * tunnels (`tailscale0` when tailscaled runs in kernel mode). A tunnel carries
+ * traffic only to its private network, so bonding over it would break streams.
+ */
+export function isNonUplinkIfname(name: string): boolean {
+	return name === "lo" || /^(?:docker|l4tbr|tailscale)/.test(name);
+}
+
+/**
  * Primary event-driven driver: react to a monitor `device-state` event by
  * adding (link up) or removing (link down) the interface in the legacy `netif`
  * map, then reconcile+broadcast. IP/throughput are NOT carried by the event —
@@ -879,7 +888,7 @@ export function handleNetifMonitorEvent(event: MonitorEvent): void {
 	if (event.type !== "device-state") return;
 
 	const name = event.device;
-	if (name === "lo" || name.match("^docker") || name.match("^l4tbr")) return;
+	if (isNonUplinkIfname(name)) return;
 
 	const up = isNetifUpState(event.state);
 	if (!up && !isNetifDownState(event.state)) return;
@@ -1275,7 +1284,7 @@ async function readNetifSample() {
 		[...ifindices].map(([name, index]) => [index, name]),
 	);
 	for (const { name, block } of entries) {
-		if (!name || name === "lo" || /^(?:docker|l4tbr)/.test(name)) continue;
+		if (!name || isNonUplinkIfname(name)) continue;
 		ifnames.push(name);
 		if (!/\bRUNNING\b/.test(block.split("\n")[0] ?? "")) continue;
 		const current = readNetdevWitness(name);
@@ -1362,8 +1371,7 @@ function publishIfconfigEntries(
 
 	for (const { name, block: int } of entries) {
 		try {
-			if (name === "lo" || name.match("^docker") || name.match("^l4tbr"))
-				continue;
+			if (isNonUplinkIfname(name)) continue;
 
 			// Prefer the scope-annotated `ip addr` address (a routable global
 			// lease over a link-local) when present; fall back to ifconfig's single
