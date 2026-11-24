@@ -53,3 +53,11 @@ export const RECONFIGURE_DEADLINE_MS =
 
 export const ENGINE_TRANSITION_STOP_DEADLINE_MS =
 	INTERNAL_TRANSITION_WORST_CASE_BOUND_MS + STOP_DEADLINE_MS;
+
+/**
+ * Bound on the capability read a start makes on its own engine connection
+ * before sending a mix or a composition. Well inside the bindings' 10 s request
+ * timeout and the `start-rpc` phase deadline: an engine that does not answer
+ * gets the start without the gated fields instead of a stalled go-live.
+ */
+export const START_CAPABILITY_PREFLIGHT_DEADLINE_MS = 2_000;
