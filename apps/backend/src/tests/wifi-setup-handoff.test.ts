@@ -27,6 +27,7 @@ import {
 	setWifiAdapterMode,
 	startWifiAdapterModeRestore,
 } from "../modules/wifi/wifi-adapter-mode-transition.ts";
+import * as adapterOwner from "../modules/wifi/wifi-adapter-owner.ts";
 import * as reconciler from "../modules/wifi/wifi-adapter-reconciler.ts";
 import { hotspotAutoconnectPolicy } from "../modules/wifi/wifi-autoconnect-policy.ts";
 import { getWifiInterfacesByMacAddress } from "../modules/wifi/wifi-connections.ts";
@@ -34,6 +35,7 @@ import {
 	startHotspotForInterface,
 	startHotspotLocked,
 } from "../modules/wifi/wifi-hotspot-activation.ts";
+import * as hotspotActivity from "../modules/wifi/wifi-hotspot-activity.ts";
 import { settlePending } from "../modules/wifi/wifi-hotspot-monitor.ts";
 import {
 	isProvisioningSetupActive,
@@ -457,6 +459,54 @@ test("an owned profile pinned to the port where the setup radio now sits is disa
 	expect(f.profiles.get(SWAPPED)?.["connection.autoconnect"]).toBe("no");
 	expect(getConfig().wifi_modes?.[OTHER]).toBe("hotspot");
 });
+
+for (const intent of ["station", "hotspot"] as const) {
+	test(`a port-only owned profile on a limited setup radio is only disarmed under ${intent} intent`, async () => {
+		// No permanent MAC on the setup radio: it stays a candidate, so the port
+		// match may disarm the profile but never bind an owner or bring it down.
+		const witness = f.witnesses.get(PROVISIONING_AP_IFNAME);
+		if (!witness) throw new Error("Missing setup radio witness");
+		witness.mac = undefined;
+		const SWAPPED = "swapped-port-ap";
+		f.profiles.set(SWAPPED, {
+			"802-11-wireless.mode": "ap",
+			"802-11-wireless.ssid": "Old dongle AP",
+			"802-11-wireless-security.psk": "fixture-password",
+			"connection.interface-name": "",
+			"802-11-wireless.mac-address": "",
+			"match.path": PORT,
+			"connection.autoconnect": "yes",
+			"connection.autoconnect-priority": "999",
+		});
+		rememberHotspotCredentials(OTHER, {
+			ssid: "Old dongle AP",
+			password: "fixture-password",
+			conn: SWAPPED,
+		});
+		if (intent === "station") {
+			f.persistMode(OTHER, "station");
+			f.list([`${PROVISIONING_AP_IFNAME}:wifi:connected:${SWAPPED}`]);
+		}
+		saveConfig();
+		const bind = spyOn(adapterOwner, "bindWifiAdapterOwner");
+		const down = spyOn(hotspotActivity, "nmDisconnectActivation");
+		try {
+			await f.discover();
+
+			expect(f.profiles.get(SWAPPED)?.["connection.autoconnect"]).toBe("no");
+			expect(bind.mock.calls.filter(([, owner]) => owner === OTHER)).toEqual(
+				[],
+			);
+			expect(down).not.toHaveBeenCalled();
+			expect(getConfig().wifi_modes?.[OTHER]).toBe(
+				intent === "station" ? "station" : undefined,
+			);
+		} finally {
+			bind.mockRestore();
+			down.mockRestore();
+		}
+	});
+}
 
 test("the first start after a completed setup join, with no accounting yet, restores no AP over the live station", async () => {
 	f.persistMode(MAC, "hotspot");
