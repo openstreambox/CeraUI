@@ -12,7 +12,6 @@ import {
 	stopStreaming as stopStreamingFn,
 } from '$lib/helpers/SystemHelper';
 import { DESKTOP_CHROME_QUERY } from '$lib/layout';
-import { requestDialog } from '$lib/stores/dialog-request.svelte';
 import {
 	activeNotificationId,
 	clearNotifications,
@@ -23,6 +22,7 @@ import {
 	claimStartFailurePresentation,
 	startFailureNoticePending,
 } from '$lib/streaming/start-failure-presentation.svelte';
+import { runNotificationAction } from '../notifications/notification-presentation';
 
 // Resolve the action label i18n key against the live message registry, falling
 // back to the raw key so an unknown label never blocks the deep-link affordance.
@@ -78,13 +78,13 @@ $effect(() => {
 			dismissable: notification.isDismissable,
 			onDismiss: () => dismiss(id),
 			onAutoClose: () => dismiss(id),
-			...(action?.kind === 'navigate'
+			...(action?.kind === 'navigate' || action?.kind === 'command'
 				? {
 						...viewLogsSecondary(notification, () => toast.dismiss(id)),
 						action: {
 							label: resolveActionLabel(action.labelKey),
 							onClick: () => {
-								requestDialog(action.target);
+								void runNotificationAction(action, id);
 								toast.dismiss(id);
 							},
 						},

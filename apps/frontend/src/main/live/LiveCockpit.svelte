@@ -30,6 +30,12 @@
  * {@link IngestStats} is rendered UNCONDITIONALLY so its device-local session
  * rollup survives the streaming→stopped flip (its instance is never remounted).
  *
+ * LiveView also keeps it mounted, live and not in `summaryMode`, while a
+ * supervised connection restart is between its Stop and its Start
+ * (`restarting`): the operator stopped nothing, so the cockpit says the
+ * connection is restarting and what viewers see, keeps Stop, and IngestStats
+ * treats the gap as part of the session instead of closing it as "Session ended".
+ *
  * State ownership stays in LiveView: EVERY datum and handler here is a prop — this
  * component owns NO `$state`, NO RPC, and writes NO config.
  */
@@ -41,7 +47,7 @@ import type {
 	LinkTelemetryMessage,
 	SourcesMessage,
 } from '@ceraui/rpc/schemas';
-import { Gauge, Layers, MonitorOff, Repeat, TriangleAlert } from '@lucide/svelte';
+import { Gauge, Layers, MonitorOff, RefreshCw, Repeat, TriangleAlert } from '@lucide/svelte';
 import { MediaQuery } from 'svelte/reactivity';
 
 import IngestStats from '$lib/components/custom/IngestStats.svelte';
@@ -140,6 +146,9 @@ interface Props {
 	isStreaming: boolean;
 	optimismState: StreamingOptimismState;
 	onStop: () => void;
+	// A supervised connection restart is between its Stop and its Start. The
+	// session goes on: Stop stays, and the restart band replaces the live bands.
+	restarting?: boolean;
 	// ── Post-stream summary window ─────────────────────────────────────────────
 	// When true the stream has stopped but LiveView is holding this cockpit mounted
 	// so IngestStats can show its historical summary; collapse to summary-only.
@@ -194,6 +203,7 @@ const {
 	isStreaming,
 	optimismState,
 	onStop,
+	restarting = false,
 	summaryMode = false,
 	onCloseSummary = undefined,
 }: Props = $props();
@@ -272,9 +282,20 @@ const canPlace = $derived(compositionGeometrySupported(capabilities));
 const canMix = $derived(capabilities?.audio_mix !== undefined);
 // Whether any banner is up: the banners lead the cards column only when they
 // exist, so an alert-free stream opens no empty row above the telemetry card.
+const showRestarting = $derived(restarting && !summaryMode);
 const hasBanners = $derived(
-	captureBands.length > 0 || showSourceLost || showVideoSignalLost || showAudioLost || allLinksDown || observationLost,
+	showRestarting ||
+		captureBands.length > 0 ||
+		showSourceLost ||
+		showVideoSignalLost ||
+		showAudioLost ||
+		allLinksDown ||
+		observationLost,
 );
+// The restart is part of the session: Stop stays, and the session rollup is
+// not closed into a "Session ended" summary. Stop asks first only for a stream
+// the device has confirmed; during a restart it still ends the session at once.
+const sessionOn = $derived(isStreaming || showRestarting);
 
 const BAND_CLASS =
 	'border-status-warning/50 bg-status-warning/10 flex items-start gap-3 rounded-lg border p-3';
@@ -296,6 +317,16 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 	<!-- Banners lead the cards column. -->
 	{#if hasBanners}
 		<div class="flex min-w-0 flex-col gap-6 lg:col-span-2 lg:col-start-4">
+			{#if showRestarting}
+				<div class={BAND_CLASS} data-testid="live-restarting-banner" role="status">
+					<RefreshCw aria-hidden={true} class="{BAND_ICON_CLASS} motion-safe:animate-spin" />
+					<div class="min-w-0 space-y-0.5">
+						<p class="text-status-warning text-sm font-medium">{m["live.restartingConnection"]()}</p>
+						<p class="text-muted-foreground text-xs">{m["live.restartingConnectionBody"]()}</p>
+					</div>
+				</div>
+			{/if}
+
 			{#each captureBands as band (band.kind)}
 				{#if band.kind === 'standby'}
 					<div class={BAND_CLASS} data-testid="capture-standby-banner" role="status">
@@ -500,7 +531,7 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 				/>
 			{/if}
 
-			<IngestStats {telemetry} {rows} {isStreaming} bitrateKbps={measuredBitrateKbps} />
+			<IngestStats {telemetry} {rows} isStreaming={sessionOn} bitrateKbps={measuredBitrateKbps} />
 		</LiveDetails>
 	</section>
 
@@ -537,8 +568,8 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 				<div class="min-w-0 flex-1 sm:flex-none sm:shrink-0 sm:min-w-56">
 					<StreamControlButton
 						canStart={false}
-						confirmStop
-						{isStreaming}
+						confirmStop={isStreaming}
+						isStreaming={sessionOn}
 						{optimismState}
 						onStart={() => undefined}
 						{onStop}
