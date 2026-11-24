@@ -188,9 +188,11 @@ async function collectLog(
 		? ` Boots with no shown records: ${rendered.bootsWithoutShown.join(", ")}.`
 		: "";
 	const label = shouldUseMocks() ? `${mockJournalLabel(service)}\n` : "";
-	const contents = redactStreamIdJournal(redactSrtPassphrases(
-		`${label}Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\nRecords: ${rendered.shown} shown, ${rendered.withheld} withheld (lines without a typed shape, messages the code does not write, split or oversized records). [boot 0] is the running boot, [boot -1] the one before it.${quietBoots}\n${boundRedactedSupportJournal(rendered.text)}\n\n${summary}`,
-	));
+	const contents = redactStreamIdJournal(
+		redactSrtPassphrases(
+			`${label}Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\nRecords: ${rendered.shown} shown, ${rendered.withheld} withheld (lines without a typed shape, messages the code does not write, split or oversized records). [boot 0] is the running boot, [boot -1] the one before it.${quietBoots}\n${boundRedactedSupportJournal(rendered.text)}\n\n${summary}`,
+		),
+	);
 	try {
 		// The client's request id, when it sent one, ties this file to that request.
 		conn.send(
