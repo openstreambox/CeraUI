@@ -203,7 +203,9 @@ export async function applyHotspotProfilePolicy(
 					if (!current) refusedPins = true;
 					return current;
 				};
-				const ownsPins = async () => {
+				// "disarm" is the setup radio's port-only match: it authorizes the
+				// autoconnect=no write and nothing else.
+				const ownsPins = async (): Promise<boolean | "disarm"> => {
 					const currentOwners = getHotspotCredentialOwners(uuid);
 					if (
 						currentOwners.length !== 1 ||
@@ -232,10 +234,10 @@ export async function applyHotspotProfilePolicy(
 						);
 					// The image's setup radio never keeps an owned AP armed. A profile
 					// without a MAC pin matches it by port alone, so its sole owner may
-					// disarm it there; candidates exclude the setup radio, so nothing
-					// here repins it or brings an activation down on it.
+					// disarm it there, and only that: a limited setup radio can still be
+					// a candidate, so this grants no binding, Down or arming authority.
 					if (!profile.mac && occupant.ifname === PROVISIONING_AP_IFNAME)
-						return true;
+						return "disarm";
 					if (occupant.permanentMac !== undefined)
 						return occupant.permanentMac === mac;
 					// Station teardown can use the exact recorded AP witness on a
@@ -254,10 +256,68 @@ export async function applyHotspotProfilePolicy(
 									))),
 					);
 				};
-				if (!(await ownsPins()))
+				const disarm = async (): Promise<string | undefined | false> => {
+					const permitDisarm = async () => {
+						const live = await readHotspotProfilePins(uuid);
+						if (!live) return false;
+						refusedPins =
+							live[0].toLowerCase() !== profile.mac.toLowerCase() ||
+							live[1] !== profile.path ||
+							!(await ownsPins());
+						// An owned profile's old port may be disarmed, never repinned here.
+						return !refusedPins && inventoryCurrent;
+					};
+					const disabled = await act({
+						uuid,
+						kind: "modify",
+						fields: { "connection.autoconnect": "no" },
+						run: (fields) =>
+							writeHotspotProfileFields(write, uuid, fields, permitDisarm),
+					});
+					if (refusedPins) return skipConflictingPins();
+					if (disabled === undefined && !healthyTwins) return undefined;
+					if (!disabled) return `could not disable ${uuid}`;
+					if (healthyTwins) {
+						const observed = await observeHotspotProfile(uuid);
+						if (
+							observed.kind !== "absent" &&
+							(observed.kind !== "read" || observed.autoconnect !== "no")
+						)
+							return `could not verify autoconnect is disabled for ${uuid}`;
+					}
+					return false;
+				};
+				const ownership = await ownsPins();
+				if (!ownership)
 					return profile.autoconnect === "yes" || failedFirstStart || station
 						? skipConflictingPins()
 						: undefined;
+				if (ownership === "disarm") {
+					// Keep the saved hotspot intent for CeraUI's restore, on the same
+					// terms as the hotspot branch below, then disarm.
+					const verifiedOnly = candidates.every(
+						(row) => row.classification === "verified",
+					);
+					if (
+						!station &&
+						!failedFirstStart &&
+						profile.autoconnect === "yes" &&
+						verifiedOnly &&
+						getPersistedWifiAdapterMode(owner) === undefined
+					) {
+						try {
+							persistWifiAdapterMode(owner, hybrid ? "hybrid" : "hotspot");
+						} catch (error: unknown) {
+							return `intent persistence ${error instanceof Error ? error.name : "failed"}`;
+						}
+					}
+					if (profile.autoconnect === "yes" || failedFirstStart) {
+						const stop = await disarm();
+						if (stop !== false) return stop;
+					}
+					if (failedFirstStart) clearHotspotProfileCreation(owner, uuid);
+					return undefined;
+				}
 				if (candidates.length === 1 && resolved)
 					for (const candidate of candidates)
 						bindWifiAdapterOwner(candidate.ifname, owner, {
@@ -361,34 +421,8 @@ export async function applyHotspotProfilePolicy(
 					}
 				}
 				if (profile.autoconnect === "yes" || failedFirstStart) {
-					const permitDisarm = async () => {
-						const live = await readHotspotProfilePins(uuid);
-						if (!live) return false;
-						refusedPins =
-							live[0].toLowerCase() !== profile.mac.toLowerCase() ||
-							live[1] !== profile.path ||
-							!(await ownsPins());
-						// An owned profile's old port may be disarmed, never repinned here.
-						return !refusedPins && inventoryCurrent;
-					};
-					const disabled = await act({
-						uuid,
-						kind: "modify",
-						fields: { "connection.autoconnect": "no" },
-						run: (fields) =>
-							writeHotspotProfileFields(write, uuid, fields, permitDisarm),
-					});
-					if (refusedPins) return skipConflictingPins();
-					if (disabled === undefined && !healthyTwins) return undefined;
-					if (!disabled) return `could not disable ${uuid}`;
-					if (healthyTwins) {
-						const observed = await observeHotspotProfile(uuid);
-						if (
-							observed.kind !== "absent" &&
-							(observed.kind !== "read" || observed.autoconnect !== "no")
-						)
-							return `could not verify autoconnect is disabled for ${uuid}`;
-					}
+					const stop = await disarm();
+					if (stop !== false) return stop;
 				}
 				if (failedFirstStart) clearHotspotProfileCreation(owner, uuid);
 				return undefined;
