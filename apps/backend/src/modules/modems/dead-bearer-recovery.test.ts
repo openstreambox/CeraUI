@@ -895,6 +895,31 @@ describe("runDeadBearerRecovery", () => {
 			// was live, and the outage's age is kept, not cleared.
 			expect(at).toEqual([315_000]);
 		});
+
+		test("an outage that ends while a Start holds the interlock is forgotten, also past the cap", async () => {
+			others = [eth()];
+			health = dead();
+			let flaps = 0;
+			let held: LifecycleLease | undefined;
+			duringLeasedReads(() => {
+				const admitted = tryAcquireLifecycle("streaming");
+				if (!admitted.admitted) return;
+				if (++flaps <= DEAD_BEARER_MAX_HOLD_RESTARTS) {
+					admitted.lease.release();
+					return;
+				}
+				// Past the cap: the Start still holds the interlock while the
+				// link answers again.
+				held = admitted.lease;
+				health = record({ state: "up" }, wall);
+			}, DEAD_BEARER_MAX_HOLD_RESTARTS + 1);
+			expect(await pollUntil(300_000)).toEqual([]);
+			expect(held).toBeDefined();
+			held?.release();
+			health = dead();
+			// A new outage from 315 s waits its own 60 s hold.
+			expect(await pollUntil(390_000)).toEqual([375_000]);
+		});
 	});
 
 	test("an outage that ends during the owner reads is forgotten even when the device lookup fails", async () => {

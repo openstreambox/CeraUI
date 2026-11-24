@@ -680,9 +680,11 @@ export async function runDeadBearerRecovery(
 						skipped("modem reconnect skipped: the stream changed");
 						return;
 					}
-					// Saved also when the device lookup failed, so an outage that ended
-					// during the reads does not keep its age.
-					if (refusal === undefined) memories.set(key, again.memory);
+					// The identity checked out, and stream activity took the branch
+					// above. Saved also when the device lookup failed or a Start holds
+					// the interlock, so an outage that ended during the reads does not
+					// keep its age.
+					memories.set(key, again.memory);
 					return;
 				}
 				if (streamChanged) {
