@@ -49,7 +49,7 @@ test.each([false, true])(
 				phy: "/sys/devices/policy/phy0",
 				path: PORT,
 			});
-		f.list([`wlan0:wifi:connected:${PROFILE}`]);
+		f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 		await f.discover();
 		const row = Object.values(getWifiInterfacesByMacAddress()).find(canHotspot);
 		if (!row) throw new Error("Missing fixture radio");
@@ -114,7 +114,7 @@ test.each(["yes", "no"])(
 			PROFILE,
 			ACTIVE_PATH,
 			RUN_ID,
-			"wlan0",
+			f.ifname,
 		);
 		expect(observedWifiAdapterMode(f.row())).toBe("station");
 		expect(profile()["connection.autoconnect"]).toBe("no");
@@ -128,7 +128,7 @@ test("round3 owner Stop policy recovers on its scheduled retry while keeping sta
 	spyOn(time, "getms").mockImplementation(() => Date.now());
 	f.persistMode(MAC, "hotspot");
 	profile()["match.path"] = PORT;
-	f.list([`wlan0:wifi:connected:${PROFILE}`]);
+	f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 	await f.discover();
 	wifiCancelScanRefresh();
 	f.row().conn = PROFILE;
@@ -140,7 +140,7 @@ test("round3 owner Stop policy recovers on its scheduled retry while keeping sta
 		accepted ? write(uuid, fields) : Promise.resolve(false),
 	);
 	const disconnect = jest.fn(async () => {
-		f.list(["wlan0:wifi:disconnected:"]);
+		f.list([`${f.ifname}:wifi:disconnected:`]);
 		return true;
 	});
 
@@ -159,7 +159,7 @@ test("round3 owner Stop policy recovers on its scheduled retry while keeping sta
 test("round3 owner a failed Stop disconnect keeps the existing failure and prior intent", async () => {
 	f.persistMode(MAC, "hotspot");
 	profile()["match.path"] = PORT;
-	f.list([`wlan0:wifi:connected:${PROFILE}`]);
+	f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 	await f.discover();
 	f.row().conn = PROFILE;
 	f.row().activeConn = PROFILE;
