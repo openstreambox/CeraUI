@@ -44,7 +44,7 @@ vi.mock("$lib/rpc/client", () => ({
 	},
 }));
 vi.mock("svelte-sonner", () => ({
-	toast: { error: vi.fn(), success: vi.fn() },
+	toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
 }));
 vi.mock("qrcode", () => ({ default: { toDataURL: vi.fn(async () => "") } }));
 
