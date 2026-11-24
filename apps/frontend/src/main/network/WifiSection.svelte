@@ -1,6 +1,6 @@
 <script lang="ts">
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
-import type { NetifMessage, WifiInterface } from '@ceraui/rpc/schemas';
+import type { NetifMessage, WifiAdapterMode, WifiInterface } from '@ceraui/rpc/schemas';
 import {
 	Ban,
 	ChevronRight,
@@ -31,6 +31,7 @@ import { cn } from '$lib/utils';
 import WifiModeBadge from './WifiModeBadge.svelte';
 import WifiModeErrorBand from './WifiModeErrorBand.svelte';
 import WifiModeSelector from './WifiModeSelector.svelte';
+import WifiSavedHybridBand from './WifiSavedHybridBand.svelte';
 import { deriveWifiAdapterModeView, wifiModeTarget } from './wifi-adapter-mode-view';
 import {
 	blockIsOperatorActionable,
@@ -86,6 +87,22 @@ function openHotspotSetup(id: string) {
 }
 
 // ── The per-adapter mode offering (station / hotspot / hybrid) ──
+// The row hosts the saved-hybrid band (the popover may be closed), so its
+// switch reopens the selector with the mode to request: the selector's own
+// activation gate stays the only path to an access point.
+const modeOpen = $state<Record<string, boolean>>({});
+const modeRequest = $state<Record<string, WifiAdapterMode | undefined>>({});
+
+function setModeOpen(id: string, open: boolean) {
+	modeOpen[id] = open;
+	if (!open) delete modeRequest[id];
+}
+
+function requestModeSwitch(id: string, mode: WifiAdapterMode) {
+	modeRequest[id] = mode;
+	modeOpen[id] = true;
+}
+
 // The offering is a PULL, so it is re-read whenever the set of radios changes —
 // a newly-plugged adapter has no entry until we ask for one. `refresh` is
 // self-serialising, so a re-render cannot stack duplicate reads.
@@ -280,7 +297,7 @@ $effect(() => {
 						     under the row. Its TERMINAL FAILURE deliberately does NOT come
 						     with it: a dismissed popover cannot report an outcome, so the row
 						     hosts that band itself (see the secondary region below). -->
-							<Popover.Root>
+							<Popover.Root bind:open={() => modeOpen[id] ?? false, (open) => setModeOpen(id, open)}>
 							<Popover.Trigger
 								class="focus-visible:ring-ring text-muted-foreground hover:bg-accent/50 hover:text-foreground inline-flex h-8 min-h-[var(--touch-target-min)] items-center gap-1.5 rounded-md px-2.5 text-sm font-medium transition-colors outline-hidden focus-visible:ring-2"
 								data-testid="open-wifi-mode"
@@ -307,6 +324,7 @@ $effect(() => {
 										hotspotLive: hotspotIsActive(iface),
 									}}
 									errorPlacement="host"
+									initialRequest={modeRequest[id]}
 									lockedReason={isSwitching ? stationLockReason : undefined}
 								/>
 							</Popover.Content>
@@ -395,6 +413,15 @@ $effect(() => {
 					     the row keeps its terminal failure instead: an outcome nobody can
 					     see is an outcome that did not happen. `WifiModeSelector` withholds
 					     its own copy (`errorPlacement="host"`) so this fact renders once. -->
+					{#if modeView.savedHybridRefused && !degradedReasonKey}
+						<WifiSavedHybridBand
+							device={id}
+							onSwitch={modeView.options.some((option) => option.mode === 'hotspot' && option.available)
+								? () => requestModeSwitch(id, 'hotspot')
+								: undefined}
+							switchDisabled={isSwitching}
+						/>
+					{/if}
 					{#if modeView.errorKey}
 						<WifiModeErrorBand device={id} error={modeView.error} errorKey={modeView.errorKey} />
 					{/if}
