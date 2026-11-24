@@ -79,6 +79,8 @@ type RetirementListener = (
 	name: string,
 	epoch: number,
 	fencePoll: boolean,
+	/** The witness recorded for the lifetime that just ended, if any. */
+	retired: NetdevWitness | undefined,
 ) => void;
 const listeners = new Set<RetirementListener>();
 
@@ -160,10 +162,11 @@ export function noteNetdevWitness(name: string, next: NetdevWitness): void {
 }
 
 export function retireNetdev(name: string, fencePoll = true): void {
+	const retired = witnesses.get(name);
 	witnesses.delete(name);
 	const epoch = advanceNetifTopologyGeneration();
 	epochs.set(name, epoch);
-	for (const listener of listeners) listener(name, epoch, fencePoll);
+	for (const listener of listeners) listener(name, epoch, fencePoll, retired);
 }
 
 export function onNetdevRetired(listener: RetirementListener): () => void {
