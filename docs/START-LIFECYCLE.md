@@ -336,7 +336,7 @@ require — each row is a site that was found and mapped.
 | 14 | **subscribe** connection lost (`CerastreamConnectionError`) | `cerastream-backend.ts:449-451` | `subscribe` | `engine_unavailable` | no |
 | 15 | start-RPC `-32000` unsupported_version | `errors.js:74` | `start-rpc` | `protocol_incompatible` | no |
 | 16 | start-RPC `-32602` params.invalid | `errors.js:75` | `start-rpc` | `start_invalid` | no |
-| 17 | start-RPC `-32002` already_streaming | `errors.js:77` | `start-rpc` | `engine_internal` | no |
+| 17 | start-RPC `-32002` already_streaming | `errors.js:77` | `start-rpc` | `engine_internal` (no rollback Stop, liveness unknown; see [Failed Start rollback connection](#failed-start-rollback-connection)) | no |
 | 18 | start-RPC `-32003` device.not_found | `errors.js:78` | `start-rpc` | `start_invalid` | no |
 | 19 | start-RPC `-32603` internal | `errors.js:82` | `start-rpc` | `engine_internal` | no |
 | 20 | client **request timeout** (10s) on the `start` RPC | client `client.js:9` (`requestTimeoutMs: 10_000`) | `start-rpc` | `start_timeout` | no |
@@ -1089,6 +1089,15 @@ only an idle acknowledgement confirms cleanup. Connect/Stop timeout preserves th
 original Start failure with unknown liveness, so replacement admission stays
 closed. Socket close is bounded, including acquisition failures before Start
 submission, and the rollback closes each acquired session only once.
+
+One refusal is exempt. A Start the engine refuses as
+`cerastream.state.already_streaming` (or `-32002` without a `data.code`) opened
+nothing, and the engine's Stop takes no session, so a rollback Stop would end
+whichever session caused the refusal, possibly another client's. That refusal
+sends no rollback Stop and keeps unknown liveness, so the lifecycle reconciles
+and the operator's Stop decides. The trade-off: a leftover session of our own
+also stays up until that Stop instead of being cleared by the rollback. Every
+other failure after Start dispatch still rolls back as above.
 
 The control-owner regression injects a refused Start and an unresponsive session
 Stop, then verifies independent idle acknowledgement, socket retirement and a
