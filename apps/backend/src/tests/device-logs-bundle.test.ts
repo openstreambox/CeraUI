@@ -993,3 +993,22 @@ test("uncompressed output is bounded at 32 MiB and compressed output at 8 MiB", 
 		}
 	}
 }, 30_000);
+
+test("the /boot FAT fault marker's line reaches the downloaded settings record unchanged", async () => {
+	const bootFat = {
+		state: "present",
+		detail:
+			"Shared /boot FAT check needs attention: [Errno 16] Device or resource busy: '/dev/disk/by-partlabel/boot'",
+	} as const;
+	source = { ...source, settings: { ...source.settings, bootFat } };
+	const manifest = await previewBundle();
+	expect(manifest.sections[1]).toEqual({
+		id: "settings",
+		entries: 1,
+		redactions: 0,
+	});
+	const { lines } = await unpack(await download());
+	expect(lines.find((line) => line.section === "settings")).toMatchObject({
+		bootFat,
+	});
+});

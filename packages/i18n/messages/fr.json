@@ -3181,6 +3181,7 @@
 	"network.sharing.policy.healthTitle": "Santé de la liaison montante",
 	"network.sharing.policy.healthBody": "Les liaisons montantes {usable} ou {total} sont suffisamment saines pour être prises en compte. La politique de routage des appareils clients peut les exclure.",
 	"notifications.clientCarrying": "Le boîtier transporte du trafic client. Mises à jour, redémarrage, extinction et changements de liaison à vide attendent.",
+	"notifications.bootFatFault": "Le boîtier a démarré normalement. Ses fichiers de démarrage devront être vérifiés au prochain entretien. Rien à faire pour le moment.",
 	"notifications.powerWaitingForUpdate": "Le boîtier s’éteindra dès la fin de la mise à jour.",
 	"notifications.powerStuckOnUpdate": "La mise à jour est toujours en cours après 15 minutes. Le boîtier s’éteindra dès qu’elle sera terminée.",
 	"notifications.powerShuttingDown": "Extinction en cours.",

@@ -22,9 +22,13 @@ errors retain the matching existing log error code and carry `data.stage`.
 Preview and creation execute the same bounded pipeline. `bundle-data.ts`
 collects current versions, the current and previous available journal boots'
 stored versions, retained events and boot records, and an allowlist of facts:
-log settings/state, effective update channel, autostart, cached hardware kind
-and the cached used/total bytes for `/data`. Missing historical versions stay
-null. No config dump, password hash, authentication-token file, Wi-Fi PSK or
+log settings/state, effective update channel, autostart, cached hardware kind,
+the cached used/total bytes for `/data` and the image's `/boot` FAT fault marker
+(`bootFat`: `absent`, `present` with the checker's one line or null when the
+file is not in its format, or `unreadable` with the errno code; see
+`modules/system/boot-fat-fault.ts`). Only a line in the checker's own format is
+copied, so other file contents never enter the bundle. Missing
+historical versions stay null. No config dump, password hash, authentication-token file, Wi-Fi PSK or
 NetworkManager profile is included. `readUpdateChannel()` reuses the update
 owner's validated readers without migrating or writing settings.
 

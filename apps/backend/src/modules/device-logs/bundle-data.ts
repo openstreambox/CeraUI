@@ -7,6 +7,10 @@ import { getRouterCellularMarkers } from "../network/router-cellular-scan.ts";
 import { getRelays } from "../remote/remote-relays.ts";
 import { getManagedIngestAccounts } from "../remote-control/ingest-slots.ts";
 import { setup } from "../setup.ts";
+import {
+	type BootFatFault,
+	readBootFatFault,
+} from "../system/boot-fat-fault.ts";
 import { getDeviceStatsSnapshot } from "../system/device-stats-snapshot.ts";
 import { getHardwareKindCached } from "../system/hardware-kind.ts";
 import { readUpdateChannel } from "../system/update-settings.ts";
@@ -27,6 +31,8 @@ interface BundleData {
 		readonly autostart: boolean | null;
 		readonly hardwareKind: ReturnType<typeof getHardwareKindCached>;
 		readonly data: { readonly used: number; readonly total: number } | null;
+		/** The image's /boot FAT fault marker; optional only for older fixtures. */
+		readonly bootFat?: BootFatFault;
 	};
 	readonly events: readonly DeviceEvent[];
 	readonly bootRecords: readonly EventBootRecord[];
@@ -114,10 +120,11 @@ export function collectHeldSecrets(): Array<{ kind: string; value: string }> {
 export async function collectBundleData(): Promise<BundleData> {
 	const config = getConfig();
 	const secrets = collectHeldSecrets();
-	const [exportedBy, available, updateChannel] = await Promise.all([
+	const [exportedBy, available, updateChannel, bootFat] = await Promise.all([
 		collectVersionContext(),
 		listBoots(),
 		readUpdateChannel(),
+		readBootFatFault(),
 	]);
 	const previous = available
 		.filter((boot) => boot.logsAvailable && boot.bootId !== exportedBy.bootId)
@@ -142,6 +149,7 @@ export async function collectBundleData(): Promise<BundleData> {
 			autostart: config.autostart ?? null,
 			hardwareKind: getHardwareKindCached(),
 			data: disk ? { used: disk.used, total: disk.total } : null,
+			bootFat,
 		},
 		events: readEvents(),
 		bootRecords: readBoots(),
