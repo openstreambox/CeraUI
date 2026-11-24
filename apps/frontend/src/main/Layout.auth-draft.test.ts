@@ -32,6 +32,12 @@ vi.mock("$lib/rpc/client", () => ({
 		ui: { heartbeat: async () => ({ success: true }) },
 	},
 	rpcClient: {
+		// The session gate (reconnect re-auth): never armed in this stub.
+		setSessionActive: () => undefined,
+		confirmSocketSignedIn: () => undefined,
+		failHeldCalls: () => undefined,
+		isAwaitingSignIn: () => false,
+		recycleSocket: () => undefined,
 		isConnected: () => true,
 		getConnectionState: () => "connected",
 		onConnectionChange: () => () => undefined,
