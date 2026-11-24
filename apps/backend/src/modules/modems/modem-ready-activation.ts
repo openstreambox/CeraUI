@@ -14,7 +14,10 @@ import {
 } from "./modem-registration.ts";
 import { getModem, getModemIds, setModem } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
-import { withModemMutation } from "./mutation-lease.ts";
+import {
+	withBackgroundModemLease,
+	withModemMutation,
+} from "./mutation-lease.ts";
 
 interface ActivationIntent {
 	state: "pending" | "consumed";
@@ -33,6 +36,8 @@ export interface ModemReadyActivationDeps {
 	readonly automaticReady: typeof automaticActivationReady;
 	readonly connect: typeof nmConnect;
 	readonly mutate: typeof withModemMutation;
+	/** The redial's lease: same-modem exclusion that never refuses a Stream Start. */
+	readonly backgroundMutate: typeof withBackgroundModemLease;
 	readonly readSim: typeof readReadyModemSim;
 	readonly resolveConfig: typeof resolveLateModemConfig;
 }
@@ -48,6 +53,7 @@ const defaultDeps: ModemReadyActivationDeps = {
 	automaticReady: automaticActivationReady,
 	connect: nmConnect,
 	mutate: withModemMutation,
+	backgroundMutate: withBackgroundModemLease,
 	readSim: readReadyModemSim,
 	resolveConfig: resolveLateModemConfig,
 };
@@ -58,12 +64,59 @@ const intents = new Map<ModemId, ActivationIntent>();
 const lastDispatch = new Map<string, number>();
 const COOLDOWN_MS = 300_000;
 
+/*
+  REDIAL A PREPARED AUTOMATIC PROFILE AFTER IT DROPS.
+
+  Automatic carrier profiles are demoted to `connection.autoconnect=no` by
+  cellular preparation, so NetworkManager never brings them back by itself.
+  The one-shot intent above dials them once per ModemManager object; without
+  this, a bearer that drops later (cell loss, network detach, a settings save
+  that reactivated it) stayed down until the modem re-enumerated or the
+  backend restarted.
+
+  Only profiles that preparation owns qualify: autoconnect is "no" AND the
+  preparation grant still matches this SIM, modem and USB generation. Manual
+  profiles keep NetworkManager's own autoconnect and retry handling.
+
+  - The device must read NetworkManager state 30 (disconnected) with the modem
+    registered on two polls at least REDIAL_DWELL_MS apart, so a transient
+    state between NetworkManager's own steps never triggers a dial.
+  - Dials per physical modem are spaced 30, 60, 120, 240, then 300 s apart,
+    counted from the last dial of any kind (the first-activation cooldown uses
+    the same clock). After REDIAL_TAIL_AFTER dials without a lasting
+    connection the spacing becomes REDIAL_TAIL_MS (30 min): a SIM whose plan
+    has lapsed or whose APN is wrong is not dialled every five minutes forever.
+    The spacing resets once the link has stayed connected for REDIAL_STABLE_MS.
+  - ModemManager may still report a stale bearer as `connected` after
+    NetworkManager tore the device down; that counts like `registered`.
+  - Each dial runs under the modem's background lease
+    (`withBackgroundModemLease`), rechecked after it is taken: it excludes
+    other mutations of this modem but never refuses a Stream Start, and it
+    does not begin while a stream is being launched.
+  - A failed dial raises the modem's data-call warning once; repeated failures
+    do not re-broadcast it.
+*/
+const REDIAL_DELAYS_MS = [30_000, 60_000, 120_000, 240_000, 300_000] as const;
+const REDIAL_TAIL_AFTER = 5;
+const REDIAL_TAIL_MS = 1_800_000;
+const REDIAL_DWELL_MS = 20_000;
+const REDIAL_STABLE_MS = 300_000;
+
+interface RedialState {
+	/** Dials since the link last stayed connected for REDIAL_STABLE_MS. */
+	failures: number;
+	disconnectedSince?: number;
+	connectedSince?: number;
+}
+const redials = new Map<string, RedialState>();
+
 export function setModemReadyActivationDepsForTest(
 	overrides: Partial<ModemReadyActivationDeps> | null,
 ): void {
 	deps = overrides === null ? defaultDeps : { ...defaultDeps, ...overrides };
 	intents.clear();
 	lastDispatch.clear();
+	redials.clear();
 }
 
 /** Called only after a genuinely new registry entry has been installed. */
@@ -140,7 +193,7 @@ async function readReadiness(
 	const device = await deps.resolveDevice(uuid);
 	if (device === undefined) return undefined;
 	const fields = await deps.readDevice(device, "GENERAL.STATE");
-	const raw = fields?.length === 1 ? fields[0]?.trim() : undefined;
+	const raw = singleDeviceValue(fields);
 	const code = raw?.match(/^(\d+)(?: \([^()\r\n]+\))?$/)?.[1];
 	if (!isPending(id, intent) || getModem(id)?.config?.conn !== uuid)
 		return undefined;
@@ -164,6 +217,122 @@ async function readReadiness(
 		: undefined;
 }
 
+function redialDelay(failures: number): number {
+	if (failures >= REDIAL_TAIL_AFTER) return REDIAL_TAIL_MS;
+	return (
+		REDIAL_DELAYS_MS[Math.min(failures, REDIAL_DELAYS_MS.length - 1)] ?? 300_000
+	);
+}
+
+const registeredForRedial = (state: string | undefined): boolean =>
+	state === "registered" || state === "connected";
+
+/**
+ * The one value a device property read returned. The reader drops nmcli's
+ * single trailing newline; anything other than exactly one entry (a blank
+ * record, two values) stays ambiguous.
+ */
+export function singleDeviceValue(
+	fields: readonly string[] | undefined,
+): string | undefined {
+	return fields?.length === 1 ? fields[0]?.trim() : undefined;
+}
+
+/** NetworkManager state code of the profile's device, or undefined. */
+async function readDeviceState(uuid: string): Promise<string | undefined> {
+	const device = await deps.resolveDevice(uuid);
+	if (device === undefined) return undefined;
+	const fields = await deps.readDevice(device, "GENERAL.STATE");
+	const raw = singleDeviceValue(fields);
+	return raw?.match(/^(\d+)(?: \([^()\r\n]+\))?$/)?.[1];
+}
+
+function redialEligible(id: ModemId, uuid: string, key: string): boolean {
+	const modem = getModem(id);
+	const intent = intents.get(id);
+	return (
+		(intent === undefined || intent.state === "consumed") &&
+		deps.stableKey(id) === key &&
+		modem?.config?.conn === uuid &&
+		!modem.inhibit &&
+		!modem.is_scanning
+	);
+}
+
+/** Prepared automatic profile that has dropped: dial it again, spaced out. */
+async function redialAutomaticProfile(
+	id: ModemId,
+	configured: ModemId[],
+): Promise<void> {
+	const uuid = getModem(id)?.config?.conn;
+	const key = deps.stableKey(id);
+	if (!uuid || !key || !redialEligible(id, uuid, key)) return;
+	const state: RedialState = redials.get(key) ?? { failures: 0 };
+	redials.set(key, state);
+	const code = await readDeviceState(uuid);
+	const now = deps.now();
+	if (code === "100") {
+		delete state.disconnectedSince;
+		state.connectedSince ??= now;
+		if (now - state.connectedSince >= REDIAL_STABLE_MS) state.failures = 0;
+		return;
+	}
+	delete state.connectedSince;
+	if (code !== "30") {
+		// Activating, deactivating, unavailable or unreadable: not a drop to act on.
+		delete state.disconnectedSince;
+		return;
+	}
+	if (!registeredForRedial(await deps.readRegistration(id))) {
+		delete state.disconnectedSince;
+		return;
+	}
+	if ((await deps.readAutoconnect(uuid))?.trim() !== "no") return;
+	if (!(await deps.automaticReady(uuid))) return;
+	if (state.disconnectedSince === undefined) {
+		state.disconnectedSince = now;
+		return;
+	}
+	if (now - state.disconnectedSince < REDIAL_DWELL_MS) return;
+	const spaced = (): boolean => {
+		const previous = lastDispatch.get(key);
+		return (
+			previous === undefined ||
+			deps.now() - previous >= redialDelay(state.failures)
+		);
+	};
+	if (!spaced()) return;
+	await deps.backgroundMutate(key, async () => {
+		if (!redialEligible(id, uuid, key) || !spaced()) return;
+		if ((await readDeviceState(uuid)) !== "30") return;
+		if (!registeredForRedial(await deps.readRegistration(id))) return;
+		if ((await deps.readAutoconnect(uuid))?.trim() !== "no") return;
+		if (!(await deps.automaticReady(uuid))) return;
+		if (!redialEligible(id, uuid, key) || !spaced()) return;
+		lastDispatch.set(key, deps.now());
+		state.failures += 1;
+		delete state.disconnectedSince;
+		const result = await deps.connect(uuid, 45);
+		const currentModem = getModem(id);
+		if (
+			result === false &&
+			deps.stableKey(id) === key &&
+			currentModem?.config?.conn === uuid &&
+			currentModem.data_connection_failed !== true
+		) {
+			setModem(id, { ...currentModem, data_connection_failed: true });
+			configured.push(id);
+		}
+		logger.info("automatic profile redial", {
+			id,
+			stableKey: key,
+			result,
+			attempt: state.failures,
+			nextSpacingS: redialDelay(state.failures) / 1000,
+		});
+	});
+}
+
 /** The retained status poll calls this only AFTER releasing its reconcile lock. */
 export async function runModemReadyActivations(
 	skip: readonly number[] = [],
@@ -182,7 +351,18 @@ export async function runModemReadyActivations(
 			configured.push(id);
 		}
 		const intent = intents.get(id);
-		if (intent === undefined || !isPending(id, intent)) continue;
+		if (intent === undefined || !isPending(id, intent)) {
+			try {
+				await redialAutomaticProfile(id, configured);
+			} catch (error) {
+				if (!(error instanceof Error)) throw error;
+				logger.warn("automatic profile redial did not complete", {
+					id,
+					error: error.message,
+				});
+			}
+			continue;
+		}
 		try {
 			if (await resolveMissingConfig(id, intent)) configured.push(id);
 			const uuid = getModem(id)?.config?.conn;
