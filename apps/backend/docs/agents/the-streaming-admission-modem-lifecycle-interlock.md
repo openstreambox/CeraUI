@@ -53,8 +53,9 @@ interlock does not count, and its owner reads await; without the hold, a Start
 admitted during those reads launched onto a link that went down a moment later.
 Right before the `down`, with no await in between, the reconnect checks that the
 stream state is still the one its reads began with (no stream started, ended or
-was restored) and takes the interlock; either failing skips this poll and leaves
-its memory as it was. The hold ends with the `down`: the `up` is an ordinary
+was restored) and takes the interlock; either failing skips this poll and
+restarts its outage hold, so time seen before a stream came and went does not
+count afterwards. The hold ends with the `down`: the `up` is an ordinary
 background dial. A Stream Start that meets the hold waits for it
 (`linkTeardownSettled`, see START-LIFECYCLE.md) rather than failing, because the
 refusal is not retried by any start origin. Engine-less forwarding is refused

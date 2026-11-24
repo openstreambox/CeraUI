@@ -46,7 +46,8 @@
     again under it;
   - right before the `down`, with no await in between: the stream state is
     still the one the reads began with (no stream started, ended or was
-    restored meanwhile) and the lifecycle interlock is free. That background
+    restored meanwhile) and the lifecycle interlock is free; a skip restarts
+    the outage hold. That background
     lease is journal-only and does not refuse a Stream Start, so a start could
     otherwise be admitted during the owner reads and launch onto a link that
     goes down a moment later. The interlock is held across the `down` only, so
@@ -431,7 +432,12 @@ export async function runDeadBearerRecovery(
 				// the state the `down` meets.
 				const ifname = fresh.iface;
 				const streamNow = streamState(ifname);
+				// A skipped teardown restarts the outage hold: time seen before a
+				// stream came and went is not evidence about the link after it.
+				const restartHold = () =>
+					memories.set(key, without(fresh.input.memory, "downSince"));
 				if (streamNow !== fresh.input.stream) {
+					restartHold();
 					logger.info("modem reconnect skipped: the stream changed", {
 						id,
 						stableKey: key,
@@ -442,6 +448,7 @@ export async function runDeadBearerRecovery(
 				}
 				const teardown = deps.holdTeardown();
 				if (teardown === undefined) {
+					restartHold();
 					logger.info(
 						"modem reconnect skipped: a stream or transition holds the link set",
 						{

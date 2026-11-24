@@ -418,10 +418,10 @@ describe("runDeadBearerRecovery", () => {
 			});
 			expect(await pollUntil(75_000)).toEqual([]);
 			expect(admission).toBeDefined();
-			// The launch failed and released; the next poll may reconnect, with no
-			// spacing charged for the skipped one.
+			// The launch failed and released. The skip restarted the outage hold
+			// (seen again at 90 s) and charged no spacing.
 			admission?.release();
-			expect(await pollUntil(90_000)).toEqual([90_000]);
+			expect(await pollUntil(150_000)).toEqual([150_000]);
 			expect(calls).toEqual([`down ${UUID}`, `up ${UUID} 45`]);
 		});
 
@@ -435,7 +435,7 @@ describe("runDeadBearerRecovery", () => {
 			expect(calls).toEqual([]);
 		});
 
-		test("a stream that ends during the owner reads skips this poll; the next one reconnects", async () => {
+		test("a stream that ends during the owner reads skips this poll and restarts the hold", async () => {
 			others = [eth()];
 			health = dead();
 			streaming = true;
@@ -445,7 +445,8 @@ describe("runDeadBearerRecovery", () => {
 			});
 			expect(await pollUntil(75_000)).toEqual([]);
 			expect(dials.get(KEY)).toBeUndefined();
-			expect(await pollUntil(90_000)).toEqual([90_000]);
+			expect(await pollUntil(135_000)).toEqual([]);
+			expect(await pollUntil(150_000)).toEqual([150_000]);
 		});
 
 		test("no stream or restoration is admitted while the link goes down; one is once it is down", async () => {
