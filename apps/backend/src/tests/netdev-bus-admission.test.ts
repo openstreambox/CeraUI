@@ -54,7 +54,7 @@ afterEach(async () => {
 	resetBondOptOut();
 });
 function fixture(output: string, blocked: readonly string[]) {
-	const scan = firstSightScan(output, { blocked });
+	const scan = firstSightScan(output, { blocked, indexed: true });
 	const answers = new Map<string, Answer[]>();
 	const calls: string[] = [];
 	const respond = async (path: string): Promise<Reply> => {
@@ -448,6 +448,11 @@ test("a periodic scan cannot publish the predecessor while ifconfig is pending",
 		seen.push(genSrtlaBondEntries().map((entry) => entry.iface));
 	});
 	try {
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		// The first scan sees the replaced witness, retires the predecessor and
+		// withholds its stale reading; the next scan commits the successor's.
+		await f.settle();
+		expect(seen).toEqual([]);
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		await f.settle();
 		expect(seen).toHaveLength(1);

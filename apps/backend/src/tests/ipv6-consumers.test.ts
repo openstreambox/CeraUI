@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import * as textFiles from "../helpers/text-files.ts";
 import { eligibleProbeCandidates } from "../modules/network/connectivity-candidates.ts";
@@ -7,6 +7,7 @@ import {
 	setDnsCacheEntryForTest,
 	setDnsResolverFactoryForTest,
 } from "../modules/network/dns.ts";
+import { resetNetdevLifetimesForTest } from "../modules/network/netdev-lifetime.ts";
 import {
 	getNetworkInterfaces,
 	netIfBuildMsg,
@@ -22,6 +23,9 @@ import { genSrtlaIpList, resolveSrtla } from "../modules/streaming/srtla.ts";
 import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
 
 const originalRandom = Math.random;
+// Each case starts its own netdev lifetimes: an earlier case's removal is not
+// a retirement of this case's interface.
+beforeEach(() => resetNetdevLifetimesForTest());
 afterEach(() => {
 	setDnsResolverFactoryForTest(null);
 	Math.random = originalRandom;
