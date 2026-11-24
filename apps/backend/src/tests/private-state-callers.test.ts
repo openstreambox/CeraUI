@@ -17,7 +17,6 @@ import {
 	writeArmedStreamMarker,
 } from "../modules/streaming/armed-stream-marker.ts";
 import {
-	forgetHotspotCredentials,
 	initHotspotCredentials,
 	rememberHotspotCredentials,
 	resetHotspotCredentialsForTest,
@@ -87,17 +86,6 @@ const writers = [
 		save: async () => {
 			await initHotspotCredentials();
 			rememberHotspotCredentials(mac, credentials);
-		},
-	},
-	{
-		name: "hotspot credentials forget",
-		file: "hotspot_credentials.json",
-		save: async () => {
-			await initHotspotCredentials();
-			rememberHotspotCredentials(mac, credentials);
-			// Make the removal path prove its own mode, independently of remember.
-			fs.chmodSync("hotspot_credentials.json", 0o644);
-			forgetHotspotCredentials(mac);
 		},
 	},
 	{

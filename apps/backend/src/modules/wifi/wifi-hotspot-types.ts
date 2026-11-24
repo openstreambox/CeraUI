@@ -214,9 +214,6 @@ export type HotspotProfilePins = readonly [
  */
 export type HotspotActivationDeps = {
 	confirmSteering?: (ifname: string) => Promise<boolean>;
-	stationChannel?: typeof import("./wifi-concurrent-interface.ts").concurrentStationChannel;
-	configureProfile?: typeof import("./wifi-hotspot-profile.ts").configureHotspotProfile;
-	ownedProfile?: typeof import("./wifi-hotspot-profile.ts").ownedHotspotProfile;
 	/** Present only for explicit user toggles; mode transitions and boot omit it. */
 	recordIntent?: WifiAdapterModeRecorder;
 	/** Current kernel proof; production never treats a failed legacy probe as absence. */

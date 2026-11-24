@@ -430,14 +430,6 @@ export const wifiInterfaceSchema = z.object({
 	// an interface that cannot host a hotspot — the backend omits both there.
 	available: z.array(availableWifiNetworkSchema).optional(),
 	saved: z.record(z.string(), z.string()),
-	radio_identity: z
-		.object({
-			id: z.string(),
-			permanent_mac: z.string(),
-			phy: z.string().optional(),
-			device_path: z.string().optional(),
-		})
-		.optional(),
 	// Observed NetworkManager key management by saved UUID. An observed open
 	// profile has ''; no entry means there is no evidence for saved reuse.
 	saved_key_mgmt: z.record(z.string(), z.string()).optional(),
@@ -521,7 +513,6 @@ export type WifiScanInput = z.infer<typeof wifiScanInputSchema>;
 export const hotspotToggleInputSchema = z.object({
 	device: z.string(),
 	incarnation: wifiIncarnationSchema.optional(),
-	radio_id: z.string().optional(),
 });
 export type HotspotToggleInput = z.infer<typeof hotspotToggleInputSchema>;
 const hotspotStartAttemptSchema = z.string().uuid();
@@ -585,7 +576,6 @@ export type HotspotToggleOutput = z.infer<typeof hotspotToggleOutputSchema>;
 export const hotspotPrepareInputSchema = z.object({
 	device: z.string(),
 	incarnation: wifiIncarnationSchema.optional(),
-	radio_id: z.string().optional(),
 	name: z.string().min(HOTSPOT_NAME_MIN).max(HOTSPOT_NAME_MAX).optional(),
 	password: z
 		.string()
@@ -611,7 +601,6 @@ export type HotspotPrepareOutput = z.infer<typeof hotspotPrepareOutputSchema>;
 export const hotspotConfigInputSchema = z.object({
 	device: z.string(),
 	incarnation: wifiIncarnationSchema.optional(),
-	radio_id: z.string().optional(),
 	name: z
 		.string()
 		.min(HOTSPOT_NAME_MIN, 'Hotspot name must be at least 1 character')
