@@ -139,9 +139,30 @@ export function offeredFiveGPreferences(
 	const modes = supportedModes(radioModes);
 	if (modes === undefined || !modes.includes(FIVE_G)) return [];
 	if (modes.length === 1) return ["5g-only"];
-	return FIVE_G_PREFERENCES.filter(
-		(preference) => preference !== "prefer-4g" || modes.includes(FOUR_G),
-	);
+	const lteOnly =
+		radioModes?.supported.some(
+			(row) => parseAllowedModes(row.allowed).join("|") === FOUR_G,
+		) === true;
+	return FIVE_G_PREFERENCES.filter((preference) => {
+		if (preference === "lte-only") return lteOnly;
+		// On a 4G+5G-only radio "5G off" writes exactly LTE only's pair. Two labels
+		// for one posture would leave one of them never shown as active.
+		if (
+			preference === "5g-off" &&
+			lteOnly &&
+			modes.filter((mode) => mode !== FIVE_G).join("|") === FOUR_G
+		)
+			return false;
+		if (preference === "auto")
+			return (
+				radioModes?.supported.some(
+					(row) =>
+						parseAllowedModes(row.allowed).join("|") === modes.join("|") &&
+						row.preferred === "none",
+				) === true
+			);
+		return preference !== "prefer-4g" || modes.includes(FOUR_G);
+	});
 }
 
 /**
@@ -168,6 +189,12 @@ export function fiveGPreferenceToModes(
 	const withoutFiveG = modes.filter((mode) => mode !== FIVE_G);
 
 	switch (preference) {
+		case "auto":
+			return { allowed: modes.join("|"), preferred: "none" };
+		case "lte-only":
+			return modes.includes(FOUR_G)
+				? { allowed: FOUR_G, preferred: "none" }
+				: undefined;
 		case "5g-only":
 			return { allowed: FIVE_G, preferred: "none" };
 		case "prefer-5g":
@@ -198,11 +225,49 @@ export function readFiveGPreference(
 	const allowed = parseAllowedModes(current.allowed);
 	if (allowed.length === 0) return null;
 
+	if (allowed.length === 1 && allowed[0] === FOUR_G) return "lte-only";
+	// Automatic is EVERY mode this radio lists, ranked by nothing — the pair
+	// `fiveGPreferenceToModes("auto")` writes. A narrower unranked set (say 5G+4G
+	// on a radio that also lists 3G) is not Automatic, and naming it so would
+	// show a choice the streamer never made.
+	const catalog = supportedModes(radioModes);
+	if (
+		allowed.includes(FIVE_G) &&
+		allowed.length > 1 &&
+		current.preferred === "none"
+	) {
+		return catalog === undefined ||
+			catalog.length === 0 ||
+			catalog.join("|") === allowed.join("|")
+			? "auto"
+			: null;
+	}
 	if (!allowed.includes(FIVE_G)) return "5g-off";
 	if (allowed.length === 1) return "5g-only";
 	if (current.preferred === FIVE_G) return "prefer-5g";
 	if (current.preferred === FOUR_G) return "prefer-4g";
 	return null;
+}
+
+/**
+ * Whether two `(allowed, preferred)` pairs name the same radio setting.
+ *
+ * Compared as mode SETS, because mmcli prints `4g, 5g` where this module writes
+ * `5g|4g`. A readback is judged by this, never by the posture name it happens to
+ * read as: on some catalogs two names share one pair.
+ */
+export function sameModePair(
+	a: { readonly allowed: string; readonly preferred: string } | undefined,
+	b: { readonly allowed: string; readonly preferred: string } | undefined,
+): boolean {
+	if (a === undefined || b === undefined) return false;
+	const allowedA = parseAllowedModes(a.allowed);
+	if (allowedA.length === 0) return false;
+	const norm = (p: string) => (p === "" ? "none" : p);
+	return (
+		allowedA.join("|") === parseAllowedModes(b.allowed).join("|") &&
+		norm(a.preferred) === norm(b.preferred)
+	);
 }
 
 /**
