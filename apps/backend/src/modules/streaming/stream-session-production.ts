@@ -81,6 +81,17 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 		}
 		return runtime;
 	},
+	// The engine-reconnect loop imports this module's orchestrator, so it is
+	// reached lazily, like every other engine-side collaborator here.
+	onEngineUnavailable: () => {
+		void import("./engine-reconnect.ts")
+			.then(({ rearmEngineReconnect }) => rearmEngineReconnect("start"))
+			.catch((err) => {
+				logger.error("could not re-arm the engine reconnect after a start", {
+					err,
+				});
+			});
+	},
 	canReconcileIdle: () =>
 		shouldUseMocks() || unownedSenderCensus() === "absent",
 	ownedSessionRemains: () => !shouldUseMocks() && ownedSessionProcessesRemain(),
