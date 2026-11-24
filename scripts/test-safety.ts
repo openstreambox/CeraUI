@@ -273,7 +273,10 @@ export function takeSafetyViolations(): string[] {
 
 /** Numeric PIDs are never authority after exit or a change of start identity. */
 export class ProcessOwnership {
-	private readonly entries = new Map<number, { identity?: string; live?: () => boolean }>();
+	private readonly entries = new Map<
+		number,
+		{ identity: string | undefined; live: (() => boolean) | undefined }
+	>();
 	constructor(private readonly identity: (pid: number) => string | undefined) {}
 	add(pid: number, live?: () => boolean): void {
 		const identity = this.identity(pid);
@@ -876,7 +879,7 @@ export function installNetworkSafetyGuard(): void {
 	// Bun.fetch and `import { fetch } from "bun"` are read-only; a source scan
 	// keeps the backend on the global fetch instead.
 	const RealEventSource = (
-		globalThis as { EventSource?: new (url: string | URL, init?: unknown) => unknown }
+		globalThis as { EventSource?: new (url: string | URL, init?: unknown) => object }
 	).EventSource;
 	if (typeof RealEventSource === 'function')
 		(globalThis as { EventSource?: unknown }).EventSource = class extends RealEventSource {
