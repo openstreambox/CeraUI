@@ -422,6 +422,37 @@ test.describe("Telemetry lifecycle (clears on stop)", () => {
 		await expect(hudBitrate(page)).toContainText("—");
 	});
 
+	test("on a 390 px phone the session summary tiles show their whole labels", async ({
+		page,
+	}) => {
+		// The describe runs on the desktop project only; narrow this page to the
+		// phone width streamers use. The layout is width-driven, so it reflows.
+		await page.setViewportSize({ width: 390, height: 844 });
+		sendConfig();
+		desiredStreaming = true;
+		pushStatus({ is_streaming: true, linkTelemetry: { links: TWO_LINKS } });
+		const panel = page.getByTestId("ingest-stats");
+		await expect(panel.getByTestId("ingest-row")).toHaveCount(2, { timeout: 15_000 });
+
+		desiredStreaming = false;
+		pushStatus({ is_streaming: false, linkTelemetry: null });
+		const summary = panel.getByTestId("ingest-summary");
+		await expect(summary).toBeVisible();
+		// The tile grid is the summary's first child; the per-link rows follow it.
+		const tiles = summary.locator(":scope > div").first();
+
+		// jsdom cannot measure layout. At 390 px five columns cut every label to
+		// its first letter ("P…", "A…"); each label must now fit its tile.
+		const labels = await tiles.evaluate((grid) =>
+			Array.from(grid.querySelectorAll(".truncate"), (el) => ({
+				text: el.textContent?.trim() ?? "",
+				clipped: el.scrollWidth > el.clientWidth + 1,
+			})),
+		);
+		expect(labels).toHaveLength(5);
+		expect(labels.filter((label) => label.clipped), JSON.stringify(labels)).toEqual([]);
+	});
+
 	test("stop shows the sampled session rollup without opening Details @mobile-only", async ({ page }) => {
 		sendConfig();
 		desiredStreaming = true;
