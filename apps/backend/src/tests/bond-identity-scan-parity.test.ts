@@ -265,6 +265,7 @@ test("B4 a smaller periodic scan cannot re-hold an admitted USB incarnation", as
 test("the sysfs index detects a USB replacement when the IP command fails", async () => {
 	const scan = firstSightScan(output, {
 		blocked: [],
+		indexed: true,
 		buses: { [MODEM]: "usb" },
 	});
 	await updateNetif();
@@ -286,6 +287,7 @@ test("the sysfs index detects a USB replacement when the IP command fails", asyn
 test("a changed settled non-USB index rechecks the bus and holds an unknown replacement", async () => {
 	const scan = firstSightScan(ethernet, {
 		blocked: [],
+		indexed: true,
 		buses: { eth9: "pci" },
 	});
 	await updateNetif();
@@ -303,6 +305,7 @@ test("a recreated tunnel rejoins after positive virtual sysfs evidence", async (
 	const virtual: string[] = [];
 	const scan = firstSightScan(firstSightIfconfig(name, "192.0.2.2"), {
 		blocked: [],
+		indexed: true,
 		virtual,
 	});
 	await updateNetif();
