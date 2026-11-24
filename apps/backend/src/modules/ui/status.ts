@@ -145,7 +145,10 @@ export function sendStatus(conn: WebSocket) {
 	);
 }
 
-export function sendInitialStatus(conn: WebSocket) {
+export function sendInitialStatus(
+	conn: WebSocket,
+	options = { notifications: true },
+) {
 	const config = getConfig();
 	conn.send(buildMsg("config", config));
 	conn.send(buildMsg("pipelines", getPipelinesMessage()));
@@ -160,5 +163,5 @@ export function sendInitialStatus(conn: WebSocket) {
 	conn.send(buildMsg(BLUETOOTH_EVENT, getBluetoothStatusMessage()));
 	conn.send(buildMsg("revisions", getRevisions()));
 	conn.send(buildMsg("acodecs", AUDIO_CODECS));
-	notificationSendPersistent(conn, true);
+	if (options.notifications) notificationSendPersistent(conn, true);
 }
