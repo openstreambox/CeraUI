@@ -19,7 +19,7 @@ function realDeviceDeps(
 	over: Partial<NetworkIngestDeps> = {},
 ): NetworkIngestDeps {
 	return {
-		isRealDevice: async () => true,
+		canManageIngest: async () => true,
 		shouldUseMocks: () => false,
 		resolveMockSignals: () => ({
 			rtmpUnitActive: false,
