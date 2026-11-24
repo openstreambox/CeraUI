@@ -277,7 +277,7 @@ function installScanSettlement(): void {
 		if (
 			fencePoll &&
 			usbObservedNames.has(name) &&
-			(!isSupportedWifiIfname(name) || !hasWirelessKernelEvidence(name))
+			usesUsbReplacementFence(name, isSupportedWifiIfname(name), true)
 		)
 			holdUsbReplacementIdentity(name);
 		polledNames.delete(name);
@@ -402,6 +402,14 @@ function hasWirelessKernelEvidence(name: string): boolean {
 	);
 }
 
+function usesUsbReplacementFence(
+	name: string,
+	wifi: boolean,
+	usbObserved: boolean,
+): boolean {
+	return !wifi || (usbObserved && !hasWirelessKernelEvidence(name));
+}
+
 /**
  * A replaced netdev (a different kernel interface now holds the name) keeps its
  * successor out until positive identity evidence: a scan that anchors it, or a
@@ -410,8 +418,11 @@ function hasWirelessKernelEvidence(name: string): boolean {
  */
 function holdReplacedNetdev(name: string): void {
 	if (
-		!isSupportedWifiIfname(name) ||
-		(usbObservedNames.has(name) && !hasWirelessKernelEvidence(name))
+		usesUsbReplacementFence(
+			name,
+			isSupportedWifiIfname(name),
+			usbObservedNames.has(name),
+		)
 	)
 		holdUsbReplacementIdentity(name);
 }
