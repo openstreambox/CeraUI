@@ -873,6 +873,43 @@ describe("runDeadBearerRecovery", () => {
 			// not, so the next quiet poll reconnects.
 			expect(await pollUntil(330_000)).toEqual([315_000]);
 		});
+
+		test("a stream that goes live with unknown traffic during the owner reads counts against the cap", async () => {
+			others = [eth()];
+			health = dead();
+			duringLeasedReads(() => {
+				const admitted = tryAcquireLifecycle("streaming");
+				if (admitted.admitted) {
+					// Live, and the sender has no verdict on this link yet.
+					streaming = true;
+					admitted.lease.release();
+				}
+			}, DEAD_BEARER_MAX_HOLD_RESTARTS + 1);
+			const at: number[] = [];
+			while (now < 330_000) {
+				at.push(...(await pollUntil(now + 15_000)));
+				// The stream stopped again before the next poll.
+				streaming = false;
+			}
+			// The same cap as a stream that came and went: no `down` while it
+			// was live, and the outage's age is kept, not cleared.
+			expect(at).toEqual([315_000]);
+		});
+	});
+
+	test("an outage that ends during the owner reads is forgotten even when the device lookup fails", async () => {
+		others = [eth()];
+		health = dead();
+		duringLeasedReads(() => {
+			health = record({ state: "up" }, wall);
+			// `nmcli device status` fails for this poll.
+			lookupFails = true;
+		});
+		expect(await pollUntil(75_000)).toEqual([]);
+		lookupFails = false;
+		health = dead();
+		// Down again from 90 s: a new outage with its own 60 s hold.
+		expect(await pollUntil(165_000)).toEqual([150_000]);
 	});
 
 	test("between streams the link's traffic is not consulted", async () => {

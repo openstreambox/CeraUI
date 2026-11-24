@@ -627,17 +627,11 @@ export async function runDeadBearerRecovery(
 				if (!fresh || fresh.uuid !== first.uuid || fresh.iface !== first.iface)
 					return;
 				const device = await deps.resolveDevice(fresh.uuid);
-				if (device == null) {
-					logger.info("modem reconnect skipped: its device is not resolved", {
-						id,
-						stableKey: key,
-					});
-					return;
-				}
-				// The owner reads awaited NM and MM. Re-sample the sender, link and
-				// identity synchronously at the decision that sends NM down.
-				// A stream being launched or forwarded is left to the teardown hold
-				// below, which refuses then and treats it as stream activity.
+				// The owner reads and the device lookup awaited. Re-sample the
+				// sender, link and identity synchronously at the decision that sends
+				// NM down. A stream being launched or forwarded is left to the
+				// teardown hold below, which refuses then and treats it as stream
+				// activity.
 				const row = getModem(id);
 				const refusal = backgroundModemRefusal(key);
 				if (
@@ -649,20 +643,16 @@ export async function runDeadBearerRecovery(
 					(refusal !== undefined && refusal !== "streaming_active")
 				)
 					return;
-				const again = decideDeadBearer({
-					...fresh.input,
-					...pathObservation(fresh.iface, key),
-				});
-				if (again.action !== "reconnect") {
-					if (refusal === undefined) memories.set(key, again.memory);
-					return;
-				}
 				// The reads above awaited, and the background lease does not refuse
-				// a Stream Start. From here to the `down` nothing awaits, so this
-				// check, the interlock and the bond exclusion see the state the
+				// a Stream Start. From here to the `down` nothing awaits, so these
+				// checks, the interlock and the bond exclusion see the state the
 				// `down` meets.
 				const ifname = fresh.iface;
-				const streamNow = streamState(ifname);
+				const observed = pathObservation(ifname, key);
+				const streamNow = observed.stream;
+				const streamChanged =
+					streamNow !== fresh.input.stream ||
+					deps.streamCycle() !== fresh.input.streamCycle;
 				const skipped = (message: string) => {
 					const memory = restartOutageHold(fresh.input.memory);
 					memories.set(key, memory);
@@ -674,11 +664,36 @@ export async function runDeadBearerRecovery(
 						holdRestarts: memory.holdRestarts,
 					});
 				};
-				if (
-					streamNow !== fresh.input.stream ||
-					deps.streamCycle() !== fresh.input.streamCycle
-				) {
+				const again = decideDeadBearer({ ...fresh.input, ...observed });
+				if (again.action !== "reconnect") {
+					// A stream that went live with unknown traffic still vetoes the
+					// `down`, but it is stream activity, not the end of the outage: it
+					// restarts the hold within the cap instead of clearing it.
+					if (
+						streamChanged &&
+						decideDeadBearer({
+							...fresh.input,
+							...observed,
+							stream: fresh.input.stream,
+						}).action === "reconnect"
+					) {
+						skipped("modem reconnect skipped: the stream changed");
+						return;
+					}
+					// Saved also when the device lookup failed, so an outage that ended
+					// during the reads does not keep its age.
+					if (refusal === undefined) memories.set(key, again.memory);
+					return;
+				}
+				if (streamChanged) {
 					skipped("modem reconnect skipped: the stream changed");
+					return;
+				}
+				if (device == null) {
+					logger.info("modem reconnect skipped: its device is not resolved", {
+						id,
+						stableKey: key,
+					});
 					return;
 				}
 				const teardown = deps.holdTeardown(LINK_TEARDOWN_MAX_HOLD_MS);
