@@ -190,22 +190,80 @@ enlace traducido. CeraUI no ejecuta ni configura el traductor.
 
 ## Recovery isolation
 
-The box excludes a failed or quarantined modem from the links it uses to send
-the stream. The warning names the modem when a current row identifies it and
-says “a modem” when the row is missing.
+The warning reports a modem setting change pending recovery. It names the
+modem when a current row identifies it and lists the links held from bond
+selection. If you have the original modem, reconnect it to its original USB
+port. Contact support if recovery is still pending or the original is gone.
 The warning clears after verified recovery releases the journal block. Dismissing
 a warning or reusing an interface name cannot release a block. An operation still
 in progress continues to hold new starts.
 
 Bond exclusion uses the current USB descriptor scan's physical path, with the
 same stable-key derivation as modem recovery. Removal immediately invalidates
-that name's scan evidence, and a scan overlapping removal cannot restore it.
+that name's scan evidence. An interface-index change invalidates it even when the
+name and address stay the same. After a disconnect, a known USB name with a
+missing old or new index waits for fresh identity evidence. An unreadable
+bus alone cannot establish that a link was USB. Missing indices alone leave
+a continuously present link admitted. A recreated virtual link
+can rejoin when the kernel confirms its virtual path. The ordinary first-sight
+timeout cannot release a replacement. A scan overlapping invalidation cannot
+restore the old evidence.
+
+A different modem in the same USB port can have a different link identity. The
+recovery journal still owns the port. When the box captured a reliable USB
+serial identity before the change, the same journal entry also blocks that unit
+if it moves to another port. The journal and live scan normalize USB serials
+the same way, including before checking whether devices share a serial. Sender admission enforces both checks, including
+for a receiver on the local network. Automatic rollback stays at the original
+port and checks the recorded unit when available. Older entries and units
+without a reliable identity use the port only. While a recorded unit is
+blocked, a candidate with the same USB vendor and product waits for positive
+identification, including after a fresh scan on an unblocked port. The same
+rule applies when that candidate has no current ID_PATH. A USB mode change
+can change the product ID, so its unresolved candidates are scoped by
+vendor. A known different
+USB model can keep sending. Older entries without model evidence keep a
+conservative hold on ambiguous candidates.
 The modem roster's retained ID-path cache is not admission authority. Positively
 classified USB Ethernet and sysfs-confirmed Wi-Fi stay available without an
 ID-path cache entry; unresolved USB candidates stay out while a block exists,
 even after the ordinary identity-settlement deadline. Translated IPv4 links
 follow their parent modem's exclusion. A fresh scan republishes membership even
 when the interface name and address have not changed.
+
+### Support-assisted modem recovery
+
+Use a maintenance window with the stream stopped. Record the modem and links
+from the warning, and confirm which physical modem and USB port the owner
+intends to recover. Use the signed-in box's authenticated modem RPC with the
+owner's confirmation. Call `modems.listMutationBlocks`, wait for
+`replayComplete`, and match the affected `stableKey` before proceeding.
+
+- For `failed`, use `modems.acknowledgeMutation` with the matched
+  `stableKey` and mode `verified-rollback`. If verification fails, review
+  the current hardware with the owner before using `force-rebaseline`.
+- For `device-absent-quarantine`, reconnect the original modem to its original
+  port and restart the box during the maintenance window so recovery can
+  recheck it.
+  If the owner confirms the original is permanently gone, call
+  `modems.decommissionMutation` with that key. The old port remains held.
+- To use a replacement at that port, connect it with the stream stopped
+  and restart the box. Wait for recovery to mark the entry
+  `recommission-pending`. Confirm
+  the replacement's identity and call `modems.rebaselineMutation`.
+- Read `modems.listMutationBlocks` again and confirm the selected record's
+  state and the expected bond links before restarting the stream. Keep
+  the journal under the recovery service's control.
+
+When the sender advertises intentional empty reloads, the box opts in at
+launch. The last held link can then leave the live bond without replacing the
+sender. Sending resumes when a link is admitted and registers again. Older
+senders, including stock v4.2.0, retain the previous pool on an empty reload.
+With these senders, SRT forwarding closes an empty session and restarts its
+listener. The encoder sender can keep sending through the last held link.
+The image must ship a sender with intentional empty reloads to enable the pause. During a long
+pause the SRT peer receives no replies and its idle timeout expires. The
+encoder then reconnects after sending resumes.
 
 The host-plane replay, displacement and recovery-wait mechanisms from the older
 recovery drafts remain outside this implementation. The box fixture covers real
@@ -215,10 +273,11 @@ OS reads, journal entries, sender spawning and engine I/O substituted.
 
 ### Aislamiento durante la recuperación
 
-La caja excluye a un módem con una restauración fallida o en cuarentena de los
-enlaces que usa para enviar la transmisión. El aviso muestra su nombre cuando
-se puede identificar en la lista de módems. Si no aparece, el aviso dice
-«un módem».
+El aviso indica que hay un cambio de configuración pendiente de recuperación.
+Muestra el nombre si el módem aparece en la lista y los enlaces retenidos.
+Si tiene el módem original, vuelva a conectarlo a su puerto USB original.
+Contacte con soporte si la recuperación sigue pendiente o si ya no tiene
+el módem original.
 El aviso desaparece cuando una recuperación verificada libera el bloqueo.
 Cambiar el nombre de la interfaz no lo libera. Una operación todavía en curso
 sigue impidiendo iniciar una nueva transmisión.
@@ -227,3 +286,45 @@ Los adaptadores USB Ethernet y Wi-Fi identificados siguen disponibles aunque no
 haya una ruta guardada. Un dispositivo USB sin identificar permanece excluido
 mientras exista un bloqueo, hasta obtener evidencia física actual. La interfaz
 IPv4 traducida de un módem sigue el bloqueo de ese módem.
+
+Si se reutiliza un nombre de interfaz USB y no se puede confirmar su identidad,
+la caja espera una lectura física actual. Si se conecta otro módem al mismo
+puerto, su identidad de enlace puede ser distinta. La caja mantiene el puerto
+fuera de los enlaces que usa para enviar, también en la red local, hasta que
+la recuperación verifique la entrada del diario o se establezca explícitamente
+una nueva configuración de referencia. Cuando el diario guarda una identidad
+USB fiable, el bloqueo también sigue a ese módem si cambia de puerto.
+Mientras dure ese bloqueo, un candidato del mismo fabricante y producto USB
+sin identidad fiable queda a la espera de que la caja pueda identificarlo.
+Durante un cambio de modo USB, el producto puede cambiar y la caja usa
+el fabricante para delimitar la retención.
+Un modelo USB conocido y diferente puede seguir enviando.
+
+#### Recuperación con soporte
+
+Detenga la transmisión durante el mantenimiento. Anote los enlaces del aviso
+y confirme con el propietario qué módem y puerto USB desea recuperar. Use el
+RPC autenticado de la caja. Consulte `modems.listMutationBlocks`, espere
+`replayComplete` y compruebe el `stableKey` antes de cambiar el estado.
+
+- Para `failed`, llame a `modems.acknowledgeMutation` con el `stableKey`
+  y el modo `verified-rollback`. Si no se verifica, revise el dispositivo
+  con el propietario antes de usar `force-rebaseline`.
+- Para `device-absent-quarantine`, vuelva a conectar el módem original al
+  puerto original y reinicie la caja durante el mantenimiento para que
+  la recuperación lo compruebe. Si el propietario confirma que el original ya
+  no se usará, llame a `modems.decommissionMutation`. El puerto queda retenido.
+- Para usar un reemplazo en ese puerto, conéctelo con la transmisión detenida
+  y reinicie la caja. Espere a que la recuperación marque
+  `recommission-pending`. Confirme la
+  identidad del reemplazo y llame a `modems.rebaselineMutation`.
+- Vuelva a consultar `modems.listMutationBlocks` y compruebe el estado y los
+  enlaces esperados antes de reanudar la transmisión. Deje el diario bajo
+  control del servicio de recuperación.
+
+Con un emisor compatible, la caja pausa el envío cuando el último enlace
+queda excluido. El envío se reanuda cuando se admite y se registra un enlace.
+Con el emisor estándar v4.2.0, el reenvío SRT cierra la sesión cuando se queda
+sin enlaces y reinicia la escucha. El emisor del codificador puede seguir
+enviando por el último enlace. En una pausa larga, el par SRT agota su tiempo
+de espera por inactividad. El codificador vuelve a conectarse cuando se reanuda el envío.
