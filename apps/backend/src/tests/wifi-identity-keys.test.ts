@@ -157,7 +157,11 @@ beforeEach(async () => {
 					)[field],
 			);
 		if (args.includes("uuid,type")) return "";
-		if (args.includes("IN-USE,BSSID,SSID,MODE,CHAN,RATE,SIGNAL,BARS,SECURITY"))
+		if (
+			args.includes(
+				"IN-USE,BSSID,SSID,MODE,CHAN,RATE,SIGNAL,BARS,SECURITY,DEVICE",
+			)
+		)
 			return "";
 		if (nmcliFieldNames(args).length > 0) {
 			if (["station", "virtual-station"].includes(args.at(-1) ?? ""))
