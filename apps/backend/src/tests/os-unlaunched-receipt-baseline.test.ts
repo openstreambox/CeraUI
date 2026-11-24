@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readReceiptFile } from "../modules/system/update-orchestrator/os-receipt-file-identity.ts";
 import { osStageCandidateKey } from "../modules/system/update-orchestrator/os-stage-retry.ts";
@@ -39,7 +40,7 @@ test.each(["unchanged", "identical replacement", "new outcome"] as const)(
 	"attributes %s receipt against admission baseline",
 	async (change) => {
 		// Given a stale legacy .64 receipt and a positively identified never-launched next attempt.
-		const dir = mkdtempSync("/var/tmp/ceraui-baseline-state-");
+		const dir = mkdtempSync(`${tmpdir()}/ceraui-baseline-state-`);
 		const live = join(dir, "os-staged.json");
 		writeFileSync(live, legacyBytes);
 		const baseline = readReceiptFile(dir);

@@ -8,6 +8,7 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	retireConsumedStagedReceipt,
@@ -27,7 +28,7 @@ const receipt = {
 	bootId: "070fd8ac-4a40-4b85-9d31-f21502ebd117",
 };
 function directory() {
-	const dir = mkdtempSync("/var/tmp/ceraui-receipt-durability-");
+	const dir = mkdtempSync(`${tmpdir()}/ceraui-receipt-durability-`);
 	dirs.push(dir);
 	return dir;
 }

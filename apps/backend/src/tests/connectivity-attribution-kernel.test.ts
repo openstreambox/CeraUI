@@ -4,7 +4,10 @@ import { fileURLToPath } from "node:url";
 import { eligibleProbeCandidates } from "../modules/network/connectivity-candidates.ts";
 import { buildDeviceBoundProbeArgv } from "../modules/network/device-bound-probe.ts";
 import { kernelRouteRunner as run } from "./helpers/default-route-kernel.ts";
-import { runTestCommand } from "./helpers/run-test-command.ts";
+import {
+	backendTestRunner,
+	runTestCommand,
+} from "./helpers/run-test-command.ts";
 
 const child = process.env.CERALIVE_ATTRIBUTION_CHILD === "1";
 const probe = child
@@ -31,7 +34,7 @@ async function prepareProtocol242() {
 			"unshare",
 			"-Urn",
 			process.execPath,
-			"test",
+			backendTestRunner,
 			fileURLToPath(import.meta.url),
 			"-t",
 			"eth0 probe retains egress against protocol 242",
@@ -93,7 +96,7 @@ for (const protocol of [241, 242]) {
 						"unshare",
 						"-Urn",
 						process.execPath,
-						"test",
+						backendTestRunner,
 						fileURLToPath(import.meta.url),
 						"-t",
 						name,

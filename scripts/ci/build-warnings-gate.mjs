@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 
-import { resolve } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { file, spawn } from 'bun';
 
 export const BUILD_WARNING_PATTERN = /\bwarn(ing)?\b|INEFFECTIVE_DYNAMIC_IMPORT|chunks are larger/i;
@@ -39,16 +41,23 @@ async function main() {
 		return;
 	}
 
-	const vite = spawn([process.execPath, 'x', '--bun', 'vite', 'build'], {
-		stdout: 'pipe',
-		stderr: 'pipe',
-	});
-	const [stdout, stderr, exitCode] = await Promise.all([
-		tee(vite.stdout, process.stdout),
-		tee(vite.stderr, process.stderr),
-		vite.exited,
-	]);
-	process.exitCode = exitCode === 0 && !rejectWarnings(`${stdout}\n${stderr}`) ? 0 : 1;
+	// Workbox leaves its intermediate service worker in a tempy directory.
+	const root = await mkdtemp(join(tmpdir(), 'ceraui-frontend-build-'));
+	try {
+		const vite = spawn([process.execPath, 'x', '--bun', 'vite', 'build'], {
+			env: { ...process.env, TMPDIR: root },
+			stdout: 'pipe',
+			stderr: 'pipe',
+		});
+		const [stdout, stderr, exitCode] = await Promise.all([
+			tee(vite.stdout, process.stdout),
+			tee(vite.stderr, process.stderr),
+			vite.exited,
+		]);
+		process.exitCode = exitCode === 0 && !rejectWarnings(`${stdout}\n${stderr}`) ? 0 : 1;
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 }
 
 if (import.meta.main) await main();

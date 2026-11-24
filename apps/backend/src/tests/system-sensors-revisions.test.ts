@@ -10,13 +10,14 @@
  * same primitive the migrated sensors.ts now uses.
  */
 import { afterAll, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 
 import { getRevisions, initRevisions } from "../modules/system/revisions.ts";
 
 const tmpFiles: string[] = [];
 
 async function writeTmp(name: string, contents: string): Promise<string> {
-	const path = `/tmp/task15-${name}-${process.pid}-${Math.random().toString(36).slice(2)}`;
+	const path = `${tmpdir()}/task15-${name}-${process.pid}-${Math.random().toString(36).slice(2)}`;
 	await Bun.write(path, contents);
 	tmpFiles.push(path);
 	return path;

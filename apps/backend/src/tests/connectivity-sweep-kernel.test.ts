@@ -11,7 +11,10 @@ import {
 	probeAptReachability,
 } from "../modules/system/apt-reachability.ts";
 import { kernelRouteRunner as run } from "./helpers/default-route-kernel.ts";
-import { runTestCommand } from "./helpers/run-test-command.ts";
+import {
+	backendTestRunner,
+	runTestCommand,
+} from "./helpers/run-test-command.ts";
 
 const child = process.env.CERALIVE_SWEEP_CHILD === "1";
 const probe = child
@@ -30,7 +33,7 @@ const unavailable = probe !== undefined && probe.code !== 0;
 					"unshare",
 					"-Urn",
 					process.execPath,
-					"test",
+					backendTestRunner,
 					fileURLToPath(import.meta.url),
 				],
 				{
