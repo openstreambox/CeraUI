@@ -26,6 +26,7 @@ import {
 	stopWifiUpdateLoopForTest,
 	wifiUpdateDevices,
 } from "../../modules/wifi/wifi-interfaces.ts";
+import { provisioningHandoffDeps } from "../../modules/wifi/wifi-provisioning-handoff.ts";
 import { ACTIVE_PATH, RUN_ID } from "./wifi-active-observation.ts";
 import { wifiFrameFixture } from "./wifi-frame-fixture.ts";
 import { targetFixture } from "./wifi-hybrid-target.ts";
@@ -41,6 +42,11 @@ export async function hybridFixture(
 	const target = await targetFixture({ recordDiscovery, distinctSentinel });
 	frame.row.conn = "station-uuid";
 	frame.row.activeConn = "station-uuid";
+	// NetworkManager's inventory: the station is an ordinary profile, not one
+	// the device image's setup created, so no setup handoff is pending here.
+	spyOn(provisioningHandoffDeps, "listConnections").mockResolvedValue([
+		"station-uuid:Venue",
+	]);
 	frame.row.hotspot.channel = "ch_11";
 	frame.row.hotspot.availableChannels = ["auto", "ch_1", "ch_11"];
 	frame.row.hotspot.derivedChannels = [

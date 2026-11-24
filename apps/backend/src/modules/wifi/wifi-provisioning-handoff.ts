@@ -36,7 +36,10 @@ export type ProvisioningHandoffDecision =
 	| "none"
 	/** The setup's join was accounted and the setup radio's intent cleared. */
 	| "handoff"
-	/** The handoff could not be saved; restore waits for the next edge. */
+	/**
+	 * The handoff is unknown (the inventory could not be read, or the station
+	 * moved during the read) or could not be saved; restore waits and retries.
+	 */
 	| "hold";
 
 export interface ProvisioningHandoffDeps {
@@ -113,6 +116,13 @@ function saveHandoff(
  * with them, and no other radio's intent is touched. A setup station profile
  * that exists but is not the radio's active station is left unaccounted: the
  * setup ended without a join this process can see, and the intent is kept.
+ *
+ * A live setup station on the setup radio is never displaced on unknown
+ * evidence. Without accounting yet (the first run of this code), an active
+ * setup station counts as a fresh handoff: a first run cannot tell a join that
+ * just completed from an older one, and only the former must win. While the
+ * profile inventory cannot be read, an unaccounted active station holds
+ * restore until a later read decides.
  */
 export async function settleProvisioningHandoff(
 	row: WifiInterface,
@@ -122,11 +132,33 @@ export async function settleProvisioningHandoff(
 ): Promise<ProvisioningHandoffDecision> {
 	if (row.ifname !== PROVISIONING_AP_IFNAME || isProvisioningSetupActive())
 		return "none";
+	const station =
+		row.activeMode === "infrastructure"
+			? (row.activeConn ?? undefined)
+			: undefined;
+	const pending = getConfig().wifi_setup_stations;
+	// An accounted or absent station needs no inventory to keep the intent.
+	if (pending !== undefined && (!station || pending.includes(station)))
+		return "none";
 	const stations = await readSetupStations(deps);
 	// The inventory read may have awaited; the setup may have started meanwhile.
-	if (stations === undefined || isProvisioningSetupActive()) return "none";
+	if (isProvisioningSetupActive()) return "none";
+	if (stations === undefined) {
+		if (!station) return "none";
+		logger.warn(
+			`wifi setup handoff: the profile inventory is unavailable; restore on ${row.ifname} waits to learn whether ${station} is the setup's station`,
+		);
+		return "hold";
+	}
+	// The station observed before the read must still be the radio's.
+	const current =
+		row.activeMode === "infrastructure"
+			? (row.activeConn ?? undefined)
+			: undefined;
+	if (current !== station) return "hold";
 	const accounted = getConfig().wifi_setup_stations;
-	if (accounted === undefined) {
+	const fresh = station !== undefined && stations.includes(station);
+	if (accounted === undefined && !fresh) {
 		try {
 			saveHandoff(stations, undefined);
 		} catch (error: unknown) {
@@ -140,15 +172,17 @@ export async function settleProvisioningHandoff(
 		);
 		return "none";
 	}
-	const station =
-		row.activeMode === "infrastructure" ? row.activeConn : undefined;
-	if (!station || accounted.includes(station) || !stations.includes(station))
-		return "none";
+	if (!station || !fresh || accounted?.includes(station)) return "none";
 	const mac = normalizeMacAddress(registryKey.split("@")[0]);
 	const keys = new Set(intentKeys);
 	let cleared: Record<string, string>;
 	try {
-		cleared = saveHandoff([...accounted, station], (key) => {
+		// A first run accounts every existing setup station along with this one.
+		const recorded =
+			accounted === undefined
+				? [...stations.filter((uuid) => uuid !== station), station]
+				: [...accounted, station];
+		cleared = saveHandoff(recorded, (key) => {
 			if (keys.has(key)) return true;
 			return (
 				mac !== undefined && normalizeMacAddress(key.split("@")[0]) === mac
