@@ -667,24 +667,25 @@ export async function runDeadBearerRecovery(
 				const again = decideDeadBearer({ ...fresh.input, ...observed });
 				if (again.action !== "reconnect") {
 					// A stream that went live with unknown traffic still vetoes the
-					// `down`, but it is stream activity, not the end of the outage: it
-					// restarts the hold within the cap instead of clearing it.
-					if (
-						streamChanged &&
-						decideDeadBearer({
-							...fresh.input,
-							...observed,
-							stream: fresh.input.stream,
-						}).action === "reconnect"
-					) {
+					// `down`, but it is stream activity, not the end of the outage, so
+					// the outage is judged on the earlier stream sample: one that would
+					// have reconnected restarts the hold within the cap, and one still
+					// waiting keeps its age (the next poll sees the new stream cycle).
+					const prior = streamChanged
+						? decideDeadBearer({
+								...fresh.input,
+								...observed,
+								stream: fresh.input.stream,
+							})
+						: again;
+					if (prior.action === "reconnect") {
 						skipped("modem reconnect skipped: the stream changed");
 						return;
 					}
-					// The identity checked out, and stream activity took the branch
-					// above. Saved also when the device lookup failed or a Start holds
-					// the interlock, so an outage that ended during the reads does not
-					// keep its age.
-					memories.set(key, again.memory);
+					// The identity checked out. Saved also when the device lookup
+					// failed or a Start holds the interlock, so an outage that ended
+					// during the reads does not keep its age.
+					memories.set(key, prior.memory);
 					return;
 				}
 				if (streamChanged) {

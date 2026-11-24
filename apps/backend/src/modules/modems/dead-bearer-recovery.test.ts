@@ -920,6 +920,33 @@ describe("runDeadBearerRecovery", () => {
 			// A new outage from 315 s waits its own 60 s hold.
 			expect(await pollUntil(390_000)).toEqual([375_000]);
 		});
+
+		test("a stream that goes live while the other uplink drops does not end the outage past the cap", async () => {
+			others = [eth()];
+			health = dead();
+			let flaps = 0;
+			let held: LifecycleLease | undefined;
+			duringLeasedReads(() => {
+				const admitted = tryAcquireLifecycle("streaming");
+				if (!admitted.admitted) return;
+				if (++flaps <= DEAD_BEARER_MAX_HOLD_RESTARTS) {
+					admitted.lease.release();
+					return;
+				}
+				// Past the cap: live with unknown traffic, still holding the
+				// interlock, and the other uplink is gone (the five-minute hold).
+				held = admitted.lease;
+				streaming = true;
+				others = [];
+			}, DEAD_BEARER_MAX_HOLD_RESTARTS + 1);
+			expect(await pollUntil(300_000)).toEqual([]);
+			expect(held).toBeDefined();
+			held?.release();
+			streaming = false;
+			others = [eth()];
+			// The outage from 240 s is still the same outage, and the cap is used up.
+			expect(await pollUntil(330_000)).toEqual([315_000]);
+		});
 	});
 
 	test("an outage that ends during the owner reads is forgotten even when the device lookup fails", async () => {
