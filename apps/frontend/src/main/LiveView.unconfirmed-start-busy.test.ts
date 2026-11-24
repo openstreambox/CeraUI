@@ -43,6 +43,8 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => ({
 	getNetif: () => ({ eth0: { enabled: true, ip: "10.0.0.2" } }),
 	getRelays: () => undefined,
 	getManagedIngestAccounts: () => [],
+	// A Start carries the config generation it read, for its refusal's retry.
+	getStartConfigGeneration: () => 0,
 	getStatus: (await import("../tests/fixtures/live-status.svelte.ts"))
 		.liveStatus,
 	getPipelines: () => ({ pipelines: {} }),
