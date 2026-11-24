@@ -8,6 +8,7 @@ import {
 	modemBandsInputSchema,
 	modemBandsOutputSchema,
 	modemCapabilitiesOutputSchema,
+	modemClearUnreadableRecordInputSchema,
 	modemConfigInputSchema,
 	modemConfigOutputSchema,
 	modemCredentialsInputSchema,
@@ -262,6 +263,9 @@ export const modemsContract = oc.router({
 	 * wrong" while replay is still running, so the flag rides the same read.
 	 */
 	listMutationBlocks: oc.output(modemMutationListOutputSchema),
+	clearUnreadableRecord: oc
+		.input(modemClearUnreadableRecordInputSchema)
+		.output(modemMutationAckOutputSchema),
 
 	/**
 	 * Acknowledge a failed modem mutation through ONE of the two typed paths.

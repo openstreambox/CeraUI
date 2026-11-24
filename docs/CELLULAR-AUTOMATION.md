@@ -5,9 +5,8 @@
 For an existing automatic profile on an admitted modem/firmware transport,
 recognized subscription evidence selects a stored APN. The IP family request is
 the one the box already uses for that SIM (IPv4v6 on carriers known to be
-IPv6-only, otherwise the IPv4 request it always made). The cellular
-poll owner applies it under the modem lifecycle lease and a durable inverse
-journal. It verifies the settings after the write. Manual profiles, unknown
+IPv6-only, otherwise the IPv4 request it always made). The box records the previous settings before applying the change, holds off
+other changes to that modem, and verifies the settings after the write. Manual profiles, unknown
 subscriptions, unqualified carriers and unknown transport firmware are preserved.
 The profile must match both device and SIM; an operator-only match is insufficient.
 
@@ -67,18 +66,68 @@ any modem state, before any carrier-dependent step.
 - The read is the USB link speed in sysfs. At 480 Mbit/s or slower nothing is
   done: no inhibition and no AT command.
 - At a faster link, and only while no stream runs, CeraUI inhibits that one modem,
-  reads the stored value, records it as the original and the attempt before any
-  setter, writes `"20"` if it differs, reads it back (a mismatch stops before the
-  reset) and resets the module. The stream check runs again after the inhibition.
-- The link is gone for about 50 seconds. One modem is switched at a time.
-- The next USB enumeration verifies it at 480 Mbit/s or slower. Two attempts per
-  unit, 15 minutes apart; then the unit is held until its record is removed.
+  reads the stored value and saves it before sending a setting change. It writes
+  `"20"` if needed and reads it back. The box records one attempt before sending
+  the setting request. If the box restarts before saving the outcome, that
+  attempt stays counted because the request may have reached the modem. A
+  failed request also stays counted. On success, the reset uses the same attempt.
+  If the setting was already correct, the box counts the reset when it reserves
+  it. If Start wins before reset admission, the box logs the deferral and saves
+  the previous count.
+- You can start a stream while the box waits for the modem or checks its USB setting. Once the box is ready to send the reset, it holds new starts until it releases USB control.
+  While the unit is absent, the box waits out its recorded 180-second return
+  window before sending another modem a USB speed reset. This also applies after restart.
+- The box checks for 480 Mbit/s or slower on the next USB enumeration. It allows
+  two attempts per modem, 15 minutes apart. An interrupted attempt can consume
+  the budget even if the box never sent the command. Once blocked, automatic USB
+  preparation for that modem stays blocked across restarts and re-enumeration.
+  Carrier processing continues.
 - `/etc/ceralive/no-usbspeed` stops every write; the decision is still logged.
 
 This is a partial implementation. It does not establish
 an RNDIS owner, CLAT,
 traffic health or carrier/hardware qualification. Existing or synthetic test
 results do not establish those capabilities. Verizon remains unqualified.
+
+#### Clearing a blocked USB preparation record
+
+1. Find the latest `usbspeed: blocked` line with
+   `journalctl -u ceralive.service -g 'usbspeed: blocked'`. It names the interface,
+   the ModemManager index (`modem=`) and the full preparation file (`record=`).
+   Use `mmcli -L` to find the current modem and `mmcli -m <index> -K` to check
+   its equipment identifier locally. Both the interface name and index can be
+   reused. If you need support, send the blocked line and keep the IMEI private.
+2. End any stream. In a root shell on the box, run the commands below. Enter the
+   current modem index and the exact path after `record=`. The commands check
+   the filename against the hash of that modem’s equipment identifier, then stop
+   `ceralive.service` and show the file. Check that `kind` is `usbspeed`, `key`
+   matches the filename without `.json`, `phase` is `blocked`, and `attempts` is
+   at least 2.
+3. Type `ARCHIVE` only if those fields match and you want to allow another
+   attempt. Press Enter to cancel. The move preserves the original setting in a
+   new private directory outside the preparation store. The service restarts on
+   exit. Its next eligible idle poll can send a setting change or modem reset.
+
+```sh
+(
+  printf 'modem= '
+  IFS= read -r modem || exit 1
+  printf 'record= '
+  IFS= read -r record || exit 1
+  equipment=$(mmcli -m "$modem" -K | sed -n \
+    's/^[[:space:]]*modem\.generic\.equipment-identifier[[:space:]]*:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p')
+  case "$equipment" in ''|*[!0-9]*) exit 1 ;; esac
+  key=$(printf '["usbspeed","%s"]' "$equipment" | sha256sum | cut -d' ' -f1)
+  [ "$record" = "/data/ceralive/cellular-preparation/$key.json" ] || exit 1
+  systemctl stop ceralive.service || exit 1
+  trap 'systemctl start ceralive.service' EXIT
+  [ -f "$record" ] && [ ! -L "$record" ] && cat -- "$record" || exit 1
+  printf '\nARCHIVE? '
+  IFS= read -r answer && [ "$answer" = ARCHIVE ] || exit 1
+  backup=$(mktemp -d /data/ceralive/usbspeed-backup.XXXXXX) &&
+    mv -v -- "$record" "$backup/" && sync -f "$backup"
+)
+```
 
 ### IPv6-only carriers (IPv4 translation)
 
@@ -95,9 +144,8 @@ translator itself.
 Un perfil automático existente puede recibir un APN cuando la suscripción se
 reconoce y el transporte del módem y su firmware están admitidos. La familia IP
 que solicita es la que el equipo ya usa para esa SIM (IPv4v6 en operadores que
-solo ofrecen IPv6; si no, la solicitud IPv4 de siempre). El proceso
-celular actualiza los ajustes guardados con exclusión de mutaciones y un registro
-persistente para restaurarlos. Después verifica los valores escritos. Conserva
+solo ofrecen IPv6; si no, la solicitud IPv4 de siempre). El equipo guarda los ajustes anteriores antes de aplicar el cambio, aplaza
+otros cambios en ese módem y verifica los valores escritos. Conserva
 los perfiles manuales, las suscripciones desconocidas, los operadores sin
 calificar y el firmware no admitido. El perfil debe coincidir con el dispositivo
 y con la SIM; coincidir solo con el operador no basta.
@@ -163,20 +211,53 @@ antes de cualquier paso que dependa del operador.
 - La lectura es la velocidad del enlace USB en sysfs. A 480 Mbit/s o menos no se
   hace nada: ni inhibición ni comandos AT.
 - Con un enlace más rápido, y solo si no hay ninguna transmisión, CeraUI inhibe
-  ese módem, lee el valor guardado, lo registra como original y registra el
-  intento antes de cualquier cambio, escribe `"20"` si es distinto, lo vuelve a
-  leer (si no coincide, se detiene antes del reinicio) y reinicia el módulo. La
-  comprobación de transmisión se repite tras la inhibición.
-- El enlace se pierde unos 50 segundos. Se cambia un solo módem a la vez.
-- La siguiente enumeración USB lo verifica a 480 Mbit/s o menos. Dos intentos por
-  unidad, con 15 minutos entre ellos; después la unidad queda en espera hasta que
-  se elimine su registro.
+  ese módem, lee el valor guardado y lo registra antes de enviar un cambio.
+  Escribe `"20"` si hace falta y vuelve a leerlo. El equipo registra un intento
+  antes de enviar el cambio. Si el equipo se reinicia antes de guardar el
+  resultado, conserva ese intento porque la solicitud pudo haber llegado al
+  módem. Una solicitud fallida también consume el intento. Si el cambio tiene
+  éxito, el reinicio del módem usa ese mismo intento. Si el ajuste ya era
+  correcto, el equipo cuenta el intento al reservar el reinicio. Si antes se inicia una transmisión, el equipo registra
+  el aplazamiento y guarda el recuento anterior.
+- Puedes iniciar una transmisión mientras el equipo espera al módem o comprueba su ajuste USB. Cuando el equipo está listo para enviar el reinicio, aplaza los inicios hasta liberar el control USB. Si el módem
+  está ausente, el equipo espera hasta el final del plazo registrado de 180
+  segundos antes de enviar a otro módem un reinicio por el cambio de velocidad
+  USB. Esto también se aplica después de reiniciar el equipo.
+- En la siguiente enumeración USB, el equipo comprueba si la velocidad es de
+  480 Mbit/s o menos. Permite dos intentos por módem, separados por 15 minutos.
+  Un intento interrumpido puede contar aunque el equipo no haya enviado el
+  comando. Una vez bloqueada, la preparación USB automática de ese módem sigue
+  bloqueada aunque se reinicie el equipo o se vuelva a enumerar el módem.
+  El procesamiento del operador continúa.
 - `/etc/ceralive/no-usbspeed` detiene toda escritura; la decisión se sigue
   registrando en el log.
 
 La implementación es parcial. Todavía no incluye control de RNDIS, CLAT ni
 comprobaciones del tráfico. Tampoco acredita compatibilidad real con un operador
 o hardware. Verizon sigue sin calificar.
+
+#### Cómo volver a permitir la preparación USB de un módem bloqueado
+
+1. Busca la entrada más reciente de `usbspeed: blocked` con
+   `journalctl -u ceralive.service -g 'usbspeed: blocked'`. Indica la interfaz,
+   el índice de ModemManager (`modem=`) y la ruta completa del archivo
+   (`record=`). Usa `mmcli -L` para ubicar el módem actual y `mmcli -m <índice> -K`
+   para verificar su identificador de equipo en el propio dispositivo. Tanto el
+   nombre de la interfaz como el índice se pueden reutilizar. Si necesitas
+   ayuda, envía esa línea a soporte y mantén el IMEI en privado.
+2. Finaliza cualquier transmisión. Desde una consola con permisos de root en el
+   equipo, ejecuta los [comandos de recuperación](#clearing-a-blocked-usb-preparation-record).
+   Introduce el índice actual y la ruta exacta que aparece después de `record=`.
+   Los comandos verifican el nombre del archivo con el hash del identificador de
+   ese módem, detienen `ceralive.service` y muestran el archivo. Comprueba que
+   `kind` sea `usbspeed`, que `key` coincida con el nombre del archivo sin `.json`,
+   que `phase` sea `blocked` y que `attempts` sea al menos 2.
+3. Escribe `ARCHIVE` solo si los campos coinciden y quieres permitir otro
+   intento. Para cancelar, presiona Intro. Se mueve solo ese archivo de
+   `/data/ceralive/cellular-preparation` a un directorio privado nuevo que
+   conserva el ajuste original. Al salir se inicia de nuevo el servicio. En la
+   siguiente comprobación sin transmisión, si se cumplen las condiciones, el
+   equipo puede enviar un cambio de ajuste o solicitar el reinicio del módem.
 
 ### Operadores solo IPv6 (traducción a IPv4)
 
@@ -197,6 +278,21 @@ port. Contact support if recovery is still pending or the original is gone.
 The warning clears after verified recovery releases the journal block. Dismissing
 a warning or reusing an interface name cannot release a block. An operation still
 in progress continues to hold new starts.
+
+If the box cannot read a modem recovery record at startup, it retries after 1,
+2 and 4 seconds. It processes readable records for other modems. If the same
+record still cannot be read, the box posts a persistent warning and holds new
+stream starts. Choose **Review recovery record**, then **Clear recovery record**
+to set that record aside. Clearing gives up restoration from its saved settings.
+The box keeps the archived bytes and checks the remaining records before
+admitting Start. During normal operation this check verifies the journal
+without replaying modem commands. While the warning is open, the box keeps
+checking at intervals of up to 60 seconds. If a check is incomplete, the box
+keeps the warning and the retries already recorded. A complete check withdraws
+the warning when the file changes or reads successfully. An unreadable
+replacement gets its own retries. A repaired record needs no confirmation.
+If the journal directory itself cannot be read or synced, recovery waits for
+working storage.
 
 Bond exclusion uses the current USB descriptor scan's physical path, with the
 same stable-key derivation as modem recovery. Removal immediately invalidates
@@ -281,6 +377,18 @@ el módem original.
 El aviso desaparece cuando una recuperación verificada libera el bloqueo.
 Cambiar el nombre de la interfaz no lo libera. Una operación todavía en curso
 sigue impidiendo iniciar una nueva transmisión.
+
+Si al arrancar el equipo no puede leer un registro de recuperación, vuelve a
+intentarlo después de 1, 2 y 4 segundos. Si sigue sin poder leerlo, muestra
+un aviso y mantiene en pausa el inicio de nuevas transmisiones. El equipo
+sigue comprobando los registros a intervalos de hasta 60 segundos. Si una
+comprobación queda incompleta, conserva el aviso y los reintentos registrados.
+Una comprobación completa retira el aviso si el archivo cambia o se puede leer.
+Un archivo de reemplazo recibe sus propios reintentos. Si se repara el registro, el equipo continúa
+sin pedir confirmación. Para apartar un registro ilegible, selecciona
+**Revisar el registro** y confirma con **Retirar el registro de recuperación**.
+El equipo archiva el contenido y revisa los demás registros antes de permitir
+otra transmisión.
 
 Los adaptadores USB Ethernet y Wi-Fi identificados siguen disponibles aunque no
 haya una ruta guardada. Un dispositivo USB sin identificar permanece excluido
