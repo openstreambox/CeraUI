@@ -13,20 +13,23 @@
   both put two rows with one id in the sidecar, which the sender rejects, and it
   kept an uplink that can never reach the receiver of the other family.
 */
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deriveModemStableKey } from "@ceraui/rpc/schemas";
+import { getConfigFilePath, setConfigFilePath } from "../modules/config.ts";
 import {
 	refreshModemIdPaths,
 	setModemIdPathReader,
 } from "../modules/modems/modem-wire-producer.ts";
+import * as clatModule from "../modules/network/clat-translation.ts";
 import {
 	type ClatReadDeps,
 	readClatTranslations,
 	refreshClatTranslations,
 	resetClatTranslationStateForTest,
+	setClatTranslationsForTest,
 } from "../modules/network/clat-translation.ts";
 import {
 	getNetworkInterfaceIncarnation,
@@ -42,16 +45,18 @@ import {
 	refreshUsbNetMarkers,
 	resetUsbNetMarkers,
 } from "../modules/network/router-cellular-scan.ts";
+import { setup } from "../modules/setup.ts";
 import {
 	defaultBindMapWriterDeps,
 	publishBondMapping,
+	resetBindMapWriter,
 } from "../modules/streaming/bind-map-writer.ts";
 import {
 	genSrtlaBondEntries,
-	genSrtlaBondEntriesForLocalIpAddress,
 	resolveSrtla,
 	revalidateClatBondEntries,
 } from "../modules/streaming/srtla.ts";
+import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
 
 const ID_PATH = "platform-xhci-hcd.0.auto-usb-0:1.1:1.4";
 const BOOT_ID = "6ab061a3-6541-46cf-a8b5-39e58f4efd47";
@@ -275,17 +280,46 @@ test("the published sidecar has one row per link id, so the sender keeps the map
 test("the local sender keeps a translated subnet route through write-time revalidation", async () => {
 	await scanBox();
 	const receiver = "10.254.0.2";
-	setBondOptOut("wwan0", true);
+	const snapshot = await readClatTranslations(clatDeps(OBSERVED_AT + 5));
+	const first = snapshot.get("clat2");
+	if (!first) throw new Error("missing translator");
+	dir = mkdtempSync(join(tmpdir(), "clat-local-bond-"));
+	const configPath = getConfigFilePath();
+	const ipsPath = setup.ips_file;
+	const bindMapPath = setup.bind_map_file;
+	const ips = join(dir, "ips.txt");
+	const read = spyOn(clatModule, "readClatTranslations").mockResolvedValue(
+		snapshot,
+	);
+	setConfigFilePath(join(dir, "config.json"));
+	setup.ips_file = ips;
+	setup.bind_map_file = `${ips}.bindmap.json`;
+	resetBindMapWriter();
 	try {
+		setBondOptOut("wwan0", true);
 		expect(genSrtlaBondEntries()).toEqual([]);
-		const entries = genSrtlaBondEntriesForLocalIpAddress(receiver);
-		expect(entries.map((entry) => entry.iface)).toEqual(["clat2"]);
-		const read = () => readClatTranslations(clatDeps(OBSERVED_AT + 5));
-		expect(await revalidateClatBondEntries(entries, read, receiver)).toEqual(
-			entries,
-		);
+		expect((await prepareSrtlaIpAddresses(receiver)).ok).toBe(true);
+		expect(readFileSync(ips, "utf8").trim()).toBe(receiver);
+
+		read.mockImplementationOnce(async () => {
+			setClatTranslationsForTest(
+				new Map([["clat2", { ...first, generation: "successor" }]]),
+			);
+			return snapshot;
+		});
+		expect(
+			(await prepareSrtlaIpAddresses(receiver, undefined, "refresh")).ok,
+		).toBe(true);
+		expect(readFileSync(ips, "utf8")).toBe("");
 	} finally {
 		setBondOptOut("wwan0", false);
+		setConfigFilePath(configPath);
+		if (ipsPath === undefined) delete setup.ips_file;
+		else setup.ips_file = ipsPath;
+		if (bindMapPath === undefined) delete setup.bind_map_file;
+		else setup.bind_map_file = bindMapPath;
+		read.mockRestore();
+		resetBindMapWriter();
 	}
 });
 

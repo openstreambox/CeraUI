@@ -317,10 +317,12 @@ export async function revalidateClatBondEntries(
 		if (e.clatGeneration === undefined) return true;
 		const live = fresh.get(e.iface);
 		const int = getNetworkInterfaces()[e.iface];
+		const current = describeBondEntry(e.iface, e.ip, false);
 		return (
 			live?.generation === e.clatGeneration &&
 			live.ipv4 === e.ip &&
-			describeBondEntry(e.iface, e.ip, false).linkId === e.linkId &&
+			current.clatGeneration === e.clatGeneration &&
+			current.linkId === e.linkId &&
 			int !== undefined &&
 			int.ip === e.ip &&
 			(localReceiver === undefined
