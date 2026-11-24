@@ -35,14 +35,18 @@ export async function writeTextFile(file: string, contents: string) {
 /**
  * Crash-safe variant of {@link writeTextFile} for durable named caches
  * (auth_tokens / relays_cache / dns_cache / gsm_operator_cache). Delegates to the
- * single canonical `writeFileAtomicSync` (sibling `.<basename>.<pid>.tmp` + fsync
+ * single canonical `writeFileAtomicSync` (random sibling temp + file/directory fsync
  * + rename) and swallows write errors like `writeTextFile` does. Deliberately not
  * folded into `writeTextFile`: the ephemeral tmpfs writers (srtla IP + key
  * files) must stay non-atomic and emit no `.tmp` sidecars.
  */
-export function writeTextFileAtomic(file: string, contents: string): boolean {
+export function writeTextFileAtomic(
+	file: string,
+	contents: string,
+	options: { mode?: number } = {},
+): boolean {
 	try {
-		writeFileAtomicSync(file, contents);
+		writeFileAtomicSync(file, contents, options);
 		return true;
 	} catch (_) {
 		return false;
