@@ -508,6 +508,58 @@ for (const intent of ["station", "hotspot"] as const) {
 	});
 }
 
+test("a port-only profile on a limited setup radio keeps its hotspot intent when two other radios report the owner's MAC", async () => {
+	// Positive same-MAC twins admit the backfill on the hotspot branch's terms;
+	// the port match still only disarms.
+	const witness = f.witnesses.get(PROVISIONING_AP_IFNAME);
+	if (!witness) throw new Error("Missing setup radio witness");
+	witness.mac = undefined;
+	f.witnesses.set("wlx1", {
+		ifindex: 7,
+		phy: "/sys/devices/policy/phy1",
+		mac: OTHER,
+		path: "platform-usb-1",
+	});
+	f.witnesses.set("wlx2", {
+		ifindex: 8,
+		phy: "/sys/devices/policy/phy2",
+		mac: OTHER,
+		path: "platform-usb-2",
+	});
+	f.list([
+		`${PROVISIONING_AP_IFNAME}:wifi:disconnected:`,
+		"wlx1:wifi:disconnected:",
+		"wlx2:wifi:disconnected:",
+	]);
+	const SWAPPED = "swapped-port-ap";
+	f.profiles.set(SWAPPED, {
+		"802-11-wireless.mode": "ap",
+		"802-11-wireless.ssid": "Old dongle AP",
+		"802-11-wireless-security.psk": "fixture-password",
+		"connection.interface-name": "",
+		"802-11-wireless.mac-address": "",
+		"match.path": PORT,
+		"connection.autoconnect": "yes",
+		"connection.autoconnect-priority": "999",
+	});
+	rememberHotspotCredentials(OTHER, {
+		ssid: "Old dongle AP",
+		password: "fixture-password",
+		conn: SWAPPED,
+	});
+	saveConfig();
+	const down = spyOn(hotspotActivity, "nmDisconnectActivation");
+	try {
+		await f.discover();
+
+		expect(f.profiles.get(SWAPPED)?.["connection.autoconnect"]).toBe("no");
+		expect(getConfig().wifi_modes?.[OTHER]).toBe("hotspot");
+		expect(down).not.toHaveBeenCalled();
+	} finally {
+		down.mockRestore();
+	}
+});
+
 test("the first start after a completed setup join, with no accounting yet, restores no AP over the live station", async () => {
 	f.persistMode(MAC, "hotspot");
 	listProfiles([NEW_STATION, PROVISIONING_STATION_CONNECTION_ID]);
