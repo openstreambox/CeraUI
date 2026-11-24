@@ -185,7 +185,11 @@ import {
 	receivePulledStatus,
 	resetState,
 } from "../lib/rpc/subscriptions.svelte";
-import { clearNotifications } from "../lib/stores/notifications.svelte";
+import { beginSession, setAuthStatus } from "../lib/stores/auth-status.svelte";
+import {
+	clearNotifications,
+	getActive as getActiveNotifications,
+} from "../lib/stores/notifications.svelte";
 import { sendCompositionWrite } from "../lib/streaming/compositionWrites.svelte";
 import { dispatchStart } from "../lib/streaming/dispatch-start";
 import {
@@ -269,7 +273,6 @@ beforeEach(() => {
 	globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
 	// biome-ignore lint/complexity/useLiteralKeys: test-only private transport seam
 	rpcClient["getUrl"] = () => "ws://device.test/ws";
-	localStorage.setItem("auth", "token-abc");
 	resetState();
 	resetNavigationFeed();
 	initAsyncOperations();
@@ -283,11 +286,14 @@ beforeEach(() => {
 	socket().readyState = FakeWebSocket.OPEN;
 	socket().onopen?.();
 	session.authenticated = true;
+	// The operator signs in on the first link; later links re-authenticate.
+	beginSession("token-abc");
 	flushSync();
 	deliverStatus({ is_streaming: false, stream_lifecycle: "idle" });
 });
 
 afterEach(() => {
+	setAuthStatus(false);
 	rpcClient.disconnect();
 	destroyAsyncOperations();
 	destroyStreamingOptimism();
@@ -3977,15 +3983,102 @@ describe("F5 sweep: the stop watchdog's pull keeps receipt order", () => {
 });
 
 describe("F6 request causality and action lifetime over the real socket", () => {
+	/** Live, then the link drops and a new socket opens (its sign-in still out). */
+	async function liveThenReconnecting(): Promise<HTMLElement> {
+		const { container } = render(LiveView);
+		deliverStatus({ is_streaming: true, stream_lifecycle: "streaming" });
+		dropLink();
+		await settle();
+		await restoreLink();
+		return container;
+	}
+
+	/** The re-auth on the current socket succeeds and its status read says live. */
+	async function signedInStillLive(): Promise<void> {
+		answer("auth.login", { success: true });
+		await settle();
+		answer("status.getStatus", {
+			is_streaming: true,
+			stream_lifecycle: "streaming",
+		});
+		await settle();
+	}
+
+	it("a Stop pressed while the new socket is being signed in goes out once, as soon as the session is back", async () => {
+		const container = await liveThenReconnecting();
+
+		await fireEvent.click(button(container, "Stop Stream"));
+		await settle();
+		expect(sentCount("streaming.stop")).toBe(0);
+		expect(controls(container)).toEqual([
+			{ label: "Stopping...", disabled: true },
+		]);
+
+		await signedInStillLive();
+		expect(sentCount("streaming.stop")).toBe(1);
+		expect(outstanding("streaming.stop")).toHaveLength(1);
+	});
+
+	it("a Stop pressed during a first stalled sign-in goes out once after the next socket signs in", async () => {
+		const container = await liveThenReconnecting();
+		await fireEvent.click(button(container, "Stop Stream"));
+		await settle();
+
+		// The first socket's sign-in never answers; the tab replaces the socket.
+		await elapse(30_000);
+		await restoreLink();
+		await signedInStillLive();
+
+		expect(sentCount("streaming.stop")).toBe(1);
+		const [stop] = socket().sent.filter(
+			(request) => request.path === "streaming.stop",
+		);
+		const [login] = socket().sent.filter(
+			(request) => request.path === "auth.login",
+		);
+		expect(stop).toBeDefined();
+		expect(login).toBeDefined();
+	});
+
+	it("a Stop pressed before the sign-in is refused is never sent, and the operator is told", async () => {
+		const container = await liveThenReconnecting();
+		await fireEvent.click(button(container, "Stop Stream"));
+		await settle();
+
+		answer("auth.login", { success: false });
+		await settle();
+
+		expect(sentCount("streaming.stop")).toBe(0);
+		expect(
+			getActiveNotifications().some(
+				(notification) => notification.name === "stop-not-sent",
+			),
+		).toBe(true);
+	});
+
+	it("a Stop pressed during the sign-in is not sent when the device is no longer live", async () => {
+		const container = await liveThenReconnecting();
+		await fireEvent.click(button(container, "Stop Stream"));
+		await settle();
+
+		answer("auth.login", { success: true });
+		await settle();
+		answer("status.getStatus", {
+			is_streaming: false,
+			stream_lifecycle: "idle",
+		});
+		await settle();
+
+		expect(sentCount("streaming.stop")).toBe(0);
+	});
+
 	it.each([
 		[true, true, true, "pending", 2],
 		[true, true, false, "pending", 2],
 		[true, false, true, "pending", 2],
 		[true, false, false, "pending", 2],
-		[false, true, true, "pending", 2],
-		[false, true, false, "pending", 2],
-		[false, false, true, "confirmed", 1],
-		[false, false, false, "confirmed", 1],
+		// preclaim=false (Stop pressed while the new socket is still being
+		// signed in) is no longer held and replayed: see the test below.
 	] as const)(
 		"ordering matrix preclaim=%s push-first=%s config-first=%s",
 		async (preclaim, pushFirst, configFirst, phase, reads) => {
