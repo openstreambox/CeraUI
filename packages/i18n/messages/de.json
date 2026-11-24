@@ -2378,6 +2378,7 @@
 	"settings.dialogs.addressLinkLocal": "Automatische Link-Local-Adresse, bleibt auch ohne DHCP für den lokalen Zugriff erhalten.",
 	"settings.dialogs.addressNone": "Keine Adresse zugewiesen",
 	"settings.dialogs.blockedStreaming": "Beenden Sie das Streaming vor dem Neustart.",
+	"settings.dialogs.blockedStreamingPower": "Sie sind live. Beenden Sie den Stream, um neu zu starten oder auszuschalten.",
 	"settings.dialogs.blockedUpdating": "Update läuft. Warten Sie vor dem Neustart.",
 	"settings.dialogs.confirmPassword": "Passwort bestätigen",
 	"settings.dialogs.enableInterface": "Für Bonding verwenden",
