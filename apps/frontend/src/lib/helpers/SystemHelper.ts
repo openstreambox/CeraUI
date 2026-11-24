@@ -1,13 +1,11 @@
 import type {
 	AudioCodecs,
-	ConfigMessage,
 	CustomProviderInput,
 	ProviderSelection,
 	StreamingConfigInput,
 } from "@ceraui/rpc/schemas";
 
 import { rpc } from "$lib/rpc/client";
-import { NotSentError } from "$lib/rpc/rpc-error";
 import { createPassword } from "$lib/stores/auth-status.svelte";
 import { sendSessionTransition } from "$lib/streaming/compositionWrites.svelte";
 
@@ -134,7 +132,7 @@ export const stopStreaming = async () => {
 };
 
 export const startStreaming = async (
-	config: ConfigMessage,
+	config: StreamingConfigInput,
 	retry?: { readonly beforeSend: () => boolean; readonly onSent: () => void },
 ) => {
 	try {
@@ -152,10 +150,10 @@ export const startStreaming = async (
 			srtla_addr: config.srtla_addr,
 			srtla_port: config.srtla_port,
 			srt_streamid: config.srt_streamid,
+			relay_streamid_override: config.relay_streamid_override,
 			asrc: config.asrc,
 			relay_server: config.relay_server,
 			relay_account: config.relay_account,
-			relay_streamid_override: config.relay_streamid_override,
 			relay_protocol: config.relay_protocol,
 			source: config.source,
 			selected_video_input: config.selected_video_input,
