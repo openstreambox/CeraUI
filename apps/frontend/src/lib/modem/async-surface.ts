@@ -171,6 +171,13 @@ export const MODEM_ASYNC_SURFACES = {
 		terminal: ["loaded", "applied", "refused", "failed", "timed-out"],
 		staleAfterMs: undefined,
 	},
+	clearUnreadableRecord: {
+		what: "archiving one operator-confirmed modem recovery record",
+		bound: "reply-bounded",
+		boundMs: MODEM_READ_BOUND_MS,
+		terminal: ["applied", "refused", "failed", "timed-out"],
+		staleAfterMs: undefined,
+	},
 	getCapabilities: {
 		what: "the device-wide capability gates, read on every open",
 		bound: "read-bound",

@@ -581,6 +581,15 @@ export const modemMutationDecommissionInputSchema = z
 	.strict();
 export type ModemMutationDecommissionInput = z.infer<typeof modemMutationDecommissionInputSchema>;
 
+export const modemClearUnreadableRecordInputSchema = z
+	.object({
+		token: z.uuid(),
+		confirm: z.literal(true),
+	})
+	.strict();
+
+export type ModemClearUnreadableRecordInput = z.infer<typeof modemClearUnreadableRecordInputSchema>;
+
 export const modemMutationRebaselineInputSchema = z
 	.object({ stableKey: z.string().min(1), confirm: z.literal(true) })
 	.strict();

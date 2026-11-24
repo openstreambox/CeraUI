@@ -5,11 +5,12 @@
  * outdated offer is refused by the device and said so, never silently ignored.
  */
 import type { Notification } from "@ceraui/rpc/schemas";
-import { render } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { flushSync } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const toastCalls: { level: string; text: string }[] = [];
+const clearRecord = vi.fn(async (_input: unknown) => ({ success: true }));
 const restartCalls: unknown[] = [];
 let restartResult: "restarting" | "refused" | "transport-error" = "restarting";
 
@@ -32,6 +33,7 @@ vi.mock("svelte-sonner", () => {
 
 vi.mock("$lib/rpc", () => ({
 	rpc: {
+		modems: { clearUnreadableRecord: (input: unknown) => clearRecord(input) },
 		notifications: { dismiss: () => Promise.resolve({}) },
 		streaming: {
 			restartConnection: (input: unknown) => {
@@ -131,4 +133,37 @@ describe("a command action on a persistent notice", () => {
 		]);
 		expect(toastCalls[0]?.text).not.toContain("nothing was restarted");
 	});
+});
+
+it("requires an explicit confirmation for the current unreadable record; cancel keeps the warning", async () => {
+	const token = "a1c66c88-3b78-4de7-9637-fc54dfb90bf3";
+	const notice: Notification = {
+		...staleLink(),
+		name: "modem_recovery_record",
+		is_dismissable: false,
+		key: "notifications.modemRecoveryWarning",
+		params: { record: "abc01234" },
+		action: {
+			schema: 1,
+			kind: "confirm-modem-record",
+			token,
+			labelKey: "notifications.modemRecoveryReview",
+		},
+	};
+	push(notice);
+	render(PersistentNotices);
+	const review = () =>
+		screen.getByRole("button", { name: "Review recovery record" });
+	await fireEvent.click(review());
+	expect(await screen.findByRole("alertdialog")).toBeTruthy();
+	expect(clearRecord).not.toHaveBeenCalled();
+	await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+	await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+	expect(getPersistent()).toHaveLength(1);
+	await fireEvent.click(review());
+	await fireEvent.click(
+		await screen.findByRole("button", { name: "Clear recovery record" }),
+	);
+	expect(clearRecord).toHaveBeenCalledExactlyOnceWith({ token, confirm: true });
+	expect(getPersistent()).toHaveLength(1);
 });

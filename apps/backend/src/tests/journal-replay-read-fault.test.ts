@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
-import { readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, rmdirSync } from "node:fs";
+import { join } from "node:path";
 import { acknowledgeMutation } from "../modules/modems/mutation-acknowledge.ts";
 import { currentMutationBlocks } from "../modules/modems/mutation-blocks.ts";
 import {
 	defaultMutationJournalFs,
+	mutationSlotName,
 	readMutationEntry,
 	setMutationJournalDeps,
 } from "../modules/modems/mutation-journal.ts";
@@ -185,4 +187,45 @@ test("permanent action-read faults keep replay owned with capped waits and shutd
 	expect(reads).toBe(36);
 	expect(isRecoveryPending()).toBe(true);
 	expect(clock.waits).toHaveLength(9);
+});
+
+test("a slot that cannot be opened leaves other modems' rollback runnable", async () => {
+	await seedInterruptedMutation();
+	const damaged = join(harness.root(), `${mutationSlotName("usb:a")}.json`);
+	mkdirSync(damaged);
+	const clock = new JournalRetryClock();
+	const summary = await initMutationRecovery({ sleep: clock.sleep });
+	expect(summary.unreadable).toBeGreaterThan(0);
+	expect(isRecoveryPending()).toBe(true);
+	expect(summary.rolledBack).toBe(1);
+	expect(await readMutationEntry("usb:b")).toBeUndefined();
+	expect(readdirSync(damaged)).toEqual([]);
+	const ready = awaitRecoveryBarrier();
+	rmdirSync(damaged);
+	clock.advance();
+	await Promise.race([ready, clock.at(2)]);
+	expect(isRecoveryPending()).toBe(false);
+});
+
+test("a bad second inventory read cannot hand an executing slot to verify-only recovery", async () => {
+	await seedInterruptedMutation();
+	let reads = 0;
+	setMutationJournalDeps({
+		dir: harness.root(),
+		fs: {
+			...defaultMutationJournalFs,
+			readText: (path) =>
+				++reads === 2
+					? Promise.resolve("{")
+					: defaultMutationJournalFs.readText(path),
+		},
+	});
+	const clock = new JournalRetryClock();
+	const summary = await initMutationRecovery({ sleep: clock.sleep });
+	const ready = awaitRecoveryBarrier();
+	clock.advance();
+	await Promise.race([ready, clock.at(2)]);
+	expect(isRecoveryPending()).toBe(false);
+	expect(await readMutationEntry("usb:b")).toBeUndefined();
+	expect(summary.unreadable).toBeGreaterThan(0);
 });
