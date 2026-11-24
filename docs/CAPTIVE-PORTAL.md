@@ -12,7 +12,14 @@ hotel's page, and accept its terms yourself in your browser. Use **Check sign-in
 or **Cancel sign-in** to close the window early. Remote helpers cannot open it.
 
 The backend derives the source address from the WebSocket peer, resolves its
-neighbor MAC and confirms association on the AP. It captures the existing radio
+neighbor MAC and confirms association on the AP. Behind the image's
+device-bound front door the TCP peer is loopback; a direct on-link WebSocket
+then arrives on the private Unix listener in `/run/ceralive-button-ingress`
+(root-only), and the front door's `X-Ceralive-Button-Path` evidence names the
+phone. That header is never read on the TCP listener. On that path the window
+also belongs to the proven arrival interface: it must be the hotspot AP the
+phone's address routes through, every action rechecks the path, and the same
+address arriving on another link cannot open, check or cancel the window. It captures the existing radio
 session identity twice before opening and checks for changes during the window.
 No credentials, cookies, page contents or terms acceptance are collected.
 
@@ -26,7 +33,13 @@ table are owned. Sharing and physical source-routing tables remain separate.
 
 A kernel timed set binds the selected source IP and MAC to the AP. Only TCP
 80/443 and TCP/UDP 53 match; DNS is sent to the selected Wi-Fi's resolver. Local
-web control stays local. During the window, the selected phone’s alternative
+web control stays local: traffic to the box's own IPv4 addresses (taken when
+the window opens) is never selected. The rules need only core nf_tables plus
+conntrack, NAT, masquerade and reject, which CeraLive kernels carry; they avoid
+`fib`, which those kernels do not build. An IPv4 address the box gains while a
+window is open is not in that set: the phone's web traffic to it is selected
+(it still reaches the box), and such a flow can stall when the window expires
+until it is torn down. IPv6 traffic to the box is never selected. During the window, the selected phone’s alternative
 web/DNS protocols receive TCP resets or kernel-rate-limited ICMP errors for UDP,
 as detailed below.
 VPNs, Private Relay and strict Private DNS / secure DNS may still require a temporary pause

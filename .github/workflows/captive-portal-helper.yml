@@ -1,0 +1,25 @@
+name: Wi-Fi sign-in helper
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths:
+      - '.github/workflows/captive-portal-helper.yml'
+      - 'deployment/captive-portal-window.py'
+      - 'scripts/tests/test_captive_portal.py'
+      - 'docs/CAPTIVE-PORTAL.md'
+
+permissions:
+  contents: read
+
+jobs:
+  helper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test the window ruleset, kernel features and cleanup
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m unittest discover -s scripts/tests -p 'test_captive_portal.py' -v
