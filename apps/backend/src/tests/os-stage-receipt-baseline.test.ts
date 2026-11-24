@@ -6,6 +6,7 @@ import {
 	renameSync,
 	writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readReceiptFile } from "../modules/system/update-orchestrator/os-receipt-file-identity.ts";
 import {
@@ -34,7 +35,7 @@ test.each(["unchanged", "replaced", "created", "launched", "legacy"] as const)(
 	"never-launched settlement treats %s receipt conservatively",
 	async (scenario) => {
 		// Given an actual admission receipt baseline in the private durable job record.
-		const dir = mkdtempSync("/var/tmp/ceraui-baseline-physical-");
+		const dir = mkdtempSync(`${tmpdir()}/ceraui-baseline-physical-`);
 		const live = join(dir, "os-staged.json");
 		if (scenario !== "created") writeFileSync(live, bytes);
 		const baseline = readReceiptFile(dir)?.identity ?? null;

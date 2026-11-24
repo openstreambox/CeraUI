@@ -7,6 +7,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readStagedReceiptEvidence } from "../modules/system/update-orchestrator/os-agent.ts";
 import {
@@ -38,7 +39,7 @@ test.each(["identical replacement", "late activation"] as const)(
 	"keeps evidence after %s during final authority read",
 	async (race) => {
 		// Given real receipt and marker paths, with a barrier at the last awaited authority read.
-		const dir = mkdtempSync("/var/tmp/ceraui-receipt-final-");
+		const dir = mkdtempSync(`${tmpdir()}/ceraui-receipt-final-`);
 		const live = join(dir, "os-staged.json");
 		const marker = join(dir, "activation-armed");
 		const bytes = JSON.stringify(receipt);

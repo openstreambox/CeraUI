@@ -25,7 +25,10 @@ import {
 	pref64FromIpv4OnlyArpa,
 } from "../modules/network/nat64.ts";
 import { CARRIER } from "./helpers/nat64-carrier-stub.ts";
-import { runTestCommand } from "./helpers/run-test-command.ts";
+import {
+	backendTestRunner,
+	runTestCommand,
+} from "./helpers/run-test-command.ts";
 
 const child = process.env.CERALIVE_IPV6_UPLINK_CHILD === "1";
 const probe = child
@@ -99,7 +102,7 @@ async function exchange(
 					"unshare",
 					"-Urn",
 					process.execPath,
-					"test",
+					backendTestRunner,
 					fileURLToPath(import.meta.url),
 				],
 				{

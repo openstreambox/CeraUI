@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquireOsOrphanLock } from "../modules/system/update-orchestrator/os-stage-orphan-lock.ts";
 import {
@@ -13,7 +14,7 @@ afterEach(() => resetOrchestratorRuntimeForTest());
 
 test("stage publication and activation exclude a competing real CONTROL writer", async () => {
 	// Given a real kernel CONTROL lease shared by stage publication and arming.
-	const dir = mkdtempSync("/var/tmp/ceraui-writer-control-");
+	const dir = mkdtempSync(`${tmpdir()}/ceraui-writer-control-`);
 	const acquire = () =>
 		acquireOsOrphanLock({
 			lock: join(dir, "control.lock"),
