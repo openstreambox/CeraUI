@@ -23195,8 +23195,46 @@
       "message": "\"revisions\"",
       "fields": [
         {
-          "path": ".*",
+          "path": "ceralive",
           "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srtla",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bun",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "kernel",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "cerastream",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "CERALIVE image",
+          "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -42241,9 +42279,9 @@
             "\"engine\"",
             "\"app\"",
             "\"cellular\"",
+            "\"kernel\"",
             "\"bonding\"",
-            "\"updates\"",
-            "\"kernel\""
+            "\"updates\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
