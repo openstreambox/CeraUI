@@ -16,7 +16,7 @@ beforeEach(() => resetEventEmitterForTest({ bootId: () => undefined }));
 function gatewayFixture() {
 	let reachable = true;
 	const deps: GatewayElectionDeps = {
-		isRealDevice: async () => true,
+		canRouteClients: async () => true,
 		resolve: async () => ({ addrs: ["203.0.113.10"], fromCache: true }),
 		validateDns: () => undefined,
 		checkConnectivity: async () => reachable,
@@ -112,20 +112,27 @@ test("an excluded default route withholds the offline claim", async () => {
 	expect(h.events()).toEqual([]);
 });
 
-test("elected connectivity restores the internet claim even when route installation fails", async () => {
+test("elected connectivity restores the internet claim only once its route applies", async () => {
 	const g = gatewayFixture();
 	await g.check(true);
 	const h = networkEventsFixture();
 	await g.check(false);
 	h.advance();
+	const elected = {
+		probes: { ...g.deps.probes, probeViaDevice: async () => true },
+	};
 	const result = await g.check(false, {
+		...elected,
 		installRoute: async () => {
 			throw new Error("route refused");
 		},
-		probes: { ...g.deps.probes, probeViaDevice: async () => true },
 	});
 	h.advance();
 	expect(result).toBe(false);
+	// The offline notice stays until a route is applied; its event follows it.
+	expect(h.events()).toEqual([{ code: "internet_lost", params: {} }]);
+	expect(await g.check(false, elected)).toBe(true);
+	h.advance();
 	expect(h.events()).toEqual([
 		{ code: "internet_lost", params: {} },
 		{ code: "internet_restored", params: {} },
@@ -136,7 +143,7 @@ test("the emulated-device gate never emits a connectivity verdict", async () => 
 	const g = gatewayFixture();
 	await g.check(true);
 	const h = networkEventsFixture();
-	await g.check(false, { isRealDevice: async () => false });
+	await g.check(false, { canRouteClients: async () => false });
 	h.advance();
 	expect(h.events()).toEqual([]);
 });
