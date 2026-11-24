@@ -21,9 +21,11 @@ import {
 } from "../modules/config.ts";
 import { resolveModemPhysicalIdentity } from "../modules/modems/physical-identity-source.ts";
 import {
+	defaultRouterCellularScanDeps,
 	getRouterCellularMarker,
 	getUsbPhysicalDescriptor,
 	identityDeadlineExpired,
+	invalidateUsbNetReading,
 	notePublishedNetifSnapshot,
 	onUsbNetScanCommitted,
 	type RouterCellularScanDeps,
@@ -406,6 +408,76 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		}
 	});
 
+	it("treats distinct USB parents with equivalent raw and udev serials as shared", async () => {
+		const devices = constructedTwins.map((device, index) => ({
+			...device,
+			serial: index === 0 ? "fixture  ABC/123" : "fixture_ABC_123",
+		}));
+		await refreshUsbNetMarkers(names, constructedTwinDeps(devices));
+		for (const name of names) {
+			expect(resolveModemPhysicalIdentity(name).anchor).toBe("id-path");
+		}
+	});
+
+	it("validates the production sysfs serial before trimming whitespace", async () => {
+		const name = names[0];
+		if (name === undefined) throw new Error("missing fixture");
+		const path = join(dir, "serial");
+		const deps = pair("unused");
+		const fallbackRead = deps.readAttr;
+		deps.readAttr = (attribute) =>
+			attribute.endsWith("/serial")
+				? defaultRouterCellularScanDeps.readAttr(path)
+				: fallbackRead(attribute);
+
+		for (const [value, anchor] of [
+			["fixture ABC123\n", "usb-serial"],
+			["fixture ABC123\r\n", "usb-serial"],
+			["\tfixture ABC123\n", "id-path"],
+			["\uFEFFfixture ABC123\n", "id-path"],
+		] as const) {
+			writeFileSync(path, value);
+			await refreshUsbNetMarkers([name], deps);
+			expect(resolveModemPhysicalIdentity(name).anchor).toBe(anchor);
+		}
+	});
+
+	it("does not trust a literal-underscore singleton with a possible legacy spelling", async () => {
+		hashes = [
+			new Bun.CryptoHasher("sha256")
+				.update("413c:fixture ABC123")
+				.digest("hex"),
+		];
+		const name = names[0];
+		if (name === undefined) throw new Error("missing fixture");
+		await refreshUsbNetMarkers([name], pair("fixture_ABC123"));
+		expect(resolveModemPhysicalIdentity(name).anchor).toBe("id-path");
+	});
+
+	it.each([1, 2])(
+		"scopes a witnessed legacy digest from %i USB parents and accepts unrelated vendors",
+		async (count) => {
+			const digest = new Bun.CryptoHasher("sha256")
+				.update("413c:fixture ABC123")
+				.digest("hex");
+			hashes = [digest];
+			const name = names[0];
+			if (name === undefined) throw new Error("missing fixture");
+			await refreshUsbNetMarkers(names.slice(0, count), pair("fixture ABC123"));
+			expect(hashes).toContain(`v1:413c:${digest}`);
+			expect(hashes).not.toContain(digest);
+			expect(resolveModemPhysicalIdentity(name).anchor).toBe("id-path");
+			const other = constructedTwins.map((d) => ({
+				...d,
+				idVendor: "2c7c",
+				serial: "RM520 A1",
+			}));
+			const otherDeps = { ...pair(), ...constructedTwinDeps(other) };
+			await refreshUsbNetMarkers([name], otherDeps);
+			expect(resolveModemPhysicalIdentity(name).anchor).toBe("usb-serial");
+		},
+	);
+
 	it("keeps a singleton on its port after pair detection and config reload", async () => {
 		const deps = pair();
 		await refreshUsbNetMarkers(names.slice(0, 1), deps);
@@ -419,8 +491,8 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		const digest = new Bun.CryptoHasher("sha256")
 			.update("413c:SHARED_SERIAL_TOKEN")
 			.digest("hex");
-		expect(hashes).toEqual([digest]);
-		expect(hashes[0]).toMatch(/^[0-9a-f]{64}$/);
+		expect(hashes).toEqual([`v2:413c:${digest}`]);
+		expect(hashes[0]).toMatch(/^v2:413c:[0-9a-f]{64}$/);
 		expect(writes).toBe(1);
 		await refreshUsbNetMarkers(names, deps);
 		expect(writes).toBe(1);
@@ -447,9 +519,7 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		expect(data).not.toContain("PERSISTED_SERIAL_TOKEN");
 		const parsed = runtimeConfigSchema.parse(JSON.parse(data));
 		expect(parsed.usb_serial_shared).toEqual([
-			new Bun.CryptoHasher("sha256")
-				.update("413c:PERSISTED_SERIAL_TOKEN")
-				.digest("hex"),
+			`v2:413c:${new Bun.CryptoHasher("sha256").update("413c:PERSISTED_SERIAL_TOKEN").digest("hex")}`,
 		]);
 		resetUsbNetMarkers();
 		getConfig().usb_serial_shared = undefined;
@@ -469,9 +539,7 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		expect(hashes).toHaveLength(64);
 		expect(hashes).not.toContain(oldest);
 		expect(hashes.at(-1)).toBe(
-			new Bun.CryptoHasher("sha256")
-				.update("413c:SHARED_SERIAL_TOKEN")
-				.digest("hex"),
+			`v2:413c:${new Bun.CryptoHasher("sha256").update("413c:SHARED_SERIAL_TOKEN").digest("hex")}`,
 		);
 		expect(writes).toBe(1);
 	});
@@ -496,6 +564,27 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		expect(resolveModemPhysicalIdentity(names[0] ?? "").anchor).toBe(
 			"usb-serial",
 		);
+	});
+
+	it("does not persist a duplicate from an invalidated USB read", async () => {
+		const [first, second] = names;
+		if (first === undefined || second === undefined)
+			throw new Error("missing twins");
+		const deps = pair();
+		const gate = makeGate();
+		const resolveLink = deps.resolveLink;
+		deps.resolveLink = async (path) => {
+			if (path.endsWith(`/${first}/device`)) await gate.passed;
+			return resolveLink(path);
+		};
+		const pending = refreshUsbNetMarkers(names, deps);
+		invalidateUsbNetReading(first, 1, true);
+		gate.open();
+		await pending;
+		expect(getUsbPhysicalDescriptor(first)).toBeUndefined();
+		expect(resolveModemPhysicalIdentity(second).anchor).toBe("usb-serial");
+		expect(hashes).toEqual([]);
+		expect(writes).toBe(0);
 	});
 
 	it("validates hash-only config with absent meaning empty", () => {

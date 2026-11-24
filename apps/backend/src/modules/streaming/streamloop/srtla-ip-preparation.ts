@@ -44,20 +44,21 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
 };
 
 /**
- * Publish the bond for a launch, and refuse the launch when there is none.
+ * Publish the launch or live bond. A launch requires at least one link.
  *
  * The returned publication is what tells the caller whether a SIGHUP is owed and
- * whether the spawn may carry `--bind-map`; a bond with no links throws before
- * anything reaches disk.
+ * whether the spawn may carry `--bind-map`. A live refresh publishes an empty
+ * set to withdraw the last link.
  */
 export async function prepareSrtlaIpAddresses(
 	srtlaAddr: string,
 	deps: SrtlaIpPreparationDeps = defaultSrtlaIpPreparationDeps,
+	purpose: "launch" | "refresh" = "launch",
 ): Promise<BindMapPublication> {
 	const entries = deps.isLocal(srtlaAddr)
 		? deps.localList(srtlaAddr)
 		: deps.bondedList();
-	if (entries.length === 0) {
+	if (purpose === "launch" && entries.length === 0) {
 		throw new Error("no_available_network_connections");
 	}
 	return deps.writeList(entries);

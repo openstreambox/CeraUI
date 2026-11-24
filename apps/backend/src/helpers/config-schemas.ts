@@ -428,9 +428,9 @@ export const runtimeConfigSchema = z.object({
 	// link id. Values can only be true: absence means included. A bare ifname is
 	// never accepted as a durable identity because the Huawei twins swap names.
 	bond_opt_out: z.record(z.string().min(1), z.literal(true)).optional(),
-	// SHA-256 of vendor:serial pairs observed on distinct USB parents.
+	// Bare legacy digests or versioned vendor-scoped digests for shared USB serials.
 	usb_serial_shared: z
-		.array(z.string().regex(/^[0-9a-f]{64}$/))
+		.array(z.string().regex(/^(?:v[12]:[0-9a-f]{4}:)?[0-9a-f]{64}$/))
 		.max(64)
 		.optional(),
 

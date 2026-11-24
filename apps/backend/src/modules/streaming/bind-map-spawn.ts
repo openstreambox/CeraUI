@@ -99,5 +99,9 @@ export async function resolveBindMapArgs(
 	}
 
 	deps.announce("bind-map-passed", bond);
-	return ["--bind-map", bond.publication.sidecarPath];
+	return [
+		"--bind-map",
+		bond.publication.sidecarPath,
+		...(capabilities.allowEmptyBond ? ["--allow-empty-bond"] : []),
+	];
 }
