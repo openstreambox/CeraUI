@@ -10,6 +10,7 @@ const KEYS = [
 	"live.unconfirmedStream.body",
 	"live.unconfirmedStream.stopFailed",
 	"live.unconfirmedStream.stopNotConfirmed",
+	"live.unconfirmedStream.stopFirst",
 ] as const;
 
 const PLACEHOLDER_RE = /\{[^}]*\}/g;
@@ -19,7 +20,7 @@ describe("unconfirmed-stream band copy", () => {
 		expect(ALL_LOCALES.length).toBe(10);
 	});
 
-	it("adds the same four keys, in the same file order, to every catalog", () => {
+	it("adds the same five keys, in the same file order, to every catalog", () => {
 		const fileOrder = (locale: (typeof ALL_LOCALES)[number]) =>
 			Object.keys(readCatalog(locale)).filter((k) => k.startsWith("live.unconfirmedStream."));
 		for (const locale of ALL_LOCALES) {

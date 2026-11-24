@@ -13,6 +13,7 @@ import {
 	SWITCH_INPUT_ERRORS,
 } from '@ceraui/rpc/schemas';
 import { Cpu, Loader2, Server } from '@lucide/svelte';
+import { untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
 import { LazyDialog, LazyDialogFallback, lazyDialog } from '$lib/components/dialogs';
 import { platformCapsForHardware } from '$lib/components/streaming/ValidationAdapter';
@@ -118,6 +119,7 @@ import {
 } from '$lib/streaming/start-failure-presentation.svelte';
 import { buildStartConfig } from '$lib/streaming/startStreaming';
 import { showUnconfirmedStreamStop, startOptimismSuperseded } from '$lib/streaming/unconfirmed-stream';
+import { unconfirmedStreamBandShown } from '$lib/streaming/unconfirmed-stream-band.svelte';
 import {
 	lifecycleSinceLostStartReply,
 	noteLostStartReply,
@@ -207,6 +209,14 @@ $effect(() => {
 // the pre-reset snapshot when its hydrate failed (FIX-16-FRONT3 R1). The record
 // lives outside this component, which navigation replaces.
 const streamLifecycle = $derived(getStatus()?.stream_lifecycle);
+// The unconfirmed-state band is on screen: the Start bar points to its Stop.
+const unconfirmedBandShown = $derived(
+	unconfirmedStreamBandShown({
+		lifecycle: streamLifecycle,
+		isStreaming,
+		optimismState: streamingOptimismState,
+	}),
+);
 $effect(() => {
 	if (streamingOptimismState !== 'starting') return;
 	const generation = getStreamingAttemptGeneration();
@@ -328,6 +338,11 @@ const STREAM_START_ERROR_KEYS = [
 ] as const;
 
 function startFailedMessage(code: string): string {
+	// Refused because the device cannot confirm an earlier stream ended: say
+	// what to press, as the bar does. Read untracked, so a later change of the
+	// band never repeats this toast.
+	if (code === 'START_IN_PROGRESS' && untrack(() => unconfirmedBandShown))
+		return m["live.unconfirmedStream.stopFirst"]();
 	return (STREAM_START_ERROR_KEYS as readonly string[]).includes(code)
 		? resolveMessageKey(`live.startFailed.${code}`)
 		: m["live.startFailed.generic"]();
@@ -1378,6 +1393,7 @@ const configRows = $derived<ConfigRow[]>([
 			{isStreaming}
 			optimismState={streamingOptimismState}
 			{destinationValidated}
+			stopFirst={unconfirmedBandShown}
 			onStart={handleStart}
 			onStop={handleStop}
 			onOpenSource={handleOpenSource}
