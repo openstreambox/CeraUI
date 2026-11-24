@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded IPv4 web/DNS forwarding. Owns only its private table and rule."""
+"""Bounded IPv4 web/DNS forwarding with phone-only protocol fallback. Owns only its private table and rule."""
 import ipaddress
 import os
 import json
@@ -41,7 +41,10 @@ def rules(c):
     # A separate timed set gates replies too; expired conntracks are dropped,
     # never restored onto a healthy link with the hotel's old NAT identity.
     match = f'iifname "{ap}" ip saddr . ether saddr @phone'
+    v6 = f'iifname "{ap}" meta nfproto ipv6 ether saddr @station'
     return f'''table inet {TABLE} {{
+ set station {{ type ether_addr; flags timeout; elements = {{ {mac} timeout {seconds}s }}; }}
+ set doh4 {{ type ipv4_addr; elements = {{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112 }}; }}
  set phone {{ type ipv4_addr . ether_addr; flags timeout; elements = {{ {phone} . {mac} timeout {seconds}s }}; }}
  set reply {{ type ipv4_addr; flags timeout; elements = {{ {phone} timeout {seconds}s }}; }}
  chain selected {{ meta mark set {MARK}; ct mark set {MARK}; return; }}
@@ -57,7 +60,17 @@ def rules(c):
   meta mark {MARK} udp dport 53 dnat ip to {dns}
   meta mark {MARK} tcp dport 53 dnat ip to {dns}
  }}
+ chain input {{ type filter hook input priority -10; policy accept;
+  {v6} tcp dport {{ 53, 853 }} reject with tcp reset
+  {v6} udp dport {{ 53, 853 }} reject with icmpx port-unreachable
+ }}
  chain forward {{ type filter hook forward priority -10; policy accept;
+  {v6} tcp dport {{ 53, 80, 443, 853 }} reject with tcp reset
+  {v6} udp dport {{ 53, 443, 853 }} reject with icmpx port-unreachable
+  {match} udp dport 443 reject with icmpx port-unreachable
+  {match} tcp dport 853 reject with tcp reset
+  {match} udp dport 853 reject with icmpx port-unreachable
+  {match} ip daddr @doh4 tcp dport 443 reject with tcp reset
   ct mark {MARK} ip daddr @reply accept
   ct mark {MARK} meta mark {MARK} oifname "{wan}" accept
   ct mark {MARK} drop
@@ -122,6 +135,7 @@ def close_window(c):
     validate(c)
     # Keep the tombstone until the exact conntracks are gone.
     absent_ok('nft', '-f', '-', data=f'flush set inet {TABLE} phone\nflush set inet {TABLE} reply\n')
+    absent_ok('nft', 'flush', 'set', 'inet', TABLE, 'station')
     clear_flows(c)
     absent_ok('ip', '-4', 'rule', 'del', 'priority', PRIORITY, 'iif', c['ap'],
               'from', c['phone'], 'fwmark', MARK, 'lookup', ROUTE_TABLE)
@@ -154,6 +168,7 @@ def sweep(_config):
         raise ValueError('route table occupied')
     if table:
         run('nft', '-f', '-', data=f'flush set inet {TABLE} phone\nflush set inet {TABLE} reply\n')
+    absent_ok('nft', 'flush', 'set', 'inet', TABLE, 'station')
     # Mark-scoped retirement works even after sets expire or an interface vanished.
     result = subprocess.run(['conntrack', '-D', '-f', 'ipv4', '--mark', MARK],
                             text=True, capture_output=True, timeout=5, env=COMMAND_ENV)
