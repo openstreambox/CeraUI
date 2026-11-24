@@ -262,9 +262,10 @@ describe("reconnect re-authentication", () => {
 
 			expect(authStatusStore.value).toBe(false);
 			expect(getSessionExpired()).toBe(true);
-			// A reconnect never touches the shared slot: only an explicit sign-in or
-			// sign-out writes it (the next page load drops a dead token itself).
-			expect(localStorage.getItem("auth")).toBe(remember ? ISSUED_TOKEN : null);
+			// A reconnect clears the shared slot only while it holds the very token
+			// the device just refused (another tab's newer token survives; see
+			// subscriptions-reconnect-auth.test.ts). Either way it is empty here.
+			expect(localStorage.getItem("auth")).toBeNull();
 			const error = await failure;
 			expect(error).toBeInstanceOf(NotSentError);
 			expect((error as NotSentError).reason).toBe("signed-out");
