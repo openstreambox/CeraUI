@@ -58,6 +58,7 @@ export function firstSightScan(
 	const clock = { now: 0 };
 	const indices = new Map<string, number>();
 	let ipUnavailable = false;
+	let sysfsIndexUnavailable = false;
 	let ifconfigGate: Promise<void> | undefined;
 	const fixture = options.usbReader ?? constructedTwinDeps(options.devices);
 	const reads = new Map<
@@ -129,7 +130,7 @@ export function firstSightScan(
 	if (options.indexed) {
 		spyOn(netdevPresence, "inSysfs").mockImplementation(listed);
 		spyOn(netdevPresence, "ifindex").mockImplementation((name) =>
-			listed(name) ? indices.get(name) : undefined,
+			listed(name) && !sysfsIndexUnavailable ? indices.get(name) : undefined,
 		);
 		spyOn(fs, "statSync").mockImplementation(((
 			path: fs.PathLike,
@@ -168,6 +169,10 @@ export function firstSightScan(
 		setIndex: (name: string, index: number) => indices.set(name, index),
 		setIpUnavailable: () => {
 			ipUnavailable = true;
+		},
+		/** The sysfs ifindex read fails too; only the sysfs node still answers. */
+		setSysfsIndexUnavailable: (unavailable = true) => {
+			sysfsIndexUnavailable = unavailable;
 		},
 		holdIfconfig: (gate: Promise<void>) => {
 			ifconfigGate = gate;
