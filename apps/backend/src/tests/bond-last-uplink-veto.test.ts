@@ -539,7 +539,9 @@ async function replay(
 							});
 						})(),
 						(async () => {
-							await waitMicrotasks(mode === "MOCK" ? 5 : 11);
+							// The role gate reads the image's capability record first, which
+							// settles two microtasks after the plain device classifier.
+							await waitMicrotasks(mode === "MOCK" ? 5 : 13);
 							await handleORPCMessage(requester("requester-configure"), {
 								id: "configure",
 								path: ["network", "configure"],
