@@ -399,6 +399,7 @@ describe("HotspotDialog — no hotspot starts unseen (#413)", () => {
 				expect(start).toHaveBeenCalledWith({
 					device: "0",
 					incarnation: "radio-A",
+					attempt: expect.any(String),
 				});
 			expect(prepare).toHaveBeenCalledTimes(2);
 		},
