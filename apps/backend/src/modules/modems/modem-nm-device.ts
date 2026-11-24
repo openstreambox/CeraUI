@@ -129,18 +129,31 @@ export async function resolveModemNmDevice(
 export async function resolveModemNmDeviceForConnection(
 	connectionId: string,
 ): Promise<string | undefined> {
+	return (await findModemNmDeviceForConnection(connectionId)) ?? undefined;
+}
+
+/**
+ * The same resolution, telling an unreadable answer from an absent one: the
+ * device, `null` when NetworkManager answered and no single modem device
+ * carries the connection, or `undefined` when a read failed (`nmcli device
+ * status`, or a candidate's properties) before a unique owner was found.
+ */
+export async function findModemNmDeviceForConnection(
+	connectionId: string,
+): Promise<string | null | undefined> {
 	if (
 		connectionId.length !== 36 ||
 		!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
 			connectionId,
 		)
 	)
-		return undefined;
+		return null;
 	const uuid = connectionId.toLowerCase();
 
 	const reader = activeReader ?? defaultReader;
 	const rows = await reader.listDevices();
 	if (rows === undefined) return undefined;
+	let unread = false;
 
 	const candidates: string[] = [];
 	for (const row of rows) {
@@ -158,11 +171,12 @@ export async function resolveModemNmDeviceForConnection(
 
 	const matches: string[] = [];
 	for (const device of candidates) {
-		const active = (await reader.deviceProp(device, "GENERAL.CON-UUID"))?.[0];
-		if (active?.trim().toLowerCase() === uuid) matches.push(device);
+		const values = await reader.deviceProp(device, "GENERAL.CON-UUID");
+		if (values === undefined) unread = true;
+		if (values?.[0]?.trim().toLowerCase() === uuid) matches.push(device);
 	}
 	if (matches.length > 0) {
-		return matches.length === 1 ? matches[0] : undefined;
+		return matches.length === 1 ? (matches[0] ?? null) : null;
 	}
 
 	for (const device of candidates) {
@@ -171,6 +185,7 @@ export async function resolveModemNmDeviceForConnection(
 			"CONNECTIONS.AVAILABLE-CONNECTIONS",
 			"multiline",
 		);
+		if (available === undefined) unread = true;
 		if (
 			available?.some((line) => {
 				const match =
@@ -182,7 +197,8 @@ export async function resolveModemNmDeviceForConnection(
 		)
 			matches.push(device);
 	}
-	return matches.length === 1 ? matches[0] : undefined;
+	if (matches.length === 1) return matches[0] ?? null;
+	return unread ? undefined : null;
 }
 
 /**

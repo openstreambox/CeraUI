@@ -246,6 +246,8 @@ describe("runDeadBearerRecovery", () => {
 	/** What the device reads once the `down` was issued. */
 	let afterDown: NmDeviceState | undefined;
 	let sleeps: number;
+	/** `nmcli device status` fails: the device lookup cannot answer. */
+	let lookupFails: boolean;
 
 	function modem(): Modem {
 		return {
@@ -307,7 +309,7 @@ describe("runDeadBearerRecovery", () => {
 				device = { state: "100", connection: uuid };
 				return connectResult;
 			},
-			resolveDevice: async () => "cdc-wdm0",
+			resolveDevice: async () => (lookupFails ? undefined : "cdc-wdm0"),
 			deviceState: async () => device,
 			sleep: async (ms) => {
 				sleeps++;
@@ -365,6 +367,7 @@ describe("runDeadBearerRecovery", () => {
 		device = { state: "100", connection: UUID };
 		afterDown = { state: "30", connection: undefined };
 		sleeps = 0;
+		lookupFails = false;
 		resetLinkTeardownPendingForTest();
 		for (const id of getModemIds()) removeModem(id);
 		setModem(2, modem());
@@ -727,11 +730,29 @@ describe("runDeadBearerRecovery", () => {
 
 		test("a mark whose profile no device carries any more is lifted", async () => {
 			setLinkTeardownPending(["wwan0"], true);
-			setDeadBearerDepsForTest({
-				...deps(),
-				resolveDevice: async () => undefined,
-			});
+			setDeadBearerDepsForTest({ ...deps(), resolveDevice: async () => null });
 			await pollUntil(15_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(false);
+		});
+
+		test("a poll whose device lookup fails keeps the mark, and a link still deactivating is re-marked on every poll", async () => {
+			others = [eth()];
+			health = dead();
+			afterDown = { state: "110", connection: UUID };
+			await pollUntil(75_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+			// `nmcli device status` fails for one poll.
+			lookupFails = true;
+			await pollUntil(now + 15_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+			// Lifted by anything else meanwhile: the next poll that reads 110
+			// marks it again.
+			lookupFails = false;
+			setLinkTeardownPending(["wwan0"], false);
+			await pollUntil(now + 15_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+			device = { state: "30", connection: undefined };
+			await pollUntil(now + 15_000);
 			expect(isLinkTeardownPending("wwan0")).toBe(false);
 		});
 

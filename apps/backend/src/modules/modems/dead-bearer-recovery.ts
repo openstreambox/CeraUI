@@ -58,11 +58,12 @@
   the device has let go of the connection, at most LINK_TEARDOWN_MAX_HOLD_MS,
   and the link is marked pending (`network/link-teardown-pending.ts`) so the
   bond leaves it out. A Start that arrives meanwhile waits. A teardown that has
-  not settled by the bound is re-marked and gets no `up`; a status poll (they
-  can overlap, so it skips links still in flight) lifts the mark once the
-  device no longer reads deactivating, or when no profiled modem or NM device
-  owns it any more, and a startup scan marks a link NetworkManager still shows
-  deactivating. The `up` follows
+  not settled by the bound is re-marked and gets no `up`. Every status poll
+  (they can overlap, so it skips links still in flight) re-marks such a link
+  while its device reads deactivating, keeps the mark when the device cannot be
+  read, and lifts it once the device reads settled or when no profiled modem or
+  NM device owns it any more. A startup scan marks a link NetworkManager still
+  shows deactivating. The `up` follows
   only onto a free device (disconnected, no active connection), so a profile
   that activated after the `down` is left alone; it is an ordinary background
   dial and not held.
@@ -101,6 +102,7 @@ import { linkCarryingState } from "../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import { automaticActivationReady } from "./cellular-preparation.ts";
 import {
+	findModemNmDeviceForConnection,
 	readModemNmDeviceProp,
 	resolveModemNmDeviceForConnection,
 } from "./modem-nm-device.ts";
@@ -316,8 +318,8 @@ export interface DeadBearerDeps {
 	/** Why the hold was refused: stream activity, or another modem change. */
 	readonly teardownRefusal: typeof linkTeardownRefusal;
 	readonly streamCycle: typeof streamingAdmissionCount;
-	/** The NM device that carries a connection UUID. */
-	readonly resolveDevice: (uuid: string) => Promise<string | undefined>;
+	/** The NM device that carries a connection UUID; `null` absent, undefined unreadable. */
+	readonly resolveDevice: (uuid: string) => Promise<string | null | undefined>;
 	/** NM device state code and active connection; undefined when unreadable. */
 	readonly deviceState: (device: string) => Promise<NmDeviceState | undefined>;
 	readonly sleep: (ms: number) => Promise<void>;
@@ -383,7 +385,7 @@ const defaultDeps: DeadBearerDeps = {
 	holdTeardown: tryAcquireLinkTeardown,
 	teardownRefusal: linkTeardownRefusal,
 	streamCycle: streamingAdmissionCount,
-	resolveDevice: resolveModemNmDeviceForConnection,
+	resolveDevice: findModemNmDeviceForConnection,
 	deviceState: readDeviceState,
 	sleep: (ms) => Bun.sleep(ms),
 	markPending: setLinkTeardownPending,
@@ -400,6 +402,7 @@ export function setDeadBearerDepsForTest(
 	memories.clear();
 	pendingSeeded = false;
 	teardownsInFlight.clear();
+	unsettledTeardowns.clear();
 }
 
 /** Another physical uplink is up: not a translator, tunnel or this modem. */
@@ -534,7 +537,9 @@ async function takeDown(
 async function reconcilePendingTeardowns(): Promise<void> {
 	// A teardown in flight owns its mark until its own outcome.
 	const pending = new Set(
-		deps.pendingIfnames().filter((ifname) => !teardownsInFlight.has(ifname)),
+		[...deps.pendingIfnames(), ...unsettledTeardowns].filter(
+			(ifname) => !teardownsInFlight.has(ifname),
+		),
 	);
 	const scan = !pendingSeeded;
 	pendingSeeded = true;
@@ -545,36 +550,41 @@ async function reconcilePendingTeardowns(): Promise<void> {
 		const uuid = modem?.config?.conn;
 		if (!modem?.ifname || !uuid) continue;
 		owned.add(modem.ifname);
-		const marked = pending.has(modem.ifname);
-		if (!marked && !scan) continue;
+		const ifname = modem.ifname;
+		const watched = pending.has(ifname);
+		if (!watched && !scan) continue;
 		const device = await deps.resolveDevice(uuid);
-		// No device carries the profile any more: nothing is deactivating it.
-		if (device === undefined) {
-			if (marked) deps.markPending([modem.ifname], false);
+		// Unreadable proves nothing: a watched link stays as it is.
+		if (device === undefined) continue;
+		const state = device === null ? null : await deps.deviceState(device);
+		if (state === undefined) continue;
+		if (state?.state === "110") {
+			// Deactivating, also after a poll that lifted the mark: (re-)mark it.
+			if (!deps.pendingIfnames().includes(ifname)) {
+				deps.markPending([ifname], true);
+				logger.warn("modem link found deactivating; kept out of the bond", {
+					id,
+					iface: ifname,
+				});
+			}
 			continue;
 		}
-		const state = await deps.deviceState(device);
-		const deactivating = state === undefined || state.state === "110";
-		if (marked && !deactivating) deps.markPending([modem.ifname], false);
-		if (!marked && state?.state === "110") {
-			deps.markPending([modem.ifname], true);
-			logger.warn("modem link found deactivating; kept out of the bond", {
-				id,
-				iface: modem.ifname,
-			});
-		}
+		// Settled, or no device carries the profile any more.
+		if (watched) deps.markPending([ifname], false);
+		unsettledTeardowns.delete(ifname);
 	}
 	// A mark no profiled modem owns (re-enumerated without a profile, or gone)
 	// would otherwise exclude that name forever.
-	const stale = [...pending].filter(
-		(ifname) => !owned.has(ifname) && !teardownsInFlight.has(ifname),
-	);
+	const stale = [...pending].filter((ifname) => !owned.has(ifname));
 	if (stale.length > 0) deps.markPending(stale, false);
+	for (const ifname of stale) unsettledTeardowns.delete(ifname);
 }
 
 let pendingSeeded = false;
 /** Interfaces whose teardown is between its mark and its outcome. */
 const teardownsInFlight = new Set<string>();
+/** Interfaces whose teardown ended unsettled, until a poll reads them settled. */
+const unsettledTeardowns = new Set<string>();
 
 /** Seed the bond exclusion from NetworkManager at startup, before the first poll. */
 export async function seedPendingTeardowns(): Promise<void> {
@@ -617,7 +627,7 @@ export async function runDeadBearerRecovery(
 				if (!fresh || fresh.uuid !== first.uuid || fresh.iface !== first.iface)
 					return;
 				const device = await deps.resolveDevice(fresh.uuid);
-				if (device === undefined) {
+				if (device == null) {
 					logger.info("modem reconnect skipped: its device is not resolved", {
 						id,
 						stableKey: key,
@@ -703,6 +713,8 @@ export async function runDeadBearerRecovery(
 				} finally {
 					// Re-marked when unsettled: nothing else may have lifted it.
 					deps.markPending([ifname], outcome === "unsettled");
+					if (outcome === "unsettled") unsettledTeardowns.add(ifname);
+					else unsettledTeardowns.delete(ifname);
 					teardownsInFlight.delete(ifname);
 					teardown.release();
 				}

@@ -70,9 +70,13 @@ admitted during those reads launched onto a link that went down a moment later.
   deactivating, an unreadable device): the link is re-marked at the outcome, no
   `up` follows, and a status poll lifts the mark only once it reads the device no
   longer deactivating. Status polls are not serialized, so a poll skips links
-  whose teardown is still in flight. A poll also lifts marks no profiled modem
-  owns (re-enumerated without a profile, or gone) and marks whose profile no NM
-  device carries any more. At startup, right after modem discovery, a scan marks
+  whose teardown is still in flight, and keeps watching an unsettled teardown's
+  link on every poll, re-marking it while the device reads deactivating. A
+  failed device lookup or state read keeps the mark (`findModemNmDeviceForConnection`
+  tells "no device" from "unreadable"). A poll lifts marks no profiled modem owns
+  (re-enumerated without a profile, or gone) and marks whose profile
+  NetworkManager says no device carries. Accepted residual: a profile-less modem
+  that re-enumerates on the same interface name loses the mark. At startup, right after modem discovery, a scan marks
   any modem link NetworkManager still shows deactivating, so a backend that
   restarted mid-teardown does not offer it to the bond either. Accepted residual:
   a Start in the seconds before that scan finishes at boot.
