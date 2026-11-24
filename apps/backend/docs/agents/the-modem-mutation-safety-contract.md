@@ -193,6 +193,12 @@ a strict subset — that asymmetry is the whole decommission escape hatch. Block
 is DERIVED from the state and published by `mutation-blocks.ts` alone; a second
 source of "is this device blocked" is how a fail-closed guard drifts open.
 
+After startup, the retained modem poll checks quarantined and decommissioned
+slots under the same journal key. Positive USB presence at that stable key
+advances the record to `failed` or `recommission-pending`, respectively. A busy
+key waits for the next poll. Either transition preserves the block and leaves
+acknowledgement or rebaseline with the operator.
+
 ### THE STARTUP REPLAY TABLE
 
 | State | Replay action |
@@ -220,7 +226,10 @@ already-restored capture avoids a second rollback effect; band and USB handlers
 also have their own pre-state no-op guards. A same-entry operator acknowledgement
 cannot be overwritten by a retry's old capture. Waits double to a 60 s cap and
 shutdown cancels; infinite writer churn or permanent I/O can retain recovery
-indefinitely, without spinning or unsafe timeout-open. When authority stabilizes,
+indefinitely, without spinning or unsafe timeout-open. A per-file open failure is counted in both startup inventories.
+Readable peers still receive their rollback. If either inventory omits a damaged
+slot, the retry owner retains the full replay obligation.
+When authority stabilizes,
 the next complete pass clears the barrier without requiring a restart. This is
 a cadence bound, not a bound on hardware I/O or total recovery duration.
 Unlink failure is another incomplete pass: no restored/pruned count precedes

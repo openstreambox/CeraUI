@@ -223,6 +223,11 @@ export interface ModemMutationLease {
 	release(): void;
 }
 
+export interface ModemJournalLease extends ModemMutationLease {
+	/** Atomically exclude Start on this same token before a disruptive command. */
+	tryUpgrade(): boolean;
+}
+
 export type ModemMutationAdmission =
 	| { readonly admitted: true; readonly lease: ModemMutationLease }
 	| { readonly admitted: false; readonly refusal: ModemMutationRefusal };
@@ -255,43 +260,47 @@ let nextMutationToken = 0;
  * reciprocal streaming check. Reordering it would let a blocked device answer
  * "a stream is running" — true, but not the fact the operator has to act on.
  */
+function modemMutationRefusal(
+	stableKey: string,
+	ownToken?: number,
+): ModemMutationRefusal | undefined {
+	if (isRecoveryPending()) return "recovery_pending";
+	const block = mutationBlocks.get(stableKey);
+	if (block) return block.refusal;
+	const owner = activeMutations.get(stableKey);
+	if (owner && owner.token !== ownToken) return "mutation_in_progress";
+	if (isForwardActive() || held?.holder === "streaming")
+		return "streaming_active";
+	if (held) return "mutation_in_progress";
+	return undefined;
+}
+
 export function tryAcquireModemMutation(
 	stableKey: string,
 ): ModemMutationAdmission {
-	if (isRecoveryPending()) {
-		return { admitted: false, refusal: "recovery_pending" };
-	}
-	const block = mutationBlocks.get(stableKey);
-	if (block !== undefined) {
-		return { admitted: false, refusal: block.refusal };
-	}
-	if (activeMutations.has(stableKey)) {
-		return { admitted: false, refusal: "mutation_in_progress" };
-	}
-	if (isForwardActive())
-		return { admitted: false, refusal: "streaming_active" };
-	if (held !== undefined) {
-		return {
-			admitted: false,
-			refusal:
-				held.holder === "streaming"
-					? "streaming_active"
-					: "mutation_in_progress",
-		};
-	}
-
+	const refusal = modemMutationRefusal(stableKey);
+	if (refusal) return { admitted: false, refusal };
 	return { admitted: true, lease: grantKeyLease(stableKey, false) };
 }
 
 function grantKeyLease(
 	stableKey: string,
 	journalOnly: boolean,
-): ModemMutationLease {
+): ModemJournalLease {
 	nextMutationToken += 1;
 	const token = nextMutationToken;
 	activeMutations.set(stableKey, { token, journalOnly });
 	return {
 		stableKey,
+		tryUpgrade: () => {
+			if (
+				activeMutations.get(stableKey)?.token !== token ||
+				modemMutationRefusal(stableKey, token)
+			)
+				return false;
+			activeMutations.set(stableKey, { token, journalOnly: false });
+			return true;
+		},
 		release: () => {
 			if (activeMutations.get(stableKey)?.token !== token) return;
 			activeMutations.delete(stableKey);
@@ -317,7 +326,7 @@ function wakeReleaseWaiters(stableKey: string): void {
  */
 export function tryAcquireModemJournalKey(
 	stableKey: string,
-): ModemMutationLease | undefined {
+): ModemJournalLease | undefined {
 	return activeMutations.has(stableKey)
 		? undefined
 		: grantKeyLease(stableKey, true);
