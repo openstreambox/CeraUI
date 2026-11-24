@@ -31,19 +31,19 @@ const MAX_READ_BYTES = 4096;
 const POLL_MS = 30_000;
 
 /** The checker's fixed messages (check-boot-fat.py), one code each. */
-const FIXED_REASONS = {
-	"invalid FAT boot sector": "boot_sector",
-	"unexpected FAT geometry": "geometry",
-	"unexpected FAT16 cluster count": "fat16_clusters",
-	"dirty report did not match the FAT geometry": "dirty_geometry",
-	"dirty byte did not match the read-only check": "dirty_byte",
-	"FAT table reports a dirty shutdown or an I/O error": "fat_flags",
-	"short write while clearing the dirty byte": "short_write",
-	"expected a block device or a regular FAT image": "not_block_device",
-} as const;
+const FIXED_REASONS = new Map([
+	["invalid FAT boot sector", "boot_sector"],
+	["unexpected FAT geometry", "geometry"],
+	["unexpected FAT16 cluster count", "fat16_clusters"],
+	["dirty report did not match the FAT geometry", "dirty_geometry"],
+	["dirty byte did not match the read-only check", "dirty_byte"],
+	["FAT table reports a dirty shutdown or an I/O error", "fat_flags"],
+	["short write while clearing the dirty byte", "short_write"],
+	["expected a block device or a regular FAT image", "not_block_device"],
+] as const);
 
 export type BootFatFaultReason =
-	| (typeof FIXED_REASONS)[keyof typeof FIXED_REASONS]
+	| (typeof FIXED_REASONS extends Map<string, infer Code> ? Code : never)
 	/** fsck.fat -n reported findings the checker does not repair (lost clusters). */
 	| "fsck_findings"
 	| "fsck_status_mismatch"
@@ -97,7 +97,8 @@ export function classifyBootFatFault(bytes: Uint8Array): BootFatFault {
 	if (!line.startsWith(PREFIX) || line.includes("\n"))
 		return present("unrecognized");
 	const reason = line.slice(PREFIX.length);
-	const fixed = FIXED_REASONS[reason as keyof typeof FIXED_REASONS];
+	// A Map, so a reason such as "constructor" never reaches an inherited value.
+	const fixed = FIXED_REASONS.get(reason as never);
 	if (fixed) return present(fixed);
 	const fsck =
 		/^read-only fsck\.fat (reported filesystem diagnostics|status disagreed with its report) \(exit (-?\d{1,3})\)$/.exec(

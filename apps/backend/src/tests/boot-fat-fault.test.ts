@@ -140,6 +140,9 @@ test("garbage is still a marker, but none of its contents are kept", async () =>
 		`${PREFIX}a new reason naming /media/card/boot.img\n`,
 		`${PREFIX}invalid FAT boot sector\nsecond line\n`,
 		`${PREFIX}[Errno x] not a number\n`,
+		`${PREFIX}constructor\n`,
+		`${PREFIX}toString\n`,
+		`${PREFIX}__proto__\n`,
 		`${PREFIX}${"x".repeat(5000)}\n`,
 		new Uint8Array([0xff, 0xfe, 0x00, 0x53]),
 	];

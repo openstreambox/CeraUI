@@ -17,7 +17,7 @@ import { readUpdateChannel } from "../system/update-settings.ts";
 import { collectVersionContext } from "../system/version-context.ts";
 import { getAllHotspotCredentials } from "../wifi/hotspot-credentials.ts";
 import { listBoots } from "./boots.ts";
-import { MIN_REDACTED_LENGTH } from "./redaction.ts";
+import { buildRedactor, MIN_REDACTED_LENGTH } from "./redaction.ts";
 import { getLogSettings, getLogState } from "./settings.ts";
 
 interface BundleData {
@@ -117,6 +117,23 @@ export function collectHeldSecrets(): Array<{ kind: string; value: string }> {
 	return secrets;
 }
 
+/**
+ * The boot FAT fact is optional diagnostics. When one of its words equals a
+ * held credential, the fail-closed collision check would refuse the whole
+ * bundle, so the fact is left out instead and the export stays available.
+ */
+function withoutHeldSecret(
+	fact: BootFatFault,
+	secrets: ReadonlyArray<{ kind: string; value: string }>,
+): BootFatFault | undefined {
+	try {
+		buildRedactor(secrets).structured(JSON.stringify({ bootFat: fact }));
+		return fact;
+	} catch {
+		return undefined;
+	}
+}
+
 export async function collectBundleData(): Promise<BundleData> {
 	const config = getConfig();
 	const secrets = collectHeldSecrets();
@@ -134,6 +151,7 @@ export async function collectBundleData(): Promise<BundleData> {
 		...(previous ? [previous.bootId] : []),
 	];
 	const disk = getDeviceStatsSnapshot()?.disk;
+	const bootFatFact = withoutHeldSecret(bootFat, secrets);
 	return structuredClone({
 		exportedBy,
 		boots: journalBoots.map((bootId) => ({
@@ -149,7 +167,7 @@ export async function collectBundleData(): Promise<BundleData> {
 			autostart: config.autostart ?? null,
 			hardwareKind: getHardwareKindCached(),
 			data: disk ? { used: disk.used, total: disk.total } : null,
-			bootFat,
+			...(bootFatFact ? { bootFat: bootFatFact } : {}),
 		},
 		events: readEvents(),
 		bootRecords: readBoots(),

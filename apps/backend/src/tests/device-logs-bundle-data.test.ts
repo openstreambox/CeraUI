@@ -282,3 +282,22 @@ test("the /boot FAT fault marker's classification goes into the bundle settings"
 		expect((await collectBundleData()).settings.bootFat).toEqual(fault);
 	}
 });
+
+test("a boot FAT fact that matches a held credential is left out, and the bundle still collects", async () => {
+	restore(
+		spyOn(hotspots, "getAllHotspotCredentials").mockReturnValue([
+			{ ssid: "private-network", password: "geometry" },
+		]),
+	);
+	restore(
+		spyOn(bootFat, "readBootFatFault").mockResolvedValue({
+			state: "present",
+			reason: "geometry",
+			exit: null,
+			errno: null,
+		}),
+	);
+	const result = await collectBundleData();
+	expect(result.settings).not.toHaveProperty("bootFat");
+	expect(result.secrets).toContainEqual({ kind: "hotspot", value: "geometry" });
+});
