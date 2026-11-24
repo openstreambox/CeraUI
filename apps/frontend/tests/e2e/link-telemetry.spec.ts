@@ -16,8 +16,9 @@ import { ensureAuthenticated, evidencePath, navigateTo } from "./helpers/index.j
  *
  *   1. Happy path — inject linkTelemetry for a live card; RTT/NAK/weight render.
  *   2. Update flow — push a new RTT; the value re-renders within 2 s.
- *   3. Empty state — linkTelemetry:null; every value reads "--", card height
- *      is identical to the populated state (layout-stable).
+ *   3. Empty state — while streaming, linkTelemetry:null; every value reads
+ *      "--", card height is identical to the populated state (layout-stable).
+ *      Idle, the cells are not rendered at all.
  *   4. Stale state — entry.stale:true; the telemetry row dims + earns a marker.
  *   5. Sender constants — rtt_ms:0 / weight_percent:100 render as-is (valid,
  *      not sentinels).
@@ -85,8 +86,14 @@ test.describe("Task 22 — link telemetry", () => {
 					const frame = JSON.parse(text) as {
 						status?: Record<string, unknown>;
 					};
-					if (frame?.status && "linkTelemetry" in frame.status) {
+					if (
+						frame?.status &&
+						("linkTelemetry" in frame.status || "is_streaming" in frame.status)
+					) {
+						// The stream flag is the test's too: the mock never streams,
+						// and the cells exist only while a stream runs.
 						delete frame.status.linkTelemetry;
+						delete frame.status.is_streaming;
 						ws.send(JSON.stringify(frame));
 						return;
 					}
@@ -105,6 +112,11 @@ test.describe("Task 22 — link telemetry", () => {
 	/** Inject a `status` frame carrying linkTelemetry (seq-less → bypasses guard). */
 	function pushTelemetry(links: TelemetryEntry[] | null): void {
 		pageWs?.send(JSON.stringify({ status: { linkTelemetry: links === null ? null : { links } } }));
+	}
+
+	/** Inject the stream flag (seq-less, like the telemetry frames). */
+	function pushStreaming(isStreaming: boolean): void {
+		pageWs?.send(JSON.stringify({ status: { is_streaming: isStreaming } }));
 	}
 
 	/** The first visible bonded-link card + its resolved interface id. */
@@ -174,8 +186,13 @@ test.describe("Task 22 — link telemetry", () => {
 	}) => {
 		const { card, iface } = await firstCard(page);
 
-		// Empty: every value is a placeholder; record the card height.
+		// Idle with no sender: no cells at all.
 		pushTelemetry(null);
+		await expect(card.getByTestId("link-telemetry")).toHaveCount(0);
+		record("idle + null telemetry: no RTT/NAK/weight cells ✓");
+
+		// Streaming: every value is a placeholder; record the card height.
+		pushStreaming(true);
 		await expect(card.getByTestId("link-rtt")).toHaveText("--");
 		await expect(card.getByTestId("link-nak")).toHaveText("--");
 		await expect(card.getByTestId("link-weight")).toHaveText("--");

@@ -10,6 +10,7 @@ import {
 	getCapabilities,
 	getConfig,
 	getIsConnected,
+	getIsStreaming,
 	getLinkTelemetry,
 	getModems,
 	getNetif,
@@ -259,6 +260,7 @@ function openModemConfig(id: string) {
 			{links}
 			{modemEntries}
 			{linkTelemetry}
+			streaming={getIsStreaming()}
 			unbondedCount={hud.unbondedLinkCount}
 		/>
 		<CollisionBands {netif} bondMapping={getStatus()?.bond_mapping ?? null} />
