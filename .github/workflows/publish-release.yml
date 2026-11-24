@@ -371,7 +371,7 @@ jobs:
         working-directory: CeraUI
         env:
           CERALIVE_NETNS_ISOLATED: "1"
-        run: bun test apps/backend/src/tests/uplink-steering-netns.test.ts apps/backend/src/tests/uplink-shaper-netns.test.ts apps/backend/src/tests/update-transport-netns.test.ts
+        run: bun test apps/backend/src/tests/hotspot-steering-lifecycle-netns.test.ts apps/backend/src/tests/uplink-steering-netns.test.ts apps/backend/src/tests/uplink-shaper-netns.test.ts apps/backend/src/tests/update-transport-netns.test.ts
 
       # The UID-routing fixture needs a nonzero UID in a private rootful network namespace.
       - name: update UID routing (rootful netns)
