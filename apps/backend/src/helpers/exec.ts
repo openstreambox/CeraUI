@@ -19,13 +19,18 @@ const SECRET_FLAG_RE =
 	/pass(word)?|secret|psk|token|key|pin|puk|stream[-_]?id|account|user(name)?|login|credential|auth/i;
 // Short options whose value is a credential (curl `-u user:password`).
 const SECRET_SHORT_FLAGS = new Set(["-u", "-U", "-p"]);
+// The nmcli SSID property is logged as *** too, so join and activation
+// logs never carry the network name.
+const isSensitiveArg = (arg: string) =>
+	SECRET_FLAG_RE.test(arg) || /^(?:802-11-wireless|wifi)\.ssid$/i.test(arg);
 
 /**
  * Produce a log-safe rendering of argv. Three shapes are redacted, because the
  * binaries this backend drives disagree about where a secret goes:
  *
  *  - `--pin <secret>` (mmcli/nmcli), `--streamid <id>`, `--account <name>`,
- *    `-u user:password` — the token AFTER a secret-looking flag.
+ *    `-u user:password`, nmcli `wifi.ssid <name>` — the token AFTER a
+ *    secret-looking flag.
  *  - `--uim-verify-pin=PIN2,<secret>` (qmicli) — the secret rides INSIDE the
  *    token, so the separate-token rule alone would log a live PIN verbatim.
  *  - `scheme://user:password@host` — URL credentials anywhere in a token.
@@ -39,13 +44,13 @@ export function redactArgv(args: readonly string[]): string {
 		const prev = i > 0 ? args[i - 1] : undefined;
 		if (
 			prev !== undefined &&
-			(SECRET_FLAG_RE.test(prev) || SECRET_SHORT_FLAGS.has(prev))
+			(isSensitiveArg(prev) || SECRET_SHORT_FLAGS.has(prev))
 		) {
 			out.push("***");
 			continue;
 		}
 		const eq = arg.indexOf("=");
-		if (eq > 0 && SECRET_FLAG_RE.test(arg.slice(0, eq))) {
+		if (eq > 0 && isSensitiveArg(arg.slice(0, eq))) {
 			out.push(`${arg.slice(0, eq)}=***`);
 			continue;
 		}
