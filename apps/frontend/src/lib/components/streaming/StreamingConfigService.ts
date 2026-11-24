@@ -1,10 +1,10 @@
 import type {
 	AudioCodecs,
-	ConfigMessage,
 	Framerate,
 	NetworkIngest,
 	Pipelines,
 	Resolution,
+	StreamingConfigInput,
 } from "@ceraui/rpc/schemas";
 import { toast } from "svelte-sonner";
 
@@ -39,9 +39,9 @@ export interface ConfigServiceOptions {
 export function buildStreamingConfig(
 	properties: Properties,
 	options: ConfigServiceOptions,
-): Partial<ConfigMessage> | null {
+): Partial<StreamingConfigInput> | null {
 	const { pipelines } = options;
-	const config: Partial<ConfigMessage> = {};
+	const config: Partial<StreamingConfigInput> = {};
 
 	if (properties.pipeline) {
 		config.pipeline = String(properties.pipeline);
@@ -106,7 +106,8 @@ export function buildStreamingConfig(
 		properties.relayAccount === "-1" ||
 		properties.relayAccount === undefined
 	) {
-		config.srt_streamid = properties.srtStreamId ?? "";
+		if (properties.srtStreamId !== undefined)
+			config.srt_streamid = properties.srtStreamId;
 	} else {
 		config.relay_account = properties.relayAccount;
 	}
@@ -138,4 +139,4 @@ export function stopStreaming(): void {
 	}
 }
 
-export type StreamingConfig = ConfigMessage;
+export type StreamingConfig = StreamingConfigInput;
