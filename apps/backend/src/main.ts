@@ -200,6 +200,7 @@ import {
 	reconcileSshPersistence,
 } from "./modules/system/ssh.ts";
 import { noteStreamReconciliationCompleted } from "./modules/system/stream-reconciliation-latch.ts";
+import { getTailscaleStatus } from "./modules/system/tailscale.ts";
 import { reconcileAptChannel } from "./modules/system/update-apt-channel.ts";
 import { runUpdateBootstrap } from "./modules/system/update-bootstrap.ts";
 import { readUpdateCapabilities } from "./modules/system/update-capabilities.ts";
@@ -534,6 +535,8 @@ await guardNonCritical("ssh-persistence", () =>
 	reconcileSshPersistence(sshPasswordSynced),
 );
 void getSshStatus();
+// Optional remote access: probe once so the first status carries it.
+void getTailscaleStatus();
 
 await guardNonCritical("hardware-identity-drift", async () => {
 	await warnOnHardwareIdentityDrift({
