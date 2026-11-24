@@ -41,6 +41,7 @@ function props(
 		isStreaming: boolean;
 		restarting: boolean;
 		summaryMode: boolean;
+		telemetry: { links: [] } | null;
 	}> = {},
 ) {
 	return {
@@ -57,7 +58,7 @@ function props(
 		onStep: () => {},
 		onSliderChange: () => {},
 		onSliderCommit: () => {},
-		telemetry: null,
+		telemetry: over.telemetry ?? null,
 		bitrateKbps: 6000,
 		isStreaming: over.isStreaming ?? false,
 		optimismState: "idle" as StreamingOptimismState,
@@ -96,8 +97,9 @@ describe("LiveCockpit during a supervised connection restart", () => {
 	});
 
 	it("closes the session into its summary once a restart ends without the stream", async () => {
+		// The session samples telemetry frames only, so the stream reports one.
 		const { queryByTestId, rerender } = render(LiveCockpit, {
-			props: props({ isStreaming: true }),
+			props: props({ isStreaming: true, telemetry: { links: [] } }),
 		});
 		await rerender(props({ isStreaming: false, restarting: true }));
 		expect(queryByTestId("ingest-summary")).toBeNull();
