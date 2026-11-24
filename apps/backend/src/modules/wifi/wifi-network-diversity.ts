@@ -51,6 +51,16 @@
   - The state is re-read under the adapter lock right before acting, and at most
     one radio moves per tick.
 
+  WHICH RADIO, AND WHICH LOCK. A radio is tracked by its physical identity: the
+  permanent MAC plus the sampled radio lifetime of a verified identity row. That
+  is never the adapter lock key, which names the radio's current OWNER (possibly
+  a composite hotspot owner) and can move. Profiles are matched against the
+  permanent MAC; every write takes the lock the current row resolves to and
+  re-checks there that the same registry row still owns it. A Limited or
+  Unverified radio is not tracked and never written. A replacement radio under
+  the same name has a new lifetime, so it starts with no back-off, parking or
+  pending choice of its predecessor.
+
   A move counts only when the radio holds the network for HOLD_MS. A quicker
   revert backs off (60 s doubling to 15 min); after PARK_AFTER_REVERTS reverts
   the radio waits for the operator or a clearly stronger signal. A failed move
@@ -78,8 +88,13 @@ import {
 	nmScanDevice,
 } from "../network/network-manager.ts";
 import {
+	admitWifiAdapter,
+	physicalWifiAdapterId,
+	type WifiAdapterAdmission,
+	wifiAdapterAdmissionCurrent,
+} from "./wifi-adapter-admission.ts";
+import {
 	type WifiAdapterLockKey,
-	wifiAdapterLockKey,
 	withWifiAdapterLock,
 } from "./wifi-adapter-lock.ts";
 import {
@@ -118,9 +133,16 @@ export const WIFI_DIVERSITY = {
 
 /** A station radio as the registry knows it: identity and saved profiles. */
 export type DiversityRadio = {
-	readonly key: WifiAdapterLockKey;
+	/** Physical identity (permanent MAC + radio lifetime); keys all tracking. */
+	readonly id: string;
+	/** Normalized permanent MAC; a profile is this radio's when bound to it. */
+	readonly mac: string;
+	/** Lock key the current registry row resolves to. Never an identity. */
+	readonly lock: WifiAdapterLockKey;
 	readonly ifname: string;
 	readonly savedAll: Readonly<Record<SSID, readonly ConnectionUUID[]>>;
+	/** The admission this projection came from (live wiring only). */
+	readonly admission?: WifiAdapterAdmission;
 };
 
 export type DiversityProfile = {
@@ -150,6 +172,12 @@ export type WifiNetworkDiversityDeps = {
 		key: WifiAdapterLockKey,
 		fn: () => Promise<void>,
 	) => Promise<boolean>;
+	/**
+	 * Called with `radio.lock` held: does this projection's registry row still
+	 * own that lock with the same physical identity? Defaults to true; the
+	 * projection itself is always re-read and compared.
+	 */
+	readonly current?: (radio: DiversityRadio) => boolean;
 	readonly now: () => number;
 	/**
 	 * SSID -> best signal in the merged scan list. Never evidence for a move
@@ -191,9 +219,18 @@ function ssidOf(radio: DiversityRadio, uuid: ConnectionUUID | null) {
 }
 
 export class WifiNetworkDiversity {
-	private readonly tracks = new Map<WifiAdapterLockKey, Track>();
+	/** Keyed by physical identity (`DiversityRadio.id`), never by lock key. */
+	private readonly tracks = new Map<string, Track>();
 	private readonly profiles = new Map<ConnectionUUID, DiversityProfile>();
-	private readonly busy = new Map<WifiAdapterLockKey, number>();
+	private readonly busy = new Map<string, number>();
+	/** Operator choices whose write found the adapter busy; retried per tick. */
+	private readonly pending = new Map<
+		string,
+		{ radio: DiversityRadio; uuid: ConnectionUUID; seq: number }
+	>();
+	/** The newest choice per physical radio; an older one is never written. */
+	private readonly latestChoice = new Map<string, number>();
+	private choiceSeq = 0;
 	private running: Promise<void> | undefined;
 	private choices: Promise<void> = Promise.resolve();
 	private startedAt: number | undefined;
@@ -203,64 +240,161 @@ export class WifiNetworkDiversity {
 
 	/** One evaluation; concurrent calls join the one in flight. */
 	tick(): Promise<void> {
-		this.running ??= this.evaluate().finally(() => {
-			this.running = undefined;
-		});
+		this.running ??= this.retryChoices()
+			.then(() => this.evaluate())
+			.finally(() => {
+				this.running = undefined;
+			});
 		return this.running;
 	}
 
 	/**
-	 * Mark an operator join/connect on `key` as in flight. The check leaves the
-	 * radio alone until the returned release runs.
+	 * Mark an operator join/connect on the physical radio `id` as in flight. The
+	 * check leaves the radio alone until the returned release runs.
 	 */
-	beginOperatorChoice(key: WifiAdapterLockKey): () => void {
-		this.busy.set(key, (this.busy.get(key) ?? 0) + 1);
+	beginOperatorChoice(id: string): () => void {
+		this.busy.set(id, (this.busy.get(id) ?? 0) + 1);
 		let released = false;
 		return () => {
 			if (released) return;
 			released = true;
-			const left = (this.busy.get(key) ?? 1) - 1;
-			if (left > 0) this.busy.set(key, left);
-			else this.busy.delete(key);
+			const left = (this.busy.get(id) ?? 1) - 1;
+			if (left > 0) this.busy.set(id, left);
+			else this.busy.delete(id);
 		};
 	}
 
 	/**
-	 * Record an operator's explicit choice of `uuid` on the radio `key`. Only a
-	 * profile bound to this radio's MAC is marked: an unbound profile is shared
-	 * by every radio, so marking it would mark it for all of them. Serialized,
-	 * so two quick choices cannot interleave their writes.
+	 * Record an operator's explicit choice of `uuid` on a radio: the projection
+	 * admitted for the choice, or the current one for a physical id. Only a
+	 * profile bound to this radio's permanent MAC is marked: an unbound profile
+	 * is shared by every radio, so marking it would mark it for all of them.
+	 * Serialized, so two quick choices cannot interleave their writes. A busy
+	 * adapter defers the write to the next tick; a replaced radio drops it.
 	 */
-	recordChoice(key: WifiAdapterLockKey, uuid: ConnectionUUID): Promise<void> {
-		const next = this.choices.then(() => this.writeChoice(key, uuid));
+	recordChoice(
+		radio: DiversityRadio | string,
+		uuid: ConnectionUUID,
+	): Promise<void> {
+		const seq = ++this.choiceSeq;
+		this.latestChoice.set(typeof radio === "string" ? radio : radio.id, seq);
+		return this.enqueueChoice(radio, uuid, seq);
+	}
+
+	private enqueueChoice(
+		radio: DiversityRadio | string,
+		uuid: ConnectionUUID,
+		seq: number,
+	): Promise<void> {
+		const next = this.choices.then(() => {
+			const target =
+				typeof radio === "string"
+					? this.deps.radios().find((r) => r.id === radio)
+					: radio;
+			return target ? this.writeChoice(target, uuid, seq) : undefined;
+		});
 		this.choices = next.catch(() => {
 			// The caller sees the failure; the chain only keeps the order.
 		});
 		return next;
 	}
 
+	/** The radio's current projection, if `radio` still names it under its lock. */
+	private held(radio: DiversityRadio): DiversityRadio | undefined {
+		const now = this.deps.radios().find((r) => r.id === radio.id);
+		if (
+			!now ||
+			now.lock !== radio.lock ||
+			now.ifname !== radio.ifname ||
+			now.mac !== radio.mac ||
+			now.admission?.row !== radio.admission?.row
+		)
+			return undefined;
+		return (this.deps.current?.(now) ?? true) ? now : undefined;
+	}
+
+	private async retryChoices(): Promise<void> {
+		const due = [...this.pending.values()];
+		this.pending.clear();
+		for (const { radio, uuid, seq } of due) {
+			await this.enqueueChoice(radio, uuid, seq).catch((err) => {
+				logger.warn(`Wi-Fi diversity: deferred choice failed: ${err}`);
+			});
+		}
+	}
+
 	private async writeChoice(
-		key: WifiAdapterLockKey,
+		radio: DiversityRadio,
 		uuid: ConnectionUUID,
+		seq: number,
 	): Promise<void> {
-		const radio = this.deps.radios().find((r) => r.key === key);
-		if (!radio) return;
-		// Re-read this radio's profiles: a choice must act on NetworkManager's
-		// current marks, not on what an earlier tick cached.
-		await this.loadProfiles(this.deps.radios(), radio);
+		// A newer choice for this radio was made after this one: it wins.
+		if (this.latestChoice.get(radio.id) !== seq) return;
+		this.pending.delete(radio.id);
+		let outcome = "done" as "done" | "replaced" | "moved";
+		const locked = await this.deps.withLock(radio.lock, async () => {
+			const held = this.held(radio);
+			if (!held) {
+				outcome = this.sameRow(radio) ? "moved" : "replaced";
+				return;
+			}
+			// Re-read this radio's profiles: a choice must act on NetworkManager's
+			// current marks, not on what an earlier tick cached.
+			await this.loadProfiles(this.deps.radios(), held);
+			if (!this.held(radio)) {
+				outcome = "replaced";
+				return;
+			}
+			await this.markChoice(held, uuid);
+		});
+		if (!locked || outcome === "moved") {
+			// Busy, or the same row now resolves to another owner: try again under
+			// whatever lock the row resolves to on the next tick.
+			const now = this.sameRow(radio);
+			if (now) this.pending.set(radio.id, { radio: now, uuid, seq });
+			else this.settleChoice(radio.id, seq);
+			return;
+		}
+		this.settleChoice(radio.id, seq);
+		if (outcome === "replaced") {
+			logger.warn(
+				`Wi-Fi diversity: ${radio.ifname} was replaced before its choice was recorded; nothing written`,
+			);
+		}
+	}
+
+	private settleChoice(id: string, seq: number) {
+		if (this.latestChoice.get(id) === seq) this.latestChoice.delete(id);
+	}
+
+	/** The current projection of the same physical radio and registry row. */
+	private sameRow(radio: DiversityRadio): DiversityRadio | undefined {
+		return this.deps
+			.radios()
+			.find(
+				(r) =>
+					r.id === radio.id &&
+					r.mac === radio.mac &&
+					r.admission?.row === radio.admission?.row,
+			);
+	}
+
+	/** Under the radio's lock: the operator's choice becomes its only mark. */
+	private async markChoice(radio: DiversityRadio, uuid: ConnectionUUID) {
 		const ssid = ssidOf(radio, uuid);
-		this.resetTrack(key, true);
-		if (ssid === null || this.profiles.get(uuid)?.mac !== key) {
+		this.resetTrack(radio.id, true);
+		if (ssid === null || this.profiles.get(uuid)?.mac !== radio.mac) {
 			// The operator chose something we cannot mark. An old mark would make
 			// the check undo that choice, so the radio is left without one.
 			logger.info(
-				`Wi-Fi diversity: ${key} chose a profile not bound to it; clearing its preference`,
+				`Wi-Fi diversity: ${radio.mac} chose a profile not bound to it; clearing its preference`,
 			);
 			for (const profile of this.bound(radio)) {
 				if (
 					this.profiles.get(profile.uuid)?.priority ===
 					WIFI_CHOSEN_NETWORK_PRIORITY
 				) {
+					if (!this.held(radio)) return;
 					await this.writePriority(profile.uuid, 0);
 				}
 			}
@@ -275,6 +409,7 @@ export class WifiNetworkDiversity {
 						? 0
 						: undefined;
 			if (want === undefined || want === priority) continue;
+			if (!this.held(radio)) return;
 			await this.writePriority(profile.uuid, want);
 		}
 		const marks = new Set(
@@ -288,7 +423,7 @@ export class WifiNetworkDiversity {
 		);
 		if (marks.size !== 1) {
 			logger.warn(
-				`Wi-Fi diversity: ${key} has ${marks.size} marked networks after a choice; its preference is ignored`,
+				`Wi-Fi diversity: ${radio.mac} has ${marks.size} marked networks after a choice; its preference is ignored`,
 			);
 		}
 	}
@@ -305,7 +440,7 @@ export class WifiNetworkDiversity {
 		const out: Array<{ ssid: SSID; uuid: ConnectionUUID }> = [];
 		for (const ssid in radio.savedAll) {
 			for (const uuid of radio.savedAll[ssid] ?? []) {
-				if (this.profiles.get(uuid)?.mac === radio.key)
+				if (this.profiles.get(uuid)?.mac === radio.mac)
 					out.push({ ssid, uuid });
 			}
 		}
@@ -350,8 +485,8 @@ export class WifiNetworkDiversity {
 		}
 	}
 
-	private track(key: WifiAdapterLockKey, now: number): Track {
-		let t = this.tracks.get(key);
+	private track(id: string, now: number): Track {
+		let t = this.tracks.get(id);
 		if (!t) {
 			t = {
 				uuid: null,
@@ -369,14 +504,14 @@ export class WifiNetworkDiversity {
 				parkedSignal: undefined,
 				moved: undefined,
 			};
-			this.tracks.set(key, t);
+			this.tracks.set(id, t);
 		}
 		return t;
 	}
 
 	/** Forget an episode; `all` also forgets reverts and parking. */
-	private resetTrack(key: WifiAdapterLockKey, all = false) {
-		const t = this.tracks.get(key);
+	private resetTrack(id: string, all = false) {
+		const t = this.tracks.get(id);
 		if (!t) return;
 		t.dupTicks = 0;
 		t.sighting = undefined;
@@ -418,12 +553,13 @@ export class WifiNetworkDiversity {
 		await this.loadProfiles(radios);
 		const seen = this.view(radios, links);
 
-		const present = new Set(radios.map((r) => r.key));
-		for (const key of [...this.tracks.keys()]) {
-			if (!present.has(key)) this.tracks.delete(key);
+		// A radio that left (or came back with a new lifetime) keeps nothing.
+		const present = new Set(radios.map((r) => r.id));
+		for (const id of [...this.tracks.keys()]) {
+			if (!present.has(id)) this.tracks.delete(id);
 		}
 		for (const { radio, uuid } of seen) {
-			const t = this.track(radio.key, now);
+			const t = this.track(radio.id, now);
 			if (t.uuid !== uuid) {
 				if (
 					t.moved &&
@@ -436,7 +572,7 @@ export class WifiNetworkDiversity {
 						t.parkedSignal = t.moved.signal;
 						t.nextMoveAt = now + WIFI_DIVERSITY.moveBackoffMaxMs;
 						logger.warn(
-							`Wi-Fi diversity: ${radio.key} keeps dropping its own network; waiting for a stronger signal or the operator`,
+							`Wi-Fi diversity: ${radio.mac} keeps dropping its own network; waiting for a stronger signal or the operator`,
 						);
 					}
 					t.moved = undefined;
@@ -455,7 +591,7 @@ export class WifiNetworkDiversity {
 		}
 
 		for (const s of seen) {
-			const t = this.track(s.radio.key, now);
+			const t = this.track(s.radio.id, now);
 			if (
 				(t.reverts > 0 || t.parkedSignal !== undefined) &&
 				s.uuid !== null &&
@@ -479,26 +615,26 @@ export class WifiNetworkDiversity {
 			if (s.ssid !== null) used.set(s.ssid, (used.get(s.ssid) ?? 0) + 1);
 		}
 		const settled = seen.every(
-			(s) =>
-				now - this.track(s.radio.key, now).since >= WIFI_DIVERSITY.settleMs,
+			(s) => now - this.track(s.radio.id, now).since >= WIFI_DIVERSITY.settleMs,
 		);
 
 		let pick:
 			| { seen: Seen; target: { ssid: SSID; uuid: ConnectionUUID } }
 			| undefined;
 		for (const s of seen) {
-			const t = this.track(s.radio.key, now);
+			const t = this.track(s.radio.id, now);
 			const target = this.preferred(s.radio);
 			const candidate =
 				s.ssid !== null &&
 				(used.get(s.ssid) ?? 0) >= 2 &&
-				!this.busy.has(s.radio.key) &&
+				!this.busy.has(s.radio.id) &&
+				!this.pending.has(s.radio.id) &&
 				target !== undefined &&
 				target.ssid !== s.ssid &&
 				!used.has(target.ssid) &&
 				!active.has(target.uuid);
 			if (!candidate) {
-				this.resetTrack(s.radio.key);
+				this.resetTrack(s.radio.id);
 				// A short blip keeps the episode's scan budget; a real gap resets it.
 				if (
 					t.lastCandidateAt === undefined ||
@@ -572,36 +708,79 @@ export class WifiNetworkDiversity {
 			connected.every(
 				(s) =>
 					s.ssid !== null &&
-					this.profiles.get(s.uuid as ConnectionUUID)?.mac === s.radio.key &&
-					now - this.track(s.radio.key, now).since >=
+					this.profiles.get(s.uuid as ConnectionUUID)?.mac === s.radio.mac &&
+					now - this.track(s.radio.id, now).since >=
 						WIFI_DIVERSITY.migrationStableMs,
 			) &&
 			seen.every(
 				(s) =>
-					now - this.track(s.radio.key, now).since >=
+					now - this.track(s.radio.id, now).since >=
 					WIFI_DIVERSITY.migrationStableMs,
 			);
 		if (!ready) return;
-		this.migrated = true;
-		for (const s of connected) {
-			logger.info(
-				`Wi-Fi diversity: marking ${JSON.stringify(s.ssid)} as the network of ${s.radio.key}`,
-			);
-			await this.writePriority(
-				s.uuid as ConnectionUUID,
-				WIFI_CHOSEN_NETWORK_PRIORITY,
-			);
+		// All marks or none, each written under its radio's current owner lock;
+		// a busy or replaced radio leaves the migration for a later tick.
+		const locks = [...new Set(connected.map((s) => s.radio.lock))].sort();
+		await this.withLocks(locks, async () => {
+			if (
+				connected.some(
+					(s) =>
+						!this.held(s.radio) ||
+						this.busy.has(s.radio.id) ||
+						this.pending.has(s.radio.id),
+				)
+			)
+				return;
+			const links = await this.deps.readLinks();
+			if (
+				!links ||
+				connected.some((s) => (links.get(s.radio.ifname) ?? null) !== s.uuid)
+			)
+				return;
+			this.migrated = true;
+			for (const s of connected) {
+				if (!this.held(s.radio)) return;
+				logger.info(
+					`Wi-Fi diversity: marking ${JSON.stringify(s.ssid)} as the network of ${s.radio.mac}`,
+				);
+				await this.writePriority(
+					s.uuid as ConnectionUUID,
+					WIFI_CHOSEN_NETWORK_PRIORITY,
+				);
+			}
+		});
+	}
+
+	/** Run `fn` holding every lock in `locks` (sorted), or not at all. */
+	private async withLocks(
+		locks: readonly WifiAdapterLockKey[],
+		fn: () => Promise<void>,
+	): Promise<boolean> {
+		const [first, ...rest] = locks;
+		if (first === undefined) {
+			await fn();
+			return true;
 		}
+		let inner = false;
+		const outer = await this.deps.withLock(first, async () => {
+			inner = await this.withLocks(rest, fn);
+		});
+		return outer && inner;
 	}
 
 	private async act(
 		s: Seen,
 		target: { ssid: SSID; uuid: ConnectionUUID },
 	): Promise<void> {
-		const key = s.radio.key;
-		const t = this.track(key, this.deps.now());
-		await this.deps.withLock(key, async () => {
-			if (this.busy.has(key)) return;
+		const radio = s.radio;
+		const t = this.track(radio.id, this.deps.now());
+		// An operator choice in flight or waiting for this lock wins.
+		const yields = () =>
+			this.busy.has(radio.id) ||
+			this.pending.has(radio.id) ||
+			!this.held(radio);
+		await this.deps.withLock(radio.lock, async () => {
+			if (yields()) return;
 			// Re-read: the plan must still hold right before we touch the link.
 			if (!(await this.stillShared(s, target))) return;
 
@@ -641,10 +820,10 @@ export class WifiNetworkDiversity {
 			}
 			if (now - t.sighting.at < WIFI_DIVERSITY.sightingGapMs) return;
 			t.sighting = undefined;
-			if (!(await this.stillShared(s, target))) return;
+			if (!(await this.stillShared(s, target)) || yields()) return;
 
 			logger.info(
-				`Wi-Fi diversity: moving ${key} back to its own network ${JSON.stringify(target.ssid)} (signal ${signal})`,
+				`Wi-Fi diversity: moving ${radio.mac} back to its own network ${JSON.stringify(target.ssid)} (signal ${signal})`,
 			);
 			const ok = await this.deps.activate(target.uuid, s.radio.ifname);
 			const after = this.deps.now();
@@ -660,15 +839,16 @@ export class WifiNetworkDiversity {
 				return;
 			}
 			logger.warn(
-				`Wi-Fi diversity: could not move ${key} to ${JSON.stringify(target.ssid)}; restoring its previous link`,
+				`Wi-Fi diversity: could not move ${radio.mac} to ${JSON.stringify(target.ssid)}; restoring its previous link`,
 			);
 			this.backoff(t, after);
+			if (!this.held(radio)) return;
 			if (
 				s.uuid !== null &&
 				!(await this.deps.activate(s.uuid, s.radio.ifname))
 			) {
 				logger.warn(
-					`Wi-Fi diversity: could not restore ${key}'s previous link; NetworkManager's autoconnect has to recover it`,
+					`Wi-Fi diversity: could not restore ${radio.mac}'s previous link; NetworkManager's autoconnect has to recover it`,
 				);
 			}
 		});
@@ -696,9 +876,13 @@ export class WifiNetworkDiversity {
 
 // ─── runtime wiring ──────────────────────────────────────────────────────────
 
-/** Project a registry row onto the check's view; undefined when exempt. */
+/**
+ * Project a registry row onto the check's view; undefined when exempt or when
+ * the row is not a verified radio (Limited, Unverified, degraded, or not the
+ * exact registry object its identity names).
+ */
 export function diversityRadioOf(
-	macAddress: string,
+	registryKey: string,
 	wifiInterface: WifiInterface,
 ): DiversityRadio | undefined {
 	if (
@@ -708,20 +892,25 @@ export function diversityRadioOf(
 	) {
 		return undefined;
 	}
+	const admission = admitWifiAdapter(registryKey);
+	if (admission?.row !== wifiInterface) return undefined;
 	return {
-		key: wifiAdapterLockKey(macAddress),
+		id: physicalWifiAdapterId(admission),
+		mac: admission.permanentMac,
+		lock: admission.owner,
 		ifname: wifiInterface.ifname,
 		savedAll: wifiInterface.savedAll ?? {},
+		admission,
 	};
 }
 
 function liveRadios(): DiversityRadio[] {
 	const radios: DiversityRadio[] = [];
 	const interfaces = getWifiInterfacesByMacAddress();
-	for (const macAddress in interfaces) {
-		const wifiInterface = interfaces[macAddress];
+	for (const registryKey in interfaces) {
+		const wifiInterface = interfaces[registryKey];
 		if (!wifiInterface) continue;
-		const radio = diversityRadioOf(macAddress, wifiInterface);
+		const radio = diversityRadioOf(registryKey, wifiInterface);
 		if (radio) radios.push(radio);
 	}
 	return radios;
@@ -740,9 +929,19 @@ export function parseDiversityLinks(rows: readonly string[]): DiversityLinks {
 	return links;
 }
 
-export function createLiveWifiNetworkDiversity(): WifiNetworkDiversity {
+/**
+ * The live check. `overrides` replaces NetworkManager access in tests; the
+ * registry projection, the adapter lock and its re-check stay live unless
+ * overridden too.
+ */
+export function createLiveWifiNetworkDiversity(
+	overrides: Partial<WifiNetworkDiversityDeps> = {},
+): WifiNetworkDiversity {
 	return new WifiNetworkDiversity({
 		radios: liveRadios,
+		current: (radio) =>
+			radio.admission !== undefined &&
+			wifiAdapterAdmissionCurrent(radio.admission),
 		readLinks: async () => {
 			const rows = await nmDevices("DEVICE,TYPE,STATE,CON-UUID");
 			return rows ? parseDiversityLinks(rows) : undefined;
@@ -787,6 +986,7 @@ export function createLiveWifiNetworkDiversity(): WifiNetworkDiversity {
 			return ssids;
 		},
 		now: () => Date.now(),
+		...overrides,
 	});
 }
 
@@ -815,22 +1015,59 @@ export function stopWifiNetworkDiversity(): void {
 	timer = undefined;
 }
 
-/** An operator join/connect is starting on the radio `macAddress`. */
-export function beginWifiOperatorChoice(macAddress: string): () => void {
-	return liveInstance().beginOperatorChoice(wifiAdapterLockKey(macAddress));
-}
+/** An operator join/connect in flight on one physical radio. */
+export type WifiOperatorChoice = {
+	/** The join/connect settled; the check may consider the radio again. */
+	readonly release: () => void;
+	/**
+	 * The operator chose `uuid` on the radio admitted when the choice began.
+	 * Never rejects: recording the choice must not change the join's answer.
+	 * Nothing is written when that radio was not verified or has since been
+	 * replaced, even by a radio with the same name and MAC.
+	 */
+	readonly record: (uuid: ConnectionUUID) => Promise<void>;
+};
 
 /**
- * The operator chose `uuid` on the radio `macAddress` (a join or a connect).
- * Never rejects: recording the choice must not change the join's answer.
+ * An operator join/connect is starting on the registry row `registryKey`. The
+ * physical radio is admitted now, so the choice can never land on a radio that
+ * replaced it while the join ran.
  */
-export async function recordWifiNetworkChoice(
-	macAddress: string,
-	uuid: ConnectionUUID,
-): Promise<void> {
-	try {
-		await liveInstance().recordChoice(wifiAdapterLockKey(macAddress), uuid);
-	} catch (err) {
-		logger.warn(`Recording the Wi-Fi network choice failed: ${err}`);
+export function beginWifiOperatorChoice(
+	registryKey: string,
+	instance: WifiNetworkDiversity = liveInstance(),
+): WifiOperatorChoice {
+	const admission = admitWifiAdapter(registryKey);
+	if (!admission) {
+		return {
+			release: () => {
+				// Nothing was flagged for a radio that was not admitted.
+			},
+			record: async () => {
+				logger.info(
+					`Wi-Fi diversity: ${registryKey} is not a verified radio; its choice is not recorded`,
+				);
+			},
+		};
 	}
+	const id = physicalWifiAdapterId(admission);
+	return {
+		release: instance.beginOperatorChoice(id),
+		record: async (uuid) => {
+			const radio = liveRadios().find(
+				(r) => r.id === id && r.admission?.row === admission.row,
+			);
+			if (!radio) {
+				logger.info(
+					`Wi-Fi diversity: ${admission.row.ifname} changed during the operator's choice; nothing recorded`,
+				);
+				return;
+			}
+			try {
+				await instance.recordChoice(radio, uuid);
+			} catch (err) {
+				logger.warn(`Recording the Wi-Fi network choice failed: ${err}`);
+			}
+		},
+	};
 }
