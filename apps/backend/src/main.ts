@@ -1,3 +1,4 @@
+import { moblinkOwner, stopMoblinkRelay } from "./modules/moblink/runtime";
 import {
 	initCarrying,
 	tickCarrying,
@@ -481,6 +482,7 @@ await guardNonCritical("mock-preview", () => {
 	startMockPreviewServer();
 });
 
+await moblinkOwner.restore();
 void guardNonCritical("boot-record", async () => {
 	await initRevisions();
 	await logBootRecord();
@@ -769,7 +771,10 @@ const termination = terminationHandlers({
 	},
 	terminateWifiDiscovery,
 	gracefulShutdown,
-	stopSrtIngest: stopSRTIngest,
+	stopSrtIngest: async () => {
+		await stopMoblinkRelay();
+		await stopSRTIngest();
+	},
 	stopDmesgWatchers,
 	stopUplinkShaper,
 	stopGatewayRoutes,
