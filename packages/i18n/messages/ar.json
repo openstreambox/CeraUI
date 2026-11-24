@@ -2122,6 +2122,8 @@
 	"notifications.installFailedDescription": "تعذّر تثبيت التطبيق. يرجى المحاولة مرة أخرى.",
 	"notifications.jetsonUndervoltage": "تم اكتشاف انخفاض في جهد النظام. قد يصبح النظام غير مستقر، بما في ذلك أعطال في الصورة وتجمّد وانقطاع اتصال المودمات",
 	"notifications.linksRecovered": "تعافت الروابط المجمّعة.",
+	"notifications.modemHeldOut": "تم إبعاد {name} عن البث لأنه تعذّر التراجع عن تغيير في إعداداته. روابطك الأخرى غير متأثرة.",
+	"notifications.modemHeldOutUnknown": "تم إبعاد مودم تم فصله أو إعادة توصيله عن البث لأنه تعذّر التراجع عن تغيير في إعداداته. روابطك الأخرى غير متأثرة.",
 	"notifications.modemRoaming": "{name} في وضع التجوال. تم تسجيله على شبكة شريكة، لذا قد تُحتسب البيانات بأسعار التجوال. البث غير متأثر.",
 	"notifications.openUpdates": "فتح التحديثات",
 	"notifications.viewLogs": "عرض السجلات",
