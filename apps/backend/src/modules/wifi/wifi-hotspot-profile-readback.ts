@@ -1,6 +1,7 @@
 import type { NmProfileReadTrace } from "../network/network-manager-profile-diagnostics.ts";
 import {
 	type NmProfileInstance,
+	sameNmProfileActivation,
 	sameNmProfileResource,
 } from "../network/network-manager-profile-instance.ts";
 import {
@@ -16,6 +17,8 @@ type ProfileWriteWitness = {
 	readonly predicted: Buffer | undefined;
 	readonly acknowledged: boolean;
 	readonly fields: Readonly<Record<string, string>>;
+	/** The writer's receipt for a reload it verified after rejecting this dispatch. */
+	readonly restoration?: NmProfileInstance | undefined;
 };
 
 type ProfileReadback = {
@@ -63,13 +66,31 @@ function withoutActivationTimestamp(
 	};
 }
 
+/** Same NM object and settings, same inode and name; only the file's ctime may differ. */
+function sameNmProfileRestoration(
+	before: NmProfileInstance,
+	after: NmProfileInstance,
+): boolean {
+	return Boolean(
+		before.file &&
+			after.file &&
+			before.runId === after.runId &&
+			before.path === after.path &&
+			before.fingerprint === after.fingerprint &&
+			before.file.filename === after.file.filename &&
+			before.file.device === after.file.device &&
+			before.file.inode === after.file.inode,
+	);
+}
+
 /** Read-only comparison; dispatch, retirement and record updates belong to the operation owner. */
 export async function classifyHotspotProfileReadback(
 	witness: ProfileWriteWitness,
 	after: NmProfileInstance | null | undefined,
 	trace: NmProfileReadTrace,
 ): Promise<ProfileReadback> {
-	const { kind, before, held, predicted, acknowledged, fields } = witness;
+	const { kind, before, held, predicted, acknowledged, fields, restoration } =
+		witness;
 	const unchangedBytes = async (): Promise<ProfileReadback> => {
 		if (!held || !sameNmProfileResource(before, after))
 			return {
@@ -114,15 +135,20 @@ export async function classifyHotspotProfileReadback(
 			const current = await openNmProfileFile(after.file, trace);
 			try {
 				if (!acknowledged) {
-					const unchanged = Boolean(
-						sameNmProfileResource(before, after) &&
-							original?.equals(held.bytes) &&
-							current?.bytes.equals(held.bytes),
+					const sameBytes = Boolean(
+						original?.equals(held.bytes) && current?.bytes.equals(held.bytes),
 					);
+					const unchanged = sameBytes && sameNmProfileResource(before, after);
+					// Only the writer's verified rollback, matched exactly, explains a moved ctime.
+					const restored =
+						!unchanged &&
+						sameBytes &&
+						sameNmProfileRestoration(before, after) &&
+						sameNmProfileActivation(restoration, after);
 					return {
-						checked: unchanged,
-						instance: unchanged ? before : undefined,
-						exit: unchanged ? undefined : "modify-failure-changed",
+						checked: unchanged || restored,
+						instance: unchanged ? before : restored ? after : undefined,
+						exit: unchanged || restored ? undefined : "modify-failure-changed",
 					};
 				}
 				if (
