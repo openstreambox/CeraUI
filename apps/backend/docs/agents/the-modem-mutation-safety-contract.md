@@ -212,6 +212,12 @@ acknowledgement or rebaseline with the operator.
 | `decommissioned` | re-check presence (present ⇒ `recommission-pending`; absent ⇒ no action) |
 | `recommission-pending` | remain awaiting the rebaseline |
 
+Boot replay and the retained return poll require a recorded unit to match at
+its original port before advancing an absent quarantine. Only a positive
+port observation is required for a decommissioned record to enter
+`recommission-pending`. The record still holds the port and original unit
+until the operator confirms the rebaseline.
+
 `mutation-replay.ts` is the table's executor. Replay lowers the barrier only after
 complete readable authority and strict block publication; unknown/damaged journal
 authority keeps it raised behind the cancellable retry owner. Failed rollback's
