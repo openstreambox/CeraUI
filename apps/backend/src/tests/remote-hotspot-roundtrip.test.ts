@@ -25,7 +25,7 @@ import { hotspotConfigureProcedure } from "../rpc/procedures/wifi.procedure.ts";
 import { object } from "./helpers/remote-privacy-cases.ts";
 import { wifiFrameFixture } from "./helpers/wifi-frame-fixture.ts";
 
-test("remote status exposes the live hotspot password and a new password reaches the existing config writer unchanged", async () => {
+test("remote status withholds the live hotspot password and a new password reaches the existing config writer unchanged", async () => {
 	const scratch = await mkdtemp(join(tmpdir(), "remote-hotspot-roundtrip-"));
 	const fixture = await wifiFrameFixture(true, true);
 	try {
@@ -40,8 +40,10 @@ test("remote status exposes the live hotspot password and a new password reaches
 		const status = StatusSchema.parse(frames[0]);
 		expect(status.v).toBe(PROTOCOL_VERSION);
 		if (!object(status.payload?.wifi)) throw new Error("missing remote Wi-Fi");
-		const remote = wifiInterfaceSchema.parse(status.payload.wifi["0"]);
-		expect(remote.hotspot?.password).toBe(fixture.row.hotspot.password);
+		const remote = wifiInterfaceSchema.parse(
+			Object.values(status.payload.wifi)[0],
+		);
+		expect(JSON.stringify(status)).not.toContain(fixture.row.hotspot.password);
 		expect(remote).not.toHaveProperty("incarnation");
 		expect(JSON.stringify(local)).toBe(before);
 
@@ -51,7 +53,7 @@ test("remote status exposes the live hotspot password and a new password reaches
 			incarnation: fixture.before,
 			name: remote.hotspot?.name,
 			password,
-			channel: remote.hotspot?.channel,
+			channel: fixture.row.hotspot.channel,
 		});
 		const profile = join(scratch, "nm-hotspot.json");
 		const identity = join(scratch, "hotspot-identity.json");
