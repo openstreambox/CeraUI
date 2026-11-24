@@ -10,10 +10,14 @@ import {
 	reservePowerAction,
 } from "./disruptive-action-reservation.ts";
 import { getDisruptiveActionDecision } from "./disruptive-action-runtime.ts";
+import {
+	type PowerRunnerOutcome,
+	trackBrokerRequest,
+} from "./power-admission.ts";
 
 export function submitPowerCommand(
 	command: "reboot" | "poweroff",
-	runner: (command: "reboot" | "poweroff") => void,
+	runner: (command: "reboot" | "poweroff") => PowerRunnerOutcome | undefined,
 ): { success: boolean; error?: string; failureReason?: PowerFailureReason } {
 	const admission = reservePowerAction(
 		getDisruptiveActionDecision({ powerAction: command }),
@@ -29,8 +33,15 @@ export function submitPowerCommand(
 		notePlannedShutdown(command);
 		emitDeviceEvent("shutdown_requested", { action: command, origin: "local" });
 		effectInvoked = true;
-		runner(command);
+		const outcome = runner(command);
 		admission.reservation.releaseAfterCompletion();
+		// The broker admitted the request and finishes it later: only its
+		// correlated definite failure releases the reservation again.
+		if (outcome?.brokerRequestId)
+			trackBrokerRequest(
+				outcome.brokerRequestId,
+				admission.reservation.releaseAfterFailure,
+			);
 		return { success: true };
 	} catch (error) {
 		if (!effectInvoked || isPositiveDisruptiveFailure(error))
