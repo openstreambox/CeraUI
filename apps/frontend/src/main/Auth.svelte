@@ -103,6 +103,14 @@ const passwordError = $derived.by(() => {
 });
 const confirmError = $derived(confirmMismatch ? m["auth.passwordsDoNotMatch"]() : '');
 
+// The create form states its one rule under the field, not in the placeholder,
+// which a phone cut mid-sentence. While the entry is too short the same words
+// are the error, so the hint steps aside rather than repeating them.
+const showPasswordHint = $derived(setPassword && !passwordError);
+const passwordDescribedBy = $derived(
+	passwordError ? 'password-error' : showPasswordHint ? 'password-hint' : undefined,
+);
+
 const isFormValid = $derived(
 	setPassword
 		? password.length >= MIN_PASSWORD_LENGTH && confirmPassword === password
@@ -271,7 +279,7 @@ async function onSubmit(event: SubmitEvent) {
 				<div class="relative">
 					<Input
 						id="password"
-						aria-describedby={passwordError ? 'password-error' : undefined}
+						aria-describedby={passwordDescribedBy}
 						aria-invalid={Boolean(passwordError)}
 						class={cn(
 							'h-11 w-full pe-12 rtl:ps-12 rtl:pe-2.5',
@@ -283,7 +291,7 @@ async function onSubmit(event: SubmitEvent) {
 						dir="ltr"
 						disabled={isLoading}
 						placeholder={setPassword
-							? m["auth.placeholderNewPassword"]()
+							? m["auth.placeholderCreatePassword"]()
 							: m["auth.placeholderPassword"]()}
 						type={showPassword ? 'text' : 'password'}
 						bind:ref={passwordInput}
@@ -314,6 +322,11 @@ async function onSubmit(event: SubmitEvent) {
 					</Button>
 				</div>
 
+				{#if showPasswordHint}
+					<p id="password-hint" class="text-muted-foreground text-xs">
+						{m["auth.passwordTooShort"]()}
+					</p>
+				{/if}
 				{#if passwordError}
 					<p
 						id="password-error"

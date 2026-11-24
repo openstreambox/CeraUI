@@ -154,6 +154,7 @@
 	"auth.passwordTooShort": "Use pelo menos 8 caracteres",
 	"auth.passwordsDoNotMatch": "As senhas não coincidem",
 	"auth.placeholderConfirmPassword": "Digite a senha novamente",
+	"auth.placeholderCreatePassword": "Crie uma senha",
 	"auth.placeholderNewPassword": "Criar uma senha segura (mínimo 8 caracteres)",
 	"auth.placeholderPassword": "Digite sua senha",
 	"auth.rememberMe": "Lembrar de mim",
