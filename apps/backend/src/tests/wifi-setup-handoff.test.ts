@@ -27,6 +27,7 @@ import {
 	setWifiAdapterMode,
 	startWifiAdapterModeRestore,
 } from "../modules/wifi/wifi-adapter-mode-transition.ts";
+import * as reconciler from "../modules/wifi/wifi-adapter-reconciler.ts";
 import { hotspotAutoconnectFields } from "../modules/wifi/wifi-autoconnect-policy.ts";
 import { getWifiInterfacesByMacAddress } from "../modules/wifi/wifi-connections.ts";
 import {
@@ -335,10 +336,9 @@ test.each([
 	},
 );
 
-test("the first run records existing setup stations as a baseline and clears nothing", async () => {
+test("the first run with no live setup station records existing ones as a baseline and clears nothing", async () => {
 	f.persistMode(MAC, "hotspot");
 	listProfiles([OLD_STATION, PROVISIONING_STATION_CONNECTION_ID]);
-	joinStation(OLD_STATION);
 
 	await f.discover();
 	await f.restore();
@@ -346,6 +346,43 @@ test("the first run records existing setup stations as a baseline and clears not
 	expect(getConfig().wifi_setup_stations).toEqual([OLD_STATION]);
 	expect(getConfig().wifi_modes).toEqual({ [MAC]: "hotspot" });
 	expect(f.activations).toEqual([PROFILE]);
+});
+
+test("the first run counts a live setup station on the setup radio as a fresh handoff", async () => {
+	// A first run cannot tell a join that just completed from an older one.
+	f.persistMode(MAC, "hotspot");
+	listProfiles(
+		[OLD_STATION, PROVISIONING_STATION_CONNECTION_ID],
+		[NEW_STATION, PROVISIONING_STATION_CONNECTION_ID],
+	);
+	joinStation(NEW_STATION);
+
+	await f.discover();
+	await f.restore();
+
+	expect(f.activations).toEqual([]);
+	expect(getConfig().wifi_modes).toEqual({ [MAC]: "station" });
+	expect(getConfig().wifi_setup_stations).toEqual([OLD_STATION, NEW_STATION]);
+	expect(savedConfig()).toMatchObject({
+		wifi_modes: { [MAC]: "station" },
+		wifi_setup_stations: [OLD_STATION, NEW_STATION],
+	});
+});
+
+test("an ordinary later boot on the accounted setup station restores the intent chosen after the handoff", async () => {
+	getConfig().wifi_setup_stations = [OLD_STATION];
+	// Chosen after the handoff, which had already recorded OLD_STATION.
+	f.persistMode(MAC, "hotspot");
+	listProfiles([OLD_STATION, PROVISIONING_STATION_CONNECTION_ID]);
+	joinStation(OLD_STATION);
+
+	await f.discover();
+	await f.restore();
+
+	expect(getConfig().wifi_modes).toEqual({ [MAC]: "hotspot" });
+	expect(getConfig().wifi_setup_stations).toEqual([OLD_STATION]);
+	expect(f.activations).toEqual([PROFILE]);
+	expect(observedWifiAdapterMode(f.row())).toBe("hotspot");
 });
 
 test("a handoff that cannot be saved clears nothing and restore waits", async () => {
@@ -405,4 +442,102 @@ test("an owned profile pinned to the port where the setup radio now sits is disa
 
 	expect(f.profiles.get(SWAPPED)?.["connection.autoconnect"]).toBe("no");
 	expect(getConfig().wifi_modes?.[OTHER]).toBe("hotspot");
+});
+
+test("the first start after a completed setup join, with no accounting yet, restores no AP over the live station", async () => {
+	f.persistMode(MAC, "hotspot");
+	listProfiles([NEW_STATION, PROVISIONING_STATION_CONNECTION_ID]);
+	joinStation(NEW_STATION);
+	await f.discover();
+
+	await f.restore();
+
+	expect(f.activations).toEqual([]);
+});
+
+test("a completed setup join with an unavailable profile inventory restores no AP over the live station", async () => {
+	getConfig().wifi_setup_stations = [OLD_STATION];
+	f.persistMode(MAC, "hotspot");
+	joinStation(NEW_STATION);
+	await f.discover();
+	spyOn(provisioningHandoffDeps, "listConnections").mockResolvedValue(
+		undefined,
+	);
+	const retry = spyOn(reconciler, "retryWifiAdapterReconcile");
+
+	await f.restore();
+
+	expect(f.activations).toEqual([]);
+	// Restore waits on the bounded discovery retry rather than an edge alone.
+	expect(retry).toHaveBeenCalledWith(MAC, undefined, "restore");
+	// Unknown clears nothing either; a later successful read decides.
+	expect(getConfig().wifi_modes).toEqual({ [MAC]: "hotspot" });
+	expect(getConfig().wifi_setup_stations).toEqual([OLD_STATION]);
+
+	listProfiles(
+		[OLD_STATION, PROVISIONING_STATION_CONNECTION_ID],
+		[NEW_STATION, PROVISIONING_STATION_CONNECTION_ID],
+	);
+	spyOn(provisioningHandoffDeps, "listConnections").mockImplementation(
+		async () => [...inventory],
+	);
+	await f.restore();
+
+	expect(f.activations).toEqual([]);
+	expect(getConfig().wifi_modes).toEqual({ [MAC]: "station" });
+	expect(getConfig().wifi_setup_stations).toEqual([OLD_STATION, NEW_STATION]);
+});
+
+test("an unavailable inventory on the first run also holds restore over a live station", async () => {
+	f.persistMode(MAC, "hotspot");
+	joinStation(NEW_STATION);
+	await f.discover();
+	spyOn(provisioningHandoffDeps, "listConnections").mockResolvedValue(
+		undefined,
+	);
+
+	await f.restore();
+
+	expect(f.activations).toEqual([]);
+	expect(getConfig().wifi_setup_stations).toBeUndefined();
+	expect(getConfig().wifi_modes).toEqual({ [MAC]: "hotspot" });
+});
+
+test.each([
+	["is disconnected", false],
+	["is on its accounted setup station", true],
+] as const)(
+	"an unavailable inventory never holds restore when the setup radio %s",
+	async (_case, onAccountedStation) => {
+		getConfig().wifi_setup_stations = [OLD_STATION];
+		f.persistMode(MAC, "hotspot");
+		if (onAccountedStation) joinStation(OLD_STATION);
+		await f.discover();
+		spyOn(provisioningHandoffDeps, "listConnections").mockResolvedValue(
+			undefined,
+		);
+
+		await f.restore();
+
+		expect(f.activations).toEqual([PROFILE]);
+	},
+);
+
+test("a station that changes during the inventory read holds restore", async () => {
+	getConfig().wifi_setup_stations = [OLD_STATION];
+	f.persistMode(MAC, "hotspot");
+	listProfiles([NEW_STATION, PROVISIONING_STATION_CONNECTION_ID]);
+	joinStation(NEW_STATION);
+	await f.discover();
+	spyOn(provisioningHandoffDeps, "listConnections").mockImplementation(
+		async () => {
+			f.row().activeConn = OLD_STATION;
+			return [...inventory];
+		},
+	);
+
+	await f.restore();
+
+	expect(f.activations).toEqual([]);
+	expect(getConfig().wifi_modes).toEqual({ [MAC]: "hotspot" });
 });
