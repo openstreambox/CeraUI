@@ -156,13 +156,24 @@ export async function refreshMutationBlocks(
 
 	assertMutationJournalRevision(revision);
 	setMutationBlocks(
-		blocks.map(
-			(block): MutationBlock => ({
-				stableKey: block.stableKey,
-				refusal: REFUSAL_BY_STATE[block.state] ?? "mutation_blocked",
-				blocksStreaming: block.blocksStreaming,
-			}),
-		),
+		blocking.map((entry): MutationBlock => {
+			const prior = entry.preState.vidPid;
+			const deviceVidPid =
+				entry.deviceVidPid ??
+				(typeof prior === "string" && /^[0-9a-f]{4}:[0-9a-f]{4}$/i.test(prior)
+					? prior.toLowerCase()
+					: undefined);
+			return {
+				stableKey: entry.stableKey,
+				...(entry.unitLinkId === undefined
+					? {}
+					: { unitLinkId: entry.unitLinkId }),
+				...(deviceVidPid === undefined ? {} : { deviceVidPid }),
+				...(entry.kind === "usb-mode" ? { matchUsbVendor: true } : {}),
+				refusal: REFUSAL_BY_STATE[entry.state] ?? "mutation_blocked",
+				blocksStreaming: blocksStreaming(entry.state),
+			};
+		}),
 	);
 	lastBlocks = blocks;
 	lastRevision = revision;

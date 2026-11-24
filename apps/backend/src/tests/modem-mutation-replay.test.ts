@@ -9,10 +9,10 @@
  * means a device that never recovers.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createUsbEnumerator } from "@ceralive/modem-control";
 
 import {
 	MODEM_MUTATION_JOURNAL_VERSION,
@@ -20,6 +20,8 @@ import {
 	type ModemMutationState,
 } from "@ceraui/rpc/schemas";
 
+import { getConfig } from "../modules/config.ts";
+import { rebaselineMutation } from "../modules/modems/mutation-acknowledge.ts";
 import {
 	PRESENCE_UNKNOWN,
 	refreshMutationBlocks,
@@ -34,13 +36,20 @@ import {
 	resetMutationJournalDeps,
 	setMutationJournalDeps,
 } from "../modules/modems/mutation-journal.ts";
+import { withJournaledModemMutation } from "../modules/modems/mutation-lease.ts";
 import { initMutationRecovery } from "../modules/modems/mutation-replay.ts";
 import {
+	captureModemState,
+	captureModemUnitLinkId,
 	clearMutationRollbacks,
 	registerMutationRollback,
 	resetMutationCaptureDeps,
 	setMutationCaptureDeps,
 } from "../modules/modems/mutation-rollback.ts";
+import {
+	mintLinkId,
+	usbSerialDigest,
+} from "../modules/modems/physical-identity.ts";
 import {
 	getMutationBlocks,
 	resetLifecycleInterlock,
@@ -161,6 +170,169 @@ afterEach(async () => {
 	resetLifecycleInterlock();
 	resetRecoveryBarrier();
 	await rm(dir, { recursive: true, force: true });
+});
+
+function useUdevDevice(serial: string, rawSerial?: string): void {
+	const udev = [
+		"P: /devices/platform/test/usb1/1-4",
+		"E: DEVTYPE=usb_device",
+		"E: ID_VENDOR_ID=2c7c",
+		"E: ID_MODEL_ID=0801",
+		`E: ID_MODEL=${PRE_STATE.model}`,
+		`E: ID_REVISION=${PRE_STATE.firmwareRevision}`,
+		`E: ID_PATH=${KEY}`,
+		`E: ID_SERIAL_SHORT=${serial}`,
+		"E: ID_USB_INTERFACES=:ff0000:",
+		"",
+		"P: /devices/platform/test/usb1/1-4/1-4:1.0",
+		"E: DEVTYPE=usb_interface",
+		"E: DRIVER=qmi_wwan",
+	].join("\n");
+	useDevice(present());
+	setMutationCaptureDeps({
+		...createUsbEnumerator({ readUdevDatabase: async () => udev }),
+		readSerial: async () => rawSerial,
+	});
+}
+
+test("the journal captures a unit and replay does not verify a different unit on its port", async () => {
+	useUdevDevice("fixture-original-5b2");
+	const failed = await withJournaledModemMutation(
+		KEY,
+		"usb-mode",
+		PRE_STATE,
+		async () => ({
+			confirmed: false,
+			value: undefined,
+		}),
+	);
+	expect(failed.ok).toBe(true);
+	const entry = await readMutationEntry(KEY);
+	expect(entry?.unitLinkId).toMatch(/^lnk_[0-9a-f]{16}$/);
+	if (entry === undefined)
+		throw new Error("fixture mutation was not journaled");
+	expect(JSON.stringify(entry)).not.toContain("fixture-original-5b2");
+	await commitMutationEntry({ ...entry, state: "executing" });
+	useUdevDevice("fixture-replacement-a72");
+	const summary = await initMutationRecovery();
+	expect(summary.rolledBack).toBe(0);
+	expect((await readMutationEntry(KEY))?.state).toBe(
+		"device-absent-quarantine",
+	);
+	expect(getMutationBlocks()).toEqual([
+		expect.objectContaining({ unitLinkId: entry.unitLinkId }),
+	]);
+});
+
+test.each(["fixture ABC123", "fixture_ABC123"])(
+	"a remembered shared digest for %s prevents capture and unit verification",
+	async (remembered) => {
+		useUdevDevice("fixture_ABC123", "fixture ABC123\n");
+		const previous = getConfig().usb_serial_shared;
+		const unit = mintLinkId("usb-serial:2c7c:fixture_ABC123");
+		try {
+			getConfig().usb_serial_shared = [];
+			expect(await captureModemUnitLinkId(KEY)).toBe(unit);
+			expect(await captureModemState(KEY, undefined, unit)).toBeDefined();
+			getConfig().usb_serial_shared = [usbSerialDigest(`2c7c:${remembered}`)];
+			expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+			expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
+		} finally {
+			getConfig().usb_serial_shared = previous;
+		}
+	},
+);
+
+test("literal underscores cannot verify a singleton against historical raw digests", async () => {
+	useUdevDevice("fixture_ABC123", "fixture_ABC123\n");
+	const previous = getConfig().usb_serial_shared;
+	try {
+		getConfig().usb_serial_shared = [usbSerialDigest("2c7c:fixture ABC123")];
+		const unit = mintLinkId("usb-serial:2c7c:fixture_ABC123");
+		expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+		expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
+		expect(await captureModemState(KEY)).toBeDefined();
+	} finally {
+		getConfig().usb_serial_shared = previous;
+	}
+});
+
+test("the production journal reader rejects BOM bytes before trusting the udev property", async () => {
+	await writeFile(join(dir, "serial"), "\uFEFFfixture_ABC123\n");
+	setMutationCaptureDeps({
+		enumerate: async () => [
+			{
+				vendorId: "2c7c",
+				productId: "0801",
+				physicalUid: KEY,
+				sysfsPath: dir,
+				udevProperties: { ID_SERIAL_SHORT: "fixture_ABC123" },
+				interfaces: [],
+				bDeviceClass: 0,
+			},
+		],
+	});
+	const unit = mintLinkId("usb-serial:2c7c:fixture_ABC123");
+	expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+	expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
+});
+
+test("a different vendor's legacy digest and a canonical digest do not prevent replay", async () => {
+	useUdevDevice("RM520_A1", "RM520 A1");
+	const previous = getConfig().usb_serial_shared;
+	const unit = mintLinkId("usb-serial:2c7c:RM520_A1");
+	try {
+		getConfig().usb_serial_shared = [
+			`v1:1199:${usbSerialDigest("1199:old device")}`,
+			`v2:2c7c:${usbSerialDigest("2c7c:OTHER_SERIAL")}`,
+		];
+		expect(await captureModemUnitLinkId(KEY)).toBe(unit);
+		expect(await captureModemState(KEY, undefined, unit)).toBeDefined();
+		getConfig().usb_serial_shared = [
+			`v1:2c7c:${usbSerialDigest("2c7c:OTHER LEGACY")}`,
+		];
+		expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
+	} finally {
+		getConfig().usb_serial_shared = previous;
+	}
+});
+
+test("unavailable raw evidence cannot establish a unit against ambiguous older digests", async () => {
+	useUdevDevice("fixture_ABC123");
+	const previous = getConfig().usb_serial_shared;
+	try {
+		getConfig().usb_serial_shared = [usbSerialDigest("2c7c:fixture ABC123")];
+		expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+	} finally {
+		getConfig().usb_serial_shared = previous;
+	}
+});
+
+test.each(["fixture other", "\tfixture ABC123\n"])(
+	"contradictory or invalid sysfs evidence cannot capture or verify a reported unit",
+	async (raw) => {
+		useUdevDevice("fixture_ABC123", raw);
+		const unit = mintLinkId("usb-serial:2c7c:fixture_ABC123");
+		expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+		expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
+	},
+);
+
+test("capture and recovery reject canonical collisions on distinct ports", async () => {
+	setMutationCaptureDeps({
+		enumerate: async () =>
+			[KEY, KEY.replace(/1\.4\.1$/, "1.4.2")].map((physicalUid, i) => ({
+				vendorId: "2c7c",
+				productId: "0801",
+				physicalUid,
+				serialNumber: i === 0 ? "fixture ABC123" : "fixture_ABC123",
+				interfaces: [],
+				bDeviceClass: 0,
+			})),
+	});
+	const unit = mintLinkId("usb-serial:2c7c:fixture_ABC123");
+	expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+	expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
 });
 
 describe("crash-point replay — one test per journal state", () => {
@@ -290,6 +462,19 @@ describe("crash-point replay — one test per journal state", () => {
 		});
 		// A destroyed modem must never strand the remaining links.
 		expect(streamingBlockingMutation()).toBeUndefined();
+	});
+
+	test("a replacement at a decommissioned port can be rebaselined after boot", async () => {
+		const unitLinkId = mintLinkId("usb-serial:2c7c:fixture-original-5b2");
+		await commitMutationEntry({ ...seed("decommissioned"), unitLinkId });
+		useUdevDevice("fixture-replacement-38a");
+
+		await initMutationRecovery();
+		expect((await readMutationEntry(KEY))?.state).toBe("recommission-pending");
+		expect(getMutationBlocks()).toContainEqual(
+			expect.objectContaining({ stableKey: KEY, unitLinkId }),
+		);
+		expect(await rebaselineMutation(KEY)).toMatchObject({ success: true });
 	});
 
 	test("a REPLACEMENT modem in the same port is treated identically", async () => {

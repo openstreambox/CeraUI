@@ -33,13 +33,13 @@ test("C9 real class symlink with no device differs from a vanished name", async 
 	const root = await mkdtemp(join(tmpdir(), "t18-c9-"));
 	try {
 		await mkdir(join(root, "sys/class/net"), { recursive: true });
-		await mkdir(join(root, "devices/virtual/net/br"), { recursive: true });
+		await mkdir(join(root, "sys/devices/virtual/net/br"), { recursive: true });
 		await symlink(
-			join(root, "devices/virtual/net/br"),
+			join(root, "sys/devices/virtual/net/br"),
 			join(root, "sys/class/net/br"),
 		);
 		const deps = { ...defaultRouterCellularScanDeps, sysfsRoot: root };
-		expect(await readNetdevBus("br", deps)).toEqual({ kind: "no-device" });
+		expect(await readNetdevBus("br", deps)).toEqual({ kind: "virtual" });
 		expect(await readNetdevBus("gone", deps)).toEqual({ kind: "vanished" });
 	} finally {
 		await rm(root, { recursive: true, force: true });
@@ -83,7 +83,7 @@ test("C9 the class-link probe also retries a non-ENOENT failure", async () => {
 				: { ok: true, target: "/sys/devices/virtual/net/nic" };
 		},
 	});
-	expect(result).toEqual({ kind: "no-device" });
+	expect(result).toEqual({ kind: "virtual" });
 	expect(paths).toHaveLength(3);
 });
 

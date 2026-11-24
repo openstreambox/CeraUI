@@ -187,6 +187,7 @@ for (const name of ["br-test", "vlan-test", "bond-test"]) {
 	test(`B11 virtual ${name} retains its own identity without bus evidence`, async () => {
 		const scan = firstSightScan(firstSightIfconfig(name, "192.0.2.2"), {
 			blocked: [name],
+			virtual: [name],
 		});
 		const publication = updateNetif();
 		try {
@@ -259,4 +260,60 @@ test("B4 a smaller periodic scan cannot re-hold an admitted USB incarnation", as
 		await periodic;
 		await scan.settle();
 	}
+});
+
+test("the sysfs index detects a USB replacement when the IP command fails", async () => {
+	const scan = firstSightScan(output, {
+		blocked: [],
+		buses: { [MODEM]: "usb" },
+	});
+	await updateNetif();
+	expect(
+		srtla.genSrtlaBondEntries().some((entry) => entry.iface === MODEM),
+	).toBe(true);
+	scan.setIndex(MODEM, 29);
+	scan.setIpUnavailable();
+	await updateNetif();
+	expect(
+		srtla.genSrtlaBondEntries().some((entry) => entry.iface === MODEM),
+	).toBe(false);
+	await scan.settle();
+	expect(
+		srtla.genSrtlaBondEntries().some((entry) => entry.iface === MODEM),
+	).toBe(true);
+});
+
+test("a changed settled non-USB index rechecks the bus and holds an unknown replacement", async () => {
+	const scan = firstSightScan(ethernet, {
+		blocked: [],
+		buses: { eth9: "pci" },
+	});
+	await updateNetif();
+	expect(srtla.genSrtlaBondEntries()).toEqual(expectedEntries);
+	const prior = scan.busCounts.get("eth9") ?? 0;
+	scan.setIndex("eth9", 29);
+	scan.setBus("eth9", async () => "usb");
+	await updateNetif();
+	expect(scan.busCounts.get("eth9")).toBeGreaterThan(prior);
+	expect(srtla.genSrtlaBondEntries()).toEqual([]);
+});
+
+test("a recreated tunnel rejoins after positive virtual sysfs evidence", async () => {
+	const name = "tun-test";
+	const virtual: string[] = [];
+	const scan = firstSightScan(firstSightIfconfig(name, "192.0.2.2"), {
+		blocked: [],
+		virtual,
+	});
+	await updateNetif();
+	expect(srtla.genSrtlaBondEntries()).toMatchObject([{ iface: name }]);
+
+	scan.setIndex(name, 29);
+	await updateNetif();
+	await scan.settle();
+	expect(srtla.genSrtlaBondEntries()).toEqual([]);
+
+	virtual.push(name);
+	await updateNetif();
+	expect(srtla.genSrtlaBondEntries()).toMatchObject([{ iface: name }]);
 });

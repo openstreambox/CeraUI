@@ -47,7 +47,7 @@
  */
 
 import { readdir, readlink, realpath } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
 	canonicalModemIdPath,
 	deriveModemStableKey,
@@ -59,9 +59,10 @@ import { getConfig, saveConfig } from "../config.ts";
 import {
 	mintLinkId,
 	type PhysicalDeviceRecord,
+	readUsbSerialAttribute,
 	resolvePhysicalDevice,
 	setPresentPhysicalDevices,
-	usableUsbSerial,
+	usbSerialIdentity,
 } from "../modems/physical-identity.ts";
 import {
 	hasNetdevWitness,
@@ -117,7 +118,7 @@ export type LinkRead =
 	| { readonly ok: false; readonly code: string };
 export type NetdevBus =
 	| { readonly kind: "bus"; readonly bus: string }
-	| { readonly kind: "no-device" | "vanished" }
+	| { readonly kind: "no-device" | "vanished" | "virtual" }
 	| { readonly kind: "unreadable"; readonly code: string };
 
 export type RouterCellularScanDeps = {
@@ -144,6 +145,7 @@ async function defaultListDir(path: string): Promise<string[]> {
 }
 
 async function defaultReadAttr(path: string): Promise<string | undefined> {
+	if (path.endsWith("/serial")) return readUsbSerialAttribute(path);
 	try {
 		return (await Bun.file(path).text()).trim();
 	} catch {
@@ -412,10 +414,29 @@ export async function readNetdevBus(
 		return { kind: "unreadable", code: result.code };
 	let device = await read(path);
 	if (!device.ok && device.code !== "ENOENT") device = await read(path);
-	if (device.ok) return { kind: "no-device" };
+	if (device.ok) {
+		const target = resolve(dirname(path), device.target);
+		// A hardware parent can lose its subsystem link during unplug. Only
+		// the kernel's virtual netdev path proves this name has no such parent.
+		return target === resolve(deps.sysfsRoot, "sys/devices/virtual/net", ifname)
+			? { kind: "virtual" }
+			: { kind: "no-device" };
+	}
 	return device.code === "ENOENT"
 		? { kind: "vanished" }
 		: { kind: "unreadable", code: device.code };
+}
+
+/** Independent of address enumeration. Missing or malformed sysfs is unknown. */
+export async function readNetdevIfindex(
+	ifname: string,
+	deps = defaultRouterCellularScanDeps,
+): Promise<number | undefined> {
+	const value = await deps.readAttr(
+		join(deps.sysfsRoot, "sys/class/net", ifname, "ifindex"),
+	);
+	const index = decimal(value);
+	return index !== undefined && index > 0 ? index : undefined;
 }
 
 /**
@@ -454,6 +475,7 @@ export type UsbPhysicalDescriptor = {
 	deviceClass: UsbNetClass;
 	serial?: string;
 	legacyLinkId?: string;
+	serialLinkId?: string;
 	/** Resolved sysfs USB parent; grouping only, never a stable_key override. */
 	usbParent: string;
 	idPath?: string;
@@ -466,7 +488,6 @@ export type UsbNetMarkerSets = {
 	routerCellular: Map<string, RouterCellularMarker>;
 	modemNet: Map<string, UsbModemNetMarker>;
 	physical: Map<string, UsbPhysicalDescriptor>;
-	duplicateSerialKeys: Set<string>;
 };
 
 /**
@@ -540,55 +561,42 @@ export async function scanUsbNetMarkers(
 			...(serial !== undefined ? { serial } : {}),
 		});
 	}
-	const duplicateSerialKeys = reads
-		? new Set<string>()
-		: resolveSharedSerials(physical);
-	return { routerCellular, modemNet, physical, duplicateSerialKeys };
+	return { routerCellular, modemNet, physical };
 }
 
-function resolveSharedSerials(
-	physical: ReadonlyMap<string, UsbPhysicalDescriptor>,
+function duplicateSerialKeys(
+	descriptors: Iterable<UsbPhysicalDescriptor>,
 ): Set<string> {
 	const parentsBySerial = new Map<string, Set<string>>();
-	for (const descriptor of physical.values()) {
-		const serial = usableUsbSerial(descriptor.serial);
+	for (const descriptor of descriptors) {
+		const { canonicalEntry: key } = usbSerialIdentity(
+			descriptor.serial,
+			descriptor.vid,
+		);
 		const parent = deriveModemStableKey(
 			canonicalModemIdPath(descriptor.idPath ?? descriptor.usbParent),
 		);
-		if (serial === undefined || parent === undefined) continue;
-		const key = `${descriptor.vid.toLowerCase()}:${serial}`;
+		if (key === undefined || parent === undefined) continue;
 		const parents = parentsBySerial.get(key) ?? new Set<string>();
 		parents.add(parent);
 		parentsBySerial.set(key, parents);
 	}
-	const duplicateSerialKeys = new Set(
+	return new Set(
 		[...parentsBySerial]
 			.filter(([, parents]) => parents.size > 1)
-			.map(([key]) => serialDigest(key)),
+			.map(([key]) => key),
 	);
-	for (const descriptor of physical.values()) {
-		rejectSharedSerial(descriptor, duplicateSerialKeys);
-	}
-	return duplicateSerialKeys;
-}
-
-function serialDigest(key: string): string {
-	return new Bun.CryptoHasher("sha256").update(key).digest("hex");
 }
 
 function rejectSharedSerial(
 	descriptor: UsbPhysicalDescriptor,
 	hashes: ReadonlySet<string>,
 ): void {
-	const serial = descriptor.serial?.trim();
-	if (
-		serial === undefined ||
-		!hashes.has(serialDigest(`${descriptor.vid.toLowerCase()}:${serial}`))
-	)
-		return;
-	descriptor.legacyLinkId = mintLinkId(
-		`usb-serial:${descriptor.vid.toLowerCase()}:${serial}`,
-	);
+	const serial = usbSerialIdentity(descriptor.serial, descriptor.vid);
+	if (serial.key === undefined || !serial.isShared(hashes)) return;
+	descriptor.serialLinkId = mintLinkId(`usb-serial:${serial.key}`);
+	if (serial.legacyKey !== undefined)
+		descriptor.legacyLinkId = mintLinkId(`usb-serial:${serial.legacyKey}`);
 	delete descriptor.serial;
 }
 
@@ -642,6 +650,7 @@ let sharedSerialHashes = new Set<string>();
 let coveredIfnames = new Set<string>();
 let coveredEpochs = new Map<string, number>();
 const netdevRemovalEpochs = new Map<string, number>();
+const awaitingReplacementIdentity = new Set<string>();
 const scanCommittedListeners = new Set<() => void>();
 const readingInvalidatedListeners = new Set<() => void>();
 const identityFirstPublishedAt = new Map<string, number>();
@@ -669,16 +678,28 @@ function presentDeviceRecords(): PhysicalDeviceRecord[] {
 	);
 }
 
-/**
- * Creation adopts its covering read; only observed removal invalidates it.
- *
- * Deleting the committed state is invisible to the scan's own change detection
- * — the next sweep starts from the already-emptied caches — so listeners are
- * told here, or the roster would keep the removed dongle until an unrelated
- * broadcast.
- */
-export function invalidateUsbNetReading(ifname: string, epoch: number): void {
+export function isUsbReplacementPending(ifname: string): boolean {
+	return awaitingReplacementIdentity.has(ifname);
+}
+
+/** A retired name's successor waits for fresh identity evidence. */
+export function holdUsbReplacementIdentity(ifname: string): void {
+	awaitingReplacementIdentity.add(ifname);
+}
+
+/** A current, positive bus read can identify a formerly USB name as non-USB. */
+export function confirmNonUsbReplacement(ifname: string): boolean {
+	return awaitingReplacementIdentity.delete(ifname);
+}
+
+/** A removal clears committed observations. A replacement also fences admission. */
+export function invalidateUsbNetReading(
+	ifname: string,
+	epoch: number,
+	replaced: boolean,
+): void {
 	netdevRemovalEpochs.set(ifname, epoch);
+	if (replaced) awaitingReplacementIdentity.add(ifname);
 	const coverage = coveredIfnames.delete(ifname);
 	coveredEpochs.delete(ifname);
 	const descriptor = physicalDescriptors.delete(ifname);
@@ -691,7 +712,12 @@ export function invalidateUsbNetReading(ifname: string, epoch: number): void {
 	for (const listener of readingInvalidatedListeners) listener();
 }
 
-onNetdevRetired(invalidateUsbNetReading);
+// A retirement discards the name's committed observations. Whether a successor
+// must also wait for fresh identity is the netif owner's call (Wi-Fi radios keep
+// their own lifetime), so the hold is set there, not here.
+onNetdevRetired((ifname, epoch) =>
+	invalidateUsbNetReading(ifname, epoch, false),
+);
 
 /** Fired once per removal that actually discarded committed USB state. */
 export function onUsbNetReadingInvalidated(listener: () => void): () => void {
@@ -769,7 +795,6 @@ function cachedSets(): UsbNetMarkerSets {
 		routerCellular: markers,
 		modemNet: modemNetMarkers,
 		physical: physicalDescriptors,
-		duplicateSerialKeys: sharedSerialHashes,
 	};
 }
 
@@ -857,15 +882,27 @@ async function runUsbNetScan(
 			scanned.modemNet.delete(name);
 			scanned.physical.delete(name);
 		}
-		const duplicates = resolveSharedSerials(scanned.physical);
 		// Taken here rather than before the read: only the newest generation can
 		// reach this line, so nothing else can have committed in between — and a
 		// `resetUsbNetMarkers()` mid-flight would have fenced us out above.
 		const before = snapshotKey(cachedSets());
 		const persisted = deps.sharedSerials?.load() ?? [];
+		const duplicates = duplicateSerialKeys(scanned.physical.values());
 		const next = new Set([...persisted, ...sharedSerialHashes, ...duplicates]);
+		let scopedLegacy = false;
+		for (const descriptor of scanned.physical.values()) {
+			if (
+				usbSerialIdentity(descriptor.serial, descriptor.vid).scopeLegacyDigests(
+					next,
+				)
+			)
+				scopedLegacy = true;
+		}
 		const newest = [...next].slice(-64);
-		if (duplicates.size > 0 && newest.join(",") !== persisted.join(",")) {
+		if (
+			(duplicates.size > 0 || scopedLegacy) &&
+			newest.join(",") !== persisted.join(",")
+		) {
 			deps.sharedSerials?.save(newest);
 		}
 		sharedSerialHashes = new Set(newest);
@@ -877,10 +914,23 @@ async function runUsbNetScan(
 		physicalDescriptors = scanned.physical;
 		coveredIfnames = new Set(ifnames.filter((name) => !stale.has(name)));
 		coveredEpochs = new Map(
-			[...readEpochs].filter(([name]) => coveredIfnames.has(name)),
+			[...reads]
+				.filter(([name]) => coveredIfnames.has(name))
+				.map(([name, read]) => [name, read.epoch]),
 		);
 		setPresentPhysicalDevices(presentDeviceRecords());
-		const changed = snapshotKey(cachedSets()) !== before;
+		let identified = false;
+		for (const [name, descriptor] of physicalDescriptors) {
+			if (
+				awaitingReplacementIdentity.has(name) &&
+				(descriptor.deviceClass === "wired-ethernet" ||
+					resolvePhysicalDevice(descriptor).anchor !== "ifname")
+			) {
+				awaitingReplacementIdentity.delete(name);
+				identified = true;
+			}
+		}
+		const changed = identified || snapshotKey(cachedSets()) !== before;
 		if (changed) {
 			for (const listener of scanCommittedListeners) listener();
 		}
@@ -985,6 +1035,7 @@ export function resetUsbNetMarkers(): void {
 	coveredIfnames = new Set();
 	coveredEpochs = new Map();
 	netdevRemovalEpochs.clear();
+	awaitingReplacementIdentity.clear();
 	identityFirstPublishedAt.clear();
 	identityDeadlineWarnings.clear();
 	setPresentPhysicalDevices([]);

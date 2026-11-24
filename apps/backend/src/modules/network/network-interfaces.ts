@@ -45,11 +45,14 @@ import {
 	shouldMockNetwork,
 } from "../../mocks/providers/network.ts";
 import { isRuntimeConfigAvailable } from "../config.ts";
+import { resolvePhysicalDevice } from "../modems/physical-identity.ts";
 import { isMappableEntry } from "../streaming/bind-map.ts";
 import { isBondLinkMappable, peekBondKeys } from "../streaming/bond-entry.ts";
 import {
+	getMutationBlocks,
 	hasMutationBlocks,
-	isModemKeyBlocked,
+	type MutationBlock,
+	modemBlockMatches,
 	onMutationBlocksChange,
 } from "../streaming/lifecycle-admission.ts";
 // Type-only: erased at build time, so it adds no runtime edge back into
@@ -64,6 +67,7 @@ import { broadcastMsg, buildMsg } from "../ui/websocket-server.ts";
 import {
 	isConcurrentApIfname,
 	isSupportedWifiIfname,
+	wifiInterfaceReaders,
 } from "../wifi/wifi-concurrent-interface.ts";
 import { getWifiInterfacesByMacAddress } from "../wifi/wifi-connections.ts";
 import {
@@ -115,12 +119,15 @@ import {
 	refreshRouterCellularAdmin,
 } from "./router-cellular-admin.ts";
 import {
+	confirmNonUsbReplacement,
 	getIdentityDeadlineAt,
 	getModemNetMarker,
 	getRouterCellularMarker,
 	getRouterCellularMarkers,
 	getUsbPhysicalDescriptor,
+	holdUsbReplacementIdentity,
 	identityDeadlineExpired,
+	isUsbReplacementPending,
 	type NetdevBus,
 	notePublishedNetifSnapshot,
 	onUsbNetReadingInvalidated,
@@ -216,6 +223,8 @@ let netif: Record<string, NetworkInterface> = {};
 const presenceEpoch = new Map<string, number>();
 const polledNames = new Set<string>();
 const flappingNames = new Set<string>();
+// A name once seen on USB keeps the USB replacement fence after it disappears.
+const usbObservedNames = new Set<string>();
 type NetdevBusEvidence = {
 	readonly result: NetdevBus;
 	readonly seen: number;
@@ -248,6 +257,7 @@ export function resetNetifSnapshotForTest(): void {
 	presenceEpoch.clear();
 	polledNames.clear();
 	flappingNames.clear();
+	usbObservedNames.clear();
 	resetNetdevLifetimesForTest();
 }
 
@@ -260,6 +270,16 @@ function installScanSettlement(): void {
 	const stopNetdevRetired = onNetdevRetired((name, epoch, fencePoll) => {
 		if (fencePoll) netifRefreshGeneration++;
 		presenceEpoch.set(name, epoch);
+		// A retired name last seen on USB waits for a scan of its successor's own
+		// identity before admission (a USB return cannot prove continuity). A
+		// Wi-Fi radio's lifetime is the radio's own; other names re-read their bus
+		// through the new lifetime instead.
+		if (
+			fencePoll &&
+			usbObservedNames.has(name) &&
+			(!isSupportedWifiIfname(name) || !hasWirelessKernelEvidence(name))
+		)
+			holdUsbReplacementIdentity(name);
 		polledNames.delete(name);
 		flappingNames.delete(name);
 		scanPublicationWarnings.delete(name);
@@ -276,9 +296,17 @@ function installScanSettlement(): void {
 		let released = false;
 		for (const [name, int] of Object.entries(netif)) {
 			if (
+				polledNames.has(name) &&
+				usbNetScanCoversCurrentPresence(name) &&
+				getUsbPhysicalDescriptor(name) !== undefined
+			) {
+				usbObservedNames.add(name);
+			}
+			if (
 				(int.usb || int.busUnreadable) &&
 				!int.identitySettled &&
-				usbNetScanCovers(name)
+				usbNetScanCovers(name) &&
+				!isUsbReplacementPending(name)
 			) {
 				int.identitySettled = true;
 				released = true;
@@ -367,6 +395,27 @@ export function isWifiApInterface(name: string): boolean {
 	);
 }
 
+function hasWirelessKernelEvidence(name: string): boolean {
+	return (
+		wifiInterfaceReaders.pathExists(`/sys/class/net/${name}/phy80211`) ||
+		wifiInterfaceReaders.pathExists(`/sys/class/net/${name}/wireless`)
+	);
+}
+
+/**
+ * A replaced netdev (a different kernel interface now holds the name) keeps its
+ * successor out until positive identity evidence: a scan that anchors it, or a
+ * current bus read showing it is not USB. Removals are handled by the
+ * retirement listener, which holds only names last seen on USB.
+ */
+function holdReplacedNetdev(name: string): void {
+	if (
+		!isSupportedWifiIfname(name) ||
+		(usbObservedNames.has(name) && !hasWirelessKernelEvidence(name))
+	)
+		holdUsbReplacementIdentity(name);
+}
+
 export function isBondIdentityPending(
 	name: string,
 	int: NetworkInterface,
@@ -380,10 +429,11 @@ function bondIdentityPending(
 	deadlineElapsed: (name: string) => boolean,
 ): boolean {
 	return (
-		(int.usb === true || int.busUnreadable === true) &&
-		!int.identitySettled &&
-		!usbNetScanCovers(name) &&
-		!deadlineElapsed(name)
+		isUsbReplacementPending(name) ||
+		((int.usb === true || int.busUnreadable === true) &&
+			!int.identitySettled &&
+			!usbNetScanCovers(name) &&
+			!deadlineElapsed(name))
 	);
 }
 
@@ -395,18 +445,20 @@ function bondIdentityPending(
 export function isHeldOutByModemBlock(
 	name: string,
 	int: NetworkInterface | undefined,
+	blocks: readonly MutationBlock[] = getMutationBlocks(),
 ): boolean {
-	if (!hasMutationBlocks()) return false;
+	if (blocks.length === 0) return false;
+	if (hasWirelessKernelEvidence(name)) return false;
 	if (usbNetScanCoversCurrentPresence(name)) {
 		const descriptor = getUsbPhysicalDescriptor(name);
-		if (
-			descriptor?.deviceClass === "wired-ethernet" ||
-			isSupportedWifiIfname(name)
-		)
-			return false;
+		if (descriptor?.deviceClass === "wired-ethernet") return false;
 		if (descriptor) {
-			const key = deriveModemStableKey(descriptor.idPath);
-			return key === undefined || isModemKeyBlocked(key);
+			const port = deriveModemStableKey(descriptor.idPath);
+			const identity = resolvePhysicalDevice(descriptor);
+			const sku = `${descriptor.vid}:${descriptor.pid}`.toLowerCase();
+			const unit =
+				identity.anchor === "usb-serial" ? identity.linkId : undefined;
+			return blocks.some((block) => modemBlockMatches(block, port, sku, unit));
 		}
 	}
 	// Settlement/deadline alone cannot identify an unresolved modem. A translated
@@ -457,7 +509,10 @@ function admitsBondLink(
 			return false;
 		owner = translation.parent;
 	}
-	if (isHeldOutByModemBlock(owner, owner === name ? int : netif[owner]))
+	if (
+		isUsbReplacementPending(owner) ||
+		isHeldOutByModemBlock(owner, owner === name ? int : netif[owner])
+	)
 		return false;
 	if (bondIdentityPending(name, int, view.deadlineElapsed)) return false;
 	if (isConcurrentApIfname(name)) return false;
@@ -907,6 +962,7 @@ export function handleNetifMonitorEvent(event: MonitorEvent): void {
 				hasNetdevWitness(current))
 		)
 			retireNetdev(name);
+		if (replaced) holdReplacedNetdev(name);
 		if (netif[name]) return;
 		flappingNames.delete(name);
 		noteNetdevWitness(name, current);
@@ -917,6 +973,7 @@ export function handleNetifMonitorEvent(event: MonitorEvent): void {
 			// An unclassified placeholder may have no stale sample to discard.
 			// Its new presence epoch still forces a fresh bus read before admission.
 			retireNetdev(name, hasNetdevWitness(previous) || usbNetScanCovers(name));
+			if (replaced && current.present !== false) holdReplacedNetdev(name);
 		} else {
 			// NM events carry no incarnation. Do not let an old down remove the
 			// addressed successor while the kernel still reports it operational.
@@ -1118,13 +1175,15 @@ export function updateNetif() {
 async function resolveIpAddrOverrides(
 	ifindices: Map<string, number>,
 ): Promise<Map<string, IpAddrSelection> | undefined> {
+	let addresses: Map<string, IpAddrSelection>;
 	try {
-		return parseIpAddrShow(await run("ip", ["addr", "show"]), ifindices);
+		addresses = parseIpAddrShow(await run("ip", ["addr", "show"]), ifindices);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		logger.debug(`ip addr show unavailable, using ifconfig IPs: ${message}`);
 		return undefined;
 	}
+	return addresses;
 }
 
 async function refreshNetifFromOs(): Promise<void> {
@@ -1160,13 +1219,24 @@ async function refreshNetifFromOs(): Promise<void> {
 			);
 			reads.set(name, { seen, promise });
 		};
+		const replacementBusChecks: string[] = [];
 		for (const name of ifnames) {
-			if (!netif[name]?.identitySettled && !netif[name]?.usb) issue(name);
+			// A replaced or held name gets a fresh sysfs bus read even when the
+			// USB scan already covers it: only that read can confirm a non-USB
+			// successor and lift the USB replacement hold.
+			const needsReplacementBusCheck =
+				replaced.has(name) || isUsbReplacementPending(name);
+			if (needsReplacementBusCheck) replacementBusChecks.push(name);
+			if (
+				needsReplacementBusCheck ||
+				(!netif[name]?.identitySettled && !netif[name]?.usb)
+			)
+				issue(name);
 		}
-		if (
-			replaced.size === 0 &&
-			ifnames.some((name) => !usbNetScanCovers(name))
-		) {
+		// A replaced name is not scanned in this poll: its successor settles only
+		// after the withdrawal is published. The other names still get their scan.
+		const scanIfnames = ifnames.filter((name) => !replaced.has(name));
+		if (scanIfnames.some((name) => !usbNetScanCovers(name))) {
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let expired = false;
 			const deadline = new Promise<void>((resolve) => {
@@ -1179,9 +1249,9 @@ async function refreshNetifFromOs(): Promise<void> {
 				while (
 					!expired &&
 					generation === netifRefreshGeneration &&
-					ifnames.some((name) => !usbNetScanCovers(name))
+					scanIfnames.some((name) => !usbNetScanCovers(name))
 				) {
-					await Promise.race([refreshUsbNetMarkers(ifnames), deadline]);
+					await Promise.race([refreshUsbNetMarkers(scanIfnames), deadline]);
 				}
 			} finally {
 				clearTimeout(timer);
@@ -1239,6 +1309,27 @@ async function refreshNetifFromOs(): Promise<void> {
 			}
 		}
 		if (generation !== netifRefreshGeneration) return;
+		// Even when scan coverage is complete, a changed or still-held name
+		// needs a chance to resolve a fresh sysfs bus or virtual link.
+		const missingReplacementBuses = replacementBusChecks.filter(
+			(name) => !buses.has(name),
+		);
+		if (missingReplacementBuses.length > 0) {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			try {
+				await Promise.race([
+					Promise.all(
+						missingReplacementBuses.map((name) => reads.get(name)?.promise),
+					),
+					new Promise<void>((resolve) => {
+						timer = setTimeout(resolve, 250);
+					}),
+				]);
+			} finally {
+				clearTimeout(timer);
+			}
+		}
+		if (generation !== netifRefreshGeneration) return;
 		// A name whose netdev was confirmed gone or replaced during the waits is
 		// withdrawn alone; the rest of the sample is still current. The recorded
 		// witness supplies the last confirmed presence an unreadable sample lacks.
@@ -1251,6 +1342,8 @@ async function refreshNetifFromOs(): Promise<void> {
 				netdevChanged(netdevWitness(name), witness)
 			) {
 				retireNetdev(name);
+				if (live.present !== false && hasNetdevWitness(live))
+					holdReplacedNetdev(name);
 				withdrawn.add(name);
 			}
 		}
@@ -1317,7 +1410,10 @@ function observePollWitness(name: string, witness: NetdevWitness): boolean {
 	const replaced =
 		netdevChanged(previous, witness) ||
 		(flappingNames.has(name) && !netdevMatches(previous, witness));
-	if (replaced) retireNetdev(name);
+	if (replaced) {
+		retireNetdev(name);
+		if (netdevChanged(previous, witness)) holdReplacedNetdev(name);
+	}
 	flappingNames.delete(name);
 	noteNetdevWitness(name, witness);
 	return replaced;
@@ -1409,20 +1505,35 @@ function publishIfconfigEntries(
 				10,
 			);
 
+			const ifindex = ifindices?.get(name);
 			const hadRow = netif[name] !== undefined;
 			const replaced =
 				pollReplacements?.has(name) ??
-				observePollWitness(name, { ifindex: ifindices?.get(name), mac });
-			const previous = netif[name];
-			if (previous && !polledNames.has(name)) {
-				// Adopt the monitor's lifetime without invalidating its covering bus read.
+				observePollWitness(name, { ifindex, mac });
+			const evidence = buses?.get(name);
+			const fresh = evidence?.seen === (presenceEpoch.get(name) ?? 0);
+			const observedBus =
+				fresh && evidence?.result.kind === "bus"
+					? evidence.result.bus
+					: undefined;
+			const current = netif[name];
+			const wifi = isSupportedWifiIfname(name);
+			if (current && !polledNames.has(name)) {
+				// Adopt the monitor's lifetime without invalidating its covering read.
 				advanceNetifTopologyGeneration();
 			}
 			if (replaced) {
 				intsChanged = true;
-				if (isSupportedWifiIfname(name)) wifiIncarnationChanged = true;
+				if (wifi) wifiIncarnationChanged = true;
 			}
+			const nonUsb =
+				(fresh && evidence?.result.kind === "virtual") ||
+				(observedBus !== undefined && observedBus !== "usb");
+			if (nonUsb && confirmNonUsbReplacement(name)) intsChanged = true;
+			if (nonUsb) usbObservedNames.delete(name);
+			else if (observedBus === "usb") usbObservedNames.add(name);
 			polledNames.add(name);
+			const previous = replaced ? undefined : current;
 			let tp = 0;
 			if (previous) {
 				tp = txBytes - previous.txb;
@@ -1435,21 +1546,14 @@ function publishIfconfigEntries(
 
 			const enabled = !previous || previous.enabled;
 			const error = previous ? previous.error : 0;
-			const evidence = buses?.get(name);
-			const fresh =
-				evidence !== undefined &&
-				evidence.seen === (presenceEpoch.get(name) ?? 0);
-			const usb =
-				previous?.usb === true ||
-				(fresh &&
-					evidence.result.kind === "bus" &&
-					evidence.result.bus === "usb");
+			const usb = !nonUsb && (previous?.usb === true || observedBus === "usb");
 			const busUnreadable =
-				!previous?.identitySettled &&
-				(evidence !== undefined
-					? !fresh || evidence.result.kind === "unreadable"
-					: previous?.busUnreadable === true ||
-						((!hadRow || replaced) && netdevLifetime(name) !== undefined));
+				isUsbReplacementPending(name) ||
+				(!previous?.identitySettled &&
+					(evidence !== undefined
+						? !fresh || evidence.result.kind === "unreadable"
+						: previous?.busUnreadable === true ||
+							((!hadRow || replaced) && netdevLifetime(name) !== undefined)));
 			newInterfaces[name] = {
 				...(inetAddr !== undefined ? { ip: inetAddr } : {}),
 				...(ipv6 !== undefined ? { ipv6 } : {}),
@@ -1558,7 +1662,11 @@ function publishIfconfigEntries(
 
 	let released = false;
 	for (const [name, int] of Object.entries(netif)) {
-		if (int.ip && !int.identitySettled && !isBondIdentityPending(name, int)) {
+		if (
+			(int.ip || int.ipv6) &&
+			!int.identitySettled &&
+			!isBondIdentityPending(name, int)
+		) {
 			if (int.usb || previousNetif[name]?.busUnreadable) released = true;
 			int.identitySettled = true;
 		}

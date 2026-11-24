@@ -76,6 +76,8 @@ test.each([
 	"spawn failure",
 	"selection change",
 	"shutdown failure",
+	"legacy empty refresh",
+	"capable empty refresh",
 ])("production wiring recovers: %s", async (scenario) => {
 	const tracker = new CarryingTracker();
 	const session = spyOn(carryingTracker, "session").mockImplementation(
@@ -100,9 +102,16 @@ test.each([
 	});
 	let exit!: (code: number) => void;
 	let stopped = 0;
+	const signals: string[] = [];
+	let refresh: (() => void | Promise<void>) | undefined;
+	let empty = false;
 	const fakeProc = {
 		exitCode: null,
 		signalCode: null,
+		kill: (signal: string) => {
+			signals.push(signal);
+			if (signal === "SIGTERM") exit(0);
+		},
 		exited: new Promise<number>((r) => {
 			exit = r;
 		}),
@@ -123,14 +132,24 @@ test.each([
 		}),
 		getRelays: () => ({}),
 		resolveSrtla: async () => "127.0.0.1",
-		prepareSrtlaIpAddresses: async () => ({ changed: false }) as never,
-		resolveBindMapArgs: async () => [],
+		prepareSrtlaIpAddresses: async (_address, _deps, purpose = "launch") => {
+			if (empty && purpose === "launch")
+				throw Error("no_available_network_connections");
+			return { changed: empty } as never;
+		},
+		resolveBindMapArgs: async () =>
+			scenario === "capable empty refresh" ? ["--allow-empty-bond"] : [],
 		spawnForwardLoop: () => {
 			spawned++;
 			sender = { exitListeners: [] };
 			return { ...sender, proc: fakeProc } as never;
 		},
-		onNetworkInterfacesChange: () => () => {},
+		onNetworkInterfacesChange: (listener) => {
+			refresh = listener;
+			return () => {
+				refresh = undefined;
+			};
+		},
 		startLinkTelemetry: () => {},
 		stopLinkTelemetry: () => {},
 		superviseWorker: () =>
@@ -171,6 +190,24 @@ test.each([
 					srt_streamid: "changed",
 				});
 			emit("Accepted SRT source connection");
+		}
+		if (
+			scenario === "legacy empty refresh" ||
+			scenario === "capable empty refresh"
+		) {
+			while (!refresh) await Bun.sleep(1);
+			empty = true;
+			await refresh();
+			if (scenario === "legacy empty refresh") {
+				expect(signals).not.toContain("SIGHUP");
+				await running;
+				expect(signals).toEqual(["SIGTERM"]);
+				expect(stopped).toBe(1);
+			} else {
+				expect(signals).toEqual(["SIGHUP"]);
+				expect(stopped).toBe(0);
+			}
+			return;
 		}
 		if (scenario !== "accepted" && scenario !== "shutdown failure") {
 			if (scenario === "spawn failure")
