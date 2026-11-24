@@ -134,6 +134,29 @@ returns `cancelled`, never resurrects the start, and releases its lifecycle leas
 Refusal or observer failure unwinds the pending generation; refusal payloads
 (`update_in_progress`, phase, percent and ETA) are unchanged.
 
+A dead-bearer reconnect holds the lifecycle interlock while it takes one modem's
+link down (`tryAcquireLinkTeardown`), until NetworkManager shows the device has
+let go of the connection and at most `LINK_TEARDOWN_MAX_HOLD_MS` (6 s); the hold
+releases itself at that bound. A Start of any origin that arrives then waits for
+the hold (`linkTeardownSettled`) instead of failing with
+`modem_transition_active`, because no start origin retries that refusal and
+restoration would lose the stream it exists to bring back. No new teardown begins
+while a Start waits (`beginLinkTeardownWait`), so the wait is at most one hold.
+It is budgeted at `START_LINK_TEARDOWN_WAIT_MS` (8 s) on the monotonic clock, so
+an NTP step at boot cannot end it early; with the launch's
+60 s retry budget stays inside the 75 s `streaming.start` RPC deadline. During the
+wait the Start request is simply still pending, as for any slow start. If the
+budget ran out with the interlock still held (not reachable while the hold
+releases itself), admission refuses the Start as today: class
+`modem_transition_active`, whose copy now says a modem is switching USB mode or
+reconnecting and asks the operator to wait for it and start again. The wait comes after the reconciliation awaits and before the
+duplicate-start check; it is asked again after each wake, and the last ask, the
+end of the wait and the admission run with no await between them, so a new
+teardown cannot slip in. Operator Stop intent is read after the wait, so a Stop
+during it cancels the Start. A teardown that has not settled by the bound keeps
+its link out of the bond instead (`network/link-teardown-pending.ts`) until a
+status poll reads the device settled.
+
 Restoration intent and physical OTA liveness are separate. Every Stop caller
 reports intent before joining/parking shared work. Operator intent requests
 marker removal and immediately revokes pending commitment and delayed arming
