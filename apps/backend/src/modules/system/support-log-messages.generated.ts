@@ -787,6 +787,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["gracefulShutdown: ", " ignored SIGTERM for ", "ms; sending SIGKILL"],
 	["gsm profile ", " now requests ", " (", ")"],
 	["gsm profile ", " skipped: its record store failed"],
+	["gsm profile settle did not complete"],
 	[
 		"gsm.auto-config probe failed after a successful one; keeping supported=true",
 	],

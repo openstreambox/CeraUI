@@ -43,15 +43,30 @@ device. **A takeover is not covered by it.** When NM state is 100 but the device
 is up on a profile that is not `config.conn`, names a SIM id, and that id
 differs from the modem's ICCID (NM picked another SIM's profile before the SIM
 was reported; see "SIM swap parking" below), the same pending intent dials
-`config.conn` through `withJournaledModemMutation("modem-config")` with format
-`gsm-sim-swap`, repeating every readiness read under that lease (MM `connected`
-is accepted here: the other profile's bearer makes it so). Any other active
-profile, an unreadable read or an unknown modem ICCID consumes intent as
-before. The previous profile cannot be restored on failure, because NM refuses
-to activate a profile whose SIM id differs once the SIM is known; a failed
-takeover is a failed first activation, recovered by NM autoconnect (armed
-profile) or the automatic redial (prepared profile). Resolving a late-readable SIM runs outside the update lock and reuses
-registration's profile selection. Every late profile create, field write,
+`config.conn` through `withJournaledModemMutation("modem-config")`, repeating
+every readiness read under that lease (MM `connected` is accepted here: the
+other profile's bearer makes it so). The journaled pre-state is the modem's
+descriptor capture (`captureModemState`) with no `format`, so replay on any
+build, including one without the takeover, takes the generic descriptor path:
+an unchanged device reports `restored`, an absent one is quarantined like any
+journaled mutation. If the dial does not report success, the lease is held
+until NM reads the device positively connected or disconnected; an activation
+still running after 60 s is taken down (`nmcli conn down`) so the lease is
+released on a known state, and only one that will not settle even then
+journals `failed`. A Stream Start is therefore never admitted while the
+takeover is still changing the bearer. An unreadable active profile or SIM id
+keeps the intent pending for the next poll; another active profile without a
+SIM id, the same SIM or an unknown modem ICCID consumes intent as before. The
+takeover waits out the dial cooldown and is refused while a stream is admitted
+or forwarded: another SIM's bearer carries traffic meanwhile rather than a
+stream being cut. The previous profile cannot be restored on failure, because
+NM refuses to activate a profile whose SIM id differs once the SIM is known; a
+failed takeover is a failed first activation, recovered by NM autoconnect
+(armed profile) or the automatic redial (prepared profile).
+
+Resolving a late-readable SIM runs outside the update lock and reuses
+registration's profile selection. It accepts MM `registered` or `connected`
+(another SIM's profile may already hold the bearer). Every late profile create, field write,
 autoconnect demotion or deletion holds the identity lease through the existing
 `withJournaledModemMutation("modem-config")` path, which uses the same
 `beginModemMutation` admission as `withModemMutation`. APN/roaming enforcement is
@@ -69,28 +84,57 @@ late-SIM resolution cannot be overwritten by an older snapshot.
 NM compares `gsm.sim-id` only after the modem reports its SIM, so at every new
 MM object an armed profile bound to the device id for another SIM can win. Once
 per registration, after `config.conn` and the ICCID are known, the status poll
-runs `settleModemSimSwap` under `withJournaledModemMutation("modem-config")`
-(format `gsm-sim-swap`; refused or stale work stays for a later poll). Under the
-lease it re-reads the modem and SIM, re-arms every profile of this (device id,
-SIM) that has a park record, then sets `connection.autoconnect=no` on armed
-profiles bound to the device id for SIMs no present modem with that device id
-holds, writing the park record first. It parks nothing when any modem with that
-device id has an unreadable SIM or no SIM object yet. A store fault skips the
-step with a log line and never blocks the modem. Registration itself writes no
-autoconnect. Replay of an interrupted entry reports `restored`: records describe
-themselves and the next pass converges.
+runs `settleModemSimSwap` under `withModemMutation` (the identity lease, with
+the same admission as every mutation: refused during replay, on a blocked
+identity, while a stream is admitted or forwarded and while another mutation of
+the modem runs). Under the lease it re-reads the modem and SIM, re-arms every
+profile of this (device id, SIM) that has a park record, then sets
+`connection.autoconnect=no` on armed profiles bound to the device id for SIMs
+no present modem with that device id holds, writing the park record first.
+
+- It parks nothing when a modem that may share the device id cannot be seen:
+  a listed modem without a device id, one with that device id and no SIM
+  object or ICCID yet, or a USB device of the same vid:pid as a modem with that
+  device id that MM has not listed (`readPresentSimIds`).
+- It does not park a never-activated profile (timestamp 0) that has a sibling
+  for the same device id and SIM: once disarmed, an older build's duplicate
+  cleanup, which knows nothing of park records, would prune it as its own
+  demoted clone. The ordinary two-pass cleanup handles that profile once its
+  SIM is back.
+- The settle is tracked per registration apart from the first-activation
+  intent: a refusal, a vetoed park, a store fault or a failed write leaves it
+  incomplete, and the poll tries again 30, 60, 120, 240, then every 300 s,
+  also after the intent was consumed, until it finishes or the registration
+  ends. It never throws and never blocks the modem.
+- It writes no journal entry. Neither step takes a link down (a parked
+  profile that is up stays up; re-arming only lets NM bring up the SIM's own
+  profile), the park records describe themselves (a crash between record and
+  write is converged by the next pass), and an older build has no inverse for
+  a new journal format and would hold the modem `failed`.
+
+Parking is the only autoconnect write the SIM swap adds to registration;
+duplicate cleanup still demotes clones as described in
+a-modem-save-spends-a-reconnect-only-when-it-must.md.
 
 Park records live in their own private store, `/data/ceralive/gsm-sim-park`
 (`CERALIVE_GSM_SIM_PARK_DIR`), never in a cellular authority kind: the boot
 inventory of every build parses those in full, and a record kind an older
 build does not know would hold recovery, and every Stream Start, forever.
-**Rollback:** an older build never reads the park store. It sees a parked
-profile as an ordinary `autoconnect=no` manual profile: NM does not pick it and
-the older first activation does not dial it (it requires `autoconnect=yes` or a
-preparation grant). Nothing breaks while that SIM stays out; if it comes back
-under the older build, that modem stays down until the profile is re-armed by
-hand (`nmcli connection modify <profile> connection.autoconnect yes`) or a build
-with parking re-arms it.
+
+**Rollback to a build without parking.** What an older build meets, by
+artifact:
+
+| Artifact | Older build |
+|---|---|
+| Takeover journal entry, `armed` or `executing` | Generic descriptor replay: `restored` and removed when the modem is unchanged; quarantined if it is absent, as any journaled mutation. |
+| Takeover journal entry, `completed` | Pruned. |
+| Takeover journal entry, `failed` (only an activation that would not settle even when taken down) | Blocks that modem until acknowledged, as in this build. |
+| Park store directory | Never read. |
+| Parked NM profile | An ordinary `autoconnect=no` manual profile. NM does not pick it, the older first activation does not dial it, and its duplicate cleanup does not prune it (never-used siblings are not parked). While its SIM stays out nothing changes. If that SIM comes back under the older build, the modem stays down until the profile is re-armed by hand (`nmcli connection modify <profile> connection.autoconnect yes`) or a build with parking re-arms it. |
+
+`modem-ready-activation.test.ts` covers the journal pre-state against the
+generic rollback; `gsm-sim-swap.test.ts` covers the stores and the duplicate
+classifier without park records.
 
 **IDENTITY IS FAIL-CLOSED.** The identity contract permits an omitted
 `stable_key`, and a target with no resolvable physical key cannot be journaled,

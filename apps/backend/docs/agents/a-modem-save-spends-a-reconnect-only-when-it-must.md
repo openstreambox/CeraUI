@@ -158,7 +158,9 @@ the guarantee:
   (`gsm-sim-park-store.ts`) is RETAINED whatever else holds, and an unreadable
   park store counts as parked. Parking is therefore never evidence for a
   deletion; once its SIM is back and it is re-armed, it re-enters the ordinary
-  two-pass convergence below.
+  two-pass convergence below. Parking skips a never-activated profile that has
+  a sibling for the same device and SIM, because a build without park records
+  would read it, disarmed, as prunable.
 - **Convergence is two-pass by construction.** An armed clone is enforced and
   demoted on one pass and can only become prunable on a LATER audit that observes
   the demotion — so a profile is never deleted on the strength of a flag we set

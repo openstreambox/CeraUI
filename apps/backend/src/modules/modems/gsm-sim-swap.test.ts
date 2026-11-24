@@ -192,7 +192,7 @@ describe("settleSimSwapProfiles", () => {
 		const profiles = swappedBox();
 		const { deps } = harness(profiles);
 		const result = await settleSimSwapProfiles(RM520, LIGHT, deps);
-		expect(result).toEqual({ parked: 1, rearmed: 0 });
+		expect(result).toEqual({ parked: 1, rearmed: 0, complete: true });
 		expect(byName(profiles, "gsm").autoconnect).toBe("no");
 		// The profile without a SIM id is left as it was.
 		expect(byName(profiles, "generic").autoconnect).toBe("yes");
@@ -280,6 +280,7 @@ describe("settleSimSwapProfiles", () => {
 		expect(await settleSimSwapProfiles(DELL, DARK, deps)).toEqual({
 			parked: 0,
 			rearmed: 0,
+			complete: false,
 		});
 		expect(calls).toEqual([]);
 		expect(byName(profiles, "gsm-1").autoconnect).toBe("yes");
@@ -375,6 +376,9 @@ describe("parking and the duplicate cleanup", () => {
 		byName(profiles, "gsm-3").timestamp = 0;
 		const parking = harness(profiles);
 		await settleSimSwapProfiles(DELL, DARK, parking.deps);
+		// gsm-3 was never used and has a sibling for Warp: it stays armed.
+		expect(byName(profiles, "gsm-1").autoconnect).toBe("no");
+		expect(byName(profiles, "gsm-3").autoconnect).toBe("yes");
 
 		// Warp is back in the Dell: registration reconciles first, then the
 		// settle step re-arms.
@@ -402,10 +406,77 @@ describe("parking and the duplicate cleanup", () => {
 			{},
 			parking.records,
 		);
-		expect((await settleSimSwapProfiles(DELL, WARP, back.deps)).rearmed).toBe(
-			2,
-		);
+		// Dark Star's own profile on the Dell is parked in turn.
+		expect(await settleSimSwapProfiles(DELL, WARP, back.deps)).toEqual({
+			parked: 1,
+			rearmed: 1,
+			complete: true,
+		});
 		expect(profiles.map((p) => p.uuid)).toContain(uuid(4));
+	});
+
+	test("an older build's duplicate cleanup finds no parked profile to delete", async () => {
+		// Every profile never used, so every disarmed one is a prune candidate
+		// for the base classifier (it knows nothing of park records).
+		const profiles = swappedBox().map((p) => ({ ...p, timestamp: 0 }));
+		const deps = harness(profiles).deps;
+		const before = new Map(profiles.map((p) => [p.uuid, p.autoconnect]));
+		await settleSimSwapProfiles(RM520, LIGHT, deps);
+		await settleSimSwapProfiles(DELL, DARK, deps);
+		const parked = profiles.filter(
+			(p) => before.get(p.uuid) === "yes" && p.autoconnect === "no",
+		);
+		// The singleton Dark Star profile on the RM520 is still parked.
+		expect(parked.map((p) => p.name)).toEqual(["gsm"]);
+		for (const profile of parked)
+			for (const keep of profiles)
+				if (
+					keep.uuid !== profile.uuid &&
+					keep.deviceId === profile.deviceId &&
+					keep.simId === profile.simId
+				)
+					expect(
+						classifyGsmDuplicate(
+							audits([profile])[0] as GsmProfileAudit,
+							keep.uuid,
+						),
+					).not.toBe("prune");
+	});
+});
+
+describe("an incomplete settle", () => {
+	test("a SIM that cannot be seen leaves it incomplete, so it is tried again", async () => {
+		const profiles = swappedBox();
+		const { deps } = harness(profiles, { ...present, [DELL]: undefined });
+		expect(await settleSimSwapProfiles(DELL, DARK, deps)).toEqual({
+			parked: 0,
+			rearmed: 0,
+			complete: false,
+		});
+	});
+
+	test("a failed re-arm write leaves it incomplete and keeps the record", async () => {
+		const profiles = swappedBox();
+		byName(profiles, "gsm").autoconnect = "no";
+		const key = parkedProfileKey(uuid(1), RM520, DARK);
+		const records = new Map<string, unknown>([[key, parkedRecord(key)]]);
+		const { deps } = harness(
+			profiles,
+			{ ...present, [RM520]: new Set([DARK]) },
+			{ failSet: true },
+			records,
+		);
+		const result = await settleSimSwapProfiles(RM520, DARK, deps);
+		expect(result.complete).toBe(false);
+		expect(records.has(key)).toBe(true);
+	});
+
+	test("nothing to do is complete", async () => {
+		const profiles = swappedBox();
+		const { deps } = harness(profiles);
+		expect((await settleSimSwapProfiles(FM350, WARP, deps)).complete).toBe(
+			true,
+		);
 	});
 });
 

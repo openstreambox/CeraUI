@@ -30,6 +30,8 @@
   loop publishes snapshots and broadcasts — none of that lives here.
 */
 
+import { realpath } from "node:fs/promises";
+import { createUsbEnumerator } from "@ceralive/modem-control";
 import {
 	deriveModemStableKey,
 	type ModemRadioPower,
@@ -58,7 +60,6 @@ import {
 } from "./gsm-duplicate-reconcile.ts";
 import {
 	defaultGsmSimSwapDeps,
-	SIM_SWAP_JOURNAL_FORMAT,
 	settleSimSwapProfiles,
 } from "./gsm-sim-swap.ts";
 import {
@@ -87,7 +88,10 @@ import {
 	setModem,
 } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
-import { withJournaledModemMutation } from "./mutation-lease.ts";
+import {
+	withJournaledModemMutation,
+	withModemMutation,
+} from "./mutation-lease.ts";
 import { deriveSimPresence } from "./sim-presence.ts";
 
 export type { ModemId } from "./mmcli.ts";
@@ -403,23 +407,89 @@ async function resolveModemProfile(
 	return config;
 }
 
+/** One USB device as the twin check needs it. */
+export interface TwinUsbDevice {
+	readonly vidPid: string;
+	readonly sysfsPath: string | undefined;
+}
+
+export interface PresentSimDeps {
+	/** Every USB device on the bus; undefined when the bus cannot be read. */
+	readonly usbDevices: () => Promise<readonly TwinUsbDevice[] | undefined>;
+	/** Canonical sysfs path; undefined when it does not resolve. */
+	readonly resolvePath: (path: string) => Promise<string | undefined>;
+}
+
+const defaultPresentSimDeps: PresentSimDeps = {
+	usbDevices: async () => {
+		try {
+			return (await createUsbEnumerator().enumerate()).map((device) => ({
+				vidPid: `${device.vendorId}:${device.productId}`.toLowerCase(),
+				sysfsPath: device.sysfsPath,
+			}));
+		} catch {
+			return undefined;
+		}
+	},
+	resolvePath: async (path) => {
+		try {
+			return await realpath(path);
+		} catch {
+			return undefined;
+		}
+	},
+};
+let presentSimDeps = defaultPresentSimDeps;
+
+export function setPresentSimDepsForTest(
+	overrides: Partial<PresentSimDeps> | null,
+): void {
+	presentSimDeps =
+		overrides === null
+			? defaultPresentSimDeps
+			: { ...defaultPresentSimDeps, ...overrides };
+}
+
 /**
  * ICCIDs of the SIMs in every present modem with this device id. Undefined
- * when the list or any such modem's SIM cannot be read, including a modem with
- * no SIM object yet (its SIM may still be probing, as `readReadyModemSim`
- * reads it): the caller must not conclude a SIM is absent from a read that
- * failed.
+ * when we cannot see every modem that may share it:
+ *
+ * - the list or any listed modem cannot be read, or a listed modem has no
+ *   device id yet;
+ * - a modem with this device id has no SIM object yet or an unreadable ICCID
+ *   (its SIM may still be probing, as `readReadyModemSim` reads it);
+ * - a USB device of the same vid:pid as a modem with this device id has no
+ *   ModemManager object (ModemManager lists a modem only after probing it,
+ *   so an identical twin may not be listed yet), or the bus or a sysfs path
+ *   cannot be read.
+ *
+ * The caller must not conclude a SIM is absent from a read that failed.
  */
 export async function readPresentSimIds(
 	deviceId: string,
+	deps: PresentSimDeps = presentSimDeps,
 ): Promise<ReadonlySet<string> | undefined> {
 	const ids = await mmList();
 	if (ids === undefined) return undefined;
 	const present = new Set<string>();
+	const listedPaths = new Set<string>();
+	const ownPaths = new Set<string>();
 	for (const id of ids) {
 		const modemInfo = await mmGetModem(id);
 		if (modemInfo === undefined) return undefined;
-		if (modemInfo["modem.generic.device-identifier"] !== deviceId) continue;
+		const listedId = modemInfo["modem.generic.device-identifier"]?.trim();
+		if (!listedId) return undefined;
+		const device = (modemInfo as unknown as Record<string, unknown>)[
+			"modem.generic.device"
+		];
+		const path =
+			typeof device === "string" && device.trim()
+				? await deps.resolvePath(device.trim())
+				: undefined;
+		if (path !== undefined) listedPaths.add(path);
+		if (listedId !== deviceId) continue;
+		if (path === undefined) return undefined;
+		ownPaths.add(path);
 		const simPath = modemInfo["modem.generic.sim"]?.match(
 			/^\/org\/freedesktop\/ModemManager1\/SIM\/(\d+)$/,
 		)?.[1];
@@ -430,6 +500,32 @@ export async function readPresentSimIds(
 		if (!iccid) return undefined;
 		present.add(iccid);
 	}
+	if (ownPaths.size === 0) return present;
+
+	const usb = await deps.usbDevices();
+	if (usb === undefined) return undefined;
+	const resolved: Array<{ vidPid: string; path: string | undefined }> = [];
+	for (const device of usb)
+		resolved.push({
+			vidPid: device.vidPid,
+			path:
+				device.sysfsPath === undefined
+					? undefined
+					: await deps.resolvePath(device.sysfsPath),
+		});
+	const models = new Set(
+		resolved
+			.filter((device) => device.path && ownPaths.has(device.path))
+			.map((device) => device.vidPid),
+	);
+	// Every modem with this device id must be a USB device we can see.
+	if (models.size === 0) return undefined;
+	for (const device of resolved)
+		if (
+			models.has(device.vidPid) &&
+			(device.path === undefined || !listedPaths.has(device.path))
+		)
+			return undefined;
 	return present;
 }
 
@@ -486,7 +582,9 @@ export async function resolveLateModemConfig(
 				modemStableKeyForId(id) !== stableKey ||
 				fresh === undefined ||
 				fresh === "unreadable" ||
-				fresh.modemInfo["modem.generic.state"] !== "registered" ||
+				// Another SIM's profile may already hold a bearer (gsm-sim-swap.ts).
+				(fresh.modemInfo["modem.generic.state"] !== "registered" &&
+					fresh.modemInfo["modem.generic.state"] !== "connected") ||
 				fresh.modemInfo["modem.generic.device-identifier"] !==
 					sim.modemInfo["modem.generic.device-identifier"] ||
 				fresh.simInfo["sim.properties.iccid"] !==
@@ -524,26 +622,30 @@ export async function resolveLateModemConfig(
  * Re-arm the parked profiles of the SIM this modem holds and park the ones
  * bound to it for SIMs no modem with its device id holds (gsm-sim-swap.ts).
  *
- * Runs outside the update lock, like late SIM resolution, under the same
- * journaled `modem-config` path: the identity lease spans the fresh read, the
- * writes and retirement, and the registration, physical key, device id and
- * SIM are fenced across every await. "refused" leaves the work for a later
- * poll; "done" includes a step that found nothing to do or skipped on a fault.
+ * Runs outside the update lock, under the modem's identity lease
+ * (`withModemMutation`: refused while a stream is admitted or forwarded, during
+ * journal replay, on a blocked identity and while another mutation of this
+ * modem runs). The lease spans the fresh read and every write, and the
+ * registration, physical key, device id and SIM are fenced across every await.
+ * It writes no journal entry: neither step takes a link down, the park
+ * records describe themselves, and an older build would have no inverse for
+ * the entry (the-modem-mutation-safety-contract.md, "SIM swap parking").
+ *
+ * "done" means both steps finished; "retry" (refused, stale, a SIM we could
+ * not see, a store fault or a failed write) leaves the work for a later poll
+ * of the same registration. It never throws and never blocks the modem.
  */
 export async function settleModemSimSwap(
 	id: ModemId,
 	stableKey: string,
 	isCurrent: () => boolean,
-): Promise<"done" | "refused" | "pending"> {
-	if (!isCurrent() || modemStableKeyForId(id) !== stableKey) return "pending";
+): Promise<"done" | "retry"> {
+	if (!isCurrent() || modemStableKeyForId(id) !== stableKey) return "retry";
 	const modem = getModem(id);
 	const iccid = modem?.iccid?.trim();
-	if (!modem?.config?.conn || !iccid) return "pending";
-	const guarded = await withJournaledModemMutation(
-		stableKey,
-		"modem-config",
-		{ format: SIM_SWAP_JOURNAL_FORMAT, step: "settle" },
-		async (mutation) => {
+	if (!modem?.config?.conn || !iccid) return "retry";
+	try {
+		const guarded = await withModemMutation(stableKey, async () => {
 			const fresh = await readReadyModemSim(id);
 			const current = (): boolean =>
 				isCurrent() && modemStableKeyForId(id) === stableKey;
@@ -553,8 +655,7 @@ export async function settleModemSimSwap(
 				fresh === "unreadable" ||
 				fresh.simInfo["sim.properties.iccid"]?.trim() !== iccid
 			)
-				return { confirmed: true, value: "pending" as const };
-			await mutation.markExecuting();
+				return "retry" as const;
 			const deviceId = fresh.modemInfo["modem.generic.device-identifier"];
 			const result = await settleSimSwapProfiles(
 				deviceId,
@@ -567,11 +668,17 @@ export async function settleModemSimSwap(
 				current,
 			);
 			if (result.parked > 0 || result.rearmed > 0) resetGsmConnections();
-			return { confirmed: true, value: "done" as const };
-		},
-	);
-	if (!guarded.ok) return "refused";
-	return guarded.value;
+			return result.complete ? ("done" as const) : ("retry" as const);
+		});
+		return guarded.ok ? guarded.value : "retry";
+	} catch (error) {
+		logger.warn("gsm profile settle did not complete", {
+			module: "modems",
+			id,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return "retry";
+	}
 }
 
 /**

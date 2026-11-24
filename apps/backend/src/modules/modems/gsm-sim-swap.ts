@@ -43,21 +43,35 @@
     without `gsm.sim-id` matches any SIM by design and is never touched.
     Parking deletes nothing, and the duplicate cleanup keeps a parked profile
     (gsm-duplicate-reconcile.ts), so parking is never evidence for a deletion.
+    A never-activated profile (timestamp 0) that has a sibling for the same
+    device id and SIM is left alone: an older build's duplicate cleanup would
+    read it, once disarmed, as its own demoted clone and delete it. The
+    ordinary two-pass cleanup handles it once that SIM is back.
   - RE-ARM (here): when a modem holds that SIM again, every parked profile for
     that (device id, SIM) gets its recorded value back and its record dropped.
     A record found next to an armed profile is spent (someone re-armed it, or
     the park write never landed) and is dropped without a write.
 
-  Parking is skipped whenever a modem with the same device id has a SIM that
-  cannot be read, including one with no SIM object yet: two identical modems
-  can share a device id, and a SIM we cannot see may be the one that profile
-  belongs to. A store fault skips the step and is logged; it never blocks the
-  modem. Both steps run under the modem's identity lease with an armed journal
-  entry (modem-registration.ts, settleModemSimSwap).
+  Parking is skipped whenever a modem that may share the device id has a SIM
+  that cannot be read: one with no SIM object yet, one without a device id,
+  or a USB device of the same model that ModemManager has not listed
+  (modem-registration.ts, readPresentSimIds). Two identical modems can share a
+  device id, and a SIM we cannot see may be the one that profile belongs to.
+  A skipped step, a store fault or a failed write leaves the settle
+  INCOMPLETE: the status poll tries again later in the same registration, and
+  nothing blocks the modem.
+
+  Both steps run under the modem's identity lease (modem-registration.ts,
+  settleModemSimSwap) and write no journal entry: neither takes a link down
+  (parking leaves an active profile up, re-arming only lets NetworkManager
+  bring up the SIM's own profile), the park records describe themselves
+  (a crash between record and write is converged by the next pass), and an
+  older build would have no inverse for a new journal format.
 
   Limit: a user's `autoconnect=no` set by hand on a profile that is already
-  parked cannot be told apart from the parking and is restored on re-arm. Any
-  change that arms the profile in between spends the record.
+  parked, or between the record and the disarm of an interrupted pass, cannot
+  be told apart from the parking and is restored on re-arm. Any change that
+  arms the profile in between spends the record.
 */
 
 import { logger } from "../../helpers/logger.ts";
@@ -76,22 +90,6 @@ import {
 	readParkedRecord,
 	writeParkedRecord,
 } from "./gsm-sim-park-store.ts";
-import { registerModemConfigInverse } from "./mutation-rollback.ts";
-
-/** The journal format of park, re-arm and takeover entries. */
-export const SIM_SWAP_JOURNAL_FORMAT = "gsm-sim-swap";
-
-/*
-  Replay after a crash in one of these steps has nothing better to restore
-  than the next pass does: park and re-arm records describe themselves (a
-  record without the write is spent or re-applied, a write without the record
-  cannot happen because the record goes first), and a takeover interrupted
-  mid-dial is decided again by the next registration's first activation. So
-  the inverse reports the device as restored instead of blocking it.
-*/
-registerModemConfigInverse(SIM_SWAP_JOURNAL_FORMAT, {
-	rollback: async () => "restored",
-});
 
 /** SIM ids in modems with this device id, or undefined when any is unreadable. */
 export type PresentSimReader = (
@@ -127,7 +125,11 @@ export function defaultGsmSimSwapDeps(
 export type GsmSimSwapResult = {
 	readonly parked: number;
 	readonly rearmed: number;
+	/** False when a step was skipped or a write failed: try again later. */
+	readonly complete: boolean;
 };
+
+type StepResult = { readonly count: number; readonly complete: boolean };
 
 /** May this profile carry a modem of this device id whose SIM is not its own? */
 export function isOtherSimCandidate(
@@ -157,8 +159,9 @@ async function rearmReturningSim(
 	simId: string,
 	deps: GsmSimSwapDeps,
 	isCurrent: () => boolean,
-): Promise<number> {
+): Promise<StepResult> {
 	let rearmed = 0;
+	let complete = true;
 	for (const audit of audits) {
 		if (audit.deviceId !== deviceId || audit.simId !== simId) continue;
 		if (!isCurrent()) break;
@@ -177,8 +180,9 @@ async function rearmReturningSim(
 			) {
 				rearmed += 1;
 				await deps.writeParked(key, undefined);
-			}
+			} else complete = false;
 		} catch (error) {
+			complete = false;
 			storeFault("re-arm", deviceId, error);
 		}
 	}
@@ -187,7 +191,27 @@ async function rearmReturningSim(
 			module: "modems",
 			deviceId,
 		});
-	return rearmed;
+	return { count: rearmed, complete };
+}
+
+/**
+ * Would an older build's duplicate cleanup delete this profile once it is
+ * disarmed? Its classifier prunes an idle, disarmed, never-activated profile
+ * that is not the one it keeps for that (device id, SIM).
+ */
+function prunableOnceDisarmed(
+	candidate: GsmProfileAudit,
+	audits: readonly GsmProfileAudit[],
+): boolean {
+	return (
+		Number.parseInt(candidate.timestamp, 10) === 0 &&
+		audits.some(
+			(other) =>
+				other.uuid !== candidate.uuid &&
+				other.deviceId === candidate.deviceId &&
+				other.simId === candidate.simId,
+		)
+	);
 }
 
 async function parkOtherSims(
@@ -196,16 +220,20 @@ async function parkOtherSims(
 	simId: string,
 	deps: GsmSimSwapDeps,
 	isCurrent: () => boolean,
-): Promise<number> {
-	const candidates = audits.filter((audit) =>
-		isOtherSimCandidate(audit, deviceId, simId),
+): Promise<StepResult> {
+	const candidates = audits.filter(
+		(audit) =>
+			isOtherSimCandidate(audit, deviceId, simId) &&
+			!prunableOnceDisarmed(audit, audits),
 	);
-	if (candidates.length === 0) return 0;
+	if (candidates.length === 0) return { count: 0, complete: true };
 	const present = await deps.presentSims(deviceId);
 	// Not a statement about the profiles: we could not see every SIM.
-	if (present === undefined || !present.has(simId)) return 0;
+	if (present === undefined || !present.has(simId))
+		return { count: 0, complete: false };
 
 	let parked = 0;
+	let complete = true;
 	for (const candidate of candidates) {
 		if (present.has(candidate.simId)) continue;
 		if (!isCurrent()) break;
@@ -214,6 +242,7 @@ async function parkOtherSims(
 			await deps.writeParked(key, newParkedRecord(key));
 		} catch (error) {
 			storeFault("parking", deviceId, error);
+			complete = false;
 			break;
 		}
 		// A failed write keeps the record: the profile may be disarmed anyway,
@@ -225,13 +254,14 @@ async function parkOtherSims(
 			}))
 		)
 			parked += 1;
+		else complete = false;
 	}
 	if (parked > 0)
 		logger.warn(
 			`disarmed ${parked} gsm profiles bound to this modem for SIMs it does not hold`,
 			{ module: "modems", deviceId },
 		);
-	return parked;
+	return { count: parked, complete };
 }
 
 /**
@@ -245,7 +275,7 @@ export async function settleSimSwapProfiles(
 	deps: GsmSimSwapDeps,
 	isCurrent: () => boolean = () => true,
 ): Promise<GsmSimSwapResult> {
-	if (!deviceId || !simId) return { parked: 0, rearmed: 0 };
+	if (!deviceId || !simId) return { parked: 0, rearmed: 0, complete: false };
 	const audits = await deps.audit();
 	const rearmed = await rearmReturningSim(
 		audits,
@@ -255,5 +285,9 @@ export async function settleSimSwapProfiles(
 		isCurrent,
 	);
 	const parked = await parkOtherSims(audits, deviceId, simId, deps, isCurrent);
-	return { parked, rearmed };
+	return {
+		parked: parked.count,
+		rearmed: rearmed.count,
+		complete: rearmed.complete && parked.complete && isCurrent(),
+	};
 }
