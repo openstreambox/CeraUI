@@ -149,4 +149,27 @@ describe("the discovery question and its answer on the wire", () => {
 		expect(parseAaaaResponse(response({ flags: 0x8380 }), ID)).toBeUndefined();
 		expect(parseAaaaResponse(response().subarray(0, 40), ID)).toBeUndefined();
 	});
+	test("matching id cannot substitute a different name, type or class", () => {
+		const wrongName = response();
+		wrongName[13] = 0x78;
+		expect(parseAaaaResponse(wrongName, ID)).toBeUndefined();
+		const wrongType = response();
+		wrongType[buildIpv4OnlyArpaQuery(ID).length - 3] = 1;
+		expect(parseAaaaResponse(wrongType, ID)).toBeUndefined();
+		const wrongClass = response();
+		wrongClass[buildIpv4OnlyArpaQuery(ID).length + 5] = 3;
+		expect(parseAaaaResponse(wrongClass, ID)).toBeUndefined();
+		const truncated = response().subarray(0, 20);
+		new DataView(
+			truncated.buffer,
+			truncated.byteOffset,
+			truncated.byteLength,
+		).setUint16(6, 0);
+		expect(parseAaaaResponse(truncated, ID)).toBeUndefined();
+	});
+	test("echoed DNS name is case-insensitive", () => {
+		const upper = response();
+		upper[13] = 0x49;
+		expect(parseAaaaResponse(upper, ID)).toEqual(["64:ff9b::c000:aa"]);
+	});
 });
