@@ -1034,6 +1034,7 @@ export function createLiveWifiNetworkDiversity(
 				uuid,
 				WIFI_DIVERSITY.activateTimeoutS,
 				undefined,
+				undefined,
 				ifname,
 			);
 			wifiScheduleScanRefresh();
