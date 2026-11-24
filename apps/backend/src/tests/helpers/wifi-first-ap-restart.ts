@@ -37,8 +37,10 @@ test("replay persisted first-start NM state", async () => {
 		reanchorThenReplace?: boolean;
 		reportAuthority?: boolean;
 		unreadableRun?: boolean;
+		radioIfname?: string;
 	} = JSON.parse(await Bun.stdin.text());
-	const f = await firstAp();
+	const radio = persistent.radioIfname ?? "wlan0";
+	const f = await firstAp(undefined, false, radio);
 	const dir = await mkdtemp(join(tmpdir(), "first-ap-restart-"));
 	try {
 		getConfig().wifi_modes = {};
@@ -90,7 +92,7 @@ test("replay persisted first-start NM state", async () => {
 			getConfig().wifi_modes = { [MAC]: "hotspot" };
 			await reconcileWifiAdapterPolicies({
 				identities: wifiRadioIdentity.state.rows,
-				active: new Map([["wlan0", persistent.uuid]]),
+				active: new Map([[radio, persistent.uuid]]),
 			});
 			getConfig().wifi_modes = {};
 			f.replace(persistent.uuid, "First AP");
@@ -98,12 +100,12 @@ test("replay persisted first-start NM state", async () => {
 		}
 		const result = await reconcileWifiAdapterPolicies({
 			identities: wifiRadioIdentity.state.rows,
-			active: new Map([["wlan0", persistent.uuid]]),
+			active: new Map([[radio, persistent.uuid]]),
 		});
 		if (persistent.reportAuthority)
 			await reconcileWifiAdapterPolicies({
 				identities: wifiRadioIdentity.state.rows,
-				active: new Map([["wlan0", f.active() ?? null]]),
+				active: new Map([[radio, f.active() ?? null]]),
 			});
 		process.stdout.write(
 			`${JSON.stringify({
