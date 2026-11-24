@@ -3331,6 +3331,7 @@
 	"live.phone.moblinBusy": "Attendez que le boîtier confirme qu'aucun flux ne l'utilise avant de changer le mot de passe Moblin.",
 	"live.audioMixer.error.audio_input_primary": "L'entrée principale reste toujours dans le mix. Pour la désactiver, choisissez une autre source audio.",
 	"live.layout.insetCancel": "Appuyez sur Échap avant de relâcher pour la remettre à sa place.",
+	"network.sharing.ipv6Only": "Les appareils connectés au Wi-Fi du boîtier ne peuvent pas encore accéder aux sites IPv4 par cette liaison.",
 	"systemLogs.tabs.label": "Vues des journaux",
 	"systemLogs.tabs.events": "Événements",
 	"systemLogs.tabs.raw": "Journaux bruts",
