@@ -142,3 +142,32 @@ test("each radio is in use only on its own network", async () => {
 		),
 	).toBe("Hotel");
 });
+
+test("an open network offers each radio the access point that radio heard", async () => {
+	const open = (signal: number, device: string, bssid: string) =>
+		` :${bssid}:Library:Infra:6:54 Mbit/s:${signal}:____::${device}`;
+	spies.push(
+		spyOn(nm, "nmScanResults").mockResolvedValue([
+			// The spare radio lists the stronger access point first; the station
+			// radio hears a different access point of the same network.
+			open(90, "wlx020000000003", "02\\:00\\:00\\:00\\:51\\:AA"),
+			open(40, "wlx020000000002", "02\\:00\\:00\\:00\\:51\\:BB"),
+			// A radio that reported nothing itself keeps the first stand-in.
+			open(30, "wlx020000000003", "02\\:00\\:00\\:00\\:51\\:CC"),
+		]),
+	);
+	expect(await wifiUpdateScanResult()).toBe(true);
+	const radios = Object.values(getWifiInterfacesByMacAddress());
+	const station = radios.find((r) => r.id === 2);
+	const spare = radios.find((r) => r.id === 3);
+	const hotspot = radios.find((r) => r.id === 1);
+	expect(station?.available.get("Library")).toMatchObject({
+		bssid: "02:00:00:00:51:bb",
+		signal: 40,
+	});
+	expect(spare?.available.get("Library")).toMatchObject({
+		bssid: "02:00:00:00:51:aa",
+		signal: 90,
+	});
+	expect(hotspot?.available.get("Library")?.bssid).toBe("02:00:00:00:51:aa");
+});
