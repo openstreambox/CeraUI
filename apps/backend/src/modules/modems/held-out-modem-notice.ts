@@ -9,7 +9,7 @@
 
   One persistent notice per held-out modem, raised when the block appears and
   retracted when it clears. It names the modem when a current modem row has that
-  stable key, and says "a modem that was unplugged or reconnected" otherwise.
+  stable key, and says "a modem" otherwise.
 */
 
 import type { ModemMutationBlock } from "@ceraui/rpc/schemas";
@@ -26,8 +26,8 @@ export const HELD_OUT_UNKNOWN_KEY = "notifications.modemHeldOutUnknown";
 
 export function heldOutMsg(name: string | undefined): string {
 	return name === undefined
-		? "A modem that was unplugged or reconnected is kept out of the stream because a setting change on it could not be undone. Your other links aren't affected."
-		: `${name} is kept out of the stream because a setting change on it could not be undone. Your other links aren't affected.`;
+		? "The box is keeping a modem out of its stream because a setting change on that modem could not be undone."
+		: `The box is keeping ${name} out of its stream because a setting change on that modem could not be undone.`;
 }
 
 export interface HeldOutNoticeDeps {
