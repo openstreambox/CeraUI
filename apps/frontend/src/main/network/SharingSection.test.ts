@@ -9,7 +9,7 @@
  * diagnostic by its own backend contract.
  */
 
-import { setLocale } from "@ceraui/i18n/svelte";
+import { m, setLocale } from "@ceraui/i18n/svelte";
 import type {
 	NetifEntry,
 	NetifMessage,
@@ -202,68 +202,35 @@ it.each([
 	},
 );
 
-describe.each([
-	[
-		"en",
-		"Uplinks available for client traffic: 1 of 1.",
-		"Uplinks available for client traffic: 1 of 2.",
-		"Uplinks available for client traffic: 2 of 2.",
-	],
-	[
-		"de",
-		"Verfügbare Uplinks für Client-Datenverkehr: 1 von 1.",
-		"Verfügbare Uplinks für Client-Datenverkehr: 1 von 2.",
-		"Verfügbare Uplinks für Client-Datenverkehr: 2 von 2.",
-	],
-	[
-		"es",
-		"Enlaces disponibles para el tráfico de los clientes: 1 de 1.",
-		"Enlaces disponibles para el tráfico de los clientes: 1 de 2.",
-		"Enlaces disponibles para el tráfico de los clientes: 2 de 2.",
-	],
-	[
-		"fr",
-		"Liaisons disponibles pour le trafic des clients : 1 sur 1.",
-		"Liaisons disponibles pour le trafic des clients : 1 sur 2.",
-		"Liaisons disponibles pour le trafic des clients : 2 sur 2.",
-	],
-	[
-		"ar",
-		"الوصلات الصاعدة المتاحة لحركة الأجهزة المتصلة: 1 من 1.",
-		"الوصلات الصاعدة المتاحة لحركة الأجهزة المتصلة: 1 من 2.",
-		"الوصلات الصاعدة المتاحة لحركة الأجهزة المتصلة: 2 من 2.",
-	],
-	[
-		"hi",
-		"क्लाइंट ट्रैफ़िक के लिए उपलब्ध अपलिंक: 1 में से 1।",
-		"क्लाइंट ट्रैफ़िक के लिए उपलब्ध अपलिंक: 2 में से 1।",
-		"क्लाइंट ट्रैफ़िक के लिए उपलब्ध अपलिंक: 2 में से 2।",
-	],
-	[
-		"pt-BR",
-		"Enlaces disponíveis para o tráfego dos clientes: 1 de 1.",
-		"Enlaces disponíveis para o tráfego dos clientes: 1 de 2.",
-		"Enlaces disponíveis para o tráfego dos clientes: 2 de 2.",
-	],
-] as const)(
+// The fork's sharing policy reports uplink health, not availability: a healthy
+// uplink can still be excluded by the client policy. Each locale renders that
+// count in its own health sentence.
+describe.each(["en", "de", "es", "fr", "ar", "hi", "pt-BR"] as const)(
 	"SharingSection active headline in %s",
-	(locale, allOne, mixed, allTwo) => {
+	(locale) => {
 		it.each([
-			["1 of 1", uplinks({ iface: "wwan0" }), allOne],
+			["1 of 1", uplinks({ iface: "wwan0" }), 1, 1],
 			[
 				"1 of 2",
 				uplinks(
 					{ iface: "wwan0" },
 					{ iface: "wwan1", state: "down", weight: 0 },
 				),
-				mixed,
+				1,
+				2,
 			],
-			["2 of 2", uplinks({ iface: "wwan0" }, { iface: "wwan1" }), allTwo],
+			["2 of 2", uplinks({ iface: "wwan0" }, { iface: "wwan1" }), 2, 2],
 		] as const)(
-			"reports %s uplinks available for client traffic",
-			(_ratio, roster, expected) => {
+			"reports %s uplinks healthy enough for client traffic",
+			(_ratio, roster, usable, total) => {
 				setLocale(locale);
 				try {
+					const expected = m["network.sharing.policy.healthBody"]({
+						usable,
+						total,
+					});
+					expect(expected).toContain(String(usable));
+					expect(expected).toContain(String(total));
 					const { getByTestId } = mount({ uplinks: roster });
 					expect(
 						getByTestId("sharing-band-sharing-active").textContent,
