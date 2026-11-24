@@ -39,6 +39,15 @@ const MODE_LABEL_KEY: Record<WifiAdapterMode, string> = {
 	hybrid: "network.wifiMode.hybrid",
 };
 
+// What the PICKER calls each mode: an action ("Join Wi-Fi"), not the mode's
+// name. The name above stays the noun that badges and the "Switch to {mode}" /
+// "{mode} is unavailable" sentences interpolate.
+const MODE_OPTION_LABEL_KEY: Record<WifiAdapterMode, string> = {
+	station: "network.wifiMode.option.station",
+	hotspot: "network.wifiMode.option.hotspot",
+	hybrid: "network.wifiMode.option.hybrid",
+};
+
 const MODE_DESCRIPTION_KEY: Record<WifiAdapterMode, string> = {
 	station: "network.wifiMode.stationHint",
 	hotspot: "network.wifiMode.hotspotHint",
@@ -68,6 +77,11 @@ const ERROR_KEY: Record<string, string> = {
 /** i18n dot-path for the mode's own name. */
 export function wifiModeLabelKey(mode: WifiAdapterMode): string {
 	return MODE_LABEL_KEY[mode];
+}
+
+/** i18n dot-path for the mode as a choice in the picker. */
+export function wifiModeOptionLabelKey(mode: WifiAdapterMode): string {
+	return MODE_OPTION_LABEL_KEY[mode];
 }
 
 /**
