@@ -154,6 +154,7 @@
 	"auth.passwordTooShort": "Mindestens 8 Zeichen verwenden",
 	"auth.passwordsDoNotMatch": "Passwörter stimmen nicht überein",
 	"auth.placeholderConfirmPassword": "Passwort erneut eingeben",
+	"auth.placeholderCreatePassword": "Passwort erstellen",
 	"auth.placeholderNewPassword": "Sicheres Passwort erstellen (mindestens 8 Zeichen)",
 	"auth.placeholderPassword": "Passwort eingeben",
 	"auth.rememberMe": "Angemeldet bleiben",
