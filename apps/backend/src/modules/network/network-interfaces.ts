@@ -75,6 +75,11 @@ import {
 	setPersistentBondOptOut,
 } from "./bond-preference.ts";
 import {
+	clatTranslationFor,
+	isClatTunName,
+	startClatTranslationPolling,
+} from "./clat-translation.ts";
+import {
 	getDongleMarker,
 	getDongleRecords,
 	refreshDongleMetadata,
@@ -114,7 +119,6 @@ import {
 	onUsbNetScanCommitted,
 	readNetdevBus,
 	refreshUsbNetMarkers,
-	type UsbModemNetMarker,
 	usbNetScanCovers,
 } from "./router-cellular-scan.ts";
 
@@ -403,6 +407,18 @@ function admitsBondLink(
 ): boolean {
 	if (isWifiApInterface(name)) return false;
 	if (!int.ip && !int.ipv6) return false;
+	// The image's IPv4 translator for an IPv6-only modem carries that modem's
+	// traffic only while its snapshot says so, and follows the modem's toggle.
+	if (isClatTunName(name)) {
+		if (!int.ip) return false;
+		const translation = clatTranslationFor(name, int.ip);
+		if (
+			!translation ||
+			view.optedOut(translation.parent) ||
+			!view.mappable(name, int.ip)
+		)
+			return false;
+	}
 	if (bondIdentityPending(name, int, view.deadlineElapsed)) return false;
 	if (isConcurrentApIfname(name)) return false;
 	if (isSharedLanPort(name)) return false;
@@ -946,6 +962,9 @@ export function initNetworkInterfaceMonitoring() {
 	setInterval(() => {
 		void refreshUnclaimedAdapterState();
 	}, UNCLAIMED_ADAPTER_POLL_INTERVAL_MS);
+	// The CLAT snapshot has its own poll, off the publication path; a change in
+	// the translated links the bond may use republishes it.
+	startClatTranslationPolling(triggerNetworkInterfacesChange);
 }
 
 /**
@@ -1790,7 +1809,7 @@ export function netIfBuildMsg() {
 		: undefined;
 	for (const i in netif) {
 		const networkInterface = netif[i];
-		if (!networkInterface) continue;
+		if (!networkInterface || isClatTunName(i)) continue;
 
 		const entry: NetworkInterfaceResponseMessage[string] = {
 			...(networkInterface.ip !== undefined ? { ip: networkInterface.ip } : {}),
@@ -1836,6 +1855,21 @@ export function netIfBuildMsg() {
 		}
 	}
 
+	// Project the translated address and counters onto the modem's existing row.
+	// The kernel TUN remains the sender's bind device, never a second UI link.
+	for (const [name, int] of Object.entries(netif)) {
+		if (!isClatTunName(name)) continue;
+		const translation = clatTranslationFor(name, int.ip);
+		if (!translation) continue;
+		const parent = m[translation.parent];
+		if (!parent || parent.ip) continue; // Native IPv4 still wins.
+		parent.ip = translation.ipv4;
+		parent.addresses = [parent.ip, parent.ipv6].filter((ip): ip is string => ip !== undefined);
+		parent.enabled = isBondCandidate(name, int);
+		parent.tp = int.tp;
+		if (int.tx_bps !== undefined) parent.tx_bps = int.tx_bps;
+		if (int.rx_bps !== undefined) parent.rx_bps = int.rx_bps;
+	}
 	applyDongleProjection(m);
 	applyRouterCellularProjection(m);
 	applyModemNetProjection(m);
