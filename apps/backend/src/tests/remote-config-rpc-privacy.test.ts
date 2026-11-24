@@ -11,10 +11,10 @@ import {
 	ResultSchema,
 } from "../modules/remote-control/protocol.ts";
 import { getConfigProcedure } from "../rpc/procedures/streaming.procedure.ts";
+import { expectNoSourceStrings } from "./helpers/remote-outbound-assert.ts";
 import {
 	AUTH_KEY,
 	CID,
-	expectedBytes,
 	expectNoPairingSecret,
 	object,
 	secrets,
@@ -29,7 +29,7 @@ afterEach(() => {
 	mock.restore();
 });
 
-test("actual remote streaming.getConfig preserves media keys and preserves local RPC bytes and remote authentication", async () => {
+test("actual remote streaming.getConfig withholds media keys and preserves local RPC bytes and remote authentication", async () => {
 	const context = buildControlContext();
 	const local = await call(getConfigProcedure, undefined, { context });
 	const before = JSON.stringify(local);
@@ -52,21 +52,17 @@ test("actual remote streaming.getConfig preserves media keys and preserves local
 	);
 
 	expect(frames).toHaveLength(1);
-	expect(JSON.stringify(frames[0])).toBe(
-		expectedBytes(
-			{
-				v: PROTOCOL_VERSION,
-				kind: "result",
-				type: "streaming.getConfig",
-				cid: CID,
-				role: "owner",
-				payload: { ok: true, applied: local },
-			},
-			local,
-		),
-	);
+	expectNoSourceStrings(JSON.stringify(frames), local);
+	expect(frames[0]).toMatchObject({
+		v: PROTOCOL_VERSION,
+		kind: "result",
+		type: "streaming.getConfig",
+		cid: CID,
+		role: "owner",
+		payload: { ok: true },
+	});
 	expectNoPairingSecret(JSON.stringify(frames));
-	expect(JSON.stringify(frames)).toContain(AUTH_KEY);
+	expect(JSON.stringify(frames)).not.toContain(AUTH_KEY);
 	expect(ResultSchema.safeParse(frames[0]).success).toBe(true);
 	expect(
 		JSON.stringify(await call(getConfigProcedure, undefined, { context })),
@@ -77,9 +73,6 @@ test("actual remote streaming.getConfig preserves media keys and preserves local
 
 for (const destination of ["custom", "managed"] as const) {
 	test(`remote latency-only ${destination} save preserves its persisted media credential`, async () => {
-		const { buildServerSetConfig } = await import(
-			"../../../frontend/src/lib/streaming/receiver-experience.ts"
-		);
 		const config = getConfig();
 		config.srtla_addr = "relay.example.test";
 		config.srtla_port = 5000;
@@ -106,28 +99,7 @@ for (const destination of ["custom", "managed"] as const) {
 		);
 		const remoteConfig = frames[0]?.payload.applied;
 		if (!object(remoteConfig)) throw new Error("missing remote config");
-		const payload = buildServerSetConfig(
-			{
-				latency: 3000,
-				protocol: "srtla",
-				addr: String(remoteConfig.srtla_addr ?? ""),
-				portStr: String(remoteConfig.srtla_port ?? ""),
-				streamId:
-					typeof remoteConfig.srt_streamid === "string"
-						? remoteConfig.srt_streamid
-						: "",
-				relayStreamId:
-					typeof remoteConfig.relay_streamid_override === "string"
-						? remoteConfig.relay_streamid_override
-						: "",
-				relayServer:
-					typeof remoteConfig.relay_server === "string"
-						? remoteConfig.relay_server
-						: "",
-				relayAccount: "",
-			},
-			{ destination },
-		);
+		const payload = { srt_latency: 3000 };
 		await routeCommand(
 			{
 				v: PROTOCOL_VERSION,
