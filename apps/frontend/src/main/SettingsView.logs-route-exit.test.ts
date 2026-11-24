@@ -97,6 +97,10 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => ({
 	)),
 	getConfig: () => ({ autostart: false }),
 	getKiosk: () => undefined,
+	getStatus: () => undefined,
+	getTailscale: () => undefined,
+	getDeviceStats: () => undefined,
+	getUplinks: () => undefined,
 	setLogFollowListener: vi.fn(),
 	setEventFeedListener: vi.fn(),
 }));
