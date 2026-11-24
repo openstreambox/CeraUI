@@ -135,3 +135,17 @@ None of the above is board evidence. The class, the causes and the per-cause
 retry rule are proven against the bindings' typed error and the frontend's
 rendered DOM; the full board drill with released artifacts is a separate,
 hardware-gated step and has not run.
+
+### HDMI no-signal admission
+
+HDMI start admission reads V4L2 DV timings for the default onboard receiver or
+an explicit selection resolving to `/dev/hdmirx`. Other selected input IDs
+retain engine admission: a fixed onboard probe cannot establish their signal.
+Only an explicit no-link verdict returns `capture_source_unavailable` with
+`captureCause: no_signal` before capture. Permission errors, unsupported
+controls and other unknown observations retain engine admission. Missing audio
+cards retain the existing audio-source failure classification. Class-level
+operator copy does not assume a timeout; legacy probe timeouts retain their
+separate reconnect/select remedy. Video-only sources can carry silence; no
+audio-presence or amplitude claim is made. The image owns automatic PipeWire
+profile selection.
