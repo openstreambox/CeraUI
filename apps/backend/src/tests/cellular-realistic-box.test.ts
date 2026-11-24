@@ -415,7 +415,7 @@ test("a udev serial and its raw sysfs spelling keep the moved unit quarantined",
 
 test("the local CLAT sender checks the held parent even when its link identity was evicted", async () => {
 	box = await realisticBox();
-	const modem = MODEMS[0];
+	const modem = { ...MODEMS[0], ip: "" };
 	const tun = { ifname: "clat3", ip: "10.254.0.3", kind: "ethernet" as const };
 	const links = [ETHERNET, modem, tun];
 	await box.scan(links, {
@@ -430,6 +430,8 @@ test("the local CLAT sender checks the held parent even when its link identity w
 		]),
 	);
 	try {
+		expect(box.bonded()).toContain(tun.ifname);
+		expect(genSrtlaBondEntriesForLocalIpAddress("10.254.0.4")).toHaveLength(1);
 		await box.scan(links, {
 			ifindices: new Map([
 				[modem.ifname, 21],
@@ -438,6 +440,7 @@ test("the local CLAT sender checks the held parent even when its link identity w
 			skipPhysical: true,
 		});
 		expect(genSrtlaBondEntriesForLocalIpAddress("10.254.0.4")).toEqual([]);
+		expect(box.bonded()).not.toContain(tun.ifname);
 	} finally {
 		setClatTranslationsForTest(new Map());
 	}
@@ -477,6 +480,14 @@ test("a known ifindex survives disconnection and distinguishes return from repla
 	await scan(11);
 	await box.scan([ETHERNET, MODEMS[2]], { skipPhysical: true });
 	await scan(11);
+	// The train retires descriptors on removal, even if the ifindex returns.
+	expect(box.bonded()).not.toContain("wwan1");
+	await box.scan(links, {
+		ifindices: new Map([
+			["wwan1", 11],
+			["wwan2", 12],
+		]),
+	});
 	expect(box.bonded()).toContain("wwan1");
 	await box.scan([ETHERNET, MODEMS[2]], { skipPhysical: true });
 	await scan(21);
