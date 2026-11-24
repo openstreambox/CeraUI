@@ -92,9 +92,9 @@ export type GsmDuplicateVerdict = "keep" | "retain" | "prune";
  * - NetworkManager is not holding it right now (an EMPTY `GENERAL.STATE`;
  *   `activated`/`activating` both mean hands off — measured on the board);
  * - `connection.autoconnect` is `no`, which on a same-(device, SIM) clone is
- *   CeraUI's OWN footprint: `demoteDuplicateGsmProfiles`/this reconciler are the
- *   only writers of it here, so an armed clone has never been through our hands
- *   and is retained;
+ *   CeraUI's OWN footprint: `demoteDuplicateGsmProfiles`/this reconciler and
+ *   the absent-SIM parking in `gsm-sim-swap.ts` are the only writers of it
+ *   here, so an armed clone has never been through our hands and is retained;
  * - `connection.timestamp` is `0`, i.e. NetworkManager has NEVER successfully
  *   activated it. A profile an operator has actually used carries a real stamp.
  *

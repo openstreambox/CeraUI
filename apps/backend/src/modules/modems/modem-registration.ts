@@ -57,6 +57,10 @@ import {
 	reconcileDuplicateGsmProfiles,
 } from "./gsm-duplicate-reconcile.ts";
 import {
+	defaultGsmSimSwapDeps,
+	settleSimSwapProfiles,
+} from "./gsm-sim-swap.ts";
+import {
 	type ModemId,
 	type ModemInfo,
 	mmConvertAccessTech,
@@ -395,7 +399,50 @@ async function resolveModemProfile(
 		);
 		if (result.pruned > 0) resetGsmConnections();
 	}
+	if (config?.conn && isCurrent()) {
+		const swap = await settleSimSwapProfiles(
+			modemInfo["modem.generic.device-identifier"],
+			simInfo["sim.properties.iccid"],
+			config.conn,
+			{
+				...defaultGsmSimSwapDeps(readPresentSimIds),
+				setFields: (uuid, fields) =>
+					isCurrent() ? nmConnSetFields(uuid, fields) : Promise.resolve(false),
+			},
+			isCurrent,
+		);
+		if (swap.parked > 0 || swap.rearmed) resetGsmConnections();
+	}
 	return config;
+}
+
+/**
+ * ICCIDs of the SIMs in every present modem with this device id. Undefined
+ * when the list or any such modem's SIM cannot be read: the caller must not
+ * conclude a SIM is absent from a read that failed. A modem that reports no
+ * SIM object holds none.
+ */
+export async function readPresentSimIds(
+	deviceId: string,
+): Promise<ReadonlySet<string> | undefined> {
+	const ids = await mmList();
+	if (ids === undefined) return undefined;
+	const present = new Set<string>();
+	for (const id of ids) {
+		const modemInfo = await mmGetModem(id);
+		if (modemInfo === undefined) return undefined;
+		if (modemInfo["modem.generic.device-identifier"] !== deviceId) continue;
+		const simPath = modemInfo["modem.generic.sim"]?.match(
+			/^\/org\/freedesktop\/ModemManager1\/SIM\/(\d+)$/,
+		)?.[1];
+		if (simPath === undefined) continue;
+		const iccid = (await mmGetSim(Number(simPath)))?.[
+			"sim.properties.iccid"
+		]?.trim();
+		if (!iccid) return undefined;
+		present.add(iccid);
+	}
+	return present;
 }
 
 export interface ReadyModemSim {

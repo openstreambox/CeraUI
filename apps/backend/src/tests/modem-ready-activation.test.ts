@@ -80,6 +80,9 @@ let unexpected: string[];
 let onStateRead: (() => Promise<void>) | undefined;
 let onConnect: (() => Promise<void>) | undefined;
 let onModemRead: (() => Promise<void>) | undefined;
+let activeUuid: string;
+let activeSimId: string | undefined;
+let modemIccid: string | undefined;
 
 function modem(): Modem {
 	return {
@@ -87,6 +90,7 @@ function modem(): Modem {
 		name: "MBIM modem",
 		sim_network: "Test",
 		network_type: { supported: {}, active: null },
+		...(modemIccid ? { iccid: modemIccid } : {}),
 		config: {
 			conn: UUID,
 			autoconfig: false,
@@ -138,6 +142,9 @@ beforeEach(async () => {
 	onStateRead = undefined;
 	onConnect = undefined;
 	onModemRead = undefined;
+	activeUuid = "";
+	activeSimId = undefined;
+	modemIccid = undefined;
 	resetLifecycleInterlock();
 	resetRecoveryBarrier();
 	resetGsmConnections();
@@ -180,7 +187,11 @@ modem.generic.ports.value[1] : wwan0 (net)`;
 				assertNmDeviceShowFields(fields);
 			}
 			if (args.includes("DEVICE,TYPE")) return "cdc-wdm0:gsm";
-			if (args.includes("GENERAL.CON-UUID")) return "";
+			if (args.includes("GENERAL.CON-UUID")) return activeUuid;
+			if (args[args.indexOf("--get-values") + 1] === "gsm.sim-id") {
+				if (activeSimId === undefined) throw new Error("sim-id unreadable");
+				return activeSimId;
+			}
 			if (args.includes("CONNECTIONS.AVAILABLE-CONNECTIONS")) {
 				expect(args.slice(0, 2)).toEqual(["--mode", "multiline"]);
 				return `CONNECTIONS.AVAILABLE-CONNECTIONS[1]:${UUID} | profile-a`;
@@ -306,6 +317,75 @@ test("NM success consumes intent before MM state eligibility", async () => {
 	await runModemStatusPoll();
 	nmState = "30 (disconnected)";
 	mmState = "registered";
+	await runModemStatusPoll();
+	expect(activations()).toEqual([]);
+});
+
+const OTHER_UUID = "0b9c6d3e-2f41-4a7b-9c55-6e1d2a3b4c5d";
+const OTHER_SIM_ID = "89000000000000000002";
+
+test("a device up on another SIM's profile gets its own profile once", async () => {
+	modemIccid = SIM_ID;
+	nmState = "100 (connected)";
+	mmState = "connected";
+	activeUuid = OTHER_UUID;
+	activeSimId = OTHER_SIM_ID;
+	await runModemStatusPoll();
+	expect(activations()).toEqual([["nmcli", "-w", "45", "conn", "up", UUID]]);
+	// The takeover is the one first activation: it is never repeated.
+	now = 600_000;
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(1);
+});
+
+for (const [label, sim] of [
+	["the same SIM", SIM_ID],
+	["no SIM id", ""],
+	["an unreadable SIM id", undefined],
+] as const) {
+	test(`a device up on another profile for ${label} is left alone`, async () => {
+		modemIccid = SIM_ID;
+		nmState = "100 (connected)";
+		mmState = "connected";
+		activeUuid = OTHER_UUID;
+		activeSimId = sim;
+		await runModemStatusPoll();
+		now = 600_000;
+		nmState = "30 (disconnected)";
+		mmState = "registered";
+		await runModemStatusPoll();
+		expect(activations()).toEqual([]);
+	});
+}
+
+test("a device up on its own profile is not dialled again", async () => {
+	modemIccid = SIM_ID;
+	nmState = "100 (connected)";
+	activeUuid = UUID;
+	activeSimId = OTHER_SIM_ID;
+	await runModemStatusPoll();
+	expect(activations()).toEqual([]);
+	expect(commands.some((command) => command.includes("gsm.sim-id"))).toBe(
+		false,
+	);
+});
+
+test("another SIM's profile is not replaced while its modem's SIM is unknown", async () => {
+	nmState = "100 (connected)";
+	mmState = "connected";
+	activeUuid = OTHER_UUID;
+	activeSimId = OTHER_SIM_ID;
+	await runModemStatusPoll();
+	expect(activations()).toEqual([]);
+});
+
+test("a takeover still needs a dialable profile", async () => {
+	modemIccid = SIM_ID;
+	nmState = "100 (connected)";
+	mmState = "connected";
+	activeUuid = OTHER_UUID;
+	activeSimId = OTHER_SIM_ID;
+	autoconnect = "no";
 	await runModemStatusPoll();
 	expect(activations()).toEqual([]);
 });

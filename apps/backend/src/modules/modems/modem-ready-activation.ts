@@ -33,6 +33,7 @@ export interface ModemReadyActivationDeps {
 	readonly resolveDevice: typeof resolveModemNmDeviceForConnection;
 	readonly readDevice: typeof readModemNmDeviceProp;
 	readonly readAutoconnect: (uuid: string) => Promise<string | undefined>;
+	readonly readProfileSimId: (uuid: string) => Promise<string | undefined>;
 	readonly automaticReady: typeof automaticActivationReady;
 	readonly connect: typeof nmConnect;
 	readonly mutate: typeof withModemMutation;
@@ -50,6 +51,8 @@ const defaultDeps: ModemReadyActivationDeps = {
 	readDevice: readModemNmDeviceProp,
 	readAutoconnect: async (uuid) =>
 		(await nmConnGetFields(uuid, ["connection.autoconnect"] as const))?.[0],
+	readProfileSimId: async (uuid) =>
+		(await nmConnGetFields(uuid, ["gsm.sim-id"] as const))?.[0],
 	automaticReady: automaticActivationReady,
 	connect: nmConnect,
 	mutate: withModemMutation,
@@ -211,12 +214,23 @@ async function readReadiness(
 	const code = raw?.match(/^(\d+)(?: \([^()\r\n]+\))?$/)?.[1];
 	if (!isPending(id, intent) || getModem(id)?.config?.conn !== uuid)
 		return undefined;
+	let takeover = false;
 	if (code === "100") {
-		intent.state = "consumed";
-		return "connected";
-	}
-	if (code !== "30") return undefined;
-	if ((await deps.readRegistration(id)) !== "registered") return undefined;
+		takeover = await carriesAnotherSim(id, device, uuid);
+		if (!isPending(id, intent) || getModem(id)?.config?.conn !== uuid)
+			return undefined;
+		if (!takeover) {
+			intent.state = "consumed";
+			return "connected";
+		}
+	} else if (code !== "30") return undefined;
+	const registration = await deps.readRegistration(id);
+	// The bearer another SIM's profile holds makes ModemManager say connected.
+	if (
+		registration !== "registered" &&
+		!(takeover && registration === "connected")
+	)
+		return undefined;
 	if (
 		(await deps.readAutoconnect(uuid))?.trim() !== "yes" &&
 		!(await deps.automaticReady(uuid))
@@ -229,6 +243,35 @@ async function readReadiness(
 		!modem.is_scanning
 		? "ready"
 		: undefined;
+}
+
+/**
+ * Is the device up on a profile bound to a SIM other than the modem's own?
+ *
+ * NetworkManager can bring up another SIM's profile while the modem has not
+ * reported its SIM yet (gsm-sim-swap.ts). Only positive evidence counts: the
+ * active profile is not ours, names a SIM id, and that id differs from the
+ * modem's ICCID. A profile without a SIM id, the same SIM, or a read that
+ * failed leaves the connection alone, as before.
+ */
+async function carriesAnotherSim(
+	id: ModemId,
+	device: string,
+	uuid: string,
+): Promise<boolean> {
+	const active = singleDeviceValue(
+		await deps.readDevice(device, "GENERAL.CON-UUID"),
+	)?.toLowerCase();
+	if (!active || active === uuid.toLowerCase()) return false;
+	const iccid = getModem(id)?.iccid?.trim();
+	if (!iccid) return false;
+	const activeSim = (await deps.readProfileSimId(active))?.trim();
+	if (!activeSim || activeSim === iccid) return false;
+	logger.warn("modem is up on a profile for another SIM; activating its own", {
+		module: "modems",
+		id,
+	});
+	return true;
 }
 
 function redialDelay(failures: number): number {

@@ -70,6 +70,16 @@ const recordSchema = z.discriminatedUnion("kind", [
 			reason: z.string().max(200).optional(),
 		})
 		.strict(),
+	// A profile bound to this modem for a SIM that is not inserted, disarmed so
+	// NetworkManager cannot bring it up on the SIM that is (gsm-sim-swap.ts).
+	z
+		.object({
+			version: z.literal(1),
+			kind: z.literal("parked"),
+			key: z.string(),
+			original: z.literal("yes"),
+		})
+		.strict(),
 ]);
 export type PreparationRecord = z.infer<typeof recordSchema>;
 export const preparationKey = (...parts: readonly string[]) => {
