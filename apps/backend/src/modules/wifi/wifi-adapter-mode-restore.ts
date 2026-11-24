@@ -1,5 +1,6 @@
 import { logger } from "../../helpers/logger.ts";
 import { nmConnGetFields } from "../network/network-manager.ts";
+import { isStreamSessionUnconfirmed } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import {
 	getHotspotCredentials,
@@ -139,7 +140,7 @@ async function applyWifiAdapterModes(
 						row.conn,
 						capability.staApComboSupported,
 						getWifiCapabilityEvidenceRevision(row.ifname),
-						getIsStreaming(),
+						getIsStreaming() || isStreamSessionUnconfirmed(),
 						...(!verified ? Object.keys(deps.resolveInterfaces()) : []),
 					]);
 					await reconcileWifiAdapterRestoreLocked(owner, {
@@ -189,7 +190,11 @@ async function applyWifiAdapterModes(
 										);
 										return undefined;
 									}
-									if (desired === "hotspot" && row.conn && getIsStreaming()) {
+									if (
+										desired === "hotspot" &&
+										row.conn &&
+										(getIsStreaming() || isStreamSessionUnconfirmed())
+									) {
 										logger.warn(
 											`wifi mode restore: streaming keeps the station link on ${row.ifname}; leaving hotspot pending`,
 										);

@@ -1,6 +1,7 @@
 import { logger } from "../../helpers/logger.ts";
 import { nmConnect, nmConnGetFields } from "../network/network-manager.ts";
 import { nmRunId } from "../network/network-manager-profile-instance.ts";
+import { isStreamSessionUnconfirmed } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import {
 	canUseHotspotConnection,
@@ -191,7 +192,11 @@ export async function restoreLimitedHotspot(
 		refreshHotspotChannels(row.hotspot, getDerivedApChannels());
 		if (channel !== "auto" && !row.hotspot.availableChannels.includes(channel))
 			return reject("stored channel is no longer permitted");
-		if (desired === "hotspot" && row.conn && getIsStreaming())
+		if (
+			desired === "hotspot" &&
+			row.conn &&
+			(getIsStreaming() || isStreamSessionUnconfirmed())
+		)
 			return reject("streaming keeps the station link");
 		return true;
 	};
