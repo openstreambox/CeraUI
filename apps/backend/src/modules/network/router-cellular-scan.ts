@@ -427,18 +427,6 @@ export async function readNetdevBus(
 		: { kind: "unreadable", code: device.code };
 }
 
-/** Independent of address enumeration. Missing or malformed sysfs is unknown. */
-export async function readNetdevIfindex(
-	ifname: string,
-	deps = defaultRouterCellularScanDeps,
-): Promise<number | undefined> {
-	const value = await deps.readAttr(
-		join(deps.sysfsRoot, "sys/class/net", ifname, "ifindex"),
-	);
-	const index = decimal(value);
-	return index !== undefined && index > 0 ? index : undefined;
-}
-
 /**
  * The subset of a ModemManager-manageable USB device that reaches the wire.
  *

@@ -1571,6 +1571,16 @@ function publishIfconfigEntries(
 				(fresh && evidence?.result.kind === "virtual") ||
 				(observedBus !== undefined && observedBus !== "usb");
 			if (nonUsb && confirmNonUsbReplacement(name)) intsChanged = true;
+			// A Wi-Fi radio's lifetime is the radio's own (T1615). The rule is
+			// judged when the successor is seen, because a removed radio has no
+			// wireless sysfs left: a held name that now shows it leaves the hold.
+			if (
+				wifi &&
+				isUsbReplacementPending(name) &&
+				hasWirelessKernelEvidence(name) &&
+				confirmNonUsbReplacement(name)
+			)
+				intsChanged = true;
 			if (nonUsb) usbObservedNames.delete(name);
 			else if (
 				observedBus === "usb" ||
