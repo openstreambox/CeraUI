@@ -55,17 +55,41 @@ const GSM_AUDIT_FIELDS = [
 
 /** A fresh, cache-independent audit of every gsm profile on the device. */
 export async function auditGsmProfiles(): Promise<Array<GsmProfileAudit>> {
+	return (await readGsmProfiles(false)) ?? [];
+}
+
+/**
+ * The same audit, but undefined unless EVERY gsm profile was read: a caller
+ * that reasons from what is not there (no sibling, no parked profile) must not
+ * mistake a profile it could not read for one that does not exist.
+ */
+export async function auditGsmProfilesComplete(): Promise<
+	Array<GsmProfileAudit> | undefined
+> {
+	return readGsmProfiles(true);
+}
+
+async function readGsmProfiles(
+	complete: boolean,
+): Promise<Array<GsmProfileAudit> | undefined> {
 	const rows = await nmConnsGet("uuid,type,state");
-	if (rows === undefined) return [];
+	if (rows === undefined) return complete ? undefined : [];
 
 	const audits: Array<GsmProfileAudit> = [];
 	for (const row of rows) {
 		const [uuid, type, state] = nmcliParseSep(row) as [string, string, string];
-		if (type !== "gsm" || !uuid) continue;
+		if (!uuid) {
+			if (complete) return undefined;
+			continue;
+		}
+		if (type !== "gsm") continue;
 
 		// The inventory proved GSM: its GSM and connection settings are required.
 		const fields = await nmConnGetFields(uuid, GSM_AUDIT_FIELDS, "fixed");
-		if (fields === undefined) continue;
+		if (fields === undefined) {
+			if (complete) return undefined;
+			continue;
+		}
 
 		audits.push({
 			uuid,

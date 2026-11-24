@@ -1,10 +1,6 @@
 import { logger } from "../../helpers/logger.ts";
 import { getNetworkInterfaces } from "../network/network-interfaces.ts";
-import {
-	nmConnect,
-	nmConnGetFields,
-	nmDisconnect,
-} from "../network/network-manager.ts";
+import { nmConnect, nmConnGetFields } from "../network/network-manager.ts";
 import { automaticActivationReady } from "./cellular-preparation.ts";
 import {
 	readModemNmDeviceProp,
@@ -60,7 +56,6 @@ export interface ModemReadyActivationDeps {
 	readonly journaled: typeof withJournaledModemMutation;
 	/** The modem's descriptor state, the takeover's journaled pre-state. */
 	readonly captureState: typeof captureModemState;
-	readonly disconnect: (uuid: string) => Promise<boolean>;
 	readonly sleep: (ms: number) => Promise<void>;
 	readonly settleSwap: typeof settleModemSimSwap;
 	/** The redial's lease: same-modem exclusion that never refuses a Stream Start. */
@@ -84,7 +79,6 @@ const defaultDeps: ModemReadyActivationDeps = {
 	mutate: withModemMutation,
 	journaled: withJournaledModemMutation,
 	captureState: captureModemState,
-	disconnect: (uuid) => nmDisconnect(uuid),
 	sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 	settleSwap: settleModemSimSwap,
 	backgroundMutate: withBackgroundModemLease,
@@ -264,7 +258,7 @@ async function readReadiness(
 			// or a busy lease over many polls.
 			intent.takeoverNoticed = true;
 			logger.warn(
-				"modem is up on a profile for another SIM; activating its own",
+				"modem is up on a profile for another SIM; its own profile will be activated when the modem is free",
 				{ module: "modems", id },
 			);
 		}
@@ -440,33 +434,43 @@ async function redialAutomaticProfile(
 	});
 }
 
-/** NetworkManager device states between "disconnected" and "activated". */
-const isActivating = (code: string | undefined): boolean => {
-	const value = Number(code);
-	return code !== undefined && value > 30 && value < 100;
-};
-const TAKEOVER_SETTLE_MS = 60_000;
+/**
+ * NetworkManager device states that end an activation: unmanaged,
+ * unavailable, disconnected, activated, failed. Anything else, including
+ * 0 (unknown) and an unreadable state, is not settled.
+ */
+const SETTLED_STATES: ReadonlySet<string> = new Set([
+	"10",
+	"20",
+	"30",
+	"100",
+	"120",
+]);
+const TAKEOVER_SETTLE_MS = 180_000;
 const TAKEOVER_SETTLE_STEP_MS = 2_000;
 
 /**
  * After a takeover dial that did not report success: wait, still under the
- * lease, until NetworkManager is positively connected or disconnected.
- * `nmcli -w` exiting does not cancel the daemon's activation, so a timeout
- * can leave it activating. If it is still not settled after
- * TAKEOVER_SETTLE_MS, the activation is taken down so the lease is released
- * on a known state. Answers whether the device settled.
+ * lease, until NetworkManager reports a state that ends the activation.
+ * `nmcli -w` exiting does not cancel the daemon's activation, so a timeout can
+ * leave it running; NetworkManager's own modem connect and IP timeouts end it
+ * well within TAKEOVER_SETTLE_MS. Nothing is taken down: `nmcli conn down`
+ * would block the profile's autoconnect. Answers "settled", "stale" (the
+ * registration ended; the next one decides again) or "unsettled".
  */
-async function settleTakeover(uuid: string): Promise<boolean> {
-	const settled = (code: string | undefined): boolean =>
-		code !== undefined && !isActivating(code) && code !== "110";
+async function settleTakeover(
+	uuid: string,
+	registered: () => boolean,
+): Promise<"settled" | "stale" | "unsettled"> {
 	const deadline = deps.now() + TAKEOVER_SETTLE_MS;
 	for (;;) {
-		if (settled(await readDeviceState(uuid))) return true;
-		if (deps.now() >= deadline) break;
+		if (!registered()) return "stale";
+		const code = await readDeviceState(uuid);
+		if (!registered()) return "stale";
+		if (code !== undefined && SETTLED_STATES.has(code)) return "settled";
+		if (deps.now() >= deadline) return "unsettled";
 		await deps.sleep(TAKEOVER_SETTLE_STEP_MS);
 	}
-	await deps.disconnect(uuid).catch(() => false);
-	return settled(await readDeviceState(uuid));
 }
 
 /**
@@ -476,7 +480,8 @@ async function settleTakeover(uuid: string): Promise<boolean> {
  * or forwarded, and while another mutation of this modem runs) and repeats
  * every readiness read under it. The lease is held until NetworkManager has
  * settled (settleTakeover), so a Stream Start is never admitted while the
- * bearer is still changing.
+ * bearer is still changing; an activation that does not end within
+ * TAKEOVER_SETTLE_MS journals `failed` and stays visible until acknowledged.
  *
  * The journaled pre-state is the modem's descriptor capture with no `format`,
  * so replay on any build, including one without this change, takes the
@@ -484,8 +489,9 @@ async function settleTakeover(uuid: string): Promise<boolean> {
  * no restoring the previous profile: once the SIM is known NetworkManager
  * refuses to activate a profile whose SIM id differs. A failed dial is a
  * failed first activation: NetworkManager's own autoconnect (armed profile)
- * or the automatic redial below (prepared profile) brings the link back. Only
- * an activation that would not settle even when taken down journals `failed`.
+ * or the automatic redial below (prepared profile) brings the link back.
+ * A modem that is not a USB device we can capture cannot be journaled: the
+ * intent is consumed as before this change and the connection left alone.
  */
 async function takeOver(
 	id: ModemId,
@@ -495,8 +501,20 @@ async function takeOver(
 	cooledDown: () => boolean,
 	configured: ModemId[],
 ): Promise<void> {
-	const preState = await deps.captureState(key).catch(() => undefined);
-	if (preState === undefined) return;
+	let preState: Awaited<ReturnType<typeof deps.captureState>>;
+	try {
+		preState = await deps.captureState(key);
+	} catch {
+		return; // The bus could not be read: try again on a later poll.
+	}
+	if (preState === undefined) {
+		if (isPending(id, intent)) intent.state = "consumed";
+		logger.warn("modem takeover skipped: the modem is not on USB", {
+			module: "modems",
+			id,
+		});
+		return;
+	}
 	await deps.journaled(key, "modem-config", preState, async (mutation) => {
 		const current = (): boolean =>
 			isPending(id, intent) &&
@@ -512,7 +530,13 @@ async function takeOver(
 		intent.state = "consumed";
 		lastDispatch.set(key, deps.now());
 		const result = await deps.connect(uuid, 45).catch(() => false);
-		const settled = result === true || (await settleTakeover(uuid));
+		const settled =
+			result === true
+				? "settled"
+				: await settleTakeover(
+						uuid,
+						() => intents.get(id) === intent && deps.stableKey(id) === key,
+					);
 		const currentModem = getModem(id);
 		if (
 			result === false &&
@@ -529,7 +553,7 @@ async function takeOver(
 			result,
 			settled,
 		});
-		return settled
+		return settled !== "unsettled"
 			? { confirmed: true, value: undefined }
 			: {
 					confirmed: false,

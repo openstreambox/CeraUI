@@ -787,6 +787,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["gracefulShutdown: ", " ignored SIGTERM for ", "ms; sending SIGKILL"],
 	["gsm profile ", " now requests ", " (", ")"],
 	["gsm profile ", " skipped: its record store failed"],
+	["gsm profile parking skipped: the modem is not on USB"],
 	["gsm profile settle did not complete"],
 	[
 		"gsm.auto-config probe failed after a successful one; keeping supported=true",
@@ -889,7 +890,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["modem credentials: loaded ", " device record(s)"],
 	["modem decommission did not commit"],
 	["modem id-path refresh failed; retaining previous map"],
-	["modem is up on a profile for another SIM; activating its own"],
+	[
+		"modem is up on a profile for another SIM; its own profile will be activated when the modem is free",
+	],
 	["modem link deactivation did not settle; kept out of the bond"],
 	["modem link found deactivating; kept out of the bond"],
 	["modem link stayed connected after the down"],
@@ -918,6 +921,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["modem shadow: stop() failed: ", ""],
 	["modem shadow: transport disconnect failed: ", ""],
 	["modem takeover from another SIM's profile"],
+	["modem takeover skipped: the modem is not on USB"],
 	["modem usage policy: refresh failed; retaining last snapshot"],
 	["modem usage policy: write refused"],
 	["modem usage policy: write threw"],

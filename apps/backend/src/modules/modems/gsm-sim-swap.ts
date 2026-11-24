@@ -57,16 +57,19 @@
   or a USB device of the same model that ModemManager has not listed
   (modem-registration.ts, readPresentSimIds). Two identical modems can share a
   device id, and a SIM we cannot see may be the one that profile belongs to.
-  A skipped step, a store fault or a failed write leaves the settle
+  Both steps need a complete profile audit: a profile we could not read may
+  be a parked one or the sibling that decides a skip. A skipped step, an
+  incomplete audit, a store fault or a failed write leaves the settle
   INCOMPLETE: the status poll tries again later in the same registration, and
   nothing blocks the modem.
 
-  Both steps run under the modem's identity lease (modem-registration.ts,
-  settleModemSimSwap) and write no journal entry: neither takes a link down
-  (parking leaves an active profile up, re-arming only lets NetworkManager
-  bring up the SIM's own profile), the park records describe themselves
-  (a crash between record and write is converged by the next pass), and an
-  older build would have no inverse for a new journal format.
+  Both steps run under the modem's identity lease with an armed journal entry
+  (modem-registration.ts, settleModemSimSwap): an autoconnect change decides
+  what NetworkManager may bring up next. The entry's pre-state is the modem's
+  descriptor capture with no `format`, so replay on any build, including one
+  without this change, takes the generic descriptor path and finds nothing to
+  restore; the park records describe themselves and the next pass converges
+  a crash between record and write.
 
   Limit: a user's `autoconnect=no` set by hand on a profile that is already
   parked, or between the record and the disarm of an interrupted pass, cannot
@@ -80,7 +83,7 @@ import {
 	nmConnSetFields,
 } from "../network/network-manager.ts";
 import {
-	auditGsmProfiles,
+	auditGsmProfilesComplete,
 	type GsmProfileAudit,
 } from "./gsm-duplicate-reconcile.ts";
 import {
@@ -97,7 +100,8 @@ export type PresentSimReader = (
 ) => Promise<ReadonlySet<string> | undefined>;
 
 export interface GsmSimSwapDeps {
-	readonly audit: () => Promise<Array<GsmProfileAudit>>;
+	/** Every gsm profile, or undefined when any of them could not be read. */
+	readonly audit: () => Promise<Array<GsmProfileAudit> | undefined>;
 	readonly presentSims: PresentSimReader;
 	readonly setFields: (
 		uuid: ConnectionUUID,
@@ -114,7 +118,7 @@ export function defaultGsmSimSwapDeps(
 	presentSims: PresentSimReader,
 ): GsmSimSwapDeps {
 	return {
-		audit: auditGsmProfiles,
+		audit: auditGsmProfilesComplete,
 		presentSims,
 		setFields: nmConnSetFields,
 		readParked: readParkedRecord,
@@ -277,6 +281,8 @@ export async function settleSimSwapProfiles(
 ): Promise<GsmSimSwapResult> {
 	if (!deviceId || !simId) return { parked: 0, rearmed: 0, complete: false };
 	const audits = await deps.audit();
+	// A profile we could not read may be a parked one or a sibling: try later.
+	if (audits === undefined) return { parked: 0, rearmed: 0, complete: false };
 	const rearmed = await rearmReturningSim(
 		audits,
 		deviceId,

@@ -8,6 +8,7 @@ import * as runner from "../helpers/run.ts";
 import { resetGsmAutoconfigProbe } from "../modules/modems/gsm-autoconfig.ts";
 import { resetGsmConnections } from "../modules/modems/gsm-connections.ts";
 import {
+	forgetModemReadyActivation,
 	runModemReadyActivations,
 	setModemReadyActivationDepsForTest,
 } from "../modules/modems/modem-ready-activation.ts";
@@ -195,6 +196,7 @@ beforeEach(async () => {
 	for (const id of getModemIds()) removeModem(id);
 	setModemsState({});
 	setModemIdPathReader(async () => new Map([["wwan0", KEY]]));
+	setMutationCaptureDeps({ enumerate: async () => [USB_DEVICE] });
 	setPresentSimDepsForTest({
 		usbDevices: async () => [
 			{ vidPid: DESCRIPTOR.vidPid, sysfsPath: USB_PATH },
@@ -326,6 +328,7 @@ afterEach(async () => {
 	setModemPresenceDepsForTest(null);
 	setModemReadyActivationDepsForTest(null);
 	setPresentSimDepsForTest(null);
+	resetMutationCaptureDeps();
 	setModemIdPathReader(null);
 	resetModemWireProducer();
 	resetMutationJournalDeps();
@@ -535,7 +538,7 @@ test("a takeover dial that times out holds the lease until NetworkManager settle
 	);
 });
 
-test("a takeover activation that never settles is taken down before the lease goes", async () => {
+test("a takeover activation that never settles is journaled failed, never taken down", async () => {
 	modemIccid = SIM_ID;
 	nmState = "100 (connected)";
 	mmState = "connected";
@@ -543,14 +546,39 @@ test("a takeover activation that never settles is taken down before the lease go
 	activeSimId = OTHER_SIM_ID;
 	activationFails = true;
 	onConnect = async () => {
-		nmState = "70 (connecting (getting IP configuration))";
+		nmState = "0 (unknown)";
 	};
+	const started = now;
 	await runModemStatusPoll();
+	expect(now - started).toBeGreaterThanOrEqual(180_000);
 	expect(
 		commands.filter(
 			([binary, ...args]) => binary === "nmcli" && args.includes("down"),
 		),
-	).toEqual([["nmcli", "conn", "down", UUID]]);
+	).toEqual([]);
+	const [name] = (await readdir(dir)).filter((file) => file.endsWith(".json"));
+	expect(JSON.parse(await readFile(join(dir, name ?? ""), "utf8")).state).toBe(
+		"failed",
+	);
+});
+
+test("a takeover wait ends when the registration does", async () => {
+	modemIccid = SIM_ID;
+	nmState = "100 (connected)";
+	mmState = "connected";
+	activeUuid = OTHER_UUID;
+	activeSimId = OTHER_SIM_ID;
+	activationFails = true;
+	let reads = 0;
+	onConnect = async () => {
+		nmState = "70 (connecting (getting IP configuration))";
+		onStateRead = async () => {
+			reads += 1;
+			if (reads === 2) forgetModemReadyActivation(2);
+		};
+	};
+	await runModemStatusPoll();
+	expect(reads).toBe(2);
 	expect((await readdir(dir)).filter((name) => name.endsWith(".json"))).toEqual(
 		[],
 	);
@@ -623,7 +651,7 @@ test("a takeover held back by the dial cooldown is logged once", async () => {
 		const notices = warn.mock.calls.filter(
 			([message]) =>
 				message ===
-				"modem is up on a profile for another SIM; activating its own",
+				"modem is up on a profile for another SIM; its own profile will be activated when the modem is free",
 		);
 		expect(notices).toHaveLength(1);
 		expect(activations()).toHaveLength(1);
@@ -699,16 +727,45 @@ test("an incomplete settle is tried again, spaced out, until it finishes", async
 	expect(settles).toEqual([0, 30_000, 90_000]);
 });
 
-test("the settle step writes no journal entry", async () => {
+test("the settle step journals a descriptor pre-state and retires it", async () => {
 	modemIccid = SIM_ID;
 	otherProfile = true;
-	const seen: string[][] = [];
+	const seen: Array<{ kind: string; preState: Record<string, unknown> }> = [];
 	onModify = async () => {
-		seen.push((await readdir(dir)).filter((name) => name.endsWith(".json")));
+		for (const name of (await readdir(dir)).filter((file) =>
+			file.endsWith(".json"),
+		))
+			seen.push(JSON.parse(await readFile(join(dir, name), "utf8")));
 	};
 	await runModemStatusPoll();
 	expect(modifies).toEqual([[OTHER_UUID, "connection.autoconnect", "no"]]);
-	expect(seen).toEqual([[]]);
+	expect(seen.map((entry) => [entry.kind, entry.preState])).toEqual([
+		["modem-config", DESCRIPTOR],
+	]);
+	expect((await readdir(dir)).filter((name) => name.endsWith(".json"))).toEqual(
+		[],
+	);
+});
+
+test("a modem that is not on USB settles without parking or a journal entry", async () => {
+	modemIccid = SIM_ID;
+	otherProfile = true;
+	let captures = 0;
+	setMutationCaptureDeps({
+		enumerate: async () => {
+			captures += 1;
+			return [];
+		},
+	});
+	await runModemStatusPoll();
+	now += 900_000;
+	await runModemStatusPoll();
+	// Settled once: a modem that is not on USB will not become one.
+	expect(captures).toBe(1);
+	expect(modifies).toEqual([]);
+	expect(
+		commands.filter((command) => command.includes("uuid,type,state")),
+	).toEqual([]);
 });
 
 test("registration alone parks nothing", async () => {

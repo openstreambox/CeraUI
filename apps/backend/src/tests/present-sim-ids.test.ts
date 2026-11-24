@@ -1,8 +1,12 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as runner from "../helpers/run.ts";
 import {
 	type PresentSimDeps,
 	readPresentSimIds,
+	readSysfsUsbDevices,
 	type TwinUsbDevice,
 } from "../modules/modems/modem-registration.ts";
 
@@ -153,4 +157,20 @@ test("a modem whose udev UID is a label is found by its physdev path", async () 
 	serve({ 1: { device: "twin", sim: 11, iccid: "8901", uid: "internal 4G" } });
 	usb = usbFor({ 1: { device: "twin" } });
 	expect([...((await read("twin")) ?? [])]).toEqual(["8901"]);
+});
+
+test("the USB census reads vid:pid from sysfs and skips interfaces", async () => {
+	const root = await mkdtemp(join(tmpdir(), "usb-census-"));
+	try {
+		await mkdir(join(root, "1-1"));
+		await writeFile(join(root, "1-1", "idVendor"), "2C7C\n");
+		await writeFile(join(root, "1-1", "idProduct"), "0801\n");
+		await mkdir(join(root, "1-1:1.0"));
+		expect(await readSysfsUsbDevices(root)).toEqual([
+			{ vidPid: "2c7c:0801", sysfsPath: await realpath(join(root, "1-1")) },
+		]);
+		expect(await readSysfsUsbDevices(join(root, "missing"))).toBeUndefined();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });

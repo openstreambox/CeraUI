@@ -1,10 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { listPrivateJsonKeys } from "../../helpers/private-json-state.ts";
+import * as runner from "../../helpers/run.ts";
 import { parseCarrierIntentSlot } from "./automatic-carrier-intent.ts";
 import { parsePreparationRecord } from "./cellular-preparation-state.ts";
 import {
+	auditGsmProfiles,
+	auditGsmProfilesComplete,
 	classifyGsmDuplicate,
 	type GsmProfileAudit,
 	reconcileDuplicateGsmProfiles,
@@ -469,6 +472,35 @@ describe("an incomplete settle", () => {
 		const result = await settleSimSwapProfiles(RM520, DARK, deps);
 		expect(result.complete).toBe(false);
 		expect(records.has(key)).toBe(true);
+	});
+
+	test("a profile audit that missed a profile leaves it incomplete and writes nothing", async () => {
+		const profiles = swappedBox();
+		const fake = harness(profiles);
+		const result = await settleSimSwapProfiles(RM520, LIGHT, {
+			...fake.deps,
+			audit: async () => undefined,
+		});
+		expect(result).toEqual({ parked: 0, rearmed: 0, complete: false });
+		expect(fake.calls).toEqual([]);
+	});
+
+	test("the complete audit refuses a profile whose settings could not be read", async () => {
+		const run = spyOn(runner, "run").mockImplementation(
+			async (_binary, args) => {
+				if (args.includes("uuid,type,state"))
+					return `${uuid(1)}:gsm:\n${uuid(2)}:gsm:`;
+				if (args.at(-1) === uuid(2)) throw new Error("profile unreadable");
+				return `${RM520}\n${DARK}\nyes\n300`;
+			},
+		);
+		try {
+			expect(await auditGsmProfilesComplete()).toBeUndefined();
+			// The cleanup's own audit keeps skipping it, as before.
+			expect((await auditGsmProfiles()).map((a) => a.uuid)).toEqual([uuid(1)]);
+		} finally {
+			run.mockRestore();
+		}
 	});
 
 	test("nothing to do is complete", async () => {

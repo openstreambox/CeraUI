@@ -30,8 +30,8 @@
   loop publishes snapshots and broadcasts — none of that lives here.
 */
 
-import { realpath } from "node:fs/promises";
-import { createUsbEnumerator } from "@ceralive/modem-control";
+import { readdir, readFile, realpath } from "node:fs/promises";
+import { join } from "node:path";
 import {
 	deriveModemStableKey,
 	type ModemRadioPower,
@@ -88,10 +88,8 @@ import {
 	setModem,
 } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
-import {
-	withJournaledModemMutation,
-	withModemMutation,
-} from "./mutation-lease.ts";
+import { withJournaledModemMutation } from "./mutation-lease.ts";
+import { captureModemState } from "./mutation-rollback.ts";
 import { deriveSimPresence } from "./sim-presence.ts";
 
 export type { ModemId } from "./mmcli.ts";
@@ -420,17 +418,43 @@ export interface PresentSimDeps {
 	readonly resolvePath: (path: string) => Promise<string | undefined>;
 }
 
-const defaultPresentSimDeps: PresentSimDeps = {
-	usbDevices: async () => {
-		try {
-			return (await createUsbEnumerator().enumerate()).map((device) => ({
-				vidPid: `${device.vendorId}:${device.productId}`.toLowerCase(),
-				sysfsPath: device.sysfsPath,
-			}));
-		} catch {
-			return undefined;
+const USB_DEVICES_DIR = "/sys/bus/usb/devices";
+
+/**
+ * Every USB device straight from sysfs: no subprocess, and no dependence on
+ * udev having imported its properties yet (a twin still being probed has its
+ * vid:pid in sysfs from the moment it enumerates).
+ */
+export async function readSysfsUsbDevices(
+	root: string = USB_DEVICES_DIR,
+): Promise<readonly TwinUsbDevice[] | undefined> {
+	try {
+		const devices: TwinUsbDevice[] = [];
+		for (const name of await readdir(root)) {
+			const dir = join(root, name);
+			let vendor: string;
+			let product: string;
+			try {
+				vendor = (await readFile(join(dir, "idVendor"), "utf8")).trim();
+				product = (await readFile(join(dir, "idProduct"), "utf8")).trim();
+			} catch (error) {
+				// Interfaces (`1-1:1.0`) have no ids; anything else is unreadable.
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+				return undefined;
+			}
+			devices.push({
+				vidPid: `${vendor}:${product}`.toLowerCase(),
+				sysfsPath: await realpath(dir),
+			});
 		}
-	},
+		return devices;
+	} catch {
+		return undefined;
+	}
+}
+
+const defaultPresentSimDeps: PresentSimDeps = {
+	usbDevices: () => readSysfsUsbDevices(),
 	resolvePath: async (path) => {
 		try {
 			return await realpath(path);
@@ -622,18 +646,22 @@ export async function resolveLateModemConfig(
  * Re-arm the parked profiles of the SIM this modem holds and park the ones
  * bound to it for SIMs no modem with its device id holds (gsm-sim-swap.ts).
  *
- * Runs outside the update lock, under the modem's identity lease
- * (`withModemMutation`: refused while a stream is admitted or forwarded, during
- * journal replay, on a blocked identity and while another mutation of this
- * modem runs). The lease spans the fresh read and every write, and the
- * registration, physical key, device id and SIM are fenced across every await.
- * It writes no journal entry: neither step takes a link down, the park
- * records describe themselves, and an older build would have no inverse for
- * the entry (the-modem-mutation-safety-contract.md, "SIM swap parking").
+ * Runs outside the update lock through `withJournaledModemMutation`
+ * ("modem-config"): the identity lease (refused while a stream is admitted or
+ * forwarded, during journal replay, on a blocked identity and while another
+ * mutation of this modem runs) plus an armed entry whose pre-state is the
+ * modem's descriptor capture with no `format`. Replay on any build, including
+ * one without this change, then takes the generic descriptor path: an
+ * unchanged modem is restored, because nothing a crash leaves needs undoing
+ * (the park records describe themselves). The lease spans the fresh read and
+ * every write, and the registration, physical key, device id and SIM are
+ * fenced across every await.
  *
- * "done" means both steps finished; "retry" (refused, stale, a SIM we could
- * not see, a store fault or a failed write) leaves the work for a later poll
- * of the same registration. It never throws and never blocks the modem.
+ * "done" means both steps finished, or the modem is not a USB device we can
+ * capture (nothing is journaled or parked for it); "retry" (refused, stale, a
+ * SIM or profile we could not see, a store fault or a failed write) leaves the
+ * work for a later poll of the same registration. It never throws, and it
+ * always confirms its entry, so it never blocks the modem.
  */
 export async function settleModemSimSwap(
 	id: ModemId,
@@ -645,31 +673,58 @@ export async function settleModemSimSwap(
 	const iccid = modem?.iccid?.trim();
 	if (!modem?.config?.conn || !iccid) return "retry";
 	try {
-		const guarded = await withModemMutation(stableKey, async () => {
-			const fresh = await readReadyModemSim(id);
-			const current = (): boolean =>
-				isCurrent() && modemStableKeyForId(id) === stableKey;
-			if (
-				!current() ||
-				fresh === undefined ||
-				fresh === "unreadable" ||
-				fresh.simInfo["sim.properties.iccid"]?.trim() !== iccid
-			)
-				return "retry" as const;
-			const deviceId = fresh.modemInfo["modem.generic.device-identifier"];
-			const result = await settleSimSwapProfiles(
-				deviceId,
-				iccid,
-				{
-					...defaultGsmSimSwapDeps(readPresentSimIds),
-					setFields: (uuid, fields) =>
-						current() ? nmConnSetFields(uuid, fields) : Promise.resolve(false),
-				},
-				current,
-			);
-			if (result.parked > 0 || result.rearmed > 0) resetGsmConnections();
-			return result.complete ? ("done" as const) : ("retry" as const);
-		});
+		const preState = await captureModemState(stableKey);
+		if (!isCurrent()) return "retry";
+		if (preState === undefined) {
+			logger.info("gsm profile parking skipped: the modem is not on USB", {
+				module: "modems",
+				id,
+			});
+			return "done";
+		}
+		const guarded = await withJournaledModemMutation(
+			stableKey,
+			"modem-config",
+			preState,
+			async (mutation) => {
+				const fresh = await readReadyModemSim(id);
+				const current = (): boolean =>
+					isCurrent() && modemStableKeyForId(id) === stableKey;
+				if (
+					!current() ||
+					fresh === undefined ||
+					fresh === "unreadable" ||
+					fresh.simInfo["sim.properties.iccid"]?.trim() !== iccid
+				)
+					return { confirmed: true, value: "retry" as const };
+				await mutation.markExecuting();
+				const deviceId = fresh.modemInfo["modem.generic.device-identifier"];
+				const result = await settleSimSwapProfiles(
+					deviceId,
+					iccid,
+					{
+						...defaultGsmSimSwapDeps(readPresentSimIds),
+						setFields: (uuid, fields) =>
+							current()
+								? nmConnSetFields(uuid, fields)
+								: Promise.resolve(false),
+					},
+					current,
+				).catch((error: unknown) => {
+					logger.warn("gsm profile settle did not complete", {
+						module: "modems",
+						id,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					return { parked: 0, rearmed: 0, complete: false };
+				});
+				if (result.parked > 0 || result.rearmed > 0) resetGsmConnections();
+				return {
+					confirmed: true,
+					value: result.complete ? ("done" as const) : ("retry" as const),
+				};
+			},
+		);
 		return guarded.ok ? guarded.value : "retry";
 	} catch (error) {
 		logger.warn("gsm profile settle did not complete", {
