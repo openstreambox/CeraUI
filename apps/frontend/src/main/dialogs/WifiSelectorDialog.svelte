@@ -123,6 +123,8 @@ const scanError = $derived(getOperationPhase(scanKey) === 'failed');
 // render the calm "still connecting / Retry" affordance; cleared on confirm
 // (close), hard fail, or idle decay.
 let connecting = $state<(PendingWifiConnect & { security?: string; openTarget?: { bssid: string } }) | undefined>(undefined);
+let connectingDeviceId = $state<string | undefined>(undefined);
+let interactionDeviceId = $state<string | undefined>(undefined);
 let pendingNew = $state<AvailableWifiNetwork | undefined>(undefined);
 let password = $state('');
 let showPassword = $state(false);
@@ -140,7 +142,9 @@ let joinFailure = $state<string | undefined>(undefined);
 // disconnect/forget apart, so the confirm $effects below gate on these flags and
 // resolve only the matching pure outcome.
 let disconnecting = $state<string | undefined>(undefined);
+let disconnectingDeviceId = $state<string | undefined>(undefined);
 let forgetting = $state<string | undefined>(undefined);
+let forgettingDeviceId = $state<string | undefined>(undefined);
 
 // Which intent the in-flight scan is serving. The op is shared, so this is what
 // keeps a background tick from driving the operator's spinner or toasting at
@@ -155,6 +159,7 @@ let scanIntent = $state<'manual' | 'auto' | undefined>(undefined);
 // been dispatched" from "a scan was dispatched against generation undefined".
 let scanBaseline = $state<number | undefined>(undefined);
 let scanAwaitingGeneration = $state(false);
+let scanDeviceId = $state<string | undefined>(undefined);
 
 function resetInteraction() {
 	pendingNew = undefined;
@@ -174,6 +179,7 @@ function resetInteraction() {
 async function connectVia(pending: NonNullable<typeof connecting>, run: () => Promise<unknown>) {
 	if (ifaceBusy || isOperationPending(wifiOpKey)) return;
 	joinFailure = undefined;
+	connectingDeviceId = deviceId;
 	connecting = pending;
 	await osCommand({
 		key: wifiOpKey,
@@ -201,10 +207,18 @@ function newConnectIntent(ssid: string, security: string) {
  */
 async function dispatchScan(intent: 'manual' | 'auto') {
 	if (isOperationPending(scanKey)) {
+		// Joining another radio's existing run needs a local baseline for THAT
+		// radio; an earlier selection's generation cannot complete this scan.
+		if (scanDeviceId !== deviceId || !scanAwaitingGeneration) {
+			scanDeviceId = deviceId;
+			scanBaseline = iface?.scanGeneration;
+			scanAwaitingGeneration = true;
+		}
 		if (intent === 'manual') scanIntent = 'manual';
 		return;
 	}
 	scanIntent = intent;
+	scanDeviceId = deviceId;
 	// Capture the baseline BEFORE dispatch, or a generation that advanced while
 	// the RPC was in flight would be read as the pre-scan value.
 	scanBaseline = iface?.scanGeneration;
@@ -233,6 +247,7 @@ function handleConnectSaved(uuid: string, network: AvailableWifiNetwork) {
 async function handleDisconnect(uuid: string, network: AvailableWifiNetwork) {
 	if (isOperationPending(wifiOpKey)) return;
 	disconnecting = uuid;
+	disconnectingDeviceId = deviceId;
 	await osCommand({
 		key: wifiOpKey,
 		target: network.ssid,
@@ -287,6 +302,7 @@ async function handleForget(uuid: string, network: AvailableWifiNetwork) {
 	confirmForget = undefined;
 	if (isOperationPending(wifiOpKey)) return;
 	forgetting = uuid;
+	forgettingDeviceId = deviceId;
 	await osCommand({
 		key: wifiOpKey,
 		target: network.ssid,
@@ -313,9 +329,17 @@ async function handleForget(uuid: string, network: AvailableWifiNetwork) {
 $effect(() => {
 	const pending = connecting;
 	if (!pending) return;
+	// The same mounted dialog can receive another radio before this RPC settles.
+	// Its new key's phase is not evidence about the retained local intent.
+	if (connectingDeviceId !== deviceId) {
+		connecting = undefined;
+		connectingDeviceId = undefined;
+		return;
+	}
 	const phase = getOperationPhase(wifiOpKey);
 	if (phase === 'confirmed') {
 		connecting = undefined;
+		connectingDeviceId = undefined;
 		resetInteraction();
 		open = false;
 		return;
@@ -323,6 +347,7 @@ $effect(() => {
 	if (phase === 'failed' || phase === 'idle') {
 		if (phase === 'failed') joinFailure = getOperationReason(wifiOpKey) ?? 'generic';
 		connecting = undefined;
+		connectingDeviceId = undefined;
 		return;
 	}
 	// A fresh join's status fallback must not confirm an incompatible same-name UUID.
@@ -349,7 +374,16 @@ $effect(() => {
 // NEUTRALLY as "scan complete", never an error, exactly as before this field
 // existed.
 $effect(() => {
+	if (scanDeviceId !== deviceId) {
+		scanDeviceId = undefined;
+		scanBaseline = undefined;
+		scanAwaitingGeneration = false;
+		scanIntent = undefined;
+		return;
+	}
 	if (getOperationPhase(scanKey) !== 'pending') {
+		scanDeviceId = undefined;
+		scanBaseline = undefined;
 		scanIntent = undefined;
 		scanAwaitingGeneration = false;
 		return;
@@ -368,13 +402,20 @@ $effect(() => {
 $effect(() => {
 	const uuid = disconnecting;
 	if (!uuid) return;
+	if (disconnectingDeviceId !== deviceId) {
+		disconnecting = undefined;
+		disconnectingDeviceId = undefined;
+		return;
+	}
 	if (getOperationPhase(wifiOpKey) !== 'pending') {
 		disconnecting = undefined;
+		disconnectingDeviceId = undefined;
 		return;
 	}
 	if (deriveWifiDisconnectOutcome(iface, uuid) === 'confirmed') {
 		confirmOperation(wifiOpKey);
 		disconnecting = undefined;
+		disconnectingDeviceId = undefined;
 	}
 });
 
@@ -383,13 +424,20 @@ $effect(() => {
 $effect(() => {
 	const uuid = forgetting;
 	if (!uuid) return;
+	if (forgettingDeviceId !== deviceId) {
+		forgetting = undefined;
+		forgettingDeviceId = undefined;
+		return;
+	}
 	if (getOperationPhase(wifiOpKey) !== 'pending') {
 		forgetting = undefined;
+		forgettingDeviceId = undefined;
 		return;
 	}
 	if (deriveWifiForgetOutcome(iface?.saved, uuid) === 'confirmed') {
 		confirmOperation(wifiOpKey);
 		forgetting = undefined;
+		forgettingDeviceId = undefined;
 	}
 });
 
@@ -435,13 +483,40 @@ $effect(() => {
 	return () => clearInterval(id);
 });
 
+// Retire the previous radio's local station draft and intent. Shared operations
+// continue independently; changing the selection does not cancel device effects.
+$effect(() => {
+	if (interactionDeviceId === deviceId) return;
+	if (interactionDeviceId === undefined) {
+		interactionDeviceId = deviceId;
+		return;
+	}
+	interactionDeviceId = deviceId;
+	resetInteraction();
+	connecting = undefined;
+	connectingDeviceId = undefined;
+	disconnecting = undefined;
+	disconnectingDeviceId = undefined;
+	forgetting = undefined;
+	forgettingDeviceId = undefined;
+	scanDeviceId = undefined;
+	scanBaseline = undefined;
+	scanAwaitingGeneration = false;
+	scanIntent = undefined;
+	joinFailure = undefined;
+});
+
 // Clear transient inline state whenever the dialog closes.
 $effect(() => {
 	if (!open) {
 		resetInteraction();
 		connecting = undefined;
+		connectingDeviceId = undefined;
 		disconnecting = undefined;
+		disconnectingDeviceId = undefined;
 		forgetting = undefined;
+		forgettingDeviceId = undefined;
+		scanDeviceId = undefined;
 		scanBaseline = undefined;
 		scanAwaitingGeneration = false;
 		scanIntent = undefined;

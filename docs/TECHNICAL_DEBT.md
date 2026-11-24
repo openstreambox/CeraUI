@@ -818,3 +818,31 @@ block — which is every row, since a setting is knowable before a byte is count
 | [`docs/CONVENTIONS.md`](CONVENTIONS.md) | CeraUI doc + debt-register convention |
 | [root `docs/CONVENTIONS.md`](../../docs/CONVENTIONS.md) | `[EXISTS]` / `[PARTIAL]` / `[GREENFIELD]` status labels |
 | [`image-building-pipeline/v2/docs/DEFERRED.md`](../../image-building-pipeline/v2/docs/DEFERRED.md) | The deferred-work ledger pattern this register extends |
+
+### Bundle footprint acceptance — 2026-11-10
+
+Fresh Bun 1.4.3 builds measure SPA total/precache at 1,293,660/1,493,392 B
+gzip. The aggregate baselines now match those measurements, keeping the 16 KiB
+absolute headrooms and route/chunk limits. Lazy loading does not remove bytes
+from either aggregate; catalog/offline restructuring remains tracked by
+`TD-spa-i18n-catalog-size` above.
+
+Federation toast-host measures 697,024 B (previous baseline 613,463 B,
+ceiling 674,809 B). Its new baseline 633,659 B yields a 697,024 B ceiling,
+accepting existing static catalog growth without a fresh 10% allowance.
+`TD-federation-i18n-catalog-size` stays open; static locale and signed graph
+contracts are preserved. Audio measures 7,725 B, exceeding the previous
+7,709 B ceiling by 16 B; baseline 7,023 B yields exactly 7,725 B.
+InfoPopover's 6,104 B baseline is unchanged: hash matching is repaired instead.
+
+```debt
+id: TD-federation-audio-size
+title: Audio dialog footprint exceeds its original baseline
+track: 1
+status: open
+exit_criteria: `bun run build:federation && bun scripts/ci/bundle-report.mjs`
+owner: ceraui-team
+registered_at: 2026-11-10
+resolved_at: null
+unblock: Measured 7,725 B versus original 7,009 B baseline; accepted 16 B overage. A separate lazy entry would add graph/loader complexity for negligible savings. Retain the original measurement and revisit shared dialog tree shaking when modifying the audio surface.
+```
