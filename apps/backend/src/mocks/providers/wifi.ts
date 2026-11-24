@@ -350,11 +350,15 @@ function getMockConnections(args: string[]): string {
 								? getMockState().modemStates.get(index) === "connected"
 									? "activated"
 									: ""
-								: field === "name"
-									? `gsm-${index}`
-									: field === "timestamp"
-										? "1700000000"
-										: "",
+								: field === "active"
+									? getMockState().modemStates.get(index) === "connected"
+										? "yes"
+										: "no"
+									: field === "name"
+										? `gsm-${index}`
+										: field === "timestamp"
+											? "1700000000"
+											: "",
 				)
 				.join(":"),
 		);
