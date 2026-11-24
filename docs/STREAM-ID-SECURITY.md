@@ -61,10 +61,25 @@ Los registros filtran los valores guardados en objetos, resultados de `toJSON`
 y contenido UTF-8 de Buffer, incluidas las codificaciones habituales. Se
 conservan los marcos de diagnóstico que no contienen valores secretos.
 
-Unretained labelled IDs are also blanked in prose and command-line diagnostics.
-For multiline labelled values, the remaining record is blanked up to the next
-stack frame. Stack paths and unrelated frames remain available for diagnosis.
+Unretained labelled IDs are also blanked in prose and command-line diagnostics,
+including assigned dotted fields (`cfg.streamid=…`) and doubly escaped JSON
+(`\"srt_streamid\":\"…\"`). The whole labelled line is blanked. For multiline
+labelled values, the rest of the message is blanked up to the next stack frame;
+in a downloaded journal it also ends at the next record (a line that does not
+start with whitespace). Stack paths and unrelated frames remain available for
+diagnosis.
 
-Los ID etiquetados se ocultan aunque ya no estén guardados, incluso en mensajes
-y argumentos. Si el valor ocupa varias líneas, se oculta el resto del registro
-hasta el siguiente marco de la pila; los marcos de diagnóstico se conservan.
+A line that only names the field stays readable: a stack frame whose function
+is called `streamId`, or a message where the label is followed by nothing or by
+a fixed phrase such as "not specified", "missing" or "required", with only plain
+words before it (`SRT streamid not specified`). Any other labelled line is
+blanked, even prose such as `srt_streamid must be at most 512 characters`,
+because a value could sit in it.
+
+Los ID etiquetados se ocultan aunque ya no estén guardados, incluso en mensajes,
+argumentos, campos con punto (`cfg.streamid=…`) y JSON con doble escape. Si el
+valor ocupa varias líneas, se oculta el resto del mensaje hasta el siguiente
+marco de la pila; en un registro descargado, también termina en el siguiente
+registro. Las líneas que solo nombran el campo (por ejemplo,
+`SRT streamid not specified` o un marco de pila) se conservan; cualquier otra
+línea con la etiqueta se oculta completa.
