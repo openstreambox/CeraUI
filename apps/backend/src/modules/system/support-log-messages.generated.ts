@@ -666,7 +666,6 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["control-channel: unpaired, control channel gated (no dial)"],
 	["control-command: ", " failed: ", ""],
 	["could not enumerate USB devices for mutation-block presence"],
-	["could not re-arm the engine reconnect after a start"],
 	["could not write the armed-stream marker"],
 	["could not write the config-change in-flight marker"],
 	["cpu: core-count read failed"],
@@ -712,6 +711,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["encoder-load: load_interval unreadable"],
 	["encoder-load: telemetry unreadable"],
 	["engine reconnect: capability refresh threw: ", ""],
+	["engine reconnect: control observation failed: ", ""],
 	["engine reconnect: engine back after ", "s; reconnect loop settled"],
 	[
 		"engine reconnect: engine connection lost (",
@@ -1893,6 +1893,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["no-route"],
 	["no-transport"],
 	["no_available_network_connections"],
+	["not a cerastream audio refusal token: ", ""],
 	["not an object"],
 	["not-released"],
 	["not-rm520"],
