@@ -28,15 +28,19 @@ let { open = $bindable(false) }: Props = $props();
 
 let refreshed = $state<Revisions | undefined>(undefined);
 
-const revisions = $derived(refreshed ?? getRevisions());
+const pushed = $derived(getRevisions());
+const revisions = $derived(refreshed ?? pushed);
 
 $effect(() => {
 	if (!open) return;
+	// Show the latest push now and re-read the engine when the snapshot changes.
+	// A boot push can arrive while the previous engine handshake is in flight.
+	refreshed = pushed;
 	let cancelled = false;
 	rpc.system
 		.getRevisions()
-		.then((next) => {
-			if (!cancelled) refreshed = next;
+		.then((value) => {
+			if (!cancelled) refreshed = value;
 		})
 		.catch((error: unknown) => {
 			// The pushed snapshot already on screen stays authoritative — a failed

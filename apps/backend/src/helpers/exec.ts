@@ -176,6 +176,8 @@ export const execFileP = async (
 		maxBuffer?: number;
 		timeout?: number;
 		signal?: AbortSignal;
+		/** Fail unless both pipes reached EOF before the result returns. */
+		requireCompleteOutput?: boolean;
 	} & ChildExitObserver,
 ): Promise<ExecResult> => {
 	const maxBuffer = opts?.maxBuffer ?? 1024 * 1024;
@@ -210,6 +212,7 @@ export const execFileP = async (
 		const result = collectBoundedChild(proc, command, {
 			timeoutMs: timeout,
 			maxBuffer,
+			...(opts?.requireCompleteOutput ? { requireCompleteOutput: true } : {}),
 			...(opts?.onChildExit ? { onChildExit: opts.onChildExit } : {}),
 			...(opts?.preserveChild ? { preserveChild: true } : {}),
 			...(signal ? { signal } : {}),

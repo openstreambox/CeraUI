@@ -29,7 +29,12 @@ engine version — and one contract that is easy to break from either side.
   login-time `revisions` push is a snapshot: an engine that came up (or was
   upgraded) after the operator logged in would otherwise be reported unreachable
   for the rest of the session. The push and the pull are both kept — the push
-  seeds the dialog instantly, the pull corrects it.
+  seeds the dialog instantly, the pull corrects it. Before boot commands finish,
+  snapshots already carry Bun, the kernel and `"unknown revision"` for CeraUI
+  and SRTLA. Completion sends a new `revisions` frame to authenticated local
+  clients. An open dialog shows the completed snapshot immediately and starts
+  a fresh engine read, so an earlier pull cannot replace boot values or leave
+  the engine row stuck at the boot verdict.
 - `setEngineVersionProbe(probe | null)` is the test seam (the `set*Runner`
   convention). Coverage: `tests/revisions-kernel-engine.test.ts`.
 
@@ -83,12 +88,15 @@ different questions:**
   commit to the row's secondary line with NO schema change, NO new wire field and
   NO row-specific branch in `VersionsDialog`. A `dpkg` version whose iteration
   already embeds the commit is left alone rather than repeating it.
-- **`probe(argv)` is a separate primitive from `readRevision(cmd)`**, because the
-  ladder must tell "this rung had no answer" from "this rung answered":
-  `readRevision` answers the literal `"unknown revision"`, which is a fine value
-  to RENDER and useless to RESOLVE with. It is registered separately in
-  `SPAWN_POLICY` (`revisions.installedPackageVersion`, bounded-probe) so a hung
-  `dpkg` lock is capped like every other probe.
+- **Boot commands leave the event loop free to send watchdog pulses.** Git and
+  `dpkg-query` use `spawnWithTimeout` via `probe(argv)`; `srtla_send -v` uses
+  `refreshSenderRevision()`'s `execFileP`. Both run on the bounded child
+  collector: a live child gets SIGTERM at 30 seconds and SIGKILL after 100 ms,
+  with bounded waits for exit and pipe drainage. A failed or timed-out CeraUI
+  source leaves the rest of the resolution ladder available. A failed, empty
+  or timed-out SRTLA read publishes `"unknown revision"`. Each stream is capped
+  at 4 KiB. The reader requires EOF on both streams, so a zero-exit command
+  with a descendant holding a pipe open cannot publish truncated output.
 - **`CeraUiRevisionSources` is the seam** (the `*Deps` convention, not
   `set*Runner`), passed as an optional argument to `initRevisions`, so the whole
   ladder is drivable with no packaged tree, no `dpkg` database and no git
