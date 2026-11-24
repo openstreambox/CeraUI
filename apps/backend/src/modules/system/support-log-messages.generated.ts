@@ -571,9 +571,6 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["broadcast"],
 	["cancelled stream cleanup remains unknown"],
 	[
-		"capabilities: engine schema_version differs from bindings; degrading (additive-only, informational)",
-	],
-	[
 		"capabilities: engine unavailable and no cached snapshot; serving minimal safe set",
 	],
 	["capabilities: engine unavailable; serving last-known-good snapshot"],
