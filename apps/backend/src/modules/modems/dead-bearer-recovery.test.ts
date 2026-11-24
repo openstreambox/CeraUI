@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+	isLinkTeardownPending,
+	resetLinkTeardownPendingForTest,
+} from "../network/link-teardown-pending.ts";
 import type { UplinkHealthRecord } from "../network/uplink-health/model.ts";
 import { setForwardActive } from "../streaming/forward-activity.ts";
 import {
 	currentLifecycleHolder,
 	isModemMutationHeld,
+	LINK_TEARDOWN_MAX_HOLD_MS,
 	type LifecycleLease,
 	linkTeardownSettled,
 	resetLifecycleInterlock,
@@ -16,12 +21,15 @@ import {
 	DEAD_BEARER_AFTER_DIAL_MS,
 	DEAD_BEARER_ALONE_HOLD_MS,
 	DEAD_BEARER_HOLD_MS,
+	DEAD_BEARER_MAX_HOLD_RESTARTS,
 	DEAD_BEARER_MIN_FAILURES,
 	type DeadBearerDeps,
 	type DeadBearerInput,
 	type DeadBearerMemory,
 	decideDeadBearer,
+	type NmDeviceState,
 	runDeadBearerRecovery,
+	seedPendingTeardowns,
 	setDeadBearerDepsForTest,
 } from "./dead-bearer-recovery.ts";
 import {
@@ -71,6 +79,7 @@ function input(
 		nmState: "100",
 		mmState: "connected",
 		lastDial: undefined,
+		streamCycle: 0,
 		memory,
 		...overrides,
 	};
@@ -231,6 +240,11 @@ describe("runDeadBearerRecovery", () => {
 	let calls: string[];
 	let ownerReads: number;
 	let onDisconnect: (() => Promise<void>) | undefined;
+	/** The modem's NM device as NetworkManager would report it. */
+	let device: NmDeviceState | undefined;
+	/** What the device reads once the `down` was issued. */
+	let afterDown: NmDeviceState | undefined;
+	let sleeps: number;
 
 	function modem(): Modem {
 		return {
@@ -284,11 +298,19 @@ describe("runDeadBearerRecovery", () => {
 			},
 			disconnect: async (uuid) => {
 				calls.push(`down ${uuid}`);
+				device = afterDown;
 				await onDisconnect?.();
 			},
 			connect: async (uuid, timeout) => {
 				calls.push(`up ${uuid} ${timeout}`);
+				device = { state: "100", connection: uuid };
 				return connectResult;
+			},
+			resolveDevice: async () => "cdc-wdm0",
+			deviceState: async () => device,
+			sleep: async (ms) => {
+				sleeps++;
+				now += ms;
 			},
 		};
 	}
@@ -339,6 +361,10 @@ describe("runDeadBearerRecovery", () => {
 		calls = [];
 		ownerReads = 0;
 		onDisconnect = undefined;
+		device = { state: "100", connection: UUID };
+		afterDown = { state: "30", connection: undefined };
+		sleeps = 0;
+		resetLinkTeardownPendingForTest();
 		for (const id of getModemIds()) removeModem(id);
 		setModem(2, modem());
 		setDeadBearerDepsForTest(deps());
@@ -346,6 +372,7 @@ describe("runDeadBearerRecovery", () => {
 
 	afterEach(() => {
 		setDeadBearerDepsForTest(null);
+		resetLinkTeardownPendingForTest();
 		resetLifecycleInterlock();
 		resetRecoveryBarrier();
 		for (const id of getModemIds()) removeModem(id);
@@ -389,23 +416,23 @@ describe("runDeadBearerRecovery", () => {
 	  live or ended during those reads stops the teardown, and that no stream is
 	  admitted while the link goes down.
 	*/
-	describe("a stream never starts into a teardown", () => {
-		/** Runs `during` once, in the first owner read made under the lease. */
-		function duringLeasedReads(during: () => void): void {
-			let done = false;
-			const base = deps();
-			setDeadBearerDepsForTest({
-				...base,
-				mmState: async (id) => {
-					if (!done && isModemMutationHeld(KEY)) {
-						done = true;
-						during();
-					}
-					return (await base.mmState?.(id)) ?? mmState;
-				},
-			});
-		}
+	/** Runs `during` in the first `times` owner reads made under the lease. */
+	function duringLeasedReads(during: () => void, times = 1): void {
+		let left = times;
+		const base = deps();
+		setDeadBearerDepsForTest({
+			...base,
+			mmState: async (id) => {
+				if (left > 0 && isModemMutationHeld(KEY)) {
+					left--;
+					during();
+				}
+				return (await base.mmState?.(id)) ?? mmState;
+			},
+		});
+	}
 
+	describe("a stream never starts into a teardown", () => {
 		test("a Start admitted during the owner reads is not taken down", async () => {
 			others = [eth()];
 			health = dead();
@@ -503,6 +530,185 @@ describe("runDeadBearerRecovery", () => {
 			});
 			expect(await pollUntil(75_000)).toEqual([]);
 			transition?.release();
+		});
+
+		test("a bookkeeping failure after the hold still releases it", async () => {
+			others = [eth()];
+			health = dead();
+			setDeadBearerDepsForTest({
+				...deps(),
+				noteDial: () => {
+					throw new Error("dial clock unavailable");
+				},
+			});
+			await pollUntil(75_000);
+			expect(calls).toEqual([]);
+			expect(currentLifecycleHolder()).toBeUndefined();
+			expect(linkTeardownSettled()).toBeUndefined();
+		});
+
+		test("a stream admitted and ended during the owner reads still skips", async () => {
+			others = [eth()];
+			health = dead();
+			duringLeasedReads(() => {
+				const admitted = tryAcquireLifecycle("streaming");
+				if (admitted.admitted) admitted.lease.release();
+			});
+			expect(await pollUntil(75_000)).toEqual([]);
+			expect(calls).toEqual([]);
+		});
+	});
+
+	/*
+	  The hold ends only when NetworkManager shows the device has let go of the
+	  connection, at most LINK_TEARDOWN_MAX_HOLD_MS. A link whose deactivation has
+	  not settled stays out of the bond until a later poll reads it settled, and
+	  the profile is brought back only onto a free device.
+	*/
+	describe("the teardown settles before a stream may use the link set", () => {
+		test("the interlock is held until the device reads disconnected", async () => {
+			others = [eth()];
+			health = dead();
+			afterDown = { state: "110", connection: UUID };
+			const seen: string[] = [];
+			setDeadBearerDepsForTest({
+				...deps(),
+				sleep: async (ms) => {
+					seen.push(
+						`${currentLifecycleHolder()} pending ${isLinkTeardownPending("wwan0")}`,
+					);
+					now += ms;
+					if (sleeps++ === 2) device = { state: "30", connection: undefined };
+				},
+			});
+			expect(await pollUntil(75_000)).toHaveLength(1);
+			expect(seen).toEqual([
+				"modem-transition pending true",
+				"modem-transition pending true",
+				"modem-transition pending true",
+			]);
+			expect(calls).toEqual([`down ${UUID}`, `up ${UUID} 45`]);
+			expect(currentLifecycleHolder()).toBeUndefined();
+			expect(isLinkTeardownPending("wwan0")).toBe(false);
+		});
+
+		test("a down that never settles releases at the bound and keeps the link out of the bond until a poll reads it settled", async () => {
+			others = [eth()];
+			health = dead();
+			afterDown = { state: "110", connection: UUID };
+			const start = 75_000;
+			expect(await pollUntil(75_000)).toHaveLength(1);
+			expect(now - start).toBeGreaterThanOrEqual(LINK_TEARDOWN_MAX_HOLD_MS);
+			expect(currentLifecycleHolder()).toBeUndefined();
+			expect(linkTeardownSettled()).toBeUndefined();
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+			// No `up` onto a device still deactivating.
+			expect(calls).toEqual([`down ${UUID}`]);
+			// Still deactivating at the next poll: still excluded.
+			await pollUntil(now + 15_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+			device = { state: "30", connection: undefined };
+			await pollUntil(now + 15_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(false);
+		});
+
+		test("a device that frees up just after the bound still gets no up", async () => {
+			others = [eth()];
+			health = dead();
+			afterDown = { state: "110", connection: UUID };
+			let lastBoundRead = false;
+			setDeadBearerDepsForTest({
+				...deps(),
+				deviceState: async () => {
+					if (now - 75_000 < LINK_TEARDOWN_MAX_HOLD_MS) return device;
+					if (!lastBoundRead) {
+						lastBoundRead = true;
+						return device;
+					}
+					return { state: "30", connection: undefined };
+				},
+			});
+			await pollUntil(75_000);
+			expect(calls).toEqual([`down ${UUID}`]);
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+		});
+
+		test("an unreadable device keeps the link excluded", async () => {
+			others = [eth()];
+			health = dead();
+			afterDown = undefined;
+			await pollUntil(75_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+			await pollUntil(now + 15_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+		});
+
+		test("after a restart, a link NetworkManager still shows deactivating is excluded until it settles", async () => {
+			device = { state: "110", connection: UUID };
+			await seedPendingTeardowns();
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+			await pollUntil(15_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(true);
+			device = { state: "30", connection: undefined };
+			await pollUntil(30_000);
+			expect(isLinkTeardownPending("wwan0")).toBe(false);
+		});
+
+		test("the startup scan leaves a settled link alone", async () => {
+			await seedPendingTeardowns();
+			expect(isLinkTeardownPending("wwan0")).toBe(false);
+		});
+
+		test("no up when another profile took the device after the down", async () => {
+			others = [eth()];
+			health = dead();
+			afterDown = { state: "100", connection: "other-profile" };
+			expect(await pollUntil(75_000)).toHaveLength(1);
+			expect(calls).toEqual([`down ${UUID}`]);
+			expect(isLinkTeardownPending("wwan0")).toBe(false);
+		});
+
+		test("no up when the device is not yet free", async () => {
+			others = [eth()];
+			health = dead();
+			afterDown = { state: "20", connection: undefined };
+			expect(await pollUntil(75_000)).toHaveLength(1);
+			expect(calls).toEqual([`down ${UUID}`]);
+		});
+
+		test("a down that left the connection up is not followed by an up", async () => {
+			others = [eth()];
+			health = dead();
+			afterDown = { state: "100", connection: UUID };
+			expect(await pollUntil(75_000)).toHaveLength(1);
+			expect(calls).toEqual([`down ${UUID}`]);
+			expect(isLinkTeardownPending("wwan0")).toBe(false);
+			expect(currentLifecycleHolder()).toBeUndefined();
+		});
+	});
+
+	describe("stream activity restarts the outage hold, a bounded number of times", () => {
+		test("a stream that came and went between two polls restarts the hold", async () => {
+			others = [eth()];
+			health = dead();
+			expect(await pollUntil(60_000)).toEqual([]);
+			const admitted = tryAcquireLifecycle("streaming");
+			if (admitted.admitted) admitted.lease.release();
+			// Seen again at 75 s, so the 60 s hold ends at 135 s.
+			expect(await pollUntil(150_000)).toEqual([135_000]);
+		});
+
+		test("a stream flapping at every eligible poll defers recovery at most the cap", async () => {
+			others = [eth()];
+			health = dead();
+			const flap = () => {
+				const admitted = tryAcquireLifecycle("streaming");
+				if (admitted.admitted) admitted.lease.release();
+			};
+			duringLeasedReads(flap, DEAD_BEARER_MAX_HOLD_RESTARTS + 1);
+			// Skips at 75, 150 and 225 s restart the hold; the skip at 300 s does
+			// not, so the next quiet poll reconnects.
+			expect(await pollUntil(330_000)).toEqual([315_000]);
 		});
 	});
 

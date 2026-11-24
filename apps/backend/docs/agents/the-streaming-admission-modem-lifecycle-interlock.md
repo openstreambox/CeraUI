@@ -4,6 +4,9 @@
 
 `modules/streaming/lifecycle-admission.ts` is a process-wide, fail-fast lease with
 exactly two mutually-exclusive holders — `"streaming"` and `"modem-transition"`.
+Acquisition never waits. The one waiter sits outside it: a Stream Start waits,
+within a budget, for a dead-bearer link teardown to release before it asks (see
+below).
 A USB-composition switch re-enumerates a modem and tears its bond link down
 mid-flight, so it must never overlap a stream, in EITHER order.
 
@@ -51,16 +54,36 @@ called from `modules/modems/dead-bearer-recovery.ts`). The reconnect's own
 background lease (`withBackgroundModemLease`) is a journal-only key, which this
 interlock does not count, and its owner reads await; without the hold, a Start
 admitted during those reads launched onto a link that went down a moment later.
-Right before the `down`, with no await in between, the reconnect checks that the
-stream state is still the one its reads began with (no stream started, ended or
-was restored) and takes the interlock; either failing skips this poll and
-restarts its outage hold, so time seen before a stream came and went does not
-count afterwards. The hold ends with the `down`: the `up` is an ordinary
-background dial. A Stream Start that meets the hold waits for it
-(`linkTeardownSettled`, see START-LIFECYCLE.md) rather than failing, because the
-refusal is not retried by any start origin. Engine-less forwarding is refused
-for that span and retried by the forwarding listener's backoff. Every other
-journal-only holder keeps its semantics: it never refuses a Start.
+
+- **Before the `down`**, with no await in between, the reconnect checks that the
+  stream state and the stream admission count (`streamingAdmissionCount`) are
+  still what its reads began with, takes the interlock and marks the link pending
+  in `network/link-teardown-pending.ts`, which `isBondCandidate` refuses (a CLAT
+  TUN through its modem). A changed stream or a held interlock skips this poll.
+- **Until it settles.** The hold lasts until NetworkManager shows the device has
+  let go of the connection (disconnected, or carrying another one), at most
+  `LINK_TEARDOWN_MAX_HOLD_MS` (6 s), and releases itself at that bound whatever is
+  still awaited. Settled: the pending mark is lifted. Not settled (an `nmcli`
+  timeout, a device stuck deactivating, an unreadable device): the link stays
+  marked, no `up` follows, and each status poll lifts the mark only once it reads
+  the device no longer deactivating. At startup, right after modem discovery, a
+  scan marks any modem link NetworkManager still shows deactivating, so a backend
+  that restarted mid-teardown does not offer it to the bond either.
+- **The `up`** follows only onto a free device (disconnected, no active
+  connection), checked right before; another profile that activated after the
+  `down` is left alone, as is a device that is not yet free. The `up` itself is
+  not held: it is an ordinary background dial.
+- **The outage hold** restarts after a skip and whenever a stream was admitted
+  since the outage began, so a stream that came and went between two polls is
+  not counted as quiet time. At most `DEAD_BEARER_MAX_HOLD_RESTARTS` (3) times per
+  outage: a stream flapping at every eligible poll would otherwise keep a dead
+  link dead. Past the cap only the checks before the `down` still apply.
+- **A waiting Start.** A Stream Start that meets the hold waits for it
+  (`linkTeardownSettled`, budgeted, see START-LIFECYCLE.md) rather than failing,
+  because no start origin retries the refusal, and no new teardown begins while
+  it waits. Engine-less forwarding is refused for the span and retried by the
+  forwarding listener's backoff. Every other journal-only holder keeps its
+  semantics: it never refuses a Start.
 
 **The refusal has its OWN failure class and its own operator copy.**
 `MODEM_TRANSITION_ACTIVE` used to ride the generic `start_invalid` class, which the
@@ -79,9 +102,15 @@ refused and NEVER launches), race order B (a transition during an admitted start
 is refused until it settles), the duplicate-start ordering lock, finally-release
 under a throw, the idempotent/stale release, and the production `streaming.start`
 wiring driven through the REAL procedure. The same suite pins that a Start during a
-link teardown waits and is then admitted, that a teardown is refused during an
-admission, and that an operator Stop during the wait cancels the Start;
-`modules/modems/dead-bearer-recovery.test.ts` ("a stream never starts into a
-teardown") pins a Start admitted, a stream gone live and a stream ended during the
-owner reads, restoration during the `down`, and release after a throwing `down`.
+link teardown waits and is then admitted, that it asks again after every wake,
+that no teardown begins while it waits, that a spent budget refuses it as
+`modem_transition_active`, that a hold releases itself at its bound, that the test
+reset wakes waiters, that a teardown is refused during an admission, and that an
+operator Stop during the wait cancels the Start.
+`modules/modems/dead-bearer-recovery.test.ts` pins a Start admitted, a stream gone
+live, ended, or admitted and ended during the owner reads, restoration during the
+`down`, release after a throwing `down` or failed bookkeeping, the hold until the
+device settles, the bond exclusion for an unsettled or unreadable device and after
+a restart, the free-device check before the `up`, and the capped hold restarts.
+`modules/network/link-teardown-pending.test.ts` pins the bond refusal.
 

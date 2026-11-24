@@ -28,7 +28,9 @@
  * wire value (`leaseRefusal` below is the one table both sides read, so the two
  * refusals can never drift apart). Release is idempotent, so an outer `finally`
  * may release after the body already did, and a stale lease can never free a
- * later holder.
+ * later holder. The one exception is outside this primitive: a Stream Start
+ * waits, for a bounded time, for a dead-bearer link teardown to release
+ * (`linkTeardownSettled`) before it asks.
  *
  * SCOPE: this module is the PRIMITIVE plus its streaming-side wiring, GENERALIZED
  * from the single `"modem-transition"` holder to a PER-PHYSICAL-DEVICE mutation
@@ -154,6 +156,7 @@ export function tryAcquireLifecycle(who: LifecycleHolder): LifecycleAdmission {
 	nextToken += 1;
 	const token = nextToken;
 	held = { holder: who, token };
+	if (who === "streaming") streamingAdmissions += 1;
 	return {
 		admitted: true,
 		lease: {
@@ -197,47 +200,96 @@ export async function withLifecycleLock<T>(
 }
 
 /**
+ * Every `"streaming"` admission so far: Start, restoration and engine-less
+ * forwarding alike. The dead-bearer reconnect compares it with the value it
+ * saw when an outage began, so a stream that came and went between two polls
+ * still restarts the outage hold.
+ */
+let streamingAdmissions = 0;
+
+export function streamingAdmissionCount(): number {
+	return streamingAdmissions;
+}
+
+/**
+ * The longest a link teardown holds the interlock. A Stream Start waits for
+ * the hold rather than failing, so this plus the launch's 60 s retry budget
+ * has to stay inside the 75 s Start RPC deadline. A teardown that has not
+ * settled by then keeps its link out of the bond instead
+ * (`link-teardown-pending.ts`).
+ */
+export const LINK_TEARDOWN_MAX_HOLD_MS = 6_000;
+
+/**
+ * How long a Start waits for a link teardown before it is admitted or refused
+ * as usual. Longer than one hold, and no new teardown begins while a Start
+ * waits, so the wait ends because the hold ended.
+ */
+export const START_LINK_TEARDOWN_WAIT_MS = 8_000;
+
+/**
  * A dead-bearer reconnect taking one modem's link down: the interlock held as
- * `"modem-transition"` for the span of the `down`, so neither a stream
+ * `"modem-transition"` from just before the `down` until NetworkManager shows
+ * the device has left the connection, at most `maxHoldMs`, so neither a stream
  * admission nor engine-less forwarding can begin while the link is being taken
  * away. The reconnect itself runs under a journal-only key, which the count
  * above deliberately ignores, so without this hold a Start admitted during its
  * owner reads would launch onto a link that goes down a moment later.
  *
  * Undefined when the interlock is held (a Start is being admitted, another
- * transition runs, an operator mutation holds a device) or forwarding is
- * active: the reconnect then does not happen this poll. The hold ends with the
- * `down`; the `up` that follows is an ordinary background dial, which a Start
- * may overlap the way it overlaps any redial.
+ * transition runs, an operator mutation holds a device), forwarding is active,
+ * or a Start is waiting for an earlier teardown: the reconnect then does not
+ * happen this poll. The hold releases itself at `maxHoldMs` whatever its
+ * holder is still awaiting.
  */
-export function tryAcquireLinkTeardown(): LifecycleLease | undefined {
+export function tryAcquireLinkTeardown(
+	maxHoldMs: number = LINK_TEARDOWN_MAX_HOLD_MS,
+): LifecycleLease | undefined {
+	if (startsWaiting > 0) return undefined;
 	const admission = tryAcquireLifecycle("modem-transition");
 	if (!admission.admitted) return undefined;
 	const current = Promise.withResolvers<void>();
 	linkTeardown = current;
-	return {
-		holder: "modem-transition",
-		release: () => {
-			admission.lease.release();
-			if (linkTeardown !== current) return;
-			linkTeardown = undefined;
-			current.resolve();
-		},
+	const release = () => {
+		clearTimeout(expiry);
+		admission.lease.release();
+		if (linkTeardown !== current) return;
+		linkTeardown = undefined;
+		current.resolve();
 	};
+	const expiry = setTimeout(release, maxHoldMs);
+	teardownExpiry = expiry;
+	return { holder: "modem-transition", release };
 }
 
 let linkTeardown: ReturnType<typeof Promise.withResolvers<void>> | undefined;
+let teardownExpiry: ReturnType<typeof setTimeout> | undefined;
+let startsWaiting = 0;
 
 /**
  * Resolves when the link teardown holding the interlock releases; undefined
  * when none does. A Stream Start waits on this instead of failing with
- * `modem_transition_active`: the `down` is one bounded NetworkManager call, and
- * none of the start origins retries that refusal (restoration would lose the
- * stream it exists to bring back). The waiter holds nothing and must ask again
- * after waking, synchronously before it admits.
+ * `modem_transition_active`, because none of the start origins retries that
+ * refusal (restoration would lose the stream it exists to bring back). The
+ * waiter holds nothing and must ask again after waking, synchronously before
+ * it admits.
  */
 export function linkTeardownSettled(): Promise<void> | undefined {
 	return linkTeardown?.promise;
+}
+
+/**
+ * Mark a Start as waiting for a link teardown; no new teardown begins until
+ * the returned function runs. Idempotent, so a `finally` may call it twice.
+ */
+export function beginLinkTeardownWait(): () => void {
+	startsWaiting += 1;
+	let ended = false;
+	return () => {
+		if (ended) return;
+		ended = true;
+		startsWaiting = Math.max(0, startsWaiting - 1);
+	};
 }
 
 /** True while either lifecycle operation holds the interlock. */
@@ -259,6 +311,8 @@ export function resetLifecycleInterlock(): void {
 	held = undefined;
 	const teardown = linkTeardown;
 	linkTeardown = undefined;
+	startsWaiting = 0;
+	clearTimeout(teardownExpiry);
 	teardown?.resolve();
 	activeMutations.clear();
 	mutationBlocks.clear();

@@ -25,6 +25,7 @@ import {
 	stopMockService,
 } from "../mocks/mock-service.ts";
 import {
+	beginLinkTeardownWait,
 	currentLifecycleHolder,
 	isLifecycleHeld,
 	type LifecycleAdmission,
@@ -34,6 +35,7 @@ import {
 	MODEM_TRANSITION_ACTIVE,
 	resetLifecycleInterlock,
 	STREAMING_ACTIVE,
+	streamingAdmissionCount,
 	tryAcquireLifecycle,
 	tryAcquireLinkTeardown,
 	withLifecycleLock,
@@ -86,6 +88,12 @@ function interlockedOrchestrator(
 		...overrides,
 	});
 }
+
+const realLinkTeardown = {
+	settled: linkTeardownSettled,
+	beginWait: beginLinkTeardownWait,
+	budgetMs: 60_000,
+};
 
 function makeContext(): RPCContext {
 	const ws = {
@@ -232,7 +240,9 @@ describe("lifecycle interlock — streaming admission (both race orders)", () =>
 	test("a start during a link teardown waits for the down instead of failing, then is admitted", async () => {
 		const teardown = tryAcquireLinkTeardown();
 		if (teardown === undefined) throw new Error("expected the teardown hold");
-		const orchestrator = interlockedOrchestrator({ linkTeardownSettled });
+		const orchestrator = interlockedOrchestrator({
+			linkTeardown: realLinkTeardown,
+		});
 		let launches = 0;
 
 		const starting = orchestrator.start({
@@ -255,7 +265,9 @@ describe("lifecycle interlock — streaming admission (both race orders)", () =>
 	});
 
 	test("a link teardown is refused while a start is being admitted", async () => {
-		const orchestrator = interlockedOrchestrator({ linkTeardownSettled });
+		const orchestrator = interlockedOrchestrator({
+			linkTeardown: realLinkTeardown,
+		});
 		const launched = deferred();
 		const releaseLaunch = deferred();
 		const starting = orchestrator.start({
@@ -283,7 +295,9 @@ describe("lifecycle interlock — streaming admission (both race orders)", () =>
 	test("an operator stop during the teardown wait cancels the start before admission", async () => {
 		const teardown = tryAcquireLinkTeardown();
 		if (teardown === undefined) throw new Error("expected the teardown hold");
-		const orchestrator = interlockedOrchestrator({ linkTeardownSettled });
+		const orchestrator = interlockedOrchestrator({
+			linkTeardown: realLinkTeardown,
+		});
 		let launches = 0;
 		const starting = orchestrator.start({
 			origin: "ui",
@@ -297,6 +311,119 @@ describe("lifecycle interlock — streaming admission (both race orders)", () =>
 		expect((await starting).result).toBe("cancelled");
 		expect(launches).toBe(0);
 		expect(isLifecycleHeld()).toBe(false);
+	});
+
+	test("a start asks again after every wake: a second teardown is waited out too", async () => {
+		const first = deferred();
+		const second = deferred();
+		let phase = 0;
+		const orchestrator = interlockedOrchestrator({
+			linkTeardown: {
+				settled: () =>
+					phase === 0
+						? first.promise
+						: phase === 1
+							? second.promise
+							: undefined,
+				beginWait: () => () => {},
+				budgetMs: 60_000,
+			},
+		});
+		let launches = 0;
+		const starting = orchestrator.start({
+			origin: "ui",
+			launch: async () => {
+				launches += 1;
+			},
+		});
+		phase = 1;
+		first.resolve();
+		await settleMicrotasks();
+		expect(launches).toBe(0);
+		phase = 2;
+		second.resolve();
+		expect((await starting).result).toBe("started");
+		expect(launches).toBe(1);
+	});
+
+	test("no new teardown begins while a start waits for one", async () => {
+		const teardown = tryAcquireLinkTeardown();
+		if (teardown === undefined) throw new Error("expected the teardown hold");
+		const orchestrator = interlockedOrchestrator({
+			linkTeardown: realLinkTeardown,
+		});
+		let launches = 0;
+		const starting = orchestrator.start({
+			origin: "ui",
+			launch: async () => {
+				launches += 1;
+			},
+		});
+		await settleMicrotasks();
+		teardown.release();
+		// Same tick as the release, before the waiting start resumes.
+		expect(tryAcquireLinkTeardown()).toBeUndefined();
+		expect((await starting).result).toBe("started");
+		expect(launches).toBe(1);
+		const later = tryAcquireLinkTeardown();
+		expect(later?.holder).toBe("modem-transition");
+		later?.release();
+	});
+
+	test("a start whose wait budget runs out is refused as a modem transition, never launched", async () => {
+		const teardown = tryAcquireLinkTeardown(60_000);
+		if (teardown === undefined) throw new Error("expected the teardown hold");
+		const orchestrator = interlockedOrchestrator({
+			linkTeardown: { ...realLinkTeardown, budgetMs: 20 },
+		});
+		let launches = 0;
+		const result = await orchestrator.start({
+			origin: "ui",
+			launch: async () => {
+				launches += 1;
+			},
+		});
+		expect(launches).toBe(0);
+		expect(result.result).toBe("failed");
+		if (result.result === "failed")
+			expect(result.failure.class).toBe("modem_transition_active");
+		teardown.release();
+	});
+
+	test("a teardown hold releases itself at its bound", async () => {
+		const teardown = tryAcquireLinkTeardown(10);
+		expect(teardown).toBeDefined();
+		const settled = linkTeardownSettled();
+		expect(settled).toBeDefined();
+		await settled;
+		expect(isLifecycleHeld()).toBe(false);
+		expect(linkTeardownSettled()).toBeUndefined();
+	});
+
+	test("the test reset wakes a waiting start and clears the waiting count", async () => {
+		const teardown = tryAcquireLinkTeardown(60_000);
+		const settled = linkTeardownSettled();
+		const endWait = beginLinkTeardownWait();
+		let woke = false;
+		void settled?.then(() => {
+			woke = true;
+		});
+		resetLifecycleInterlock();
+		await settleMicrotasks();
+		expect(woke).toBe(true);
+		expect(linkTeardownSettled()).toBeUndefined();
+		const next = tryAcquireLinkTeardown();
+		expect(next).toBeDefined();
+		next?.release();
+		endWait();
+		teardown?.release();
+	});
+
+	test("every streaming admission counts as a stream cycle", () => {
+		const before = streamingAdmissionCount();
+		expectAdmitted(tryAcquireLifecycle("streaming")).release();
+		expectAdmitted(tryAcquireLifecycle("modem-transition")).release();
+		expect(streamingAdmissionCount()).toBe(before + 1);
 	});
 
 	test("race order B: a transition attempted DURING an admitted start is refused until it settles", async () => {

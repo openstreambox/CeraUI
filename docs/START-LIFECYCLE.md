@@ -135,16 +135,26 @@ Refusal or observer failure unwinds the pending generation; refusal payloads
 (`update_in_progress`, phase, percent and ETA) are unchanged.
 
 A dead-bearer reconnect holds the lifecycle interlock while it takes one modem's
-link down (`tryAcquireLinkTeardown`). A Start of any origin that arrives then
-waits for that hold to release (`linkTeardownSettled`) instead of failing with
-`modem_transition_active`: the hold spans one NetworkManager `down`, bounded by
-the command timeout, and no start origin retries that refusal, so restoration
-would lose the stream it exists to bring back. The wait comes after the
-reconciliation awaits and before the duplicate-start check; it is asked again
-after each wake, and nothing awaits between the last ask and the admission, so
-a new teardown cannot slip in. Operator Stop intent is read after the wait, so a
-Stop during it cancels the Start. The reconnect's `up` is not held: a Start may
-overlap it as it overlaps any background dial.
+link down (`tryAcquireLinkTeardown`), until NetworkManager shows the device has
+let go of the connection and at most `LINK_TEARDOWN_MAX_HOLD_MS` (6 s); the hold
+releases itself at that bound. A Start of any origin that arrives then waits for
+the hold (`linkTeardownSettled`) instead of failing with
+`modem_transition_active`, because no start origin retries that refusal and
+restoration would lose the stream it exists to bring back. No new teardown begins
+while a Start waits (`beginLinkTeardownWait`), so the wait is at most one hold.
+It is budgeted at `START_LINK_TEARDOWN_WAIT_MS` (8 s), which with the launch's
+60 s retry budget stays inside the 75 s `streaming.start` RPC deadline. During the
+wait the Start request is simply still pending, as for any slow start. If the
+budget ran out with the interlock still held (not reachable while the hold
+releases itself), admission refuses the Start as today: class
+`modem_transition_active`, whose copy asks the operator to wait for the modem and
+start again. The wait comes after the reconciliation awaits and before the
+duplicate-start check; it is asked again after each wake, and the last ask, the
+end of the wait and the admission run with no await between them, so a new
+teardown cannot slip in. Operator Stop intent is read after the wait, so a Stop
+during it cancels the Start. A teardown that has not settled by the bound keeps
+its link out of the bond instead (`network/link-teardown-pending.ts`) until a
+status poll reads the device settled.
 
 Restoration intent and physical OTA liveness are separate. Every Stop caller
 reports intent before joining/parking shared work. Operator intent requests

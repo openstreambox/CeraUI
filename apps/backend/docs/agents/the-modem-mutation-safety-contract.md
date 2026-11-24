@@ -301,8 +301,9 @@ the pathname effect is awaited after the check.
 - The background lease (`withBackgroundModemLease`: redial, dead-bearer reconnect) is
   journal-only too. The one exception inside it is the dead-bearer `down`: the
   reconnect rechecks the stream state and takes the lifecycle interlock
-  (`tryAcquireLinkTeardown`) for that call alone, so no stream is admitted while the
-  link is taken away. See the interlock section.
+  (`tryAcquireLinkTeardown`) until NetworkManager shows the device settled, at most
+  6 s, and keeps an unsettled link out of the bond, so no stream is admitted onto a
+  link being taken away. See the interlock section.
 
 Lock order: key → reads/revision/effects/refresh → `finally` release. No key holder
 waits on a barrier, recovery owner or another key; waiters hold no lease. A holder

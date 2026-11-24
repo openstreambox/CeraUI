@@ -44,15 +44,24 @@
   - the modem's background lease is free (never during replay, on a blocked
     identity, or while a stream is being launched), and everything is read
     again under it;
-  - right before the `down`, with no await in between: the stream state is
-    still the one the reads began with (no stream started, ended or was
-    restored meanwhile) and the lifecycle interlock is free; a skip restarts
-    the outage hold. That background
-    lease is journal-only and does not refuse a Stream Start, so a start could
-    otherwise be admitted during the owner reads and launch onto a link that
-    goes down a moment later. The interlock is held across the `down` only, so
-    no stream or forward is admitted while the link is taken away; a Start
-    that arrives then waits for it. The `up` is an ordinary background dial.
+  - right before the `down`, with no await in between: the stream state and
+    the stream admission count are still what the reads began with, and the
+    lifecycle interlock is free. That background lease is journal-only and does
+    not refuse a Stream Start, so a start could otherwise be admitted during
+    the owner reads and launch onto a link that goes down a moment later. A
+    skip, or a stream admitted since the outage began, restarts the outage
+    hold, at most DEAD_BEARER_MAX_HOLD_RESTARTS times per outage.
+
+  The interlock is held from just before the `down` until NetworkManager shows
+  the device has let go of the connection, at most LINK_TEARDOWN_MAX_HOLD_MS,
+  and the link is marked pending (`network/link-teardown-pending.ts`) so the
+  bond leaves it out. A Start that arrives meanwhile waits. A teardown that has
+  not settled by the bound keeps the mark and gets no `up`; each status poll
+  lifts the mark once the device no longer reads deactivating, and a startup
+  scan marks a link NetworkManager still shows deactivating. The `up` follows
+  only onto a free device (disconnected, no active connection), so a profile
+  that activated after the `down` is left alone; it is an ordinary background
+  dial and not held.
 
   A failed `up` raises the modem's data-call warning; the redial picks the
   profile up from NetworkManager state 30. No journal entry is written for
@@ -67,13 +76,21 @@ import {
 	isClatTunName,
 } from "../network/clat-translation.ts";
 import {
+	linkTeardownPendingIfnames,
+	setLinkTeardownPending,
+} from "../network/link-teardown-pending.ts";
+import {
 	nmConnect,
 	nmConnGetFields,
 	nmDisconnect,
 } from "../network/network-manager.ts";
 import type { UplinkHealthRecord } from "../network/uplink-health/model.ts";
 import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
-import { tryAcquireLinkTeardown } from "../streaming/lifecycle-admission.ts";
+import {
+	LINK_TEARDOWN_MAX_HOLD_MS,
+	streamingAdmissionCount,
+	tryAcquireLinkTeardown,
+} from "../streaming/lifecycle-admission.ts";
 import type { LinkCarryingState } from "../streaming/link-progress.ts";
 import { linkCarryingState } from "../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
@@ -107,6 +124,10 @@ export const DEAD_BEARER_MIN_FAILURES = 6;
 export const DEAD_BEARER_SPACING_MS = [
 	60_000, 120_000, 240_000, 480_000, 900_000,
 ] as const;
+/** Stream activity restarts one outage's hold at most this many times. */
+export const DEAD_BEARER_MAX_HOLD_RESTARTS = 3;
+/** How often a teardown reads the device while it waits for it to settle. */
+export const DEAD_BEARER_SETTLE_POLL_MS = 250;
 
 export interface DeadBearerMemory {
 	/** Reconnects since the link last read `up` for DEAD_BEARER_STABLE_MS. */
@@ -115,6 +136,10 @@ export interface DeadBearerMemory {
 	readonly upSince?: number;
 	/** Monotonic time this module first saw the current outage. */
 	readonly downSince?: number;
+	/** `streamCycle` when `downSince` was set. */
+	readonly cycle?: number;
+	/** Times stream activity restarted this outage's hold. */
+	readonly holdRestarts?: number;
 }
 
 export interface DeadBearerInput {
@@ -138,6 +163,8 @@ export interface DeadBearerInput {
 	readonly mmState: string | undefined;
 	/** Monotonic time of the last dial or reconnect of this modem. */
 	readonly lastDial: number | undefined;
+	/** Stream admissions so far (`streamingAdmissionCount`). */
+	readonly streamCycle: number;
 	readonly memory: DeadBearerMemory;
 }
 
@@ -167,8 +194,25 @@ function without(
 	memory: DeadBearerMemory,
 	key: "downSince" | "upSince",
 ): DeadBearerMemory {
-	const { [key]: _dropped, ...rest } = memory;
+	if (key === "upSince") {
+		const { upSince: _dropped, ...rest } = memory;
+		return rest;
+	}
+	const { downSince: _since, cycle: _cycle, ...rest } = memory;
 	return rest;
+}
+
+/**
+ * Restart the outage hold because a stream came, went or was being admitted,
+ * unless that already happened DEAD_BEARER_MAX_HOLD_RESTARTS times this
+ * outage: a stream flapping at every eligible poll would otherwise keep a dead
+ * link dead indefinitely. Past the cap, the protections at the teardown itself
+ * (the stream re-check and the interlock) still apply.
+ */
+export function restartOutageHold(memory: DeadBearerMemory): DeadBearerMemory {
+	const restarts = memory.holdRestarts ?? 0;
+	if (restarts >= DEAD_BEARER_MAX_HOLD_RESTARTS) return memory;
+	return { ...without(memory, "downSince"), holdRestarts: restarts + 1 };
 }
 
 /** Pure: what to do about one modem's path this poll. */
@@ -176,7 +220,8 @@ export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 	const { now, record } = input;
 	let memory = input.memory;
 	if (record?.state === "up") {
-		memory = without(memory, "downSince");
+		const { holdRestarts: _restarts, ...rest } = without(memory, "downSince");
+		memory = rest;
 		const upSince = memory.upSince ?? now;
 		memory =
 			now - upSince >= DEAD_BEARER_STABLE_MS
@@ -201,8 +246,12 @@ export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 	if (input.nmState !== "100") return none("bearer not connected");
 	if (input.mmState !== "registered" && input.mmState !== "connected")
 		return none("modem not registered");
+	// A stream admitted since the outage began (one that came and went between
+	// two polls included) makes the time before it no evidence about the link.
+	if (memory.downSince !== undefined && memory.cycle !== input.streamCycle)
+		memory = restartOutageHold(memory);
 	const downSince = memory.downSince ?? now;
-	memory = { ...memory, downSince };
+	memory = { ...memory, downSince, cycle: input.streamCycle };
 	const hold = input.otherUplinkUp
 		? DEAD_BEARER_HOLD_MS
 		: DEAD_BEARER_ALONE_HOLD_MS;
@@ -259,6 +308,38 @@ export interface DeadBearerDeps {
 	readonly mutate: typeof withBackgroundModemLease;
 	/** The interlock across the `down`; undefined when a stream or transition holds it. */
 	readonly holdTeardown: typeof tryAcquireLinkTeardown;
+	readonly streamCycle: typeof streamingAdmissionCount;
+	/** The NM device that carries a connection UUID. */
+	readonly resolveDevice: (uuid: string) => Promise<string | undefined>;
+	/** NM device state code and active connection; undefined when unreadable. */
+	readonly deviceState: (device: string) => Promise<NmDeviceState | undefined>;
+	readonly sleep: (ms: number) => Promise<void>;
+	readonly markPending: typeof setLinkTeardownPending;
+	readonly pendingIfnames: typeof linkTeardownPendingIfnames;
+}
+
+export interface NmDeviceState {
+	/** `GENERAL.STATE` code: 100 activated, 110 deactivating, 30 disconnected. */
+	readonly state: string;
+	/** `GENERAL.CON-UUID`, undefined when no connection is active on it. */
+	readonly connection: string | undefined;
+}
+
+async function readDeviceState(
+	device: string,
+): Promise<NmDeviceState | undefined> {
+	const state = singleDeviceValue(
+		await readModemNmDeviceProp(device, "GENERAL.STATE"),
+	)?.match(/^(\d+)(?: \([^()\r\n]+\))?$/)?.[1];
+	if (state === undefined) return undefined;
+	const connection = await readModemNmDeviceProp(device, "GENERAL.CON-UUID");
+	if (connection === undefined) return undefined;
+	const uuid = connection[0]?.trim();
+	return {
+		state,
+		connection:
+			uuid === undefined || uuid === "" || uuid === "--" ? undefined : uuid,
+	};
 }
 
 async function readNmState(uuid: string): Promise<string | undefined> {
@@ -293,6 +374,12 @@ const defaultDeps: DeadBearerDeps = {
 	connect: nmConnect,
 	mutate: withBackgroundModemLease,
 	holdTeardown: tryAcquireLinkTeardown,
+	streamCycle: streamingAdmissionCount,
+	resolveDevice: resolveModemNmDeviceForConnection,
+	deviceState: readDeviceState,
+	sleep: (ms) => Bun.sleep(ms),
+	markPending: setLinkTeardownPending,
+	pendingIfnames: linkTeardownPendingIfnames,
 };
 
 let deps = defaultDeps;
@@ -303,6 +390,7 @@ export function setDeadBearerDepsForTest(
 ): void {
 	deps = overrides === null ? defaultDeps : { ...defaultDeps, ...overrides };
 	memories.clear();
+	pendingSeeded = false;
 }
 
 /** Another physical uplink is up: not a translator, tunnel or this modem. */
@@ -360,7 +448,11 @@ async function readInput(
 	)
 		return undefined;
 	const iface = modem.ifname;
-	const base = { ...pathObservation(iface, key), memory };
+	const base = {
+		...pathObservation(iface, key),
+		streamCycle: deps.streamCycle(),
+		memory,
+	};
 	const { record } = base;
 	// Only a path that health calls dead needs the owner reads.
 	if (!outageRecord(record))
@@ -377,6 +469,97 @@ async function readInput(
 	return { uuid, iface, input: { ...base, owned, nmState, mmState } };
 }
 
+type TeardownOutcome = "left" | "kept" | "unsettled";
+
+/**
+ * Has the device let go of this connection? `left`: NetworkManager shows it
+ * disconnected, or carrying another connection. `kept`: the `down` finished
+ * and it is still activated with this one. Undefined while it is deactivating
+ * or unreadable.
+ */
+function teardownOutcome(
+	state: NmDeviceState | undefined,
+	uuid: string,
+	downFinished: boolean,
+): TeardownOutcome | undefined {
+	if (state === undefined || state.state === "110") return undefined;
+	if (Number(state.state) < 40 || state.connection !== uuid) return "left";
+	return downFinished && state.state === "100" ? "kept" : undefined;
+}
+
+/**
+ * Issue the `down` and wait, while the interlock is held, until NetworkManager
+ * shows the device has let go of the connection. `unsettled` when that did not
+ * happen within LINK_TEARDOWN_MAX_HOLD_MS (an `nmcli` that timed out, a device
+ * stuck deactivating): the caller keeps the link out of the bond.
+ */
+async function takeDown(
+	uuid: string,
+	device: string,
+): Promise<TeardownOutcome> {
+	let downFinished = false;
+	void deps.disconnect(uuid).then(
+		() => {
+			downFinished = true;
+		},
+		() => {
+			downFinished = true;
+		},
+	);
+	const started = deps.now();
+	for (;;) {
+		const finished = downFinished;
+		const outcome = teardownOutcome(
+			await deps.deviceState(device),
+			uuid,
+			finished,
+		);
+		if (outcome !== undefined) return outcome;
+		if (deps.now() - started >= LINK_TEARDOWN_MAX_HOLD_MS) return "unsettled";
+		await deps.sleep(DEAD_BEARER_SETTLE_POLL_MS);
+	}
+}
+
+/**
+ * Lift the bond exclusion from links whose teardown has since settled, and on
+ * the first call of the process mark any modem link NetworkManager still shows
+ * deactivating (a backend that restarted mid-teardown has no memory of it).
+ * A link stays excluded while its device reads deactivating or cannot be read.
+ */
+async function reconcilePendingTeardowns(): Promise<void> {
+	const pending = new Set(deps.pendingIfnames());
+	const scan = !pendingSeeded;
+	pendingSeeded = true;
+	if (pending.size === 0 && !scan) return;
+	for (const id of deps.ids()) {
+		const modem = getModem(id);
+		const uuid = modem?.config?.conn;
+		if (!modem?.ifname || !uuid) continue;
+		const marked = pending.has(modem.ifname);
+		if (!marked && !scan) continue;
+		const device = await deps.resolveDevice(uuid);
+		const state =
+			device === undefined ? undefined : await deps.deviceState(device);
+		const deactivating = state === undefined || state.state === "110";
+		if (marked && !deactivating) deps.markPending([modem.ifname], false);
+		if (!marked && state?.state === "110") {
+			deps.markPending([modem.ifname], true);
+			logger.warn("modem link found deactivating; kept out of the bond", {
+				id,
+				iface: modem.ifname,
+			});
+		}
+	}
+}
+
+let pendingSeeded = false;
+
+/** Seed the bond exclusion from NetworkManager at startup, before the first poll. */
+export async function seedPendingTeardowns(): Promise<void> {
+	if (pendingSeeded) return;
+	await reconcilePendingTeardowns();
+}
+
 /**
  * The status poll calls this after its reconcile lock is released. Returns the
  * modems whose data-call warning it raised, for the caller to broadcast.
@@ -385,6 +568,14 @@ export async function runDeadBearerRecovery(
 	skip: readonly number[] = [],
 ): Promise<readonly ModemId[]> {
 	const changed: ModemId[] = [];
+	try {
+		await reconcilePendingTeardowns();
+	} catch (error) {
+		if (!(error instanceof Error)) throw error;
+		logger.warn("modem link teardown reconcile did not complete", {
+			error: error.message,
+		});
+	}
 	for (const id of deps.ids()) {
 		if (skip.includes(id)) continue;
 		const key = deps.stableKey(id);
@@ -403,6 +594,14 @@ export async function runDeadBearerRecovery(
 				const fresh = await readInput(id, key, memories.get(key) ?? before);
 				if (!fresh || fresh.uuid !== first.uuid || fresh.iface !== first.iface)
 					return;
+				const device = await deps.resolveDevice(fresh.uuid);
+				if (device === undefined) {
+					logger.info("modem reconnect skipped: its device is not resolved", {
+						id,
+						stableKey: key,
+					});
+					return;
+				}
 				// The owner reads awaited NM and MM. Re-sample the sender, link and
 				// identity synchronously at the decision that sends NM down.
 				// A stream being launched or forwarded is left to the teardown hold
@@ -426,52 +625,79 @@ export async function runDeadBearerRecovery(
 					if (refusal === undefined) memories.set(key, again.memory);
 					return;
 				}
-				// The background lease does not refuse a Stream Start. From the
-				// owner reads' start to the `down` the stream must be unchanged, and
-				// nothing awaits from here, so this check and the interlock hold see
-				// the state the `down` meets.
+				// The reads above awaited, and the background lease does not refuse
+				// a Stream Start. From here to the `down` nothing awaits, so this
+				// check, the interlock and the bond exclusion see the state the
+				// `down` meets.
 				const ifname = fresh.iface;
 				const streamNow = streamState(ifname);
-				// A skipped teardown restarts the outage hold: time seen before a
-				// stream came and went is not evidence about the link after it.
-				const restartHold = () =>
-					memories.set(key, without(fresh.input.memory, "downSince"));
-				if (streamNow !== fresh.input.stream) {
-					restartHold();
-					logger.info("modem reconnect skipped: the stream changed", {
+				const skipped = (message: string) => {
+					const memory = restartOutageHold(fresh.input.memory);
+					memories.set(key, memory);
+					logger.info(message, {
 						id,
 						stableKey: key,
 						was: fresh.input.stream,
 						now: streamNow,
+						holdRestarts: memory.holdRestarts,
 					});
+				};
+				if (
+					streamNow !== fresh.input.stream ||
+					deps.streamCycle() !== fresh.input.streamCycle
+				) {
+					skipped("modem reconnect skipped: the stream changed");
 					return;
 				}
-				const teardown = deps.holdTeardown();
+				const teardown = deps.holdTeardown(LINK_TEARDOWN_MAX_HOLD_MS);
 				if (teardown === undefined) {
-					restartHold();
-					logger.info(
+					skipped(
 						"modem reconnect skipped: a stream or transition holds the link set",
-						{
-							id,
-							stableKey: key,
-						},
 					);
 					return;
 				}
-				memories.set(key, again.memory);
-				deps.noteDial(key);
-				logger.warn("modem bearer carries no traffic; reconnecting", {
-					id,
-					stableKey: key,
-					iface: fresh.iface,
-					reason: again.reason,
-					attempt: again.memory.reconnects,
-					nextSpacingS: deadBearerSpacing(again.memory.reconnects - 1) / 1000,
-				});
+				deps.markPending([ifname], true);
+				let outcome: TeardownOutcome = "unsettled";
 				try {
-					await deps.disconnect(fresh.uuid);
+					memories.set(key, again.memory);
+					deps.noteDial(key);
+					logger.warn("modem bearer carries no traffic; reconnecting", {
+						id,
+						stableKey: key,
+						iface: fresh.iface,
+						reason: again.reason,
+						attempt: again.memory.reconnects,
+						nextSpacingS: deadBearerSpacing(again.memory.reconnects - 1) / 1000,
+					});
+					outcome = await takeDown(fresh.uuid, device);
 				} finally {
+					if (outcome !== "unsettled") deps.markPending([ifname], false);
 					teardown.release();
+				}
+				if (outcome === "unsettled") {
+					logger.warn(
+						"modem link deactivation did not settle; kept out of the bond",
+						{ id, stableKey: key, iface: ifname },
+					);
+					return;
+				}
+				if (outcome === "kept") {
+					logger.warn("modem link stayed connected after the down", {
+						id,
+						stableKey: key,
+					});
+					return;
+				}
+				// Bring the profile back only onto a free device: another profile
+				// that activated after the down may already be carrying a stream.
+				const free = await deps.deviceState(device);
+				if (free?.state !== "30" || free.connection !== undefined) {
+					logger.info("modem reconnect left the device to its new state", {
+						id,
+						stableKey: key,
+						state: free?.state,
+					});
+					return;
 				}
 				const result = await deps.connect(fresh.uuid, 45);
 				logger.info("modem bearer reconnect finished", {
