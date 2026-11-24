@@ -43,7 +43,15 @@
     redial); the spacing resets after five minutes up;
   - the modem's background lease is free (never during replay, on a blocked
     identity, or while a stream is being launched), and everything is read
-    again under it.
+    again under it;
+  - right before the `down`, with no await in between: the stream state is
+    still the one the reads began with (no stream started, ended or was
+    restored meanwhile) and the lifecycle interlock is free. That background
+    lease is journal-only and does not refuse a Stream Start, so a start could
+    otherwise be admitted during the owner reads and launch onto a link that
+    goes down a moment later. The interlock is held across the `down` only, so
+    no stream or forward is admitted while the link is taken away; a Start
+    that arrives then waits for it. The `up` is an ordinary background dial.
 
   A failed `up` raises the modem's data-call warning; the redial picks the
   profile up from NetworkManager state 30. No journal entry is written for
@@ -64,6 +72,7 @@ import {
 } from "../network/network-manager.ts";
 import type { UplinkHealthRecord } from "../network/uplink-health/model.ts";
 import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
+import { tryAcquireLinkTeardown } from "../streaming/lifecycle-admission.ts";
 import type { LinkCarryingState } from "../streaming/link-progress.ts";
 import { linkCarryingState } from "../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
@@ -247,6 +256,8 @@ export interface DeadBearerDeps {
 	readonly disconnect: (uuid: string) => Promise<unknown>;
 	readonly connect: (uuid: string, timeout: number) => Promise<boolean>;
 	readonly mutate: typeof withBackgroundModemLease;
+	/** The interlock across the `down`; undefined when a stream or transition holds it. */
+	readonly holdTeardown: typeof tryAcquireLinkTeardown;
 }
 
 async function readNmState(uuid: string): Promise<string | undefined> {
@@ -280,6 +291,7 @@ const defaultDeps: DeadBearerDeps = {
 	disconnect: nmDisconnect,
 	connect: nmConnect,
 	mutate: withBackgroundModemLease,
+	holdTeardown: tryAcquireLinkTeardown,
 };
 
 let deps = defaultDeps;
@@ -392,32 +404,68 @@ export async function runDeadBearerRecovery(
 					return;
 				// The owner reads awaited NM and MM. Re-sample the sender, link and
 				// identity synchronously at the decision that sends NM down.
+				// A stream being launched or forwarded is left to the teardown hold
+				// below, which refuses then and treats it as stream activity.
 				const row = getModem(id);
+				const refusal = backgroundModemRefusal(key);
 				if (
 					row?.ifname !== fresh.iface ||
 					row.config?.conn !== fresh.uuid ||
 					row.inhibit ||
 					row.is_scanning ||
 					deps.stableKey(id) !== key ||
-					backgroundModemRefusal(key)
+					(refusal !== undefined && refusal !== "streaming_active")
 				)
 					return;
 				const again = decideDeadBearer({
 					...fresh.input,
 					...pathObservation(fresh.iface, key),
 				});
+				if (again.action !== "reconnect") {
+					if (refusal === undefined) memories.set(key, again.memory);
+					return;
+				}
+				// The background lease does not refuse a Stream Start. From the
+				// owner reads' start to the `down` the stream must be unchanged, and
+				// nothing awaits from here, so this check and the interlock hold see
+				// the state the `down` meets.
+				const iface = fresh.iface;
+				const streamNow = streamState(iface);
+				if (streamNow !== fresh.input.stream) {
+					logger.info("modem reconnect skipped: the stream changed", {
+						id,
+						stableKey: key,
+						was: fresh.input.stream,
+						now: streamNow,
+					});
+					return;
+				}
+				const teardown = deps.holdTeardown();
+				if (teardown === undefined) {
+					logger.info(
+						"modem reconnect skipped: a stream or transition holds the link set",
+						{
+							id,
+							stableKey: key,
+						},
+					);
+					return;
+				}
 				memories.set(key, again.memory);
-				if (again.action !== "reconnect") return;
 				deps.noteDial(key);
 				logger.warn("modem bearer carries no traffic; reconnecting", {
 					id,
 					stableKey: key,
-					iface: fresh.iface,
+					iface,
 					reason: again.reason,
 					attempt: again.memory.reconnects,
 					nextSpacingS: deadBearerSpacing(again.memory.reconnects - 1) / 1000,
 				});
-				await deps.disconnect(fresh.uuid);
+				try {
+					await deps.disconnect(fresh.uuid);
+				} finally {
+					teardown.release();
+				}
 				const result = await deps.connect(fresh.uuid, 45);
 				logger.info("modem bearer reconnect finished", {
 					id,

@@ -892,6 +892,8 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["modem mutation retirement did not commit"],
 	["modem readiness poll did not complete"],
 	["modem ready activation"],
+	["modem reconnect skipped: a stream or transition holds the link set"],
+	["modem reconnect skipped: the stream changed"],
 	["modem return reconciliation incomplete"],
 	["modem roster rebroadcast degraded: ", ""],
 	["modem shadow refused a D-Bus call (mutation-free invariant): ", " (", ")"],

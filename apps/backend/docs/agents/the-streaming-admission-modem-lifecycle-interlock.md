@@ -44,8 +44,22 @@ guard covers the rest. Nothing else changes: `modems.setUsbMode`'s existing
 
 **The `"modem-transition"` holder is now acquired by `modems.setUsbMode`**
 (`rpc/procedures/modems.procedure.ts`, gate 4 — see USB-COMPOSITION SWITCH above).
-Both directions are therefore live in production. No autonomous cellular recovery
-loop acquires it, and none is wired anywhere.
+Both directions are therefore live in production.
+
+**The dead-bearer reconnect takes it across its `down`** (`tryAcquireLinkTeardown`,
+called from `modules/modems/dead-bearer-recovery.ts`). The reconnect's own
+background lease (`withBackgroundModemLease`) is a journal-only key, which this
+interlock does not count, and its owner reads await; without the hold, a Start
+admitted during those reads launched onto a link that went down a moment later.
+Right before the `down`, with no await in between, the reconnect checks that the
+stream state is still the one its reads began with (no stream started, ended or
+was restored) and takes the interlock; either failing skips this poll and leaves
+its memory as it was. The hold ends with the `down`: the `up` is an ordinary
+background dial. A Stream Start that meets the hold waits for it
+(`linkTeardownSettled`, see START-LIFECYCLE.md) rather than failing, because the
+refusal is not retried by any start origin. Engine-less forwarding is refused
+for that span and retried by the forwarding listener's backoff. Every other
+journal-only holder keeps its semantics: it never refuses a Start.
 
 **The refusal has its OWN failure class and its own operator copy.**
 `MODEM_TRANSITION_ACTIVE` used to ride the generic `start_invalid` class, which the
@@ -63,5 +77,10 @@ table and both exclusion directions, race order A (a start during a transition i
 refused and NEVER launches), race order B (a transition during an admitted start
 is refused until it settles), the duplicate-start ordering lock, finally-release
 under a throw, the idempotent/stale release, and the production `streaming.start`
-wiring driven through the REAL procedure.
+wiring driven through the REAL procedure. The same suite pins that a Start during a
+link teardown waits and is then admitted, that a teardown is refused during an
+admission, and that an operator Stop during the wait cancels the Start;
+`modules/modems/dead-bearer-recovery.test.ts` ("a stream never starts into a
+teardown") pins a Start admitted, a stream gone live and a stream ended during the
+owner reads, restoration during the `down`, and release after a throwing `down`.
 

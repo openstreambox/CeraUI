@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { UplinkHealthRecord } from "../network/uplink-health/model.ts";
 import { setForwardActive } from "../streaming/forward-activity.ts";
 import {
+	currentLifecycleHolder,
+	isModemMutationHeld,
+	type LifecycleLease,
+	linkTeardownSettled,
 	resetLifecycleInterlock,
 	tryAcquireLifecycle,
 	tryAcquireModemMutation,
@@ -377,6 +381,128 @@ describe("runDeadBearerRecovery", () => {
 		streaming = true;
 		carrying = { wwan0: "not_carrying" };
 		expect(await pollUntil(120_000)).toEqual([75_000]);
+	});
+
+	/*
+	  The reconnect runs under a journal-only key, which never refuses a Stream
+	  Start, and its owner reads await. These pin that a stream admitted, gone
+	  live or ended during those reads stops the teardown, and that no stream is
+	  admitted while the link goes down.
+	*/
+	describe("a stream never starts into a teardown", () => {
+		/** Runs `during` once, in the first owner read made under the lease. */
+		function duringLeasedReads(during: () => void): void {
+			let done = false;
+			const base = deps();
+			setDeadBearerDepsForTest({
+				...base,
+				mmState: async (id) => {
+					if (!done && isModemMutationHeld(KEY)) {
+						done = true;
+						during();
+					}
+					return (await base.mmState?.(id)) ?? mmState;
+				},
+			});
+		}
+
+		test("a Start admitted during the owner reads is not taken down", async () => {
+			others = [eth()];
+			health = dead();
+			let admission: LifecycleLease | undefined;
+			duringLeasedReads(() => {
+				const admitted = tryAcquireLifecycle("streaming");
+				// The background lease stays journal-only: the Start is admitted.
+				expect(admitted.admitted).toBe(true);
+				if (admitted.admitted) admission = admitted.lease;
+			});
+			expect(await pollUntil(75_000)).toEqual([]);
+			expect(admission).toBeDefined();
+			// The launch failed and released; the next poll may reconnect, with no
+			// spacing charged for the skipped one.
+			admission?.release();
+			expect(await pollUntil(90_000)).toEqual([90_000]);
+			expect(calls).toEqual([`down ${UUID}`, `up ${UUID} 45`]);
+		});
+
+		test("a stream that went live during the owner reads is not taken down", async () => {
+			others = [eth()];
+			health = dead();
+			duringLeasedReads(() => {
+				streaming = true;
+			});
+			expect(await pollUntil(600_000)).toEqual([]);
+			expect(calls).toEqual([]);
+		});
+
+		test("a stream that ends during the owner reads skips this poll; the next one reconnects", async () => {
+			others = [eth()];
+			health = dead();
+			streaming = true;
+			carrying = { wwan0: "not_carrying" };
+			duringLeasedReads(() => {
+				streaming = false;
+			});
+			expect(await pollUntil(75_000)).toEqual([]);
+			expect(dials.get(KEY)).toBeUndefined();
+			expect(await pollUntil(90_000)).toEqual([90_000]);
+		});
+
+		test("no stream or restoration is admitted while the link goes down; one is once it is down", async () => {
+			others = [eth()];
+			health = dead();
+			streaming = true;
+			carrying = { wwan0: "not_carrying" };
+			const events: string[] = [];
+			onDisconnect = async () => {
+				// Engine loss: retirement clears the flag, restoration tries to start.
+				streaming = false;
+				const during = tryAcquireLifecycle("streaming");
+				events.push(`admitted during down: ${during.admitted}`);
+				events.push(`holder: ${currentLifecycleHolder()}`);
+				events.push(`start waits: ${linkTeardownSettled() !== undefined}`);
+			};
+			const base = deps();
+			setDeadBearerDepsForTest({
+				...base,
+				connect: async (uuid, timeout) => {
+					const before = tryAcquireLifecycle("streaming");
+					events.push(`admitted before up: ${before.admitted}`);
+					if (before.admitted) before.lease.release();
+					return (await base.connect?.(uuid, timeout)) ?? true;
+				},
+			});
+			expect(await pollUntil(75_000)).toEqual([75_000]);
+			expect(events).toEqual([
+				"admitted during down: false",
+				"holder: modem-transition",
+				"start waits: true",
+				"admitted before up: true",
+			]);
+		});
+
+		test("a down that throws still releases the interlock", async () => {
+			others = [eth()];
+			health = dead();
+			onDisconnect = async () => {
+				throw new Error("nmcli failed");
+			};
+			await pollUntil(75_000);
+			expect(currentLifecycleHolder()).toBeUndefined();
+			expect(linkTeardownSettled()).toBeUndefined();
+		});
+
+		test("a link teardown is skipped while another transition holds the interlock", async () => {
+			others = [eth()];
+			health = dead();
+			let transition: LifecycleLease | undefined;
+			duringLeasedReads(() => {
+				const held = tryAcquireLifecycle("modem-transition");
+				if (held.admitted) transition = held.lease;
+			});
+			expect(await pollUntil(75_000)).toEqual([]);
+			transition?.release();
+		});
 	});
 
 	test("between streams the link's traffic is not consulted", async () => {

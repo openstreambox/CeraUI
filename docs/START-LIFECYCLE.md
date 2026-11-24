@@ -134,6 +134,18 @@ returns `cancelled`, never resurrects the start, and releases its lifecycle leas
 Refusal or observer failure unwinds the pending generation; refusal payloads
 (`update_in_progress`, phase, percent and ETA) are unchanged.
 
+A dead-bearer reconnect holds the lifecycle interlock while it takes one modem's
+link down (`tryAcquireLinkTeardown`). A Start of any origin that arrives then
+waits for that hold to release (`linkTeardownSettled`) instead of failing with
+`modem_transition_active`: the hold spans one NetworkManager `down`, bounded by
+the command timeout, and no start origin retries that refusal, so restoration
+would lose the stream it exists to bring back. The wait comes after the
+reconciliation awaits and before the duplicate-start check; it is asked again
+after each wake, and nothing awaits between the last ask and the admission, so
+a new teardown cannot slip in. Operator Stop intent is read after the wait, so a
+Stop during it cancels the Start. The reconnect's `up` is not held: a Start may
+overlap it as it overlaps any background dial.
+
 Restoration intent and physical OTA liveness are separate. Every Stop caller
 reports intent before joining/parking shared work. Operator intent requests
 marker removal and immediately revokes pending commitment and delayed arming

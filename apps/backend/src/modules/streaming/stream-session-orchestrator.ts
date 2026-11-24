@@ -207,6 +207,13 @@ export type StreamSessionOrchestratorDeps = {
 	 * singleton and proven through the real `streaming.start` procedure instead.
 	 */
 	readonly admitLifecycle?: () => LifecycleAdmission;
+	/**
+	 * Resolves when a dead-bearer reconnect's link teardown releases the
+	 * interlock; undefined when none holds it (`linkTeardownSettled`). Every
+	 * origin waits it out rather than failing: the hold spans one bounded
+	 * NetworkManager `down`, and no start origin retries a refusal.
+	 */
+	readonly linkTeardownSettled?: () => Promise<void> | undefined;
 	/** Confirm the shutdown block before any media launch effect. */
 	/** Last admission step, in the same tick as the launch. False when the OTA
 	 * marker would still read carrying-only beside it; the Start is then
@@ -454,6 +461,15 @@ export function createStreamSessionOrchestrator(
 			deps.getStreamingStatus?.() === false
 		)
 			await reconcile();
+
+		// Asked again after every wake, and nothing awaits between the last ask
+		// and the admission below, so a new teardown cannot slip in between.
+		for (
+			let teardown = deps.linkTeardownSettled?.();
+			teardown !== undefined;
+			teardown = deps.linkTeardownSettled?.()
+		)
+			await teardown;
 
 		if (!currentIntent()) return { result: "cancelled", attemptId };
 		if (

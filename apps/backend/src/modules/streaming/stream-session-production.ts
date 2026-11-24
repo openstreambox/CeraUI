@@ -16,6 +16,7 @@ import { queryEngineRuntimeStreaming } from "./engine-runtime-state.ts";
 import { engineUnitStopped } from "./engine-unit-state.ts";
 import {
 	globalStreamHold,
+	linkTeardownSettled,
 	tryAcquireLifecycle,
 } from "./lifecycle-admission.ts";
 import {
@@ -189,6 +190,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	ensureShutdownProtection: ensureEncoderShutdownProtection,
 	claimLaunchMarker: claimOtaMarkerForLaunch,
 	admitLifecycle: () => tryAcquireLifecycle("streaming"),
+	linkTeardownSettled,
 	awaitRecovery: awaitRecoveryBarrier,
 	recoveryPending: isRecoveryPending,
 	blockingMutation: globalStreamHold,

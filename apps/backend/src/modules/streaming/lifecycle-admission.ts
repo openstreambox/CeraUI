@@ -12,9 +12,10 @@
  *    after the admission lease ends at relay acceptance. It is
  *    released in that admission's `finally`, so a throw mid-launch can never
  *    strand it.
- *  - `"modem-transition"` — a USB-composition-mode switch (`modems.setUsbMode`)
- *    or a future, DEFAULT-DISABLED autonomous cellular recovery / USB-reset
- *    action. Both re-enumerate a modem, tearing its bond link down mid-flight.
+ *  - `"modem-transition"` — a USB-composition-mode switch (`modems.setUsbMode`),
+ *    a dead-bearer reconnect while it takes its link down
+ *    (`tryAcquireLinkTeardown`), or a future, DEFAULT-DISABLED USB-reset
+ *    action. Each tears a bond link down mid-flight.
  *
  * Letting either start while the other is mid-flight breaks the bond math — a
  * link vanishing during admission, or an admitted stream losing a link to a
@@ -195,6 +196,50 @@ export async function withLifecycleLock<T>(
 	}
 }
 
+/**
+ * A dead-bearer reconnect taking one modem's link down: the interlock held as
+ * `"modem-transition"` for the span of the `down`, so neither a stream
+ * admission nor engine-less forwarding can begin while the link is being taken
+ * away. The reconnect itself runs under a journal-only key, which the count
+ * above deliberately ignores, so without this hold a Start admitted during its
+ * owner reads would launch onto a link that goes down a moment later.
+ *
+ * Undefined when the interlock is held (a Start is being admitted, another
+ * transition runs, an operator mutation holds a device) or forwarding is
+ * active: the reconnect then does not happen this poll. The hold ends with the
+ * `down`; the `up` that follows is an ordinary background dial, which a Start
+ * may overlap the way it overlaps any redial.
+ */
+export function tryAcquireLinkTeardown(): LifecycleLease | undefined {
+	const admission = tryAcquireLifecycle("modem-transition");
+	if (!admission.admitted) return undefined;
+	const current = Promise.withResolvers<void>();
+	linkTeardown = current;
+	return {
+		holder: "modem-transition",
+		release: () => {
+			admission.lease.release();
+			if (linkTeardown !== current) return;
+			linkTeardown = undefined;
+			current.resolve();
+		},
+	};
+}
+
+let linkTeardown: ReturnType<typeof Promise.withResolvers<void>> | undefined;
+
+/**
+ * Resolves when the link teardown holding the interlock releases; undefined
+ * when none does. A Stream Start waits on this instead of failing with
+ * `modem_transition_active`: the `down` is one bounded NetworkManager call, and
+ * none of the start origins retries that refusal (restoration would lose the
+ * stream it exists to bring back). The waiter holds nothing and must ask again
+ * after waking, synchronously before it admits.
+ */
+export function linkTeardownSettled(): Promise<void> | undefined {
+	return linkTeardown?.promise;
+}
+
 /** True while either lifecycle operation holds the interlock. */
 export function isLifecycleHeld(): boolean {
 	return held !== undefined;
@@ -212,6 +257,9 @@ export function currentLifecycleHolder(): LifecycleHolder | undefined {
  */
 export function resetLifecycleInterlock(): void {
 	held = undefined;
+	const teardown = linkTeardown;
+	linkTeardown = undefined;
+	teardown?.resolve();
 	activeMutations.clear();
 	mutationBlocks.clear();
 	for (const key of [...releaseWaiters.keys()]) wakeReleaseWaiters(key);
