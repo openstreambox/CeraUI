@@ -101,8 +101,8 @@ function request(action: PendingAction) {
 // failure-feedback toast. `confirmOnResolve` settles the op to `confirmed` the
 // moment the `{ success: true }` reply flushes (the reply always returns before
 // systemd takes the host down). A backend-refused op (streaming / updating guard)
-// returns `{ success: false }`, which osCommand classifies as a failure — it
-// toasts and we never advance to "rebooting"/close.
+// returns `{ success: false }`. The named device notification explains a typed
+// refusal; osCommand reports other failures. Neither advances to "rebooting"/close.
 async function confirmAction() {
 	const action = pending;
 	if (!action) return;
@@ -115,7 +115,7 @@ async function confirmAction() {
 	});
 	pending = null;
 	// undefined → re-entry no-op or a thrown RPC (osCommand already toasted);
-	// success:false → refused op (osCommand already toasted). Either way, do NOT
+	// success:false → refused op (device notification). Either way, do NOT
 	// mark rebooting or close.
 	if (!result?.success) return;
 	if (action === 'reboot') {
