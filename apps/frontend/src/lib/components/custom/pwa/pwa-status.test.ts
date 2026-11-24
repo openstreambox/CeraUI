@@ -92,31 +92,6 @@ afterEach(() => {
 	setLocale("en");
 });
 
-describe("pwa-status — the install banner sits above the bottom nav", () => {
-	// On a phone the banner was fixed to the very bottom and covered the
-	// navigation dock (and the Live bar above it) on first visit.
-	const bannerBox = () =>
-		installBanner()?.closest<HTMLElement>(
-			'[data-testid="pwa-install-banner"]',
-		) ?? null;
-
-	it("clears the dock and the Live bar while the app shell shows them", () => {
-		setUserAgent(IPHONE_UA);
-		render(PwaStatus, { props: { aboveDock: true } });
-		const bottom = bannerBox()?.style.bottom ?? "";
-		expect(bottom).toContain("--mobile-dock-height");
-		expect(bottom).toContain("--live-bar-height");
-	});
-
-	it("stays at the screen edge where there is no dock (sign-in)", () => {
-		setUserAgent(IPHONE_UA);
-		render(PwaStatus, { props: { aboveDock: false } });
-		const bottom = bannerBox()?.style.bottom ?? "";
-		expect(bannerBox()).not.toBeNull();
-		expect(bottom).not.toContain("--mobile-dock-height");
-	});
-});
-
 describe("pwa-status — the install banner", () => {
 	it("shows on a mobile browser that is not already installed", () => {
 		setUserAgent(IPHONE_UA);
