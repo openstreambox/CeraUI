@@ -54,7 +54,7 @@ const planted: [string, Record<string, unknown>, string][] = [
 	// B1: template gaps and metadata interface names.
 	[
 		"B1 interface-shaped name in a message gap",
-		event({ level: "error", msg: "nmConnect err: enp1janedoe" }),
+		event({ level: "error", msg: "nmConnNew err: enp1janedoe" }),
 		"janedoe",
 	],
 	[
@@ -64,7 +64,7 @@ const planted: [string, Record<string, unknown>, string][] = [
 	],
 	[
 		"B1 decimal cell identity in a message gap",
-		event({ level: "error", msg: "nmConnect err: 123456" }),
+		event({ level: "error", msg: "nmConnNew err: 123456" }),
 		"123456",
 	],
 	[
@@ -74,7 +74,7 @@ const planted: [string, Record<string, unknown>, string][] = [
 	],
 	[
 		"B1 coordinate component in a message gap",
-		event({ level: "error", msg: "nmConnect err: 52.123456" }),
+		event({ level: "error", msg: "nmConnNew err: 52.123456" }),
 		"52.123456",
 	],
 	[
@@ -471,8 +471,8 @@ const typed: [Record<string, unknown>, string][] = [
 		"streamloop: [process] exited (code=1, signal=null)",
 	],
 	[
-		event({ level: "error", msg: "nmConnect err: enp1janedoe" }),
-		'"msg":"nmConnect err: [value]"',
+		event({ level: "error", msg: "nmConnNew err: enp1janedoe" }),
+		'"msg":"nmConnNew err: [value]"',
 	],
 	[
 		event({
