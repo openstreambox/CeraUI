@@ -33,6 +33,13 @@ export function isCompositionSupported(
 	return caps?.features?.includes(COMPOSITION_FEATURE) === true;
 }
 
+/** Whether a composition places the second picture freely (`composition-geometry`). */
+export function compositionNeedsGeometry(
+	composition: Pick<CompositionConfig, "layout" | "rect">,
+): boolean {
+	return composition.layout === "custom" || composition.rect !== undefined;
+}
+
 /**
  * The composition a save writes, decided against the one the device has saved.
  *

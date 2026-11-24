@@ -31,8 +31,8 @@
 //
 // `get-capabilities` is the additive method #9 on the published
 // `CerastreamClient` surface. A `schema_version` skew is informational only
-// (additive within `cerastream-ipc/1`, mirroring `probeEngine`): it warns and
-// flags the response, never throws.
+// (additive within `cerastream-ipc/1`, mirroring `probeEngine`): it is logged,
+// flags the response only when the engine is newer, and never throws.
 
 import {
 	type CaptureCap,
@@ -59,8 +59,10 @@ import {
 	reportEngineControlLoss,
 } from "./engine-control-loss.ts";
 import {
+	classifyEngineSchemaSkew,
 	forgetEngineSchemaSkew,
 	observeEngineSchema,
+	skewMayHideCapabilities,
 } from "./engine-schema-skew.ts";
 
 /**
@@ -68,8 +70,9 @@ import {
  * {@link GetCapabilitiesResult} plus the freshness flags the UI renders:
  *  - `engineUnavailable` — the snapshot is NOT live (cached or minimal).
  *  - `engineStarting` — there has been no live snapshot this run (minimal only).
- *  - `schemaVersionMismatch` — the engine reported a different `schema_version`
- *    than the bindings; additive-only, the data is still served.
+ *  - `schemaVersionMismatch` — the engine reported a `schema_version` newer
+ *    than the bindings (or one that does not parse), so some engine fields may
+ *    be stripped; the data is still served. An older engine is not flagged.
  */
 export type CapabilitiesResult = Omit<
 	GetCapabilitiesResult,
@@ -380,12 +383,19 @@ function foldDeviceModes(
  * Best-effort `device_modes` resolution: a failed/throwing `list-devices` NEVER
  * blocks the capability broadcast — it is logged and `device_modes` is omitted.
  */
+/** `fetchEngineDevices` was not queried: the last scan still stands. */
+const DEVICES_NOT_QUERIED = Symbol("devices-not-queried");
+
 async function resolveDeviceModes(
 	deps: CapabilitiesServiceDeps,
-): Promise<Record<string, DeviceModeGroup> | undefined> {
+): Promise<
+	Record<string, DeviceModeGroup> | undefined | typeof DEVICES_NOT_QUERIED
+> {
 	try {
 		const devices = await deps.fetchEngineDevices();
-		return devices === undefined ? undefined : foldDeviceModes(devices);
+		return devices === undefined
+			? DEVICES_NOT_QUERIED
+			: foldDeviceModes(devices);
 	} catch (err) {
 		if (isEngineControlLoss(err)) throw err;
 		deps.logger.warn(
@@ -427,6 +437,17 @@ function retainedCapabilities(): CapabilitiesResult {
 	);
 }
 
+/**
+ * The acquired client's own capability answer, kept local: nothing is published
+ * to the shared snapshot, so a caller authorizing a request to this client acts
+ * on this client's word only. Throws like the underlying read.
+ */
+export async function readSessionCapabilities(
+	client: CerastreamClient,
+): Promise<GetCapabilitiesResult> {
+	return (await defaultFetchEngineCapabilities(client)).caps;
+}
+
 /** Read the acquired client's capabilities without closing it or scanning devices. */
 export async function refreshCapabilitiesFromClient(
 	client: CerastreamClient,
@@ -465,9 +486,14 @@ export async function getCapabilities(
 			transports,
 			network_embedded_audio: networkEmbeddedAudio,
 		} = await deps.fetchEngineCapabilities();
-		// Additive-only within the protocol major (ADR-0002): warn + flag, but
-		// still serve — degrading, never crashing, on version skew.
-		const mismatch = schemaVersion !== deps.bindingsSchemaVersion;
+		// Additive-only within the protocol major (ADR-0002): log, but still
+		// serve — degrading, never crashing, on version skew. Only a skew that
+		// can hide engine capabilities (a newer, different-major or unparsable
+		// engine schema) is flagged to the UI. An older engine's newer features
+		// are gated on its own `features` tokens.
+		const mismatch = skewMayHideCapabilities(
+			classifyEngineSchemaSkew(schemaVersion, deps.bindingsSchemaVersion),
+		);
 		// Speak kbps everywhere downstream: the engine may report the bitrate range
 		// in bps, so normalize it once here — the single unit-conversion seam.
 		const caps: GetCapabilitiesResult = {
@@ -480,8 +506,14 @@ export async function getCapabilities(
 				),
 			},
 		};
-		const deviceModes = await resolveDeviceModes(deps);
+		const resolvedModes = await resolveDeviceModes(deps);
 		if (!current() || epoch !== capabilityEpoch) return retainedCapabilities();
+		// A read that skips list-devices (a session client's refresh) keeps the
+		// modes the last scan found instead of erasing them.
+		const deviceModes =
+			resolvedModes === DEVICES_NOT_QUERIED
+				? lastCapabilities?.device_modes
+				: resolvedModes;
 		// Only a read from the current connection may speak for its schema.
 		observeEngineSchema(deps.logger, {
 			engine: schemaVersion,

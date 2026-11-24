@@ -1089,7 +1089,16 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["stale link notice"],
 	["start-failure-taxonomy: unmapped error shape → engine_internal"],
 	["start: dropping composition — engine has not advertised the feature"],
+	["start: dropping composition — the receiving engine has not advertised it"],
 	["start: dropping stale ", " override — pipeline '", "' cannot honor it"],
+	[
+		"start: dropping the audio mix — the receiving engine has not advertised it",
+	],
+	[
+		"start: dropping the custom composition layout — the receiving engine only advertises preset layouts",
+	],
+	["start: get-capabilities failed"],
+	["start: the engine did not answer get-capabilities within the bound"],
 	["startStream: IP list read failed; aborting start"],
 	["startStream: audio source probe failed; aborting start"],
 	["stop: SIGKILL timeout (", "ms) exceeded for ", "; sending SIGKILL"],
