@@ -39,6 +39,8 @@
  * the procedure does that resolution and hands the IP down here.
  */
 
+import { isIP } from "node:net";
+
 import { logger } from "../../../helpers/logger.ts";
 
 /** Hard upper bound on how long a single probe may run. */
@@ -64,7 +66,9 @@ export async function probeReachability(
 	port: number,
 	timeoutMs: number = PROBE_TIMEOUT_MS,
 ): Promise<ProbeResult> {
-	return await new Promise<ProbeResult>((resolve) => {
+	if (isIP(ip) === 0)
+		throw new TypeError("UDP reachability requires an IP literal");
+	return await new Promise<ProbeResult>((resolve, reject) => {
 		let settled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let socket: Awaited<ReturnType<typeof Bun.udpSocket>> | undefined;
@@ -81,19 +85,22 @@ export async function probeReachability(
 			resolve(result);
 		};
 
-		Bun.udpSocket({
-			connect: { hostname: ip, port },
-			socket: {
-				// Any inbound datagram from the connected peer proves reachability.
-				data(): void {
-					finish({ reachable: true });
-				},
-				// On a connected UDP socket an ICMP port-unreachable surfaces here.
-				error(): void {
-					finish({ reachable: false, reason: "refused" });
-				},
-			},
-		})
+		Promise.resolve()
+			.then(() =>
+				Bun.udpSocket({
+					connect: { hostname: ip, port },
+					socket: {
+						// Any inbound datagram from the connected peer proves reachability.
+						data(): void {
+							finish({ reachable: true });
+						},
+						// On a connected UDP socket an ICMP port-unreachable surfaces here.
+						error(): void {
+							finish({ reachable: false, reason: "refused" });
+						},
+					},
+				}),
+			)
 			.then((s) => {
 				if (settled) {
 					try {
@@ -117,11 +124,19 @@ export async function probeReachability(
 				}
 			})
 			.catch((err) => {
-				// Socket creation/connect failed — treat as a hard refusal, but
-				// surface the discarded cause at debug so a systemic bind/socket
-				// failure is not invisible behind every "refused" verdict.
-				logger.debug("probeReachability: socket setup failed", { err });
-				finish({ reachable: false, reason: "refused" });
+				// Known no-route failures are a refusal. Bun can expose them
+				// as a code or a message-only error; preserve every unexpected
+				// setup failure so callers can diagnose a broken socket setup.
+				if (
+					err instanceof Error &&
+					(("code" in err &&
+						(err.code === "ENETUNREACH" || err.code === "EHOSTUNREACH")) ||
+						err.message === "network is unreachable" ||
+						err.message === "host is unreachable")
+				) {
+					logger.debug("probeReachability: socket setup failed", { err });
+					finish({ reachable: false, reason: "refused" });
+				} else reject(err);
 			});
 	}).catch((err: unknown): ProbeResult => {
 		if (
