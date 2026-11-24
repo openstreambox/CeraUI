@@ -3,23 +3,27 @@
   the WifiSelectorDialog.
 
   Pure presentation extraction of the former monolith's body: the busy-count scan
-  bar, the sorted network rows (signal / identity / per-network actions), and the
-  no-results empty state. All state and the RPC connect/scan/forget logic stay in
-  the parent dialog and are driven here via props + callbacks — identical markup
-  and behaviour. The inline secured-network password form is delegated to
-  WifiConnectForm.
+  bar, the sorted network rows (signal / identity / status), and the no-results
+  empty state. All state and the RPC connect/scan/forget logic stay in the parent
+  dialog and are driven here via props + callbacks. The inline secured-network
+  password form is delegated to WifiConnectForm.
+
+  Each row is one button: a tap joins (or opens the password prompt). A saved
+  network's Disconnect, Change password and Forget live in its details panel,
+  opened from the row's Manage control (or from the connected row itself), so
+  Forget is never next to Connect.
 -->
 <script lang="ts">
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
-import { canReuseWifiStationProfile, classifyWifiStationSecurity } from '@ceraui/rpc';
+import { requiresSaeKeyMgmt } from '@ceraui/rpc';
 import type { AvailableWifiNetwork, WifiInterface } from '@ceraui/rpc/schemas';
 import {
 	Check,
+	ChevronDown,
 	Clock,
 	KeyRound,
 	Loader2,
 	Lock,
-	Plug,
 	RefreshCw,
 	Trash2,
 	TriangleAlert,
@@ -139,6 +143,16 @@ const scanState = $derived(
 );
 const freshnessKey = $derived(wifiScanFreshnessKey(scanState));
 const superseded = $derived(wifiScanResultsSuperseded(scanState));
+
+// Which saved network's details are open. Local to the list: nothing outside it
+// acts on it. The forget confirm (`confirmForget`, owned by the dialog) keeps its
+// row's details open so the confirm step never appears without its context.
+let detailsFor = $state<string | undefined>(undefined);
+
+function toggleDetails(ssid: string) {
+	detailsFor = detailsFor === ssid ? undefined : ssid;
+	if (confirmForget) onConfirmForget(undefined);
+}
 </script>
 
 <div class="flex flex-col gap-4">
@@ -203,9 +217,11 @@ const superseded = $derived(wifiScanResultsSuperseded(scanState));
 		</Button>
 	</div>
 
-	<!-- Network list -->
-	<div class="divide-y rounded-lg border">
-		{#each networks as network (network.ssid)}
+	<!-- Network list. A touch region, so on a phone every button in it takes the
+	     44 px target (`DESIGN.md` §6, TT-3: through the token, never hardcoded). -->
+	<div class="divide-y rounded-lg border" data-touch-region>
+		{#each networks as network, rowIndex (network.ssid)}
+			<!-- A saved profile is reused only when its security matches this scan row. -->
 			{const uuid = $derived(getWifiUUID(network, iface))}
 			<!-- An already-active profile can be disconnected without scan security proof. -->
 			{const activeUuid = $derived(network.active && iface?.saved[network.ssid] === iface?.conn ? iface?.conn : undefined)}
@@ -215,173 +231,171 @@ const superseded = $derived(wifiScanResultsSuperseded(scanState));
 			{const isConnecting = $derived(isConnectRow && opPending)}
 			{const isConnectTimedOut =
 				$derived(isConnectRow && getOperationPhase(`wifi:${deviceId}`) === 'timed_out')}
-			{const isDisconnecting = $derived(!!activeUuid && disconnecting === activeUuid)}
+			{const isDisconnecting = $derived(!!managedUuid && disconnecting === managedUuid)}
 			{const isForgetting = $derived(!!managedUuid && forgetting === managedUuid)}
 			{const osBusy = $derived(!!connecting || !!disconnecting || !!forgetting)}
 			{const expanded = $derived(pendingNew?.ssid === network.ssid)}
 			{const confirming = $derived(confirmForget === network.ssid)}
 			<!-- The device rewrites a saved profile's secret in place only off the SAE-only
 			     path; an SAE-only join always adds a second profile. -->
-			{const correctable = $derived(canReuseWifiStationProfile(classifyWifiStationSecurity(network.security), 'wpa-psk'))}
+			{const correctable = $derived(isSecured(network) && !requiresSaeKeyMgmt(network.security))}
 			<!-- CT-2, not CT-1: the network is genuinely in the air, so the row stays
 			     visible and disabled-with-reason rather than being hidden. -->
 			{const block = $derived(wifiRowBlock(network, iface?.capabilities))}
 			{const blockReason = $derived(block ? resolveMessageKey(block.bodyKey) : undefined)}
+			{const rowBusy = $derived(isConnecting || isConnectTimedOut || isDisconnecting || isForgetting)}
+			<!-- Only a network this radio is on through one of its own saved profiles has
+			     details to open. The scan's active flag alone is not enough: the backend
+			     shares one scan, active flags included, across radios while each radio
+			     keeps its own saved map, so a network another radio is on arrives here
+			     active with no profile. That row keeps the join. -->
+			{const manageable = $derived(network.active && !!managedUuid)}
+			{const rowDisabled = $derived(
+				manageable ? rowBusy : ifaceBusy || osBusy || !!block,
+			)}
+			{const detailsShown = $derived(!!managedUuid && !rowBusy && (detailsFor === network.ssid || confirming))}
 			<div
 				class={cn(
 					'flex flex-col gap-3 px-3 py-3 transition-colors',
 					network.active && 'bg-primary/5',
 				)}
 			>
-				<div class="flex items-center gap-3">
-					<!-- Signal -->
-					<div class="relative shrink-0">
-						<LinkIndicator shape="icon" size="lg" type="wifi" signal={network.signal} />
-						{#if network.active}
-							<span
-								class="bg-primary ring-background absolute -end-1.5 -top-1.5 grid size-3.5 place-items-center rounded-full ring-2"
-							>
-								<Check class="text-primary-foreground size-2.5" />
-							</span>
-						{/if}
-					</div>
+				<div class="flex items-center gap-2">
+					<!-- The row IS the primary control: a tap joins a saved network, opens
+					     the password prompt for a new secured one, joins an open one, or
+					     opens the connected network's details. One large target instead of
+					     a small plug icon beside a trash icon. -->
+					<button
+						aria-describedby={`wifi-row-meta-${rowIndex}`}
+						aria-expanded={manageable ? detailsShown : undefined}
+						aria-label={manageable
+							? `${m["wifiSelector.button.manage"]()} ${network.ssid}`
+							: `${m["wifiSelector.button.connect"]()} ${network.ssid}`}
+						class="focus-visible:ring-ring/50 -my-1 -ms-1 flex min-h-(--touch-target-min) min-w-0 flex-1 items-center gap-3 rounded-md py-1 ps-1 text-start outline-none focus-visible:ring-3 disabled:cursor-not-allowed"
+						data-testid="wifi-network-row"
+						disabled={rowDisabled}
+						onclick={() => {
+							if (manageable) {
+								toggleDetails(network.ssid);
+							} else if (expanded) {
+								onResetInteraction();
+							} else if (uuid) {
+								onConnectSaved(uuid, network);
+							} else {
+								onConnectNew(network);
+							}
+						}}
+						title={blockReason}
+						type="button"
+					>
+						<!-- Signal -->
+						<span class="relative shrink-0">
+							<LinkIndicator shape="icon" size="lg" type="wifi" signal={network.signal} />
+							{#if network.active}
+								<span
+									class="bg-primary ring-background absolute -end-1.5 -top-1.5 grid size-3.5 place-items-center rounded-full ring-2"
+								>
+									<Check class="text-primary-foreground size-2.5" />
+								</span>
+							{/if}
+						</span>
 
-					<!-- Identity -->
-					<div class="min-w-0 flex-1">
-						<div class="flex items-center gap-1.5">
-							<p
+						<!-- Identity. The name has the full width to itself and wraps to two
+						     lines rather than being cut to one (an SSID is at most 32 bytes,
+						     so two lines always hold it); the lock and the Saved badge sit on
+						     the line below with the signal. -->
+						<span class="min-w-0 flex-1">
+							<span
 								class={cn(
-									'truncate text-sm font-medium',
+									'line-clamp-2 text-sm font-medium break-words',
 									network.active && 'text-primary',
 								)}
 								title={network.ssid}
 							>
 								{network.ssid}
-							</p>
-							{#if isSecured(network)}
-								<Lock aria-hidden="true" class="text-muted-foreground size-3.5 shrink-0" />
-								<span class="sr-only">{m["wifiSelector.accessibility.secured"]()}</span>
-							{:else}
-								<Unlock aria-hidden="true" class="text-status-warning size-3.5 shrink-0" />
-								<span class="sr-only">{m["wifiSelector.accessibility.openNetwork"]()}</span>
-							{/if}
-							{#if uuid && !network.active}
-								<span
-									class="bg-muted text-muted-foreground text-micro rounded px-1.5 py-0.5 font-medium"
-								>
-									{m["wifiSelector.status.saved"]()}
-								</span>
-							{/if}
-						</div>
-						<div class="text-muted-foreground mt-0.5 flex items-center gap-2 text-xs">
-							<span class={cn('font-mono tabular-nums', signalTextClass(network.signal))}>
-								{network.signal}%
 							</span>
-							<span aria-hidden="true">·</span>
-							<span>{frequencyBand(network.freq)}</span>
-							{#if network.active}
-								<span aria-hidden="true">·</span>
-								<span class="text-primary font-medium">{m["wifiSelector.status.connected"]()}</span>
-							{/if}
-						</div>
-					</div>
-
-					<!-- Actions -->
-					<div class="flex shrink-0 items-center gap-1.5">
-						{#if isConnecting}
-							<InlineSpinner size="md" label={m["network.os.connecting"]()} />
-						{:else if isConnectTimedOut}
 							<span
-								class="text-muted-foreground hidden items-center text-xs font-medium sm:inline-flex"
+								class="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs"
+								id={`wifi-row-meta-${rowIndex}`}
 							>
-								{m["network.os.stillWorking"]()}
-							</span>
-							<Button
-								aria-label={`${m["network.os.retry"]()} ${network.ssid}`}
-								class="gap-1.5"
-								onclick={() => (uuid ? onConnectSaved(uuid, network) : onConnectNew(network))}
-								size="sm"
-								variant="outline"
-							>
-								<RefreshCw class="size-4" />
-								<span class="hidden sm:inline">{m["network.os.retry"]()}</span>
-							</Button>
-						{:else if isDisconnecting}
-							<InlineSpinner size="md" label={m["network.os.disconnecting"]()} />
-						{:else if isForgetting}
-							<InlineSpinner size="md" label={m["network.os.applying"]()} />
-						{:else if confirming}
-							<Button onclick={() => managedUuid && onForget(managedUuid, network)} size="sm" variant="destructive">
-								{m["wifiSelector.button.forget"]()}
-							</Button>
-							<Button onclick={() => onConfirmForget(undefined)} size="sm" variant="ghost">
-								{m["wifiSelector.dialog.close"]()}
-							</Button>
-						{:else if managedUuid}
-							{#if activeUuid}
-								<Button
-									aria-label={`${m["wifiSelector.button.disconnect"]()} ${network.ssid}`}
-									class="gap-1.5"
-									disabled={osBusy}
-									onclick={() => onDisconnect(activeUuid, network)}
-									size="sm"
-									variant="outline"
-								>
-									<WifiOff class="size-4" />
-									<span class="hidden sm:inline">{m["wifiSelector.button.disconnect"]()}</span>
-								</Button>
-							{:else if uuid}
-								<Button
-									aria-label={`${m["wifiSelector.button.connect"]()} ${network.ssid}`}
-									class="gap-1.5"
-									disabled={ifaceBusy || osBusy || !!block}
-									onclick={() => onConnectSaved(uuid, network)}
-									size="sm"
-									title={blockReason}
-								>
-									<Plug class="size-4" />
-									<span class="hidden sm:inline">{m["wifiSelector.button.connect"]()}</span>
-								</Button>
-								{#if correctable}
-									<Button
-										aria-expanded={expanded}
-										aria-label={`${m["wifiSelector.button.changePassword"]()} ${network.ssid}`}
-										class="text-muted-foreground hover:text-foreground size-9"
-										disabled={ifaceBusy || osBusy || !!block}
-										onclick={() => onConnectNew(network)}
-										size="icon"
-										title={blockReason ?? m["wifiSelector.button.changePassword"]()}
-										variant="ghost"
-									>
-										<KeyRound class="size-4" />
-									</Button>
+								{#if isSecured(network)}
+									<Lock aria-hidden="true" class="text-muted-foreground size-3.5 shrink-0" />
+									<span class="sr-only">{m["wifiSelector.accessibility.secured"]()}</span>
+								{:else}
+									<Unlock aria-hidden="true" class="text-status-warning size-3.5 shrink-0" />
+									<span class="sr-only">{m["wifiSelector.accessibility.openNetwork"]()}</span>
 								{/if}
-							{/if}
-							<Button
-								aria-label={`${m["wifiSelector.button.forget"]()} ${network.ssid}`}
-								class="text-muted-foreground hover:text-destructive size-9"
-								disabled={osBusy}
-								onclick={() => onConfirmForget(network.ssid)}
-								size="icon"
-								variant="ghost"
-							>
-								<Trash2 class="size-4" />
-							</Button>
-						{:else}
-							<Button
-								aria-label={`${m["wifiSelector.button.connect"]()} ${network.ssid}`}
-								class="gap-1.5"
-								disabled={ifaceBusy || osBusy || !!block}
-								onclick={() => onConnectNew(network)}
-								size="sm"
-								title={blockReason}
-								variant={expanded ? 'outline' : 'default'}
-							>
-								<Plug class="size-4" />
-								<span class="hidden sm:inline">{m["wifiSelector.button.connect"]()}</span>
-							</Button>
+								{#if uuid && !network.active}
+									<span
+										class="bg-muted text-muted-foreground text-micro rounded px-1.5 py-0.5 font-medium"
+									>
+										{m["wifiSelector.status.saved"]()}
+									</span>
+								{/if}
+								<span class={cn('font-mono tabular-nums', signalTextClass(network.signal))}>
+									{network.signal}%
+								</span>
+								<span aria-hidden="true">·</span>
+								<span>{frequencyBand(network.freq)}</span>
+								{#if network.active}
+									<span aria-hidden="true">·</span>
+									<span class="text-primary font-medium">{m["wifiSelector.status.connected"]()}</span>
+								{/if}
+							</span>
+						</span>
+
+						{#if manageable && !rowBusy}
+							<ChevronDown
+								aria-hidden="true"
+								class={cn(
+									'text-muted-foreground size-4 shrink-0 transition-transform motion-reduce:transition-none',
+									detailsShown && 'rotate-180',
+								)}
+							/>
 						{/if}
-					</div>
+					</button>
+
+					<!-- Row status, or the saved network's Manage control -->
+					{#if isConnecting}
+						<InlineSpinner size="md" label={m["network.os.connecting"]()} />
+					{:else if isConnectTimedOut}
+						<span
+							class="text-muted-foreground hidden items-center text-xs font-medium sm:inline-flex"
+						>
+							{m["network.os.stillWorking"]()}
+						</span>
+						<Button
+							aria-label={`${m["network.os.retry"]()} ${network.ssid}`}
+							class="min-w-(--touch-target-min) shrink-0 gap-1.5"
+							onclick={() => (uuid ? onConnectSaved(uuid, network) : onConnectNew(network))}
+							size="sm"
+							variant="outline"
+						>
+							<RefreshCw class="size-4" />
+							<span class="hidden sm:inline">{m["network.os.retry"]()}</span>
+						</Button>
+					{:else if isDisconnecting}
+						<InlineSpinner size="md" label={m["network.os.disconnecting"]()} />
+					{:else if isForgetting}
+						<InlineSpinner size="md" label={m["network.os.applying"]()} />
+					{:else if uuid && !network.active}
+						<Button
+							aria-expanded={detailsShown}
+							aria-label={`${m["wifiSelector.button.manage"]()} ${network.ssid}`}
+							class="text-muted-foreground hover:text-foreground size-9 min-w-(--touch-target-min) shrink-0"
+							onclick={() => toggleDetails(network.ssid)}
+							size="icon"
+							title={m["wifiSelector.button.manage"]()}
+							variant="ghost"
+						>
+							<ChevronDown
+								class={cn(
+									'size-4 transition-transform motion-reduce:transition-none',
+									detailsShown && 'rotate-180',
+								)}
+							/>
+						</Button>
+					{/if}
 				</div>
 
 				<!-- Why this adapter cannot be offered this network (CT-2 reason) -->
@@ -400,6 +414,80 @@ const superseded = $derived(wifiScanResultsSuperseded(scanState));
 							<p class="text-muted-foreground mt-0.5 text-xs">
 								{resolveMessageKey(block.bodyKey)}
 							</p>
+						</div>
+					</div>
+				{/if}
+
+				<!-- A saved network's details: what manages the profile, away from the
+				     row's Connect. Forget sits last, set apart, and asks first. -->
+				{#if detailsShown && managedUuid}
+					<div
+						class="bg-muted/40 flex flex-col gap-3 rounded-md border px-3 py-3"
+						data-ssid={network.ssid}
+						data-testid="wifi-network-details"
+					>
+						<p class="text-sm font-medium break-all">{network.ssid}</p>
+						{#if activeUuid || correctable}
+							<div class="flex flex-wrap gap-2">
+								{#if activeUuid}
+									<Button
+										aria-label={`${m["wifiSelector.button.disconnect"]()} ${network.ssid}`}
+										class="gap-1.5"
+										disabled={osBusy}
+										onclick={() => onDisconnect(activeUuid, network)}
+										size="sm"
+										variant="outline"
+									>
+										<WifiOff class="size-4" />
+										{m["wifiSelector.button.disconnect"]()}
+									</Button>
+								{/if}
+								{#if correctable && !network.active}
+									<Button
+										aria-expanded={expanded}
+										aria-label={`${m["wifiSelector.button.changePassword"]()} ${network.ssid}`}
+										class="gap-1.5"
+										disabled={ifaceBusy || osBusy || !!block}
+										onclick={() => onConnectNew(network)}
+										size="sm"
+										title={blockReason}
+										variant="outline"
+									>
+										<KeyRound class="size-4" />
+										{m["wifiSelector.button.changePassword"]()}
+									</Button>
+								{/if}
+							</div>
+						{/if}
+						<div class="flex flex-wrap items-center gap-2 border-t pt-3">
+							{#if confirming}
+								<Button
+									onclick={() => {
+										detailsFor = undefined;
+										onForget(managedUuid, network);
+									}}
+									size="sm"
+									variant="destructive"
+								>
+									<Trash2 class="size-4" />
+									{m["wifiSelector.button.forget"]()}
+								</Button>
+								<Button onclick={() => onConfirmForget(undefined)} size="sm" variant="ghost">
+									{m["wifiSelector.dialog.close"]()}
+								</Button>
+							{:else}
+								<Button
+									aria-label={`${m["wifiSelector.button.forget"]()} ${network.ssid}`}
+									class="text-destructive hover:text-destructive gap-1.5"
+									disabled={osBusy}
+									onclick={() => onConfirmForget(network.ssid)}
+									size="sm"
+									variant="ghost"
+								>
+									<Trash2 class="size-4" />
+									{m["wifiSelector.button.forget"]()}
+								</Button>
+							{/if}
 						</div>
 					</div>
 				{/if}
