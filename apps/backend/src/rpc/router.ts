@@ -4,7 +4,6 @@ import { runtimeAllowsDevelopment } from "./runtime-mode.ts";
  */
 
 import { os } from "@orpc/server";
-
 import {
 	configureAddonProcedure,
 	getAddonStatusProcedure,
@@ -31,6 +30,7 @@ import {
 	bluetoothTrustProcedure,
 	getBluetoothStatusProcedure,
 } from "./procedures/bluetooth.procedure.ts";
+import { captivePortalProcedure } from "./procedures/captive-portal.procedure.ts";
 import {
 	devEmitProcedure,
 	devRebindWifiProcedure,
@@ -284,6 +284,7 @@ const stableRoutes = {
 	}),
 
 	wifi: base.router({
+		portal: captivePortalProcedure,
 		getStatus: getWifiStatusProcedure,
 		connect: wifiConnectProcedure,
 		disconnect: wifiDisconnectProcedure,
