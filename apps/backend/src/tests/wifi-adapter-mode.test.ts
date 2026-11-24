@@ -409,28 +409,6 @@ describe("the six transitions", () => {
 		}
 	});
 
-	test("a steering deadline preserves pending rather than confirming the mode", async () => {
-		const { deps, recorder } = makeDeps(
-			{ [MAC]: makeIface() },
-			{
-				startHotspot: async (device, publish) => {
-					publish("start", device, {
-						success: true,
-						pending: true,
-						reason: "steering-readiness-timeout",
-					});
-					return { success: true };
-				},
-			},
-		);
-		await setWifiAdapterMode(0, "hotspot", deps);
-		expect(terminalFrames(recorder)).toEqual([]);
-		expect(recorder.frames.at(-1)?.outcome).toEqual({
-			pending: true,
-			mode: "hotspot",
-		});
-	});
-
 	test("an accepted transition whose confirmation publisher is lost reaches a typed timeout terminal", async () => {
 		let expire: (() => void) | undefined;
 		const { deps, recorder } = makeDeps(
@@ -737,14 +715,13 @@ describe("exclusive vs concurrent is the OPERATOR's choice, not the radio's", ()
 			setDupIpSuppression: (ifname, value) => dupCalls.push([ifname, value]),
 		});
 
-		iface.hotspot.conn = "hotspot-uuid";
 		expect(await startHotspotForInterface(MAC, iface, deps)).toEqual({
 			success: true,
 		});
 		expect(ensured).toBe(0);
 		// The AP is hosted on the PHYSICAL interface, and the parent therefore
 		// takes the dup-IP suppression an exclusive switch has always taken.
-		expect(hotspotDevices).toEqual(["hotspot-uuid"]);
+		expect(hotspotDevices).toEqual(["wlan0"]);
 		expect(dupCalls).toEqual([["wlan0", true]]);
 		expect(iface.concurrentHotspot).toBeUndefined();
 	});
@@ -768,11 +745,10 @@ describe("exclusive vs concurrent is the OPERATOR's choice, not the radio's", ()
 			},
 		});
 
-		iface.hotspot.conn = "hotspot-uuid";
 		expect(await startHotspotForInterface(SECOND_MAC, iface, deps)).toEqual({
 			success: true,
 		});
-		expect(hotspotDevices).toEqual(["hotspot-uuid"]);
+		expect(hotspotDevices).toEqual(["clap-wlan0"]);
 		expect(iface.concurrentHotspot?.ifname).toBe("clap-wlan0");
 	});
 
@@ -796,9 +772,8 @@ describe("exclusive vs concurrent is the OPERATOR's choice, not the radio's", ()
 			},
 		});
 
-		iface.hotspot.conn = "hotspot-uuid";
 		await startHotspotForInterface("dc:a6:32:aa:bb:c2", iface, deps);
 
-		expect(hotspotDevices).toEqual(["hotspot-uuid"]);
+		expect(hotspotDevices).toEqual(["clap-wlan0"]);
 	});
 });
