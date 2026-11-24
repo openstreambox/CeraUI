@@ -39,7 +39,18 @@ retries. NM state 100 consumes intent without dispatch, before MM eligibility.
 Unknown reads and identity/lease refusals preserve pending intent.
 
 The exception covers ONLY that activation call on a positively disconnected
-device. Resolving a late-readable SIM runs outside the update lock and reuses
+device. **A takeover is not covered by it.** When NM state is 100 but the device
+is up on a profile that is not `config.conn`, names a SIM id, and that id
+differs from the modem's ICCID (NM picked another SIM's profile before the SIM
+was reported; see "SIM swap parking" below), the same pending intent dials
+`config.conn` through `withJournaledModemMutation("modem-config")` with format
+`gsm-sim-swap`, repeating every readiness read under that lease (MM `connected`
+is accepted here: the other profile's bearer makes it so). Any other active
+profile, an unreadable read or an unknown modem ICCID consumes intent as
+before. The previous profile cannot be restored on failure, because NM refuses
+to activate a profile whose SIM id differs once the SIM is known; a failed
+takeover is a failed first activation, recovered by NM autoconnect (armed
+profile) or the automatic redial (prepared profile). Resolving a late-readable SIM runs outside the update lock and reuses
 registration's profile selection. Every late profile create, field write,
 autoconnect demotion or deletion holds the identity lease through the existing
 `withJournaledModemMutation("modem-config")` path, which uses the same
@@ -53,6 +64,33 @@ profile or substitute roaming defaults. Late work remains pending on that read
 failure, including a failure after journal admission; no profile effect runs.
 Overlapping status reads merge into the latest registry row so a completed
 late-SIM resolution cannot be overwritten by an older snapshot.
+
+**SIM swap parking [EXISTS; host-tested, board-tested with a stand-in profile].**
+NM compares `gsm.sim-id` only after the modem reports its SIM, so at every new
+MM object an armed profile bound to the device id for another SIM can win. Once
+per registration, after `config.conn` and the ICCID are known, the status poll
+runs `settleModemSimSwap` under `withJournaledModemMutation("modem-config")`
+(format `gsm-sim-swap`; refused or stale work stays for a later poll). Under the
+lease it re-reads the modem and SIM, re-arms every profile of this (device id,
+SIM) that has a park record, then sets `connection.autoconnect=no` on armed
+profiles bound to the device id for SIMs no present modem with that device id
+holds, writing the park record first. It parks nothing when any modem with that
+device id has an unreadable SIM or no SIM object yet. A store fault skips the
+step with a log line and never blocks the modem. Registration itself writes no
+autoconnect. Replay of an interrupted entry reports `restored`: records describe
+themselves and the next pass converges.
+
+Park records live in their own private store, `/data/ceralive/gsm-sim-park`
+(`CERALIVE_GSM_SIM_PARK_DIR`), never in a cellular authority kind: the boot
+inventory of every build parses those in full, and a record kind an older
+build does not know would hold recovery, and every Stream Start, forever.
+**Rollback:** an older build never reads the park store. It sees a parked
+profile as an ordinary `autoconnect=no` manual profile: NM does not pick it and
+the older first activation does not dial it (it requires `autoconnect=yes` or a
+preparation grant). Nothing breaks while that SIM stays out; if it comes back
+under the older build, that modem stays down until the profile is re-armed by
+hand (`nmcli connection modify <profile> connection.autoconnect yes`) or a build
+with parking re-arms it.
 
 **IDENTITY IS FAIL-CLOSED.** The identity contract permits an omitted
 `stable_key`, and a target with no resolvable physical key cannot be journaled,

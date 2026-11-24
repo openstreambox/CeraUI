@@ -2,6 +2,7 @@ import { logger } from "../../helpers/logger.ts";
 import { getNetworkInterfaces } from "../network/network-interfaces.ts";
 import { nmConnect, nmConnGetFields } from "../network/network-manager.ts";
 import { automaticActivationReady } from "./cellular-preparation.ts";
+import { SIM_SWAP_JOURNAL_FORMAT } from "./gsm-sim-swap.ts";
 import {
 	readModemNmDeviceProp,
 	resolveModemNmDeviceForConnection,
@@ -11,16 +12,20 @@ import {
 	readModemRegistrationState,
 	readReadyModemSim,
 	resolveLateModemConfig,
+	settleModemSimSwap,
 } from "./modem-registration.ts";
 import { getModem, getModemIds, setModem } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
 import {
 	withBackgroundModemLease,
+	withJournaledModemMutation,
 	withModemMutation,
 } from "./mutation-lease.ts";
 
 interface ActivationIntent {
 	state: "pending" | "consumed";
+	/** Park and re-arm (gsm-sim-swap.ts) ran for this registration. */
+	swapSettled: boolean;
 	simReadable: boolean;
 	lateConfigPending: boolean;
 	lateConfigRunning: boolean;
@@ -37,6 +42,9 @@ export interface ModemReadyActivationDeps {
 	readonly automaticReady: typeof automaticActivationReady;
 	readonly connect: typeof nmConnect;
 	readonly mutate: typeof withModemMutation;
+	/** The takeover's lease: it replaces an active bearer, so it is journaled. */
+	readonly journaled: typeof withJournaledModemMutation;
+	readonly settleSwap: typeof settleModemSimSwap;
 	/** The redial's lease: same-modem exclusion that never refuses a Stream Start. */
 	readonly backgroundMutate: typeof withBackgroundModemLease;
 	readonly readSim: typeof readReadyModemSim;
@@ -56,6 +64,8 @@ const defaultDeps: ModemReadyActivationDeps = {
 	automaticReady: automaticActivationReady,
 	connect: nmConnect,
 	mutate: withModemMutation,
+	journaled: withJournaledModemMutation,
+	settleSwap: settleModemSimSwap,
 	backgroundMutate: withBackgroundModemLease,
 	readSim: readReadyModemSim,
 	resolveConfig: resolveLateModemConfig,
@@ -140,6 +150,7 @@ export function modemDialClock(): number {
 export function armModemReadyActivation(id: ModemId): void {
 	intents.set(id, {
 		state: "pending",
+		swapSettled: false,
 		simReadable: false,
 		lateConfigPending: false,
 		lateConfigRunning: false,
@@ -206,7 +217,7 @@ async function readReadiness(
 	id: ModemId,
 	intent: ActivationIntent,
 	uuid: string,
-): Promise<"connected" | "ready" | undefined> {
+): Promise<"connected" | "ready" | "takeover" | undefined> {
 	const device = await deps.resolveDevice(uuid);
 	if (device === undefined) return undefined;
 	const fields = await deps.readDevice(device, "GENERAL.STATE");
@@ -241,7 +252,9 @@ async function readReadiness(
 		modem?.config?.conn === uuid &&
 		!modem.inhibit &&
 		!modem.is_scanning
-		? "ready"
+		? takeover
+			? "takeover"
+			: "ready"
 		: undefined;
 }
 
@@ -390,6 +403,64 @@ async function redialAutomaticProfile(
 	});
 }
 
+/**
+ * Replace another SIM's profile on this modem with its own, once per
+ * registration. Unlike the plain first activation this replaces an ACTIVE
+ * bearer, so it takes the journaled lease (refused while a stream is admitted
+ * or forwarded, and while another mutation of this modem runs) and repeats
+ * every readiness read under it. There is no restoring the previous profile
+ * on failure: once the SIM is known NetworkManager refuses to activate a
+ * profile whose SIM id differs. A failed dial is a failed first activation:
+ * NetworkManager's own autoconnect (armed profile) or the automatic redial
+ * below (prepared profile) brings the link back.
+ */
+async function takeOver(
+	id: ModemId,
+	intent: ActivationIntent,
+	uuid: string,
+	key: string,
+	cooledDown: () => boolean,
+	configured: ModemId[],
+): Promise<void> {
+	await deps.journaled(
+		key,
+		"modem-config",
+		{ format: SIM_SWAP_JOURNAL_FORMAT, step: "takeover" },
+		async (mutation) => {
+			const current = (): boolean =>
+				isPending(id, intent) &&
+				deps.stableKey(id) === key &&
+				getModem(id)?.config?.conn === uuid &&
+				cooledDown();
+			if (!current()) return { confirmed: true, value: undefined };
+			if ((await readReadiness(id, intent, uuid)) !== "takeover" || !current())
+				return { confirmed: true, value: undefined };
+			await mutation.markExecuting();
+			if (!current()) return { confirmed: true, value: undefined };
+			// No await between consumption and dispatch; failure never rearms it.
+			intent.state = "consumed";
+			lastDispatch.set(key, deps.now());
+			const result = await deps.connect(uuid, 45);
+			const currentModem = getModem(id);
+			if (
+				result === false &&
+				intents.get(id) === intent &&
+				deps.stableKey(id) === key &&
+				currentModem?.config?.conn === uuid
+			) {
+				setModem(id, { ...currentModem, data_connection_failed: true });
+				configured.push(id);
+			}
+			logger.info("modem takeover from another SIM's profile", {
+				id,
+				stableKey: key,
+				result,
+			});
+			return { confirmed: true, value: undefined };
+		},
+	);
+}
+
 /** The retained status poll calls this only AFTER releasing its reconcile lock. */
 export async function runModemReadyActivations(
 	skip: readonly number[] = [],
@@ -424,14 +495,27 @@ export async function runModemReadyActivations(
 			if (await resolveMissingConfig(id, intent)) configured.push(id);
 			const uuid = getModem(id)?.config?.conn;
 			if (!uuid) continue;
-			if ((await readReadiness(id, intent, uuid)) !== "ready") continue;
 			const key = deps.stableKey(id);
 			if (!key) continue;
+			if (!intent.swapSettled) {
+				const settled = await deps.settleSwap(
+					id,
+					key,
+					() => isPending(id, intent) && deps.stableKey(id) === key,
+				);
+				if (settled === "done") intent.swapSettled = true;
+			}
+			const readiness = await readReadiness(id, intent, uuid);
+			if (readiness !== "ready" && readiness !== "takeover") continue;
 			const cooledDown = (): boolean => {
 				const previous = lastDispatch.get(key);
 				return previous === undefined || deps.now() - previous >= COOLDOWN_MS;
 			};
 			if (!cooledDown()) continue;
+			if (readiness === "takeover") {
+				await takeOver(id, intent, uuid, key, cooledDown, configured);
+				continue;
+			}
 			await deps.mutate(key, async () => {
 				const current = (): boolean =>
 					isPending(id, intent) &&

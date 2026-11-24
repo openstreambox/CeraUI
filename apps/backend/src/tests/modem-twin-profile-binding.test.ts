@@ -41,10 +41,6 @@ const profiles: Record<string, Record<string, string>> = {
 	},
 };
 
-const MODEM_LIST = `modem-list.length : 2
-modem-list.value[1] : /org/freedesktop/ModemManager1/Modem/0
-modem-list.value[2] : /org/freedesktop/ModemManager1/Modem/1`;
-
 beforeEach(() => {
 	resetGsmConnections();
 	resetGsmAutoconfigProbe();
@@ -62,7 +58,6 @@ test("twins sharing a device identifier keep distinct SIM profiles, including af
 	let sims = ["sim-a", "sim-b"];
 	const unexpected: string[] = [];
 	spyOn(runner, "run").mockImplementation(async (binary, args) => {
-		if (binary === "mmcli" && args.join(" ") === "-K -L") return MODEM_LIST;
 		if (binary === "mmcli" && args[0] === "-K") {
 			const id = args[2];
 			if (id === "0" || id === "1") {
@@ -135,7 +130,6 @@ for (const [scenario, devices] of [
 			"00000000-0000-4000-8000-000000000004",
 		] as const;
 		spyOn(runner, "run").mockImplementation(async (binary, args) => {
-			if (binary === "mmcli" && args.join(" ") === "-K -L") return MODEM_LIST;
 			const id = args[2];
 			if (
 				binary === "mmcli" &&
@@ -159,19 +153,6 @@ modem.generic.ports.value[1] : wwan${id} (net)`;
 					return Object.keys(saved)
 						.map((uuid) => `${uuid}:gsm:`)
 						.join("\n");
-				if (
-					args[0] === "con" &&
-					args[1] === "modify" &&
-					args.length === 5 &&
-					args[3] === "connection.autoconnect"
-				) {
-					const target = args[2] === undefined ? undefined : saved[args[2]];
-					const value = args[4];
-					if (target && value !== undefined) {
-						target["connection.autoconnect"] = value;
-						return "";
-					}
-				}
 				if (args[0] === "connection" && args[1] === "add") {
 					const fields: Record<string, string> = {};
 					for (let i = 2; i < args.length; i += 2) {
@@ -246,13 +227,6 @@ modem.generic.ports.value[1] : wwan${id} (net)`;
 		}
 		expect(Object.keys(saved)).toEqual(
 			devices[0] === devices[1] ? [UUID_A, UUID_B] : [...uuids],
-		);
-		// Twins sharing an identifier hold both SIMs: nothing is parked. Distinct
-		// modems park the pair whose SIM left and re-arm it when the SIM is back.
-		expect(
-			Object.values(saved).map((p) => p["connection.autoconnect"]),
-		).toEqual(
-			devices[0] === devices[1] ? ["yes", "yes"] : ["no", "no", "yes", "yes"],
 		);
 		expect(unexpected).toEqual([]);
 	});

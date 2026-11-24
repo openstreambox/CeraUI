@@ -40,12 +40,20 @@ test("collects the ICCIDs of every modem with the device id", async () => {
 		1: { device: "twin", sim: 11, iccid: "8901" },
 		2: { device: "twin", sim: 12, iccid: "8902" },
 		3: { device: "other", sim: 13, iccid: "8903" },
-		4: { device: "twin" },
+		4: { device: "other" },
 	});
 	expect([...((await readPresentSimIds("twin")) ?? [])].sort()).toEqual([
 		"8901",
 		"8902",
 	]);
+});
+
+test("a modem with the device id and no SIM object yet makes the answer unknown", async () => {
+	serve({
+		1: { device: "twin", sim: 11, iccid: "8901" },
+		2: { device: "twin" },
+	});
+	expect(await readPresentSimIds("twin")).toBeUndefined();
 });
 
 test("a locked SIM in a modem with the device id makes the answer unknown", async () => {

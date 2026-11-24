@@ -26,6 +26,7 @@ import {
 	nmcliParseSep,
 } from "../network/network-manager.ts";
 import type { BearerIpFamilyFields } from "./bearer-ip-family.ts";
+import { isProfileParked } from "./gsm-sim-park-store.ts";
 
 /**
  * One gsm profile as NetworkManager describes it RIGHT NOW.
@@ -92,9 +93,11 @@ export type GsmDuplicateVerdict = "keep" | "retain" | "prune";
  * - NetworkManager is not holding it right now (an EMPTY `GENERAL.STATE`;
  *   `activated`/`activating` both mean hands off — measured on the board);
  * - `connection.autoconnect` is `no`, which on a same-(device, SIM) clone is
- *   CeraUI's OWN footprint: `demoteDuplicateGsmProfiles`/this reconciler and
- *   the absent-SIM parking in `gsm-sim-swap.ts` are the only writers of it
- *   here, so an armed clone has never been through our hands and is retained;
+ *   CeraUI's OWN footprint: `demoteDuplicateGsmProfiles`/this reconciler are the
+ *   only writers of it here that mean "superseded", so an armed clone has never
+ *   been through our hands and is retained. The SIM swap parking
+ *   (`gsm-sim-swap.ts`) also writes it, but means "its SIM is out": a profile
+ *   with a park record is retained, whatever else holds;
  * - `connection.timestamp` is `0`, i.e. NetworkManager has NEVER successfully
  *   activated it. A profile an operator has actually used carries a real stamp.
  *
@@ -107,8 +110,10 @@ export type GsmDuplicateVerdict = "keep" | "retain" | "prune";
 export function classifyGsmDuplicate(
 	audit: GsmProfileAudit,
 	keepUuid: string,
+	parked = false,
 ): GsmDuplicateVerdict {
 	if (audit.uuid === keepUuid) return "keep";
+	if (parked) return "retain";
 	if (audit.state.trim() !== "") return "retain";
 	if (audit.autoconnect.trim() !== "no") return "retain";
 	if (Number.parseInt(audit.timestamp, 10) !== 0) return "retain";
@@ -130,12 +135,19 @@ export type GsmReconcileDeps = {
 		fields: Record<string, string>,
 	) => Promise<boolean>;
 	readonly remove: (uuid: ConnectionUUID) => Promise<boolean>;
+	/** Has the SIM swap parking disarmed it? Absent means never parked. */
+	readonly isParked?: (
+		uuid: string,
+		deviceId: string,
+		simId: string,
+	) => Promise<boolean>;
 };
 
 export const defaultGsmReconcileDeps: GsmReconcileDeps = {
 	audit: auditGsmProfiles,
 	setFields: nmConnSetFields,
 	remove: nmConnDelete,
+	isParked: isProfileParked,
 };
 
 /**
@@ -191,8 +203,18 @@ export async function reconcileDuplicateGsmProfiles(
 
 	// Snapshot the verdicts BEFORE anything is written, so the demotion below
 	// cannot become the evidence that authorizes a deletion.
+	const parked = new Set<string>();
+	for (const duplicate of duplicates)
+		if (await deps.isParked?.(duplicate.uuid, deviceId, simId))
+			parked.add(duplicate.uuid);
 	const verdicts = new Map(
-		duplicates.map((a) => [a.uuid, classifyGsmDuplicate(a, keepUuid)] as const),
+		duplicates.map(
+			(a) =>
+				[
+					a.uuid,
+					classifyGsmDuplicate(a, keepUuid, parked.has(a.uuid)),
+				] as const,
+		),
 	);
 
 	let enforced = 0;

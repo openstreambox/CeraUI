@@ -58,6 +58,7 @@ import {
 } from "./gsm-duplicate-reconcile.ts";
 import {
 	defaultGsmSimSwapDeps,
+	SIM_SWAP_JOURNAL_FORMAT,
 	settleSimSwapProfiles,
 } from "./gsm-sim-swap.ts";
 import {
@@ -399,28 +400,15 @@ async function resolveModemProfile(
 		);
 		if (result.pruned > 0) resetGsmConnections();
 	}
-	if (config?.conn && isCurrent()) {
-		const swap = await settleSimSwapProfiles(
-			modemInfo["modem.generic.device-identifier"],
-			simInfo["sim.properties.iccid"],
-			config.conn,
-			{
-				...defaultGsmSimSwapDeps(readPresentSimIds),
-				setFields: (uuid, fields) =>
-					isCurrent() ? nmConnSetFields(uuid, fields) : Promise.resolve(false),
-			},
-			isCurrent,
-		);
-		if (swap.parked > 0 || swap.rearmed) resetGsmConnections();
-	}
 	return config;
 }
 
 /**
  * ICCIDs of the SIMs in every present modem with this device id. Undefined
- * when the list or any such modem's SIM cannot be read: the caller must not
- * conclude a SIM is absent from a read that failed. A modem that reports no
- * SIM object holds none.
+ * when the list or any such modem's SIM cannot be read, including a modem with
+ * no SIM object yet (its SIM may still be probing, as `readReadyModemSim`
+ * reads it): the caller must not conclude a SIM is absent from a read that
+ * failed.
  */
 export async function readPresentSimIds(
 	deviceId: string,
@@ -435,7 +423,7 @@ export async function readPresentSimIds(
 		const simPath = modemInfo["modem.generic.sim"]?.match(
 			/^\/org\/freedesktop\/ModemManager1\/SIM\/(\d+)$/,
 		)?.[1];
-		if (simPath === undefined) continue;
+		if (simPath === undefined) return undefined;
 		const iccid = (await mmGetSim(Number(simPath)))?.[
 			"sim.properties.iccid"
 		]?.trim();
@@ -530,6 +518,60 @@ export async function resolveLateModemConfig(
 		home_network: sim.simInfo["sim.properties.operator-code"],
 	});
 	return "resolved";
+}
+
+/**
+ * Re-arm the parked profiles of the SIM this modem holds and park the ones
+ * bound to it for SIMs no modem with its device id holds (gsm-sim-swap.ts).
+ *
+ * Runs outside the update lock, like late SIM resolution, under the same
+ * journaled `modem-config` path: the identity lease spans the fresh read, the
+ * writes and retirement, and the registration, physical key, device id and
+ * SIM are fenced across every await. "refused" leaves the work for a later
+ * poll; "done" includes a step that found nothing to do or skipped on a fault.
+ */
+export async function settleModemSimSwap(
+	id: ModemId,
+	stableKey: string,
+	isCurrent: () => boolean,
+): Promise<"done" | "refused" | "pending"> {
+	if (!isCurrent() || modemStableKeyForId(id) !== stableKey) return "pending";
+	const modem = getModem(id);
+	const iccid = modem?.iccid?.trim();
+	if (!modem?.config?.conn || !iccid) return "pending";
+	const guarded = await withJournaledModemMutation(
+		stableKey,
+		"modem-config",
+		{ format: SIM_SWAP_JOURNAL_FORMAT, step: "settle" },
+		async (mutation) => {
+			const fresh = await readReadyModemSim(id);
+			const current = (): boolean =>
+				isCurrent() && modemStableKeyForId(id) === stableKey;
+			if (
+				!current() ||
+				fresh === undefined ||
+				fresh === "unreadable" ||
+				fresh.simInfo["sim.properties.iccid"]?.trim() !== iccid
+			)
+				return { confirmed: true, value: "pending" as const };
+			await mutation.markExecuting();
+			const deviceId = fresh.modemInfo["modem.generic.device-identifier"];
+			const result = await settleSimSwapProfiles(
+				deviceId,
+				iccid,
+				{
+					...defaultGsmSimSwapDeps(readPresentSimIds),
+					setFields: (uuid, fields) =>
+						current() ? nmConnSetFields(uuid, fields) : Promise.resolve(false),
+				},
+				current,
+			);
+			if (result.parked > 0 || result.rearmed > 0) resetGsmConnections();
+			return { confirmed: true, value: "done" as const };
+		},
+	);
+	if (!guarded.ok) return "refused";
+	return guarded.value;
 }
 
 /**

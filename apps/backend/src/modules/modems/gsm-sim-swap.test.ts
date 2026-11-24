@@ -1,9 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import type { GsmProfileAudit } from "./gsm-duplicate-reconcile.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { listPrivateJsonKeys } from "../../helpers/private-json-state.ts";
+import { parseCarrierIntentSlot } from "./automatic-carrier-intent.ts";
+import { parsePreparationRecord } from "./cellular-preparation-state.ts";
+import {
+	classifyGsmDuplicate,
+	type GsmProfileAudit,
+	reconcileDuplicateGsmProfiles,
+} from "./gsm-duplicate-reconcile.ts";
+import { isProfileParked, parkedProfileKey } from "./gsm-sim-park-store.ts";
 import {
 	defaultGsmSimSwapDeps,
 	type GsmSimSwapDeps,
-	parkedProfileKey,
 	settleSimSwapProfiles,
 } from "./gsm-sim-swap.ts";
 
@@ -108,25 +117,26 @@ interface Harness {
 	calls: string[];
 }
 
+function audits(profiles: readonly Profile[]): GsmProfileAudit[] {
+	return profiles.map((p) => ({
+		uuid: p.uuid,
+		deviceId: p.deviceId,
+		simId: p.simId,
+		state: p.activeOn ? "activated" : "",
+		autoconnect: p.autoconnect,
+		timestamp: String(p.timestamp),
+	}));
+}
+
 function harness(
 	profiles: Profile[],
 	sims: Record<string, ReadonlySet<string> | undefined> = present,
-	opts: { failSet?: boolean } = {},
+	opts: { failSet?: boolean; failStore?: "read" | "write" } = {},
+	records: Map<string, unknown> = new Map(),
 ): Harness {
-	const records = new Map<string, unknown>();
 	const calls: string[] = [];
 	const deps: GsmSimSwapDeps = {
-		audit: async () =>
-			profiles.map(
-				(p): GsmProfileAudit => ({
-					uuid: p.uuid,
-					deviceId: p.deviceId,
-					simId: p.simId,
-					state: p.activeOn ? "activated" : "",
-					autoconnect: p.autoconnect,
-					timestamp: String(p.timestamp),
-				}),
-			),
+		audit: async () => audits(profiles),
 		presentSims: async (deviceId) => sims[deviceId],
 		setFields: async (id, fields) => {
 			calls.push(`set ${id} ${JSON.stringify(fields)}`);
@@ -137,9 +147,14 @@ function harness(
 			profile.autoconnect = value;
 			return true;
 		},
-		readParked: async (key) =>
-			records.get(key) as Awaited<ReturnType<GsmSimSwapDeps["readParked"]>>,
+		readParked: async (key) => {
+			if (opts.failStore === "read") throw new Error("store unreadable");
+			return records.get(key) as Awaited<
+				ReturnType<GsmSimSwapDeps["readParked"]>
+			>;
+		},
 		writeParked: async (key, record) => {
+			if (opts.failStore === "write") throw new Error("store unwritable");
 			calls.push(`${record ? "record" : "drop"} ${key}`);
 			if (record) records.set(key, record);
 			else records.delete(key);
@@ -153,6 +168,8 @@ const byName = (profiles: Profile[], name: string): Profile => {
 	if (!found) throw new Error(name);
 	return found;
 };
+
+const parkedRecord = (key: string) => ({ version: 1, key, original: "yes" });
 
 describe("NetworkManager fixture", () => {
 	test("before the SIM is known, the swapped-out SIM's profile wins", () => {
@@ -174,8 +191,8 @@ describe("settleSimSwapProfiles", () => {
 	test("parks the other SIM's profile so the unknown-SIM window cannot pick it", async () => {
 		const profiles = swappedBox();
 		const { deps } = harness(profiles);
-		const result = await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps);
-		expect(result).toEqual({ parked: 1, rearmed: false });
+		const result = await settleSimSwapProfiles(RM520, LIGHT, deps);
+		expect(result).toEqual({ parked: 1, rearmed: 0 });
 		expect(byName(profiles, "gsm").autoconnect).toBe("no");
 		// The profile without a SIM id is left as it was.
 		expect(byName(profiles, "generic").autoconnect).toBe("yes");
@@ -187,7 +204,7 @@ describe("settleSimSwapProfiles", () => {
 	test("parks the lingering duplicates for a SIM that left the modem", async () => {
 		const profiles = swappedBox();
 		const { deps } = harness(profiles);
-		const result = await settleSimSwapProfiles(DELL, DARK, uuid(2), deps);
+		const result = await settleSimSwapProfiles(DELL, DARK, deps);
 		expect(result.parked).toBe(2);
 		expect(byName(profiles, "gsm-1").autoconnect).toBe("no");
 		expect(byName(profiles, "gsm-3").autoconnect).toBe("no");
@@ -195,69 +212,89 @@ describe("settleSimSwapProfiles", () => {
 		expect(byName(profiles, "gsm-8").autoconnect).toBe("yes");
 	});
 
-	test("records the original value before disarming, and re-arms when the SIM is back", async () => {
+	test("records the original value before disarming, and re-arms every parked profile when the SIM is back", async () => {
 		const profiles = swappedBox();
 		const { deps, records, calls } = harness(profiles);
-		await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps);
-		const key = parkedProfileKey(uuid(1), RM520, DARK);
+		await settleSimSwapProfiles(DELL, DARK, deps);
+		const keys = [3, 4].map((n) => parkedProfileKey(uuid(n), DELL, WARP));
 		expect(calls).toEqual([
-			`record ${key}`,
-			`set ${uuid(1)} {"connection.autoconnect":"no"}`,
+			`record ${keys[0]}`,
+			`set ${uuid(3)} {"connection.autoconnect":"no"}`,
+			`record ${keys[1]}`,
+			`set ${uuid(4)} {"connection.autoconnect":"no"}`,
 		]);
-		expect(records.get(key)).toEqual({
-			version: 1,
-			kind: "parked",
-			key,
-			original: "yes",
-		});
+		expect(records.get(keys[0] ?? "")).toEqual(parkedRecord(keys[0] ?? ""));
 
-		// Dark Star goes back into the RM520; Light Speed leaves.
-		const back = harness(profiles, { ...present, [RM520]: new Set([DARK]) });
-		back.records.set(key, records.get(key));
-		const result = await settleSimSwapProfiles(RM520, DARK, uuid(1), back.deps);
-		expect(result.rearmed).toBe(true);
-		expect(byName(profiles, "gsm").autoconnect).toBe("yes");
-		expect(back.records.has(key)).toBe(false);
-		expect(
-			nmAutoconnectChoice(profiles, { deviceId: RM520, simId: DARK }),
-		).toBe("gsm");
-		// gsm-7 is disarmed by preparation, not by parking: nothing to touch.
-		expect(byName(profiles, "gsm-7").autoconnect).toBe("no");
+		// Warp goes back into the Dell; Dark Star leaves.
+		const back = harness(
+			profiles,
+			{ ...present, [DELL]: new Set([WARP]), [FM350]: new Set() },
+			{},
+			records,
+		);
+		const result = await settleSimSwapProfiles(DELL, WARP, back.deps);
+		// Both duplicates, not only the one selected for the modem.
+		expect(result.rearmed).toBe(2);
+		expect(byName(profiles, "gsm-1").autoconnect).toBe("yes");
+		expect(byName(profiles, "gsm-3").autoconnect).toBe("yes");
+		expect(records.size).toBe(1);
+		expect(records.has(parkedProfileKey(uuid(2), DELL, DARK))).toBe(true);
 	});
 
 	test("a disarmed profile without a record stays disarmed", async () => {
 		const profiles = swappedBox();
 		const { deps, calls } = harness(profiles);
-		const result = await settleSimSwapProfiles(RM520, LIGHT, uuid(6), {
+		await settleSimSwapProfiles(RM520, LIGHT, {
 			...deps,
 			audit: async () => (await deps.audit()).filter((a) => a.uuid === uuid(6)),
 		});
-		expect(result).toEqual({ parked: 0, rearmed: false });
 		expect(calls).toEqual([]);
 		expect(byName(profiles, "gsm-7").autoconnect).toBe("no");
 	});
 
-	test("a record next to an armed profile is dropped without a write", async () => {
+	test("a record next to an armed profile is spent and dropped without a write", async () => {
 		const profiles = swappedBox();
-		const { deps, records, calls } = harness(profiles, {
-			...present,
-			[RM520]: new Set([DARK]),
-		});
 		const key = parkedProfileKey(uuid(1), RM520, DARK);
-		records.set(key, { version: 1, kind: "parked", key, original: "yes" });
-		const result = await settleSimSwapProfiles(RM520, DARK, uuid(1), deps);
-		expect(result.rearmed).toBe(false);
+		const { deps, records, calls } = harness(
+			profiles,
+			{ ...present, [RM520]: new Set([DARK]) },
+			{},
+			new Map([[key, parkedRecord(key)]]),
+		);
+		const result = await settleSimSwapProfiles(RM520, DARK, deps);
+		expect(result.rearmed).toBe(0);
 		expect(records.has(key)).toBe(false);
-		// No profile write: gsm-7 for the absent SIM is already disarmed.
 		expect(calls.filter((c) => c.startsWith("set"))).toEqual([]);
 	});
 
 	test("a failed disarm keeps the record", async () => {
 		const profiles = swappedBox();
 		const { deps, records } = harness(profiles, present, { failSet: true });
-		const result = await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps);
-		expect(result.parked).toBe(0);
+		expect((await settleSimSwapProfiles(RM520, LIGHT, deps)).parked).toBe(0);
 		expect(records.has(parkedProfileKey(uuid(1), RM520, DARK))).toBe(true);
+	});
+
+	test("an unwritable store skips parking without a profile write", async () => {
+		const profiles = swappedBox();
+		const { deps, calls } = harness(profiles, present, { failStore: "write" });
+		expect(await settleSimSwapProfiles(DELL, DARK, deps)).toEqual({
+			parked: 0,
+			rearmed: 0,
+		});
+		expect(calls).toEqual([]);
+		expect(byName(profiles, "gsm-1").autoconnect).toBe("yes");
+	});
+
+	test("an unreadable store skips re-arm and leaves the profile disarmed", async () => {
+		const profiles = swappedBox();
+		byName(profiles, "gsm").autoconnect = "no";
+		const { deps, calls } = harness(
+			profiles,
+			{ ...present, [RM520]: new Set([DARK]) },
+			{ failStore: "read" },
+		);
+		expect((await settleSimSwapProfiles(RM520, DARK, deps)).rearmed).toBe(0);
+		expect(calls.filter((c) => c.startsWith("set"))).toEqual([]);
 	});
 
 	test("two identical modems holding both SIMs park nothing", async () => {
@@ -266,8 +303,7 @@ describe("settleSimSwapProfiles", () => {
 			...present,
 			[RM520]: new Set([LIGHT, DARK]),
 		});
-		const result = await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps);
-		expect(result.parked).toBe(0);
+		expect((await settleSimSwapProfiles(RM520, LIGHT, deps)).parked).toBe(0);
 		expect(calls).toEqual([]);
 	});
 
@@ -277,51 +313,32 @@ describe("settleSimSwapProfiles", () => {
 			...present,
 			[RM520]: undefined,
 		});
-		expect(
-			(await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps)).parked,
-		).toBe(0);
+		expect((await settleSimSwapProfiles(RM520, LIGHT, deps)).parked).toBe(0);
 		expect(calls).toEqual([]);
 	});
 
 	test("a presence read that misses the modem's own SIM parks nothing", async () => {
 		const profiles = swappedBox();
 		const { deps } = harness(profiles, { ...present, [RM520]: new Set() });
-		expect(
-			(await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps)).parked,
-		).toBe(0);
+		expect((await settleSimSwapProfiles(RM520, LIGHT, deps)).parked).toBe(0);
 	});
 
 	test("a profile up on this modem for an absent SIM is parked too", async () => {
 		const profiles = swappedBox();
 		byName(profiles, "gsm").activeOn = "cdc-wdm1";
 		const { deps } = harness(profiles);
-		expect(
-			(await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps)).parked,
-		).toBe(1);
+		expect((await settleSimSwapProfiles(RM520, LIGHT, deps)).parked).toBe(1);
 		// Still up (autoconnect does not take a connection down); not armed for
 		// the next boot's window.
 		expect(byName(profiles, "gsm").activeOn).toBe("cdc-wdm1");
 		expect(nmAutoconnectChoice(profiles, { deviceId: RM520 })).toBe("generic");
 	});
 
-	test("a profile up on a twin modem that holds its SIM is left alone", async () => {
-		const profiles = swappedBox();
-		byName(profiles, "gsm").activeOn = "cdc-wdm2";
-		const { deps } = harness(profiles, {
-			...present,
-			[RM520]: new Set([LIGHT, DARK]),
-		});
-		expect(
-			(await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps)).parked,
-		).toBe(0);
-		expect(byName(profiles, "gsm").autoconnect).toBe("yes");
-	});
-
 	test("no candidates means no ModemManager reads", async () => {
 		const profiles = swappedBox().filter((p) => p.deviceId === FM350);
 		let reads = 0;
 		const { deps } = harness(profiles);
-		await settleSimSwapProfiles(FM350, WARP, uuid(5), {
+		await settleSimSwapProfiles(FM350, WARP, {
 			...deps,
 			presentSims: async (id) => {
 				reads += 1;
@@ -334,28 +351,125 @@ describe("settleSimSwapProfiles", () => {
 	test("a stale caller writes nothing", async () => {
 		const profiles = swappedBox();
 		const { deps, calls } = harness(profiles);
-		await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps, () => false);
+		await settleSimSwapProfiles(RM520, LIGHT, deps, () => false);
 		expect(calls).toEqual([]);
 	});
 });
 
-test("the parked record survives in the preparation store and is removed on re-arm", async () => {
-	const profiles = swappedBox();
-	const fake = harness(profiles).deps;
-	const real = defaultGsmSimSwapDeps(async (id) => present[id]);
-	const deps = { ...real, audit: fake.audit, setFields: fake.setFields };
-	await settleSimSwapProfiles(RM520, LIGHT, uuid(6), deps);
-	const key = parkedProfileKey(uuid(1), RM520, DARK);
-	expect(await real.readParked(key)).toEqual({
-		version: 1,
-		kind: "parked",
-		key,
-		original: "yes",
+describe("parking and the duplicate cleanup", () => {
+	test("a parked duplicate is never pruned, even disarmed, idle and never used", () => {
+		const duplicate: GsmProfileAudit = {
+			uuid: uuid(4),
+			deviceId: DELL,
+			simId: WARP,
+			state: "",
+			autoconnect: "no",
+			timestamp: "0",
+		};
+		expect(classifyGsmDuplicate(duplicate, uuid(3))).toBe("prune");
+		expect(classifyGsmDuplicate(duplicate, uuid(3), true)).toBe("retain");
 	});
-	await settleSimSwapProfiles(RM520, DARK, uuid(1), {
-		...deps,
-		presentSims: async () => new Set([DARK]),
+
+	test("the SIM coming back keeps both duplicates through cleanup and re-arm", async () => {
+		const profiles = swappedBox();
+		byName(profiles, "gsm-3").timestamp = 0;
+		const parking = harness(profiles);
+		await settleSimSwapProfiles(DELL, DARK, parking.deps);
+
+		// Warp is back in the Dell: registration reconciles first, then the
+		// settle step re-arms.
+		const removed: string[] = [];
+		await reconcileDuplicateGsmProfiles(
+			DELL,
+			WARP,
+			uuid(3),
+			{ "gsm.apn": "internet" },
+			{
+				audit: async () => audits(profiles),
+				setFields: async () => true,
+				remove: async (id) => {
+					removed.push(id);
+					return true;
+				},
+				isParked: async (id, deviceId, simId) =>
+					parking.records.has(parkedProfileKey(id, deviceId, simId)),
+			},
+		);
+		expect(removed).toEqual([]);
+		const back = harness(
+			profiles,
+			{ ...present, [DELL]: new Set([WARP]), [FM350]: new Set() },
+			{},
+			parking.records,
+		);
+		expect((await settleSimSwapProfiles(DELL, WARP, back.deps)).rearmed).toBe(
+			2,
+		);
+		expect(profiles.map((p) => p.uuid)).toContain(uuid(4));
 	});
-	expect(byName(profiles, "gsm").autoconnect).toBe("yes");
-	expect(await real.readParked(key)).toBeUndefined();
+});
+
+describe("the park store", () => {
+	test("records survive in their own store and are removed on re-arm", async () => {
+		const profiles = swappedBox();
+		const fake = harness(profiles).deps;
+		const real = defaultGsmSimSwapDeps(async (id) => present[id]);
+		const deps = { ...real, audit: fake.audit, setFields: fake.setFields };
+		await settleSimSwapProfiles(RM520, LIGHT, deps);
+		const key = parkedProfileKey(uuid(1), RM520, DARK);
+		expect(await real.readParked(key)).toEqual(parkedRecord(key));
+		expect(await isProfileParked(uuid(1), RM520, DARK)).toBe(true);
+		await settleSimSwapProfiles(RM520, DARK, {
+			...deps,
+			presentSims: async () => new Set([DARK]),
+		});
+		expect(byName(profiles, "gsm").autoconnect).toBe("yes");
+		expect(await real.readParked(key)).toBeUndefined();
+		expect(await isProfileParked(uuid(1), RM520, DARK)).toBe(false);
+	});
+});
+
+describe("rollback to a build without parking", () => {
+	test("every store the boot inventory parses stays readable by the base parsers", async () => {
+		const profiles = swappedBox();
+		const fake = harness(profiles).deps;
+		const real = defaultGsmSimSwapDeps(async (id) => present[id]);
+		await settleSimSwapProfiles(DELL, DARK, {
+			...real,
+			audit: fake.audit,
+			setFields: fake.setFields,
+		});
+		// What an older build is left with: two disarmed profiles in
+		// NetworkManager and records only in the park store.
+		expect(byName(profiles, "gsm-1").autoconnect).toBe("no");
+		expect(await isProfileParked(uuid(3), DELL, WARP)).toBe(true);
+		const parkKey = parkedProfileKey(uuid(3), DELL, WARP);
+		for (const [dir, parse] of [
+			[
+				process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR,
+				parsePreparationRecord,
+			],
+			[
+				process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR,
+				parseCarrierIntentSlot,
+			],
+		] as const) {
+			if (dir === undefined) throw new Error("test store not configured");
+			for (const key of await listPrivateJsonKeys({ dir })) {
+				expect(key).not.toBe(parkKey);
+				const value: unknown = JSON.parse(
+					readFileSync(join(dir, `${key}.json`), "utf8"),
+				);
+				expect(() => parse(value, key)).not.toThrow();
+			}
+		}
+		// The base parser rejects a record of this shape, which is why it lives
+		// in its own store.
+		expect(() =>
+			parsePreparationRecord(
+				{ version: 1, kind: "parked", key: parkKey, original: "yes" },
+				parkKey,
+			),
+		).toThrow();
+	});
 });

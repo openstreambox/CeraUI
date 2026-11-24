@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as runner from "../helpers/run.ts";
@@ -83,6 +83,9 @@ let onModemRead: (() => Promise<void>) | undefined;
 let activeUuid: string;
 let activeSimId: string | undefined;
 let modemIccid: string | undefined;
+let otherProfile: boolean;
+let otherAutoconnect: string;
+let modifies: string[][];
 
 function modem(): Modem {
 	return {
@@ -145,6 +148,9 @@ beforeEach(async () => {
 	activeUuid = "";
 	activeSimId = undefined;
 	modemIccid = undefined;
+	otherProfile = false;
+	otherAutoconnect = "yes";
+	modifies = [];
 	resetLifecycleInterlock();
 	resetRecoveryBarrier();
 	resetGsmConnections();
@@ -172,6 +178,14 @@ beforeEach(async () => {
 			if (args.includes("-i"))
 				return `sim.properties.iccid : ${simReadable ? SIM_ID : "--"}
 sim.properties.operator-name : Test`;
+			if (args.join(" ") === "-K -L")
+				return [
+					`modem-list.length : ${roster.length}`,
+					...roster.map(
+						(id, i) =>
+							`modem-list.value[${i + 1}] : /org/freedesktop/ModemManager1/Modem/${id}`,
+					),
+				].join("\n");
 			await onModemRead?.();
 			return `modem.generic.model : MBIM modem
 modem.generic.state : ${mmState}
@@ -197,6 +211,13 @@ modem.generic.ports.value[1] : wwan0 (net)`;
 				return `CONNECTIONS.AVAILABLE-CONNECTIONS[1]:${UUID} | profile-a`;
 			}
 			if (args.includes("GENERAL.IP-IFACE")) return "";
+			if (args[0] === "con" && args[1] === "modify") {
+				expect(isModemMutationHeld(KEY)).toBe(true);
+				modifies.push(args.slice(2));
+				if (args[2] === OTHER_UUID && args[3] === "connection.autoconnect")
+					otherAutoconnect = args[4] ?? otherAutoconnect;
+				return "";
+			}
 			if (args.includes("GENERAL.STATE")) {
 				await onStateRead?.();
 				return nmState;
@@ -204,7 +225,10 @@ modem.generic.ports.value[1] : wwan0 (net)`;
 			if (args.includes("connection.autoconnect")) return autoconnect;
 			if (args.includes("uuid,type,state")) {
 				if (profileReadFails) throw new Error("Profile lookup failed");
-				return existingProfile ? `${UUID}:gsm:` : "";
+				return [
+					...(existingProfile ? [`${UUID}:gsm:`] : []),
+					...(otherProfile ? [`${OTHER_UUID}:gsm:`] : []),
+				].join("\n");
 			}
 			if (args.includes("add")) {
 				if (profileAddFails) throw new Error("Profile creation failed");
@@ -216,7 +240,9 @@ modem.generic.ports.value[1] : wwan0 (net)`;
 					"gsm.device-id,gsm.sim-id,connection.autoconnect,connection.timestamp",
 				)
 			)
-				return `${DEVICE_ID}\n${SIM_ID}\nyes\n0`;
+				return args.at(-1) === OTHER_UUID
+					? `${DEVICE_ID}\n${OTHER_SIM_ID}\n${otherAutoconnect}\n100`
+					: `${DEVICE_ID}\n${SIM_ID}\nyes\n0`;
 			if (
 				args.some((arg) =>
 					arg.startsWith("gsm.device-id,gsm.sim-id,gsm.sim-operator-id"),
@@ -388,6 +414,74 @@ test("a takeover still needs a dialable profile", async () => {
 	autoconnect = "no";
 	await runModemStatusPoll();
 	expect(activations()).toEqual([]);
+});
+
+test("the takeover holds an armed journal entry while it dials", async () => {
+	modemIccid = SIM_ID;
+	nmState = "100 (connected)";
+	mmState = "connected";
+	activeUuid = OTHER_UUID;
+	activeSimId = OTHER_SIM_ID;
+	let entries: string[] = [];
+	onConnect = async () => {
+		entries = (await readdir(dir)).filter((name) => name.endsWith(".json"));
+	};
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(1);
+	expect(entries).toHaveLength(1);
+	expect((await readdir(dir)).filter((name) => name.endsWith(".json"))).toEqual(
+		[],
+	);
+});
+
+test("a takeover waits while another mutation of the modem runs", async () => {
+	modemIccid = SIM_ID;
+	nmState = "100 (connected)";
+	mmState = "connected";
+	activeUuid = OTHER_UUID;
+	activeSimId = OTHER_SIM_ID;
+	await discoverModems();
+	const lease = holdLease();
+	await runModemStatusPoll();
+	expect(activations()).toEqual([]);
+	lease.release();
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(1);
+});
+
+test("the settle step parks another SIM's profile under the lease, once per registration", async () => {
+	modemIccid = SIM_ID;
+	otherProfile = true;
+	await runModemStatusPoll();
+	expect(modifies).toEqual([[OTHER_UUID, "connection.autoconnect", "no"]]);
+	const audits = (): number =>
+		commands.filter((command) => command.includes("uuid,type,state")).length;
+	const after = audits();
+	await runModemStatusPoll();
+	expect(audits()).toBe(after);
+	expect((await readdir(dir)).filter((name) => name.endsWith(".json"))).toEqual(
+		[],
+	);
+});
+
+test("a held lease defers the settle step to a later poll", async () => {
+	modemIccid = SIM_ID;
+	otherProfile = true;
+	await discoverModems();
+	const lease = holdLease();
+	await runModemStatusPoll();
+	expect(modifies).toEqual([]);
+	lease.release();
+	await runModemStatusPoll();
+	expect(modifies).toEqual([[OTHER_UUID, "connection.autoconnect", "no"]]);
+});
+
+test("registration alone parks nothing", async () => {
+	modemIccid = SIM_ID;
+	otherProfile = true;
+	realRegistration = true;
+	await discoverModems();
+	expect(modifies).toEqual([]);
 });
 
 test("twenty registered and connecting polls never rearm a dispatched intent", async () => {
