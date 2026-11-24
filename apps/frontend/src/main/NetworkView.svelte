@@ -33,6 +33,7 @@ import { activeSimLock, isBlockingSimLock } from './network/cellular-row';
 import EthernetSection from './network/EthernetSection.svelte';
 import HotspotSection from './network/HotspotSection.svelte';
 import { chooseHotspotRadio } from './network/hotspot-radio-target';
+import RemoteNetworkStatus from './network/RemoteNetworkStatus.svelte';
 import SharingSection from './network/SharingSection.svelte';
 import { isWiredSectionEntry, modemClaimedIfnames } from './network/section-assignment';
 import UnclaimedAdaptersBand from './network/UnclaimedAdaptersBand.svelte';
@@ -198,6 +199,9 @@ function openModemConfig(id: string) {
 }
 </script>
 
+{#if getStatus()?.remote_status === true}
+<RemoteNetworkStatus {wifi} {modems} {netif} />
+{:else}
 <!--
 	`space-y-3`, not `space-y-5`. Every child below is a FRAMED card that already
 	carries its own border and 16px of internal padding, so 20px between them
@@ -334,4 +338,6 @@ function openModemConfig(id: string) {
 		deviceId={unlockModemId}
 		modem={unlockModem}
 	/>
+{/if}
+
 {/if}
