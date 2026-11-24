@@ -14,6 +14,9 @@ test("disconnected predictable Wi-Fi names remain discoverable for station joins
 	for (const name of ["wlan0", "wlx020000000001", "wlp2s0"]) {
 		processIfconfigOutput(
 			`${name}: flags=4099<UP,BROADCAST,MULTICAST>  mtu 1500\n        ether 02:00:00:00:00:01  txqueuelen 1000  (Ethernet)\n`,
+			undefined,
+			undefined,
+			(candidate) => candidate === name,
 		);
 		expect(wifiDeviceListGetMacAddress(name)).toBe("02:00:00:00:00:01");
 	}

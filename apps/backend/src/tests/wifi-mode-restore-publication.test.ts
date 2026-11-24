@@ -197,6 +197,16 @@ beforeEach(async () => {
 	setWifiState({});
 	spyOn(streaming, "getIsStreaming").mockReturnValue(false);
 	Object.assign(defaultHotspotDeps, {
+		ownedProfile: async () => AP,
+		findHotspotConn: async () => ({
+			uuid: AP,
+			macAddress: MAC,
+			ssid: row.hotspot.name ?? "Fixture AP",
+			password: row.hotspot.password ?? "fixture-password",
+			channel: "auto" as const,
+		}),
+		confirmSteering: async () => true,
+		stationChannel: async () => ({}),
 		readProfilePins: async () => ["", ""],
 		nmConnSetFields: async () => {
 			effects.push("fields");
