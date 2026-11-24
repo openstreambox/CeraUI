@@ -6,7 +6,7 @@ import {
 	type TwinUsbDevice,
 } from "../modules/modems/modem-registration.ts";
 
-type Row = { device: string; sim?: number; iccid?: string };
+type Row = { device: string; sim?: number; iccid?: string; uid?: string };
 
 const RM520 = "2c7c:0801";
 const usbPath = (id: number | string): string => `/sys/devices/usb1/1-${id}`;
@@ -44,8 +44,8 @@ function serve(rows: Record<number, Row>): void {
 			const row = rows[Number(args[args.indexOf("-m") + 1])];
 			if (!row) throw new Error("gone");
 			return `modem.generic.device-identifier : ${row.device || "--"}
-modem.generic.device : ${usbPath(args[args.indexOf("-m") + 1] ?? "")}
-modem.generic.sim : ${row.sim === undefined ? "--" : `/org/freedesktop/ModemManager1/SIM/${row.sim}`}
+modem.generic.device : ${row.uid ?? usbPath(args[args.indexOf("-m") + 1] ?? "")}
+${row.uid ? `modem.generic.physdev : ${usbPath(args[args.indexOf("-m") + 1] ?? "")}\n` : ""}modem.generic.sim : ${row.sim === undefined ? "--" : `/org/freedesktop/ModemManager1/SIM/${row.sim}`}
 modem.generic.ports.length : 0`;
 		}
 		if (args.includes("-i")) {
@@ -146,4 +146,11 @@ test("a modem with the device id that is not on the USB bus makes the answer unk
 	serve({ 1: { device: "twin", sim: 11, iccid: "8901" } });
 	usb = [];
 	expect(await read("twin")).toBeUndefined();
+});
+
+test("a modem whose udev UID is a label is found by its physdev path", async () => {
+	// ModemManager 1.24 on a board with an ID_MM_PHYSDEV_UID rule.
+	serve({ 1: { device: "twin", sim: 11, iccid: "8901", uid: "internal 4G" } });
+	usb = usbFor({ 1: { device: "twin" } });
+	expect([...((await read("twin")) ?? [])]).toEqual(["8901"]);
 });

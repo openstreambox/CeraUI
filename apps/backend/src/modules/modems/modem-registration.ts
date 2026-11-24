@@ -479,13 +479,13 @@ export async function readPresentSimIds(
 		if (modemInfo === undefined) return undefined;
 		const listedId = modemInfo["modem.generic.device-identifier"]?.trim();
 		if (!listedId) return undefined;
-		const device = (modemInfo as unknown as Record<string, unknown>)[
-			"modem.generic.device"
-		];
-		const path =
-			typeof device === "string" && device.trim()
-				? await deps.resolvePath(device.trim())
-				: undefined;
+		// `physdev` is the sysfs path; `device` is the udev UID, which an
+		// ID_MM_PHYSDEV_UID rule can replace with a label. Older ModemManager
+		// reports only `device`.
+		const device = (
+			modemInfo["modem.generic.physdev"] ?? modemInfo["modem.generic.device"]
+		)?.trim();
+		const path = device ? await deps.resolvePath(device) : undefined;
 		if (path !== undefined) listedPaths.add(path);
 		if (listedId !== deviceId) continue;
 		if (path === undefined) return undefined;
