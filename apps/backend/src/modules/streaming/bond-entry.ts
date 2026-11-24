@@ -45,9 +45,18 @@ export function resolveBondPhysicalIdentity(
 
 export function peekBondKeys(ifname: string): PhysicalBondKeys | undefined {
 	try {
-		return identityResolver === resolveModemPhysicalIdentity
-			? describeModemBondKeys(ifname)
-			: identityResolver(ifname);
+		// A translator carries its parent modem's keys, as in
+		// resolveBondPhysicalIdentity, without registering an identity.
+		const translation = isClatTunName(ifname)
+			? clatTranslationForTun(ifname)
+			: undefined;
+		if (isClatTunName(ifname) && !translation) return undefined;
+		const owner = translation?.parent ?? ifname;
+		const keys =
+			identityResolver === resolveModemPhysicalIdentity
+				? describeModemBondKeys(owner)
+				: identityResolver(owner);
+		return translation && keys.anchor === "ifname" ? undefined : keys;
 	} catch {
 		return undefined;
 	}

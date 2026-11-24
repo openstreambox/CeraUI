@@ -23,6 +23,7 @@ import {
 	refreshModemIdPaths,
 	setModemIdPathReader,
 } from "../modules/modems/modem-wire-producer.ts";
+import { resolvePhysicalDevice } from "../modules/modems/physical-identity.ts";
 import * as clatModule from "../modules/network/clat-translation.ts";
 import {
 	type ClatReadDeps,
@@ -31,9 +32,11 @@ import {
 	resetClatTranslationStateForTest,
 	setClatTranslationsForTest,
 } from "../modules/network/clat-translation.ts";
+import { NmcliMonitorManager } from "../modules/network/monitor/monitor-manager.ts";
 import {
 	getNetworkInterfaceIncarnation,
 	getNetworkInterfaces,
+	handleNetif,
 	isBondCandidate,
 	parseIpAddrShow,
 	processIfconfigOutput,
@@ -52,11 +55,18 @@ import {
 	resetBindMapWriter,
 } from "../modules/streaming/bind-map-writer.ts";
 import {
+	peekBondKeys,
+	resolveBondPhysicalIdentity,
+	setBondIdentityResolverForTest,
+} from "../modules/streaming/bond-entry.ts";
+import {
 	genSrtlaBondEntries,
 	resolveSrtla,
 	revalidateClatBondEntries,
 } from "../modules/streaming/srtla.ts";
 import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
+import { bootDevice, installDevice } from "./helpers/bond-guard-install.ts";
+import { makeRpcContext } from "./helpers/bond-toggle-fixture.ts";
 
 const ID_PATH = "platform-xhci-hcd.0.auto-usb-0:1.1:1.4";
 const BOOT_ID = "6ab061a3-6541-46cf-a8b5-39e58f4efd47";
@@ -343,4 +353,86 @@ test("native IPv4 on the parent wins over its translator, as on the modem's UI r
 	expect(genSrtlaBondEntries().map((e) => [e.iface, e.ip])).toEqual([
 		["wwan0", "198.51.100.10"],
 	]);
+});
+
+test("the last-uplink veto reads a translator's keys from its modem", async () => {
+	await scanBox();
+	const parent = peekBondKeys("wwan0");
+	expect(parent?.anchor).toBe("id-path");
+	expect(peekBondKeys("clat2")).toEqual(parent);
+	expect(peekBondKeys("clat2")?.linkId).toBe(
+		resolveBondPhysicalIdentity("clat2")?.linkId,
+	);
+});
+
+test("with the lease expired a translator has no bond keys", async () => {
+	await scanBox({ now: OBSERVED_AT + 31 });
+	expect(peekBondKeys("clat2")).toBeUndefined();
+});
+
+test("a translator whose modem has no stable identity has no bond keys", async () => {
+	await scanBox();
+	setBondIdentityResolverForTest((ifname) => resolvePhysicalDevice({ ifname }));
+	try {
+		expect(peekBondKeys("wwan0")?.anchor).toBe("ifname");
+		expect(peekBondKeys("clat2")).toBeUndefined();
+		expect(resolveBondPhysicalIdentity("clat2")).toBeUndefined();
+	} finally {
+		setBondIdentityResolverForTest(null);
+	}
+});
+
+const simulationSelectors = [
+	"NODE_ENV",
+	"MOCK_MODE",
+	"MOCK_SCENARIO",
+	"HWSIM_REPO",
+] as const;
+
+test("a real device refuses to disable a translated modem that is the last uplink", async () => {
+	await scanBox();
+	const saved = simulationSelectors.map(
+		(key) => [key, process.env[key]] as const,
+	);
+	for (const key of simulationSelectors) delete process.env[key];
+	process.env.NODE_ENV = "production";
+	// A regression that lets the disable through must not write the shared config.
+	const configPath = getConfigFilePath();
+	dir = mkdtempSync(join(tmpdir(), "clat-last-uplink-"));
+	setConfigFilePath(join(dir, "config.json"));
+	const sent: string[] = [];
+	try {
+		installDevice(
+			bootDevice({
+				getDeviceTypeOverride: () => "real",
+				isDevelopment: () => false,
+				readDeviceTreeCompatible: async () => "",
+				readDeviceTreeModel: async () => "",
+				readCeraliveRelease: async () => "",
+				readDmiProductName: async () => "",
+				readDmiBoardName: async () => "",
+			}),
+			new NmcliMonitorManager(() => undefined),
+		);
+		const interfaces = getNetworkInterfaces();
+		const wwan = interfaces.wwan0;
+		const tun = interfaces.clat2;
+		expect(wwan && isBondCandidate("wwan0", wwan)).toBe(true);
+		expect(tun && isBondCandidate("clat2", tun)).toBe(true);
+		const outcome = handleNetif(makeRpcContext(sent).ws, {
+			name: "wwan0",
+			ip: wwan?.ip,
+			enabled: false,
+		} as Parameters<typeof handleNetif>[1]);
+		expect(outcome).toEqual({ ok: false, reason: "disable_all_refused" });
+		expect(wwan && isBondCandidate("wwan0", wwan)).toBe(true);
+		expect(tun && isBondCandidate("clat2", tun)).toBe(true);
+	} finally {
+		installDevice(undefined, {});
+		setConfigFilePath(configPath);
+		for (const [key, value] of saved) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	}
 });
