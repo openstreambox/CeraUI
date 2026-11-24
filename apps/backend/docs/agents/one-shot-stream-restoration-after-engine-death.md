@@ -48,10 +48,13 @@ config snapshot plus the current `boot_id`, and nothing else that matters.
   engine re-issues `cs-1` for a DIFFERENT session — comparing them would be worse
   than not comparing them.
 
-**ADOPTION WINS, UNCONDITIONALLY AND FIRST.** The runtime-state check runs ahead
-of every marker gate and short-circuits: if the engine reports ANY streaming
-session it is adopted via the existing `reconcile()` path and restoration does
-not happen. This is what makes a backend-only restart safe — a marker survives a
+**A RUNNING ENGINE WINS, UNCONDITIONALLY AND FIRST.** The runtime-state check
+runs ahead of every marker gate and short-circuits: restoration never launches
+beside an engine streaming session. Reconciliation retains (`adopt`) only a
+session this process launched and still owns; a predecessor's session after a
+backend restart stays unconfirmed (`unknown`), so the run waits, gives up after
+its unknown deadline with `runtime_state_unknown`, and leaves recovery to an
+operator Stop. This is what makes a backend-only restart safe — a marker survives a
 backend restart exactly as it survives an engine death, and only the engine can
 say which occurred. Asking about the marker first is how a device ends up with
 two sessions.
@@ -103,7 +106,11 @@ the marker, so the answer to "what happens on the next backend restart" is alway
 an honest `idle` with a published reason. Typed events:
 `stream_recovered` / `stream_recovery_failed` (keyed operator copy in all 10
 locales; the machine-readable `reason` rides `params` and is never interpolated
-into operator text).
+into operator text). Only the engine-loss trigger knows the streaming engine
+restarted and uses `notifications.streamRecovered` / `streamRecoveryFailed`; boot
+and the reconnect heal use the neutral `streamRecoveredAfterRestart` /
+`streamRecoveryFailedAfterRestart` ("after a service restart"). The remote relay
+summary for `stream_recovery_failed` is likewise neutral.
 
 **DECLARED RESTORATION BOUND: 30 s** (`RESTORATION_BOUND_MS`) from the reconnect
 event, RECORDED per attempt (`elapsedMs` + `withinBound`) rather than enforced as

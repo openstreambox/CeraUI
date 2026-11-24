@@ -53,7 +53,8 @@ carrying alone, as far as that process knew at its last write. Without it, a
 restart inside the hold or while carrying (a crash, or the image restarting
 the service early in boot) stayed `reconciling` and refused Start until a Stop.
 Any other marker present before carrying wrote it still counts as unknown, so a
-restart beside a running stream adopts it or stays protected.
+restart beside a running stream stays unconfirmed and protected: a restarted
+backend never owns its predecessor's sender (see below).
 
 The line alone is not idle. A stream can begin after it was written (another
 control client, while the file could be neither rewritten nor replaced), and a
@@ -179,3 +180,36 @@ permite acciones por inactividad mientras haya evidencia reciente de tráfico.
 Una acción manual rechazada no queda en cola: se muestra un solo aviso y debes
 intentarlo de nuevo cuando el tráfico esté inactivo y no haya una actualización
 en curso. El rechazo no afirma que una transmisión haya terminado.
+
+## Backend restart and sender ownership
+
+An engine session can remain active after its sender has died. After a backend
+restart, that engine status alone does not establish a live stream: the session
+stays unconfirmed and shutdown protection remains held. Use Stop to confirm engine
+cleanup before starting again. An unowned sender is never stopped by name; while
+one remains, or its absence cannot be checked, a replacement Start is refused.
+The sender used for SRT forwarding belongs to the backend and does not count.
+While the session is unconfirmed, actions that would drop a network link (USB
+modem mode, FCC unlock, an exclusive hotspot or a Wi-Fi mode change) are refused
+as during a live stream, but the stream is not shown as live. An earlier stream
+is not started again; its restoration reports that it could not be restored after
+a service restart. When the engine ends a session itself, the backend first stops
+its own sender for that session, then reports idle.
+This does not preserve media delivery across a backend service restart.
+
+### Reinicio del backend y propiedad del emisor
+
+La sesión del motor puede seguir activa aunque su emisor haya terminado. Después
+de reiniciar el backend, ese estado por sí solo no confirma una transmisión en
+vivo: la sesión queda sin confirmar y se mantiene la protección contra el apagado.
+Usa Detener para confirmar la limpieza del motor antes de iniciar otra vez. Nunca
+se detiene un emisor ajeno por su nombre; mientras siga presente, o no se pueda
+comprobar su ausencia, se rechaza un nuevo inicio. El emisor que usa el reenvío
+SRT pertenece al backend y no cuenta. Mientras la sesión no esté confirmada, se
+rechazan las acciones que cortarían un enlace de red (modo USB del módem, desbloqueo
+FCC, un punto de acceso exclusivo o un cambio de modo Wi-Fi) como durante una
+transmisión en vivo, pero la transmisión no se muestra en vivo. La transmisión
+anterior no se inicia otra vez; su restauración indica que no se pudo restaurar
+tras reiniciarse un servicio. Cuando el motor termina una sesión por su cuenta, el
+backend primero detiene su propio emisor de esa sesión y luego informa inactividad.
+Esto no mantiene el envío de contenido durante el reinicio del servicio del backend.

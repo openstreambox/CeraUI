@@ -405,13 +405,13 @@ describe("the fence covers every start origin, not just the tested ones", () => 
 	});
 
 	test("all three restoration trigger sites route through runStreamRestoration", async () => {
-		for (const site of [
-			"main.ts",
-			"modules/streaming/engine-reconnect.ts",
-			"modules/streaming/cerastream-backend.ts",
-		]) {
+		for (const site of ["main.ts", "modules/streaming/engine-reconnect.ts"]) {
 			expect(await read(site)).toContain("runStreamRestoration()");
 		}
+		// Only the engine-loss site knows the engine restarted, and says so.
+		expect(await read("modules/streaming/cerastream-backend.ts")).toContain(
+			'runStreamRestoration({}, "engine_restart")',
+		);
 		// …whose launch reaches the choke point, closing the chain.
 		expect(await read("modules/streaming/stream-restoration.ts")).toContain(
 			"streamloop/start-stream.ts",
