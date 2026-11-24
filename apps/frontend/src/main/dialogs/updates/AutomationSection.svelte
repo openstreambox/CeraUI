@@ -24,7 +24,7 @@
 -->
 <script lang="ts">
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
-import type { UpdateSettings } from '@ceraui/rpc/schemas';
+import { type UpdateSettings, updateChannelUrlSchema } from '@ceraui/rpc/schemas';
 import { RadioGroup } from 'bits-ui';
 import { untrack } from 'svelte';
 
@@ -53,6 +53,12 @@ interface Props {
 
 let { settings, system, saving, onSave }: Props = $props();
 
+const appliedUrl = $derived(settings.channelUrl ?? 'https://images.ceralive.tv');
+let channelUrl = $derived.by(() => {
+	void appliedUrl;
+	return untrack(() => appliedUrl);
+});
+const validChannelUrl = $derived(updateChannelUrlSchema.safeParse(channelUrl).success);
 const applied = $derived(settings.schedule);
 const appliedKey = $derived(`${applied.mode}|${applied.start}|${applied.end}`);
 let draft = $derived.by<ScheduleDraft>(() => {
@@ -232,6 +238,13 @@ const rung =
 
 	{#if system}
 		<div class="space-y-2 pt-1" data-testid="update-channel">
+			<Label for="update-channel-url">{m['settings.updates.channel.address']()}</Label>
+			<Input id="update-channel-url" data-testid="update-channel-url" bind:value={channelUrl} readonly={saving} />
+			{#if channelUrl !== appliedUrl}
+				<Button data-testid="update-channel-url-save" disabled={saving || !validChannelUrl} onclick={() => onSave({ channelUrl })}>
+					{m['settings.updates.channel.saveAddress']()}
+				</Button>
+			{/if}
 			<p class="text-sm font-medium" id="updates-channel-label">{m['settings.updates.channel.title']()}</p>
 			<RadioGroup.Root
 				aria-labelledby="updates-channel-label"
