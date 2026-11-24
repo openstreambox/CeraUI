@@ -56,8 +56,16 @@ promise that every unresponsive socket leads to process exit.
 | Reaction | `deps.onSessionConnectionLost` raises the existing loss indicator and retires the generation's local sender, listeners and telemetry. No Stop is sent. The launch and OTA fence stays in place until fresh lifecycle evidence settles it. |
 
 One-shot restoration still requires its armed marker and affirmative fresh Idle.
-A fresh Streaming report adopts the running stream without restarting it. Silence
-does not allow a new Start or remove the OTA fence.
+A fresh Streaming report is adopted only with an owned sender and the client that
+acknowledged this process's Start, and the loss retirement has just ended both.
+So when fresh runtime evidence shows the generation this same process launched
+and retired at the loss still streaming, the sender it ended carries nothing, and
+the process Stops that session as its own (stop cause `engine_loss`, so an armed
+marker survives and restoration relaunches). Only an admitted Start, an explicit
+Stop or a confirmed idle engine ends that record; a lost observation-only
+connection never creates one, and a restarted process has none and keeps the
+session protected until an explicit Stop. Silence does not allow a new Start or
+remove the OTA fence.
 After availability heals, separate read-only reconciliation keeps checking an
 unresolved loss until it sees authoritative state or operator intent takes over.
 

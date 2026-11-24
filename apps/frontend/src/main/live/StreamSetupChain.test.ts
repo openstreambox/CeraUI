@@ -271,7 +271,7 @@ describe("StreamSetupChain — three rows in signal order", () => {
 });
 
 describe("StreamSetupChain: unconfirmed stream state", () => {
-	it("never says 'Ready to go live' while the device cannot confirm the state, and disables Start", () => {
+	it("points to the band's Stop instead of 'Ready to go live', and disables Start", () => {
 		const ready = renderChain({
 			config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
 		});
@@ -284,8 +284,8 @@ describe("StreamSetupChain: unconfirmed stream state", () => {
 				lifecycle,
 			});
 			expect(container.textContent).not.toContain("Ready to go live");
-			expect(container.textContent).toContain("Stream state not confirmed");
-			// Not a blocking reason with a fix: the band's Stop is the next step.
+			// The bar points to the band's Stop, the next step; no fix of its own.
+			expect(container.textContent).toContain("Stop the stream above first");
 			expect(
 				container
 					.querySelector('[data-testid="live-bar"]')
