@@ -11,7 +11,9 @@ let error = $state('');
 let radio = $state('');
 let busy = $state(false);
 const active = $derived(phase === 'signing_in' || phase === 'checking' || phase === 'cleanup_unknown');
-const radios = $derived(Object.entries(getWifi() ?? {}).filter(([, r]) => r.conn && !r.hotspot));
+// Every AP-capable radio carries a `hotspot` capability object; only the radio
+// currently running the hotspot is excluded.
+const radios = $derived(Object.entries(getWifi() ?? {}).filter(([, r]) => r.conn && r.mode !== 'hotspot'));
 async function act(action: 'start' | 'finish' | 'status') {
  if (busy) return;
  busy = true;

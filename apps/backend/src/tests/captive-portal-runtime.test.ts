@@ -6,6 +6,8 @@ let unavailable = false;
 let webAvailable = false;
 let failSweep = false;
 let failCleanupAfterOpen = false;
+let aps = ["ap0"];
+let routeDev = "ap0";
 const binding = {
 	link: {
 		ifname: "venue0",
@@ -22,7 +24,7 @@ mock.module("../helpers/run.ts", () => ({
 			return JSON.stringify([
 				{ lladdr: "02:00:00:00:00:02", state: ["REACHABLE"] },
 			]);
-		return JSON.stringify([{ dev: "ap0" }]);
+		return JSON.stringify([{ dev: routeDev }]);
 	},
 	runWithStdin: async (_bin: string, args: string[]) => {
 		expect(args[0]).toBe("-I");
@@ -62,7 +64,7 @@ mock.module("../modules/wifi/wifi-connections.ts", () => ({
 	}),
 }));
 mock.module("../modules/wifi/wifi-hotspot-clients.ts", () => ({
-	currentHotspotApIfnames: () => ["ap0"],
+	currentHotspotApIfnames: () => aps,
 }));
 const { signInWindow, reconcilePortalWindow } = await import(
 	"../modules/wifi/captive-portal-runtime.ts"
@@ -136,4 +138,36 @@ test("the post-close check uses the retired binding once without retaining activ
 	expect(commands).toEqual(["sweep"]);
 	unavailable = false;
 	webAvailable = false;
+});
+
+// Behind the front door the phone's arrival interface is proven. When the
+// hotspot and another link use overlapping networks, the same address seen on
+// the other link must not open or drive the window.
+test("a proven arrival interface must be the AP the phone routes through", async () => {
+	failOpen = false;
+	commands.length = 0;
+	await expect(signInWindow.start("10.42.0.6", "2", "eth0")).rejects.toThrow(
+		"not_on_box_wifi",
+	);
+	// Refused before any sweep or identity read: nothing ran for that caller.
+	expect(commands).toEqual([]);
+	aps = ["ap0", "ap1"];
+	await expect(signInWindow.start("10.42.0.6", "2", "ap1")).rejects.toThrow(
+		"not_on_box_wifi",
+	);
+	expect(commands).not.toContain("open");
+	expect((await signInWindow.start("10.42.0.6", "2", "ap0")).phase).toBe(
+		"signing_in",
+	);
+	expect(signInWindow.status("10.42.0.6", "eth0").phase).toBe("idle");
+	expect((await signInWindow.refresh("10.42.0.6", "eth0")).phase).toBe("idle");
+	await expect(signInWindow.finish("10.42.0.6", "eth0")).rejects.toThrow(
+		"busy_other_phone",
+	);
+	expect(signInWindow.status("10.42.0.6", "ap0").phase).toBe("signing_in");
+	expect((await signInWindow.finish("10.42.0.6", "ap0")).phase).toBe(
+		"needs_sign_in",
+	);
+	aps = ["ap0"];
+	routeDev = "ap0";
 });

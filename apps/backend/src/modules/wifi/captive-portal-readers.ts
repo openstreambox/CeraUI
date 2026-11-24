@@ -169,6 +169,18 @@ function dict(value: unknown): Map<string, unknown> {
 	}
 	return result;
 }
+/**
+ * Routing table as `ip -j route` prints it: no `table` key for main, a name for
+ * the other reserved tables, and a decimal string for numbered ones.
+ */
+function tableId(value: unknown): number {
+	if (value === undefined || value === "main") return 254;
+	if (value === "default") return 253;
+	if (value === "local") return 255;
+	if (typeof value === "string" && /^[1-9][0-9]{0,9}$/.test(value))
+		return integer(Number(value), 1);
+	return integer(value, 1);
+}
 function json(raw: string): unknown[] {
 	if (Buffer.byteLength(raw) > PORTAL_READER_LIMITS.jsonBytes) unavailable();
 	return array(JSON.parse(raw));
@@ -576,28 +588,33 @@ export async function captureWifiPortalBindingFromSystem(
 		)
 			.map(object)
 			.filter((r) => r.dst === "default");
-		if (routes.length !== 1) unavailable();
-		const route = routes[0];
+		// Uplink steering copies each uplink's default route into a table of its
+		// own, so the venue Wi-Fi normally has two: NetworkManager's and the copy.
+		// Every one of them must be the same single-path route via the captured
+		// gateway; the binding records NetworkManager's main-table route, or the
+		// only route when there is just one.
+		if (routes.length > 8) unavailable();
+		const tables = new Set<number>();
+		for (const route of routes) {
+			if (
+				(route.dev !== undefined && route.dev !== ifname) ||
+				route.gateway !== a.gateway ||
+				route.multipath !== undefined ||
+				route.nexthops !== undefined ||
+				(route.prefsrc !== undefined && route.prefsrc !== a.address) ||
+				(route.type !== undefined && route.type !== "unicast")
+			)
+				unavailable();
+			const table = tableId(route.table);
+			if (tables.has(table)) unavailable();
+			tables.add(table);
+		}
+		const route =
+			routes.length === 1
+				? routes[0]
+				: routes.find((r) => tableId(r.table) === 254);
 		if (!route) unavailable();
-		if (
-			(route.dev !== undefined && route.dev !== ifname) ||
-			route.gateway !== a.gateway ||
-			route.multipath !== undefined ||
-			route.nexthops !== undefined ||
-			(route.prefsrc !== undefined && route.prefsrc !== a.address) ||
-			(route.type !== undefined && route.type !== "unicast")
-		)
-			unavailable();
-		const routeTable = integer(
-			route.table === "main"
-				? 254
-				: route.table === "default"
-					? 253
-					: route.table === "local"
-						? 255
-						: route.table,
-			1,
-		);
+		const routeTable = tableId(route.table);
 		const routeMetric = integer(route.metric);
 		return { routeTable, routeMetric };
 	};
