@@ -154,7 +154,7 @@ export function createOtaMarkerOwner(io: {
 	// created from absence or handed back by a confirmed encoder idle.
 	let explained = false;
 	// The carrying line an earlier backend process left. `/run` outlives a
-	// backend restart, and every start takes the carrying hold again, so it is
+	// backend restart, and every restart takes the carrying hold again, so it is
 	// usually that process's hold and nothing more. It still only says what
 	// that process knew, so it stays protection, unchanged on disk, until this
 	// process's engine evidence confirms idle or finds a stream.
