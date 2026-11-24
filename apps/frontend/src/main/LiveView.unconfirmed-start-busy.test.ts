@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 /**
- * LiveView, real Start path: the operator presses Start while the device
- * reports the unconfirmed state, the device answers busy (START_IN_PROGRESS),
- * and the real optimism store reverts the attempt. The toast then says what to
- * press, as the bar does. Only the RPC transport, the toast sink and the
+ * LiveView, real Start path: the operator presses Start while the device is
+ * idle, the device reports the unconfirmed state before it answers busy
+ * (START_IN_PROGRESS), and the real optimism store reverts the attempt. The
+ * toast then says what to press: the band's Stop, with Start disabled until the
+ * device settles. Only the RPC transport, the toast sink and the
  * peripherals are stubbed; handleStart, SystemHelper and the optimism store
  * run for real.
  */
@@ -38,7 +39,8 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => ({
 	getActiveInput: () => undefined,
 	getConnectionState: () => "connected",
 	getIsConnected: () => true,
-	getCapabilities: () => undefined,
+	// Current capabilities: the engine gate needs them before Start reads ready.
+	getCapabilities: () => ({ encoder: {} }),
 	getConfigChange: () => undefined,
 	getNetif: () => ({ eth0: { enabled: true, ip: "10.0.0.2" } }),
 	getRelays: () => undefined,
@@ -69,10 +71,13 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => ({
 	}),
 }));
 
-const busyStart = vi.fn(async () => ({
-	success: false,
-	error: "START_IN_PROGRESS",
-}));
+const BUSY = { success: false, error: "START_IN_PROGRESS" } as const;
+// The reply waits for `release` when a test holds it.
+let held: Promise<void> | undefined;
+const busyStart = vi.fn(async () => {
+	await held;
+	return BUSY;
+});
 vi.mock("$lib/rpc/client", () => ({
 	rpc: {
 		streaming: {
@@ -137,6 +142,7 @@ beforeEach(() => {
 	clearOperation(UNCONFIRMED_STOP_OPERATION);
 	toastError.mockReset();
 	busyStart.mockClear();
+	held = undefined;
 });
 
 afterEach(() => {
@@ -151,18 +157,44 @@ function pressStart(container: HTMLElement) {
 }
 
 describe("LiveView: a real Start answered busy", () => {
-	it("while the band is up: the toast points to the band's Stop and Start is usable again", async () => {
+	it("when the band rises before the busy reply: the toast points to the band's Stop and Start waits", async () => {
+		setLiveStatus({ stream_lifecycle: "idle", is_streaming: false });
+		let release = () => {};
+		held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const { container } = render(LiveView);
+
+		await pressStart(container);
+		await waitFor(() => expect(busyStart).toHaveBeenCalledTimes(1));
+		setLiveStatus({ stream_lifecycle: "reconciling", is_streaming: false });
+		release();
+
+		await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
+		expect(toastError.mock.calls[0]?.[0]).toBe("Stop the stream above first");
+		expect(getStreamingOptimismState()).toBe("idle");
+		expect(container.textContent).toContain("Stream state not confirmed");
+		expect(
+			within(container).getByRole("button", { name: /stop stream/i }),
+		).toHaveProperty("disabled", false);
+		expect(
+			(
+				within(container).getByRole("button", {
+					name: /start stream/i,
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+	});
+
+	it("while the band is up, Start sends nothing", async () => {
 		setLiveStatus({ stream_lifecycle: "reconciling", is_streaming: false });
 		const { container } = render(LiveView);
 
 		await pressStart(container);
 
-		expect(busyStart).toHaveBeenCalledTimes(1);
-		await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
-		expect(toastError.mock.calls[0]?.[0]).toBe("Stop the stream above first");
-		expect(getStreamingOptimismState()).toBe("idle");
+		expect(busyStart).not.toHaveBeenCalled();
+		expect(toastError).not.toHaveBeenCalled();
 		expect(container.textContent).toContain("Stream state not confirmed");
-		expect(container.textContent).toContain("Stop the stream above first");
 	});
 
 	it("with no band: the generic copy", async () => {

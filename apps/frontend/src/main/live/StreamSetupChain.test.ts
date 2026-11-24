@@ -164,7 +164,7 @@ interface Overrides {
 	relays?: RelayMessage | undefined;
 	managedSlots?: readonly ManagedIngestAccount[] | undefined;
 	destinationValidated?: boolean;
-	stopFirst?: boolean;
+	lifecycle?: Parameters<typeof assessStart>[0]["lifecycle"];
 	rowOptions?: RowOptions;
 }
 
@@ -187,13 +187,12 @@ function renderChain(over: Overrides = {}) {
 		isStreaming: over.isStreaming ?? false,
 		optimismState: over.optimismState ?? ("idle" as StreamingOptimismState),
 		destinationValidated: over.destinationValidated,
-		stopFirst: over.stopFirst,
 		...h,
 	};
 	const assessment = assessStart({
 		...props,
 		caps: "caps" in over ? props.caps : {},
-		lifecycle: "idle",
+		lifecycle: over.lifecycle ?? "idle",
 		optimism: props.optimismState,
 		streaming: props.isStreaming,
 		outcomeUnknown: false,
@@ -272,29 +271,32 @@ describe("StreamSetupChain — three rows in signal order", () => {
 });
 
 describe("StreamSetupChain: unconfirmed stream state", () => {
-	it("points to the band's Stop instead of 'Ready to go live', and keeps Start usable", () => {
+	it("never says 'Ready to go live' while the device cannot confirm the state, and disables Start", () => {
 		const ready = renderChain({
 			config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
 		});
 		expect(ready.container.textContent).toContain("Ready to go live");
 		ready.unmount();
 
-		const { container } = renderChain({
-			config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
-			stopFirst: true,
-		});
-		expect(container.textContent).not.toContain("Ready to go live");
-		expect(container.textContent).toContain("Stop the stream above first");
-		// A warning, not a blocking reason: Start stays usable.
-		expect(
-			container
-				.querySelector('[data-testid="live-bar"]')
-				?.getAttribute("data-state"),
-		).toBe("notice");
-		const start = within(container).getByRole("button", {
-			name: /start stream/i,
-		});
-		expect((start as HTMLButtonElement).disabled).toBe(false);
+		for (const lifecycle of ["reconciling", "stop_failed"] as const) {
+			const { container, unmount } = renderChain({
+				config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
+				lifecycle,
+			});
+			expect(container.textContent).not.toContain("Ready to go live");
+			expect(container.textContent).toContain("Stream state not confirmed");
+			// Not a blocking reason with a fix: the band's Stop is the next step.
+			expect(
+				container
+					.querySelector('[data-testid="live-bar"]')
+					?.getAttribute("data-state"),
+			).toBe("pending");
+			const start = within(container).getByRole("button", {
+				name: /start stream/i,
+			});
+			expect((start as HTMLButtonElement).disabled).toBe(true);
+			unmount();
+		}
 	});
 });
 

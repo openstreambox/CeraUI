@@ -24,7 +24,14 @@ export function currentStreamLaunchOwner(): () => boolean {
 
 export type LaunchRollback =
 	| { readonly kind: "transaction"; readonly run: () => Promise<void> }
-	| { readonly kind: "legacy-dispatched" };
+	| {
+			readonly kind: "legacy-dispatched";
+			/**
+			 * Told the Stop the launch deadline sends for this attempt, so the
+			 * launch's own rollback does not send a second one once it succeeded.
+			 */
+			readonly timeoutStop?: (stop: Promise<void>) => void;
+	  };
 
 export function registerLaunchRollback(rollback: LaunchRollback): void {
 	launches.getStore()?.registerRollback?.(rollback);

@@ -192,7 +192,9 @@ test.each(["legacy", "old"] as const)(
 		expect(await h.start()).toMatchObject({ result: "failed" });
 		expect(h.cancels()).toEqual([]);
 		expect(h.starts()).toEqual([{ method: "start", peer: 1 }]);
-		expect(h.stops()).toEqual([{ method: "stop", peer: 1 }]);
+		// The train's failed-Start rollback (#15) sends its Stop on its own
+		// independent control connection, never on the busy session socket.
+		expect(h.stops()).toEqual([{ method: "stop", peer: 2 }]);
 		expect(h.view()).toEqual({
 			physical: "idle",
 			state: "idle",
