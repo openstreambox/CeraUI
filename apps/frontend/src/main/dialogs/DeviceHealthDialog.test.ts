@@ -428,29 +428,28 @@ describe("power rails", () => {
 		open();
 		const band = byTestId("device-health-power");
 		expect(band.dataset.powerState).toBe("input");
-		expect(band.dataset.inputLevel).toBe("ok");
 		expect(band.textContent).toContain(t.power.inputTitle);
 		expect(band.textContent).not.toContain(t.power.notInstrumented);
 		expect(byTestId("device-health-power-value").textContent?.trim()).toBe(
 			"12.2 V",
 		);
-		expect(byTestId("device-health-power-hint").textContent).toContain(
-			t.power.inputOk,
-		);
 	});
 
-	it.each([
-		[9.1, "low", "inputLow"],
-		[4.87, "very-low", "inputVeryLow"],
-		[15.0, "high", "inputHigh"],
-	] as const)("%s V reads as %s with its own hint", (volts, level, key) => {
-		state.inputVoltage = volts;
-		open();
-		expect(byTestId("device-health-power").dataset.inputLevel).toBe(level);
-		expect(byTestId("device-health-power-hint").textContent).toContain(
-			t.power[key],
-		);
-	});
+	it.each([4.87, 9.1, 12.2, 15.0])(
+		"%s V is shown as a plain reading: no judgement, no warning color",
+		(volts) => {
+			state.inputVoltage = volts;
+			open();
+			const band = byTestId("device-health-power");
+			const value = byTestId("device-health-power-value");
+			expect(value.textContent?.trim()).toBe(`${volts.toFixed(1)} V`);
+			expect(value.className).not.toMatch(/status-|destructive/);
+			// Title and value only: nothing that grades the supply.
+			expect(band.textContent?.replace(/\s+/g, " ").trim()).toBe(
+				`${t.power.inputTitle} ${volts.toFixed(1)} V`,
+			);
+		},
+	);
 
 	it("never mentions a PD contract, current or watts", () => {
 		state.inputVoltage = 12.2;

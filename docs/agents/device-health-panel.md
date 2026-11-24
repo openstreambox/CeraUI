@@ -92,9 +92,8 @@ it as the `Input voltage` sensor. The Orange Pi 5 Plus has no ADC channel on
 its power input (fixed 5 V USB-C input), so its profile says so and it keeps
 the not-instrumented statement, as does any board missing from the table: a
 number from an unwired channel would be fabricated. A failed read drops the
-key; it never keeps an old number. The band then shows the voltage with a hint
-keyed to the 12 V the ROCK 5B+ boxes are built for
-(`device-health/input-voltage.ts`: below 7 V, below 11 V, above 13.5 V); a
-future board with another nominal input needs that nominal on the wire first.
-The board cannot see the PD contract or the current, so the copy never claims
+key; it never keeps an old number. The band then shows the voltage as a
+plain reading, with no hint and no warning color: what a good input is
+depends on how the box is set up, and the board has no data on that. The
+board cannot see the PD contract or the current, so the copy never claims
 either, nor the supply's wattage.
