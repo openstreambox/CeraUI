@@ -45,25 +45,28 @@ export type ImageOwnedPackages = {
 	readonly source: "image-record" | "fallback";
 };
 
-const FIELD_RE = /^([A-Za-z][A-Za-z-]*):[ \t]*(.*?)[ \t]*$/;
+// Value: the rest of the line, carriage returns included (dpkg judges them).
+const FIELD_RE = /^([A-Za-z][A-Za-z-]*):[ \t]*([^\n]*?)[ \t]*$/;
 // The forms the image writes: the installed copy, or its exact version.
 const PIN_RELEASE_NOW = "release a=now";
 const PIN_VERSION_PREFIX = "version ";
 const DPKG_MAX_EPOCH = 2_147_483_647;
 
 /**
- * A version as `dpkg --validate-version` takes it: spaces and tabs around it
- * dropped, an optional epoch up to the first colon (what strtol reads: an
- * optional sign and digits, from 0 to 2147483647, so `-0` passes), the
- * revision after the last hyphen (if any), and an upstream part that starts
- * with a digit.
+ * A version as `dpkg --validate-version --` takes it: spaces and tabs around
+ * it dropped and none left inside, an optional epoch up to the first colon
+ * (what strtol reads: leading whitespace, an optional sign and digits, from 0
+ * to 2147483647, so `-0` passes), the revision after the last hyphen (if any),
+ * and an upstream part that starts with a digit.
  */
 export function isDebianVersion(raw: string): boolean {
 	const version = raw.replace(/^[ \t]+|[ \t]+$/g, "");
+	if (/[ \t]/.test(version)) return false;
 	const colon = version.indexOf(":");
 	let rest = version;
 	if (colon !== -1) {
-		const epoch = version.slice(0, colon);
+		// Blanks are gone already; strtol also skips the other ASCII whitespace.
+		const epoch = version.slice(0, colon).replace(/^[\n\v\f\r]+/, "");
 		if (!/^[+-]?[0-9]+$/.test(epoch)) return false;
 		const value = Number(epoch);
 		if (value < 0 || value > DPKG_MAX_EPOCH) return false;
