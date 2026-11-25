@@ -150,6 +150,8 @@ import type {
 	SwitchInputInput,
 	SwitchInputOutput,
 	SyslogInput,
+	TailscaleEnabledInput,
+	TailscaleJoinInput,
 	UpdateCapabilities,
 	UpdateDetails,
 	UpdateOutcome,
@@ -1138,6 +1140,11 @@ export interface TypedRPC {
 		sshStop: () => Promise<SuccessResponse>;
 		sshSetPersistent: (input: SshPersistentInput) => Promise<SuccessResponse>;
 		sshResetPassword: () => Promise<{ success: boolean; password?: string }>;
+		tailscaleJoin: (input: TailscaleJoinInput) => Promise<SuccessResponse>;
+		tailscaleSetEnabled: (
+			input: TailscaleEnabledInput,
+		) => Promise<SuccessResponse>;
+		tailscaleLogout: () => Promise<SuccessResponse>;
 		getCloudProviders: () => Promise<unknown>;
 		setRemoteConfig: (input: RemoteConfigInput) => Promise<SuccessResponse>;
 		setAutostart: (input: { autostart: boolean }) => Promise<AutostartOutput>;

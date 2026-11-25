@@ -26,6 +26,8 @@ import {
 	sshPersistentInputSchema,
 	successResponseSchema,
 	syslogInputSchema,
+	tailscaleEnabledInputSchema,
+	tailscaleJoinInputSchema,
 	updateCapabilitiesSchema,
 	updateDetailsSchema,
 	updateOutcomeInputSchema,
@@ -111,6 +113,23 @@ export const systemContract = oc.router({
 	 * without committing it to boot, or arm it for boot without starting it now.
 	 */
 	sshSetPersistent: oc.input(sshPersistentInputSchema).output(successResponseSchema),
+
+	/**
+	 * Join this device to a Tailscale network with a pasted auth key. The key is
+	 * handed to tailscale on stdin and is never stored, logged or echoed.
+	 */
+	tailscaleJoin: oc.input(tailscaleJoinInputSchema).output(successResponseSchema),
+
+	/**
+	 * The owner's off switch: stop (and disable at boot) or start tailscaled.
+	 * Turning it off keeps the login, so turning it on again reconnects.
+	 */
+	tailscaleSetEnabled: oc.input(tailscaleEnabledInputSchema).output(successResponseSchema),
+
+	/**
+	 * Forget this device: log out of the tailnet. A new key is needed to join again.
+	 */
+	tailscaleLogout: oc.output(successResponseSchema),
 
 	/**
 	 * Reset SSH password
