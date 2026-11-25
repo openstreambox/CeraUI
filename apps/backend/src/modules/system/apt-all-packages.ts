@@ -13,6 +13,7 @@ import {
 	parseAptSimulationRow,
 	APT_SIMULATION_VERSION_RE as VERSION_RE,
 } from "./apt-simulation-row.ts";
+import { isImageOwned } from "./image-owned-packages.ts";
 
 export type PinnedAptPackage = {
 	readonly name: string;
@@ -147,9 +148,12 @@ export async function discoverAptAllPackages(
 	holds: string,
 	policyFor: (name: string) => Promise<string>,
 	sourcePolicy: string,
+	// Names the system image ships itself (image-owned-packages.ts): never offered.
+	imageOwned: ReadonlySet<string> = new Set(),
 ): Promise<{
 	readonly packages: UpdatePackage[];
 	readonly actionable: PinnedAptPackage[];
+	readonly withheld: PinnedAptPackage[];
 }> {
 	const held = new Set(holds.trim().split(/\s+/).filter(Boolean));
 	if ([...held].some(isFirstPartyPackage))
@@ -160,7 +164,12 @@ export async function discoverAptAllPackages(
 	const sources = policySources(sourcePolicy);
 	const packages: UpdatePackage[] = [];
 	const actionable: PinnedAptPackage[] = [];
+	const withheld: PinnedAptPackage[] = [];
 	for (const pair of simulated) {
+		if (isImageOwned(pair.name, imageOwned)) {
+			withheld.push(pair);
+			continue;
+		}
 		const origin = candidateOrigin(
 			await policyFor(pair.name),
 			pair.version,
@@ -183,6 +192,7 @@ export async function discoverAptAllPackages(
 		actionable: actionable.sort((a, b) =>
 			compareAptPackageNames(a.name, b.name),
 		),
+		withheld,
 	};
 }
 

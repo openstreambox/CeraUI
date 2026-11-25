@@ -532,6 +532,8 @@ let osCandidate: OsChannelManifest | undefined;
 let osBoardNotOffered = false;
 let osChannelUnpublished = false;
 let packageCheckGeneration = 0;
+// Counts image checks, so a late result beside a package offer can tell it was superseded.
+let osCheckGeneration = 0;
 let packageCheckDeferral: {
 	readonly reason: "metered_only";
 	readonly at: number;
@@ -707,6 +709,7 @@ export function resetOrchestratorRuntimeForTest(): void {
 	osBoardNotOffered = false;
 	osChannelUnpublished = false;
 	packageCheckGeneration++;
+	osCheckGeneration++;
 	packageCheckDeferral = null;
 	activeOsStage?.controller.abort();
 	activeOsStage = undefined;
@@ -931,13 +934,15 @@ export async function checkUpdatesNow(): Promise<ManualCheckOutcome> {
 	if (!canStartManualCheck(state.phase))
 		return { started: false, reason: "busy" };
 	await runPackageCheckCycle();
-	if (state.phase === "idle") {
+	// Found packages must not hide a system image either.
+	if (state.phase === "idle" || state.phase === "available") {
+		const ticket = besideOfferTicket();
 		const capabilities = await deps.loadCapabilities();
 		if (
 			capabilities.mode === "capable" &&
 			capabilities.features.includes("rauc-verity-streaming")
 		)
-			await runOsCheckAfterCellularGate(await deps.loadSettings());
+			await runOsCheckAfterCellularGate(await deps.loadSettings(), ticket);
 	}
 	return { started: true };
 }
@@ -2915,6 +2920,9 @@ export async function runOrchestratorTick(): Promise<void> {
 			scheduleNextTick();
 			return;
 		}
+		// Taken before the reads below: a check started meanwhile (Check now)
+		// makes this tick's settings stale, so it must not start an image check.
+		const ticket = besideOfferTicket();
 		const settings = await deps.loadSettings();
 		const capabilities = await readCapabilityRegime();
 		if (capabilities === null) {
@@ -2922,22 +2930,7 @@ export async function runOrchestratorTick(): Promise<void> {
 			return;
 		}
 		const now = deps.now();
-		const retryAt =
-			state.osStageRecovery?.mode === "automatic"
-				? state.osStageRecovery.nextRetryAt
-				: null;
-		const osClock =
-			retryAt !== null &&
-			retryAt !== undefined &&
-			state.osCheck.consecutiveFailures === 0
-				? {
-						...state.osCheck,
-						nextAttemptAt: Math.min(
-							state.osCheck.nextAttemptAt ?? retryAt,
-							retryAt,
-						),
-					}
-				: state.osCheck;
+		const osClock = osScheduleClock();
 		let packageCheckRan = false;
 		if (
 			aptUpdatesEnabled() &&
@@ -2964,15 +2957,30 @@ export async function runOrchestratorTick(): Promise<void> {
 				settings,
 			})
 		) {
-			await runOsCheckAfterCellularGate(settings);
+			await runOsCheckAfterCellularGate(settings, ticket);
 		}
 	} else if (state.phase === "available") {
-		const settings = await deps.loadSettings();
-		if (settings.packagesAuto) {
-			dispatch({ type: "AWAIT_IDLE_FOR_INSTALL", now: deps.now() });
+		// Taken before any read, so a check started meanwhile (Check now) wins.
+		const ticket = besideOfferTicket();
+		const after = await maybeCheckOsWhilePackagesWait(
+			await deps.loadSettings(),
+			ticket,
+		);
+		// The image check can take a while; queue only on the current switch,
+		// and only if no newer check has spoken for this offer since.
+		if (after && getOrchestratorState().phase === "available") {
+			const { packagesAuto } = await deps.loadSettings();
+			if (
+				packagesAuto &&
+				ticketCurrent(after) &&
+				getOrchestratorState().phase === "available"
+			)
+				dispatch({ type: "AWAIT_IDLE_FOR_INSTALL", now: deps.now() });
 		}
 	} else if (state.phase === "awaiting-idle") {
-		await maybeStartPackageInstall({ bypassIdle: false });
+		const ticket = besideOfferTicket();
+		if (await maybeCheckOsWhilePackagesWait(await deps.loadSettings(), ticket))
+			await maybeStartPackageInstall({ bypassIdle: false });
 	} else if (state.phase === "downloading" || state.phase === "committing") {
 		await readjudicateDeferredDownload();
 		pendingPackageSuccess.assertEffectsAllowed();
@@ -3049,11 +3057,121 @@ async function runPackageCheckAfterCellularGate(
 	return "ran";
 }
 
+// The image check's clock, brought forward to an automatic restage's retry.
+function osScheduleClock(): OrchestratorState["osCheck"] {
+	const retryAt =
+		state.osStageRecovery?.mode === "automatic"
+			? state.osStageRecovery.nextRetryAt
+			: null;
+	return retryAt !== null &&
+		retryAt !== undefined &&
+		state.osCheck.consecutiveFailures === 0
+		? {
+				...state.osCheck,
+				nextAttemptAt: Math.min(
+					state.osCheck.nextAttemptAt ?? retryAt,
+					retryAt,
+				),
+			}
+		: state.osCheck;
+}
+
+// What a scheduled step or Check now was admitted on: any image check or
+// package check started since then makes that step stale.
+type BesideOfferTicket = { readonly os: number; readonly packages: number };
+
+function besideOfferTicket(): BesideOfferTicket {
+	return { os: osCheckGeneration, packages: packageCheckGeneration };
+}
+
+function ticketCurrent(ticket: BesideOfferTicket): boolean {
+	return (
+		ticket.os === osCheckGeneration &&
+		ticket.packages === packageCheckGeneration
+	);
+}
+
+// A package offer that has not launched an install yet.
+const PACKAGES_WAITING: readonly OrchestratorPhase[] = [
+	"available",
+	"awaiting-idle",
+];
+
+// Offered packages must not hide a system image: the A/B image carries its own
+// packages, so a found image replaces the package offer (reducer, `available`).
+// `ticket` is taken before `settings` was read. Returns the ticket that still
+// holds after this step (its own image check counted), or null once anything
+// else started a check: the caller then must not act on the offer.
+async function maybeCheckOsWhilePackagesWait(
+	settings: UpdateSettings,
+	ticket: BesideOfferTicket,
+): Promise<BesideOfferTicket | null> {
+	const phase = state.phase;
+	if (!PACKAGES_WAITING.includes(phase) || packageInstallStarting)
+		return ticketCurrent(ticket) ? ticket : null;
+	const capabilities = await readCapabilityRegime();
+	if (
+		capabilities?.mode !== "capable" ||
+		!capabilities.features.includes("rauc-verity-streaming") ||
+		getOrchestratorState().phase !== phase ||
+		packageInstallStarting ||
+		!scheduledCheckDue({
+			now: deps.now(),
+			clock: osScheduleClock(),
+			kind: "os",
+			settings,
+		})
+	)
+		return ticketCurrent(ticket) ? ticket : null;
+	const attempt = await runOsCheckAfterCellularGate(settings, ticket);
+	if (attempt === undefined) return ticketCurrent(ticket) ? ticket : null;
+	const after = { os: attempt, packages: ticket.packages };
+	return ticketCurrent(after) ? after : null;
+}
+
+const OS_CHECK_START_PHASES: readonly OrchestratorPhase[] = [
+	"idle",
+	"os-available",
+	...PACKAGES_WAITING,
+];
+
+// Returns the attempt number once the check is admitted. `ticket`, when given,
+// is what the caller read `settings` under: a stale one admits nothing.
 async function runOsCheckAfterCellularGate(
 	settings: UpdateSettings,
-): Promise<void> {
+	ticket?: BesideOfferTicket,
+): Promise<number | undefined> {
+	// The phase this check was admitted from; the uplink read below can outlive it.
+	const startPhase = state.phase;
+	// Only a resting phase starts one; never beside a planned or running install.
+	if (!OS_CHECK_START_PHASES.includes(startPhase)) return undefined;
+	if (ticket && !ticketCurrent(ticket)) return undefined;
+	const besidePackageOffer = PACKAGES_WAITING.includes(startPhase);
+	// This attempt, and the package check whose offer it sits beside: a newer
+	// image check or package re-check (even one that lands back in the same
+	// phase) supersedes it.
+	const attempt = ++osCheckGeneration;
+	const packageGeneration = packageCheckGeneration;
+	const superseded = () =>
+		attempt !== osCheckGeneration ||
+		packageGeneration !== packageCheckGeneration;
+	// Starting a package install owns the device until its unit is recorded.
+	const packagesMovedOn = () =>
+		besidePackageOffer &&
+		(getOrchestratorState().phase !== startPhase ||
+			packageInstallStarting ||
+			superseded());
+	if (packagesMovedOn()) return attempt;
 	const onlyMetered = await deps.onlyMeteredCandidateExists();
-	if (osSettlementPersistence.pending) return;
+	if (osSettlementPersistence.pending) return attempt;
+	// From any phase: a check started during the uplink read (Check now) has
+	// fresher settings, so this one stands down before it starts.
+	if (
+		getOrchestratorState().phase !== startPhase ||
+		superseded() ||
+		packagesMovedOn()
+	)
+		return attempt;
 	const gate = decideCellularGate({
 		onlyMeteredCandidateExists: onlyMetered,
 		kind: "os",
@@ -3063,10 +3181,13 @@ async function runOsCheckAfterCellularGate(
 		cellularOverrideId: state.cellularOverrideId,
 		candidateId: "",
 	});
-	if (!gate.allowed) return;
+	if (!gate.allowed) return attempt;
 	const now = deps.now();
 	dispatch({ type: "OS_CHECK_STARTED", now });
 	const result = await deps.checkOsManifest(settings.channel);
+	// A package install that started meanwhile owns the device: drop this
+	// result, so the image is checked again once the install has settled.
+	if (packagesMovedOn()) return attempt;
 	osBoardNotOffered = result.boardNotOffered === true;
 	osChannelUnpublished = result.channelUnpublished === true;
 	const outcomeNow = deps.now();
@@ -3095,7 +3216,7 @@ async function runOsCheckAfterCellularGate(
 			reason: result.reason,
 			nextAttemptAt,
 		});
-		return;
+		return attempt;
 	}
 	const nextAttemptAt =
 		outcomeNow +
@@ -3136,6 +3257,7 @@ async function runOsCheckAfterCellularGate(
 			holdCandidateKey(previousRecovery.candidateKey),
 		);
 	}
+	return attempt;
 }
 
 function isActivePhase(phase: OrchestratorState["phase"]): boolean {
