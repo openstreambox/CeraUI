@@ -57,7 +57,7 @@ este dispositivo; cualquier emisor Moblin local que la comparta puede autenticar
 Borrarla detiene el relé de este dispositivo. Guardarla requiere una imagen preparada
 para el relé administrado. Borrar sigue disponible cuando el dispositivo está inactivo,
 aunque el relé no esté disponible o haya que reparar el archivo guardado.
-Si el archivo está vacío o el relé se detiene inesperadamente, la sección Box health
+Si el archivo está vacío o el relé se detiene inesperadamente, la sección Estado de la caja
 muestra un aviso de conexión Moblin. Reemplaza o borra la contraseña para recuperarla.
 Borrar una contraseña no guardada no crea almacenamiento. El campo pide al
 navegador y al gestor de contraseñas que no lo rellenen ni guarden; sus propias
