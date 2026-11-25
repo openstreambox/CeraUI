@@ -40,7 +40,7 @@ test("a child handle exists when collector rejects EIO, so the helper stays held
 	});
 	// When the real collector fails after dispatch.
 	const result = await addonRefresh({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		exec,
 		createStep: () => step,
 	}).catch((error: unknown) => error);
@@ -103,7 +103,7 @@ for (const moment of [
 		});
 		// When abort races the synchronous return/assignment or follows assignment.
 		const result = await addonRefresh({
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			exec,
 			createStep: () => step,
 		}).catch((error: unknown) => error);
@@ -123,7 +123,7 @@ for (const action of ["enable", "disable"] as const) {
 			let allocated = 0;
 			// When the actual wrapper cannot read its descriptor.
 			const result = await invokeHelperAction(action, {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				exec,
 				readDescriptor: async () => {
 					throw original;

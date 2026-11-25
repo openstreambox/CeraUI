@@ -93,7 +93,7 @@ export function sysextFixture() {
 	saveConfig();
 	const effects: string[] = [];
 	setAddonManagerDeps({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getEffectiveHardware: () => "rk3588",
 		getDataFreeBytes: async () => 2 ** 32,
 		getOsVersion: async () => "13",
@@ -124,7 +124,7 @@ export function sysextFixture() {
 		},
 	});
 	setAddonProcedureDeps({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		readDescriptors: async () => [sysextDescriptor],
 		getEffectiveHardware: () => "rk3588",
 		setAddonState: (id, state) => {

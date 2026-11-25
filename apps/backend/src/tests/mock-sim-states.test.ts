@@ -85,13 +85,13 @@ type Calls = {
 	loadPin: number;
 };
 
-function makeMockDeps(opts: { isRealDevice?: boolean } = {}): {
+function makeMockDeps(opts: { canUnlockSim?: boolean } = {}): {
 	deps: SimAutoUnlockDeps;
 	calls: Calls;
 } {
 	const calls: Calls = { unlock: [], clear: 0, onUnlocked: 0, loadPin: 0 };
 	const deps: SimAutoUnlockDeps = {
-		isRealDevice: async () => opts.isRealDevice ?? true,
+		canUnlockSim: async () => opts.canUnlockSim ?? true,
 		loadSimPin: async () => {
 			calls.loadPin += 1;
 			return mockLoadSimPinSecret();
@@ -173,7 +173,7 @@ describe("maybeAutoUnlockSimPins — PIN-locked → single unlock → unlocked",
 
 		expect(reportedUnlockRequired(0)).toBe("sim-pin");
 
-		const { deps, calls } = makeMockDeps({ isRealDevice: true });
+		const { deps, calls } = makeMockDeps({ canUnlockSim: true });
 		await maybeAutoUnlockSimPins(deps);
 
 		// EXACTLY ONE submit, with the fixture PIN.
@@ -192,7 +192,7 @@ describe("maybeAutoUnlockSimPins — failed attempt stops (no second try)", () =
 		setMockSimLockState(1, "pin-locked");
 		setMockSimPinSecret("9999"); // wrong: not the fixture PIN
 
-		const { deps, calls } = makeMockDeps({ isRealDevice: true });
+		const { deps, calls } = makeMockDeps({ canUnlockSim: true });
 		await maybeAutoUnlockSimPins(deps);
 
 		// One submit total — the shared wrong PIN is not walked across every SIM.
@@ -219,7 +219,7 @@ describe("maybeAutoUnlockSimPins — PUK-locked surfaces recovery, never auto-su
 		// …but the boot hook never treats it as a PIN-unlock target.
 		expect(getMockPinLockedModems()).toEqual([]);
 
-		const { deps, calls } = makeMockDeps({ isRealDevice: true });
+		const { deps, calls } = makeMockDeps({ canUnlockSim: true });
 		await maybeAutoUnlockSimPins(deps);
 
 		expect(calls.unlock.length).toBe(0);
@@ -242,7 +242,7 @@ describe("maybeAutoUnlockSimPins — emulated host no-op", () => {
 		setMockSimLockState(0, "pin-locked");
 		setMockSimPinSecret(MOCK_SIM_PIN_FIXTURE);
 
-		const { deps, calls } = makeMockDeps({ isRealDevice: false });
+		const { deps, calls } = makeMockDeps({ canUnlockSim: false });
 		await maybeAutoUnlockSimPins(deps);
 
 		// Gate is first — the stored PIN is not even read.
@@ -262,7 +262,7 @@ describe("the fixture PIN never reaches a log line + failure-path evidence", () 
 		setMockSimPinSecret(WRONG_PIN);
 
 		const beforeLock = reportedUnlockRequired(0);
-		const { deps, calls } = makeMockDeps({ isRealDevice: true });
+		const { deps, calls } = makeMockDeps({ canUnlockSim: true });
 		const logs = await withCapturedLogs(() => maybeAutoUnlockSimPins(deps));
 		const afterRetries = getMockSimState(0)?.pinRetries ?? -1;
 
