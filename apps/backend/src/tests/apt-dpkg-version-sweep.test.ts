@@ -40,8 +40,8 @@ it.each([
 		// Given: a private executable checks the exact real reader's argv.
 		process.env.APTPARSE_DPKG_OUTPUT = output;
 		process.env.APTPARSE_DPKG_EXIT = code;
-		const spawn = Bun.spawnSync;
-		const command = spyOn(Bun, "spawnSync").mockImplementation((...args) => {
+		const spawn = Bun.spawn;
+		const command = spyOn(Bun, "spawn").mockImplementation((...args) => {
 			expect(args[0]).toEqual([
 				"dpkg-query",
 				"-W",
