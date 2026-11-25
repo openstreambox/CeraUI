@@ -46,6 +46,16 @@ Findings are informational, never admission or recovery commands:
 - **Data path** requires registration, attached packet service and at least two fresh failed path probes already owned by the host. No new traffic is generated.
 - **Possible disturbance** requires independent radio evidence of an idle neighbour becoming active, a healthy baseline and a subsequent USB event or comparable quality drop. Payload counter increases cannot establish this contrast. The deployed sampler has no independent radio-idle source, so it does not emit this finding. Synthetic evidence tests cover the positive and negative cases; correlation still cannot establish a cause.
 
+The panel leads with a status chip (icon and word), one short line and the next
+step when there is one. A fresh registration with no finding reads **OK**, a
+missing registration reads **Not checked**, and a modem without a SIM or still
+searching says so without blaming the SIM. Registration, network type and band,
+signal (RSRP in dBm with bars and a word), other modems sending and USB events
+follow as label/value rows. The signal word is a rough guide (-90 dBm and above
+Strong, down to -105 dBm Fair, below that Weak) and never a finding. Every raw
+reading with its source and time, and the timeline, sit behind a collapsed
+**Sources and history**.
+
 The panel uses words and symbols alongside calm suggested actions. It contains
 no modem action controls. Restart is a suggestion with its expected interruption,
 not an executable action. The recent timeline is for inspection after streaming.
@@ -69,6 +79,13 @@ El panel no inicia escaneos, pruebas de red, cambios ni reinicios. Solo usa el
 ciclo de lectura existente. Una denegación de una red ajena no se presenta como
 un problema de la SIM. Dos pruebas existentes fallidas, con registro y servicio
 de datos concedido, pueden indicar un problema de la ruta de datos. La actividad de datos y un evento USB no bastan para indicar interferencia. Sin una observación independiente de silencio de radio seguida de transmisión, el diagnóstico permanece desconocido.
+
+El panel empieza con una etiqueta de estado (icono y palabra), una frase corta y
+el siguiente paso cuando lo hay. Un registro reciente sin hallazgos dice **OK**;
+sin registro dice **Sin comprobar**. Después vienen el registro, el tipo de red y
+la banda, la señal (RSRP en dBm con barras y una palabra), los otros módems que
+transmiten y los eventos USB. Todas las mediciones con su fuente y hora, y el
+historial, quedan plegadas en **Fuentes e historial**.
 
 Las acciones son sugerencias, sin botones que actúen sobre el módem. Las pruebas
 en el equipo real aún **NO SE HAN EJECUTADO**.
