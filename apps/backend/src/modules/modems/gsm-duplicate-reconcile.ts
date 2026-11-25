@@ -26,6 +26,7 @@ import {
 	nmcliParseSep,
 } from "../network/network-manager.ts";
 import type { BearerIpFamilyFields } from "./bearer-ip-family.ts";
+import { isProfileParked } from "./gsm-sim-park-store.ts";
 
 /**
  * One gsm profile as NetworkManager describes it RIGHT NOW.
@@ -54,17 +55,48 @@ const GSM_AUDIT_FIELDS = [
 
 /** A fresh, cache-independent audit of every gsm profile on the device. */
 export async function auditGsmProfiles(): Promise<Array<GsmProfileAudit>> {
+	return (await readGsmProfiles(false)) ?? [];
+}
+
+/**
+ * The same audit, but undefined unless EVERY gsm profile was read: a caller
+ * that reasons from what is not there (no sibling, no parked profile) must not
+ * mistake a profile it could not read for one that does not exist.
+ */
+export async function auditGsmProfilesComplete(): Promise<
+	Array<GsmProfileAudit> | undefined
+> {
+	return readGsmProfiles(true);
+}
+
+async function readGsmProfiles(
+	complete: boolean,
+): Promise<Array<GsmProfileAudit> | undefined> {
 	const rows = await nmConnsGet("uuid,type,state");
-	if (rows === undefined) return [];
+	if (rows === undefined) return complete ? undefined : [];
 
 	const audits: Array<GsmProfileAudit> = [];
 	for (const row of rows) {
-		const [uuid, type, state] = nmcliParseSep(row) as [string, string, string];
-		if (type !== "gsm" || !uuid) continue;
+		// nmcli ends the inventory with LF, which leaves one blank row.
+		if (row.trim() === "") continue;
+		const values = nmcliParseSep(row);
+		const [uuid, type, state] = values as [string, string, string];
+		// A complete read is one uuid:type:state record per profile; a record
+		// with fewer fields (`uuid:gsm`) was cut short, not a profile with no state.
+		if (complete && values.length !== 3) return undefined;
+		if (!uuid) {
+			if (complete) return undefined;
+			continue;
+		}
+		if (type !== "gsm") continue;
 
 		// The inventory proved GSM: its GSM and connection settings are required.
 		const fields = await nmConnGetFields(uuid, GSM_AUDIT_FIELDS, "fixed");
-		if (fields === undefined) continue;
+		if (fields === undefined) {
+			if (complete) return undefined;
+			continue;
+		}
+		if (complete && fields.length !== GSM_AUDIT_FIELDS.length) return undefined;
 
 		audits.push({
 			uuid,
@@ -93,8 +125,10 @@ export type GsmDuplicateVerdict = "keep" | "retain" | "prune";
  *   `activated`/`activating` both mean hands off — measured on the board);
  * - `connection.autoconnect` is `no`, which on a same-(device, SIM) clone is
  *   CeraUI's OWN footprint: `demoteDuplicateGsmProfiles`/this reconciler are the
- *   only writers of it here, so an armed clone has never been through our hands
- *   and is retained;
+ *   only writers of it here that mean "superseded", so an armed clone has never
+ *   been through our hands and is retained. The SIM swap parking
+ *   (`gsm-sim-swap.ts`) also writes it, but means "its SIM is out": a profile
+ *   with a park record is retained, whatever else holds;
  * - `connection.timestamp` is `0`, i.e. NetworkManager has NEVER successfully
  *   activated it. A profile an operator has actually used carries a real stamp.
  *
@@ -107,8 +141,10 @@ export type GsmDuplicateVerdict = "keep" | "retain" | "prune";
 export function classifyGsmDuplicate(
 	audit: GsmProfileAudit,
 	keepUuid: string,
+	parked = false,
 ): GsmDuplicateVerdict {
 	if (audit.uuid === keepUuid) return "keep";
+	if (parked) return "retain";
 	if (audit.state.trim() !== "") return "retain";
 	if (audit.autoconnect.trim() !== "no") return "retain";
 	if (Number.parseInt(audit.timestamp, 10) !== 0) return "retain";
@@ -130,12 +166,19 @@ export type GsmReconcileDeps = {
 		fields: Record<string, string>,
 	) => Promise<boolean>;
 	readonly remove: (uuid: ConnectionUUID) => Promise<boolean>;
+	/** Has the SIM swap parking disarmed it? Absent means never parked. */
+	readonly isParked?: (
+		uuid: string,
+		deviceId: string,
+		simId: string,
+	) => Promise<boolean>;
 };
 
 export const defaultGsmReconcileDeps: GsmReconcileDeps = {
 	audit: auditGsmProfiles,
 	setFields: nmConnSetFields,
 	remove: nmConnDelete,
+	isParked: isProfileParked,
 };
 
 /**
@@ -191,8 +234,18 @@ export async function reconcileDuplicateGsmProfiles(
 
 	// Snapshot the verdicts BEFORE anything is written, so the demotion below
 	// cannot become the evidence that authorizes a deletion.
+	const parked = new Set<string>();
+	for (const duplicate of duplicates)
+		if (await deps.isParked?.(duplicate.uuid, deviceId, simId))
+			parked.add(duplicate.uuid);
 	const verdicts = new Map(
-		duplicates.map((a) => [a.uuid, classifyGsmDuplicate(a, keepUuid)] as const),
+		duplicates.map(
+			(a) =>
+				[
+					a.uuid,
+					classifyGsmDuplicate(a, keepUuid, parked.has(a.uuid)),
+				] as const,
+		),
 	);
 
 	let enforced = 0;

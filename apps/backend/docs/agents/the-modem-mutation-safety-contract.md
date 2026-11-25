@@ -39,8 +39,54 @@ retries. NM state 100 consumes intent without dispatch, before MM eligibility.
 Unknown reads and identity/lease refusals preserve pending intent.
 
 The exception covers ONLY that activation call on a positively disconnected
-device. Resolving a late-readable SIM runs outside the update lock and reuses
-registration's profile selection. Every late profile create, field write,
+device. **A takeover is not covered by it.** When NM state is 100 but the device
+is up on a profile that is not `config.conn`, names a SIM id, and that id
+differs from the modem's ICCID (NM picked another SIM's profile before the SIM
+was reported; see "SIM swap parking" below), the same pending intent dials
+`config.conn` through `withJournaledModemMutation("modem-config")`, repeating
+every readiness read under that lease (MM `connected` is accepted here: the
+other profile's bearer makes it so). The journaled pre-state is the modem's
+descriptor capture (`captureModemState`) with no `format`, so replay on any
+build, including one without the takeover, takes the generic descriptor path:
+an unchanged device reports `restored`, an absent one is quarantined like any
+journaled mutation. If the dial does not report success, the lease is held
+until NM reports a state that ends the activation (10, 20, 30, 100 or 120;
+0 and unreadable reads do not count) or the registration ends. Nothing is
+taken down, because `nmcli conn down` would block the profile's autoconnect.
+The 180 s deadline starts before the device is resolved; the dial is bound to
+that device (`nmcli conn up uuid <uuid> ifname <device>`), and the wait reads
+that device's state once per 2 s step and never sleeps past the deadline. A
+command already running when the deadline passes is not cut short, and after
+a dial that did not report success the wait always makes one state read, so
+the takeover ends at most one state read (30 s run timeout) after the later of
+the deadline and the dial's end. With a slow pre-dial resolve and dial that
+can pass 180 s: for example 170 s of resolve, a 30 s dial and a 30 s read end
+at 230 s. An
+activation that has not ended by then journals `failed` and stays visible
+until acknowledged. While this backend runs, a Stream Start is therefore never
+admitted while the takeover is still changing the bearer. After a backend
+crash mid-takeover that is not so: boot replay clears the entry on descriptor
+equality, so a Start can be admitted while NM is still bringing the new
+bearer up (accepted limit, see the rollback table below). A modem whose MM
+physdev is positively not a USB device (the path is there and no level up to
+the sysfs root has USB ids or the `usb` subsystem) is not taken over: its
+intent is consumed as before. A physdev that cannot be read or vanishes during
+the read never counts as off USB: it reads as unknown, or as USB when a
+surviving ancestor still shows USB evidence; either keeps the intent pending. A USB modem whose descriptor cannot be captured yet keeps its intent
+pending for a later poll. The status poll handles modems one after another, so a takeover that
+waits delays the next modem's poll work by that wait. An unreadable active profile or SIM id
+keeps the intent pending for the next poll; another active profile without a
+SIM id, the same SIM or an unknown modem ICCID consumes intent as before. The
+takeover waits out the dial cooldown and is refused while a stream is admitted
+or forwarded: another SIM's bearer carries traffic meanwhile rather than a
+stream being cut. The previous profile cannot be restored on failure, because
+NM refuses to activate a profile whose SIM id differs once the SIM is known; a
+failed takeover is a failed first activation, recovered by NM autoconnect
+(armed profile) or the automatic redial (prepared profile).
+
+Resolving a late-readable SIM runs outside the update lock and reuses
+registration's profile selection. It accepts MM `registered` or `connected`
+(another SIM's profile may already hold the bearer). Every late profile create, field write,
 autoconnect demotion or deletion holds the identity lease through the existing
 `withJournaledModemMutation("modem-config")` path, which uses the same
 `beginModemMutation` admission as `withModemMutation`. APN/roaming enforcement is
@@ -53,6 +99,78 @@ profile or substitute roaming defaults. Late work remains pending on that read
 failure, including a failure after journal admission; no profile effect runs.
 Overlapping status reads merge into the latest registry row so a completed
 late-SIM resolution cannot be overwritten by an older snapshot.
+
+**SIM swap parking [EXISTS; host-tested, board-tested with a stand-in profile].**
+NM compares `gsm.sim-id` only after the modem reports its SIM, so at every new
+MM object an armed profile bound to the device id for another SIM can win. Once
+per registration, after `config.conn` and the ICCID are known, the status poll
+runs `settleModemSimSwap` under `withJournaledModemMutation("modem-config")`
+(the identity lease, refused during replay, on a blocked identity, while a
+stream is admitted or forwarded and while another mutation of the modem runs,
+plus an armed entry whose pre-state is the modem's descriptor capture with no
+`format`, like the takeover's). Under the lease it re-reads the modem and SIM,
+reads every gsm profile (an audit that misses one leaves the settle
+incomplete), re-arms every
+profile of this (device id, SIM) that has a park record, then sets
+`connection.autoconnect=no` on armed profiles bound to the device id for SIMs
+no present modem with that device id holds, writing the park record first.
+
+- It parks nothing when a modem that may share the device id cannot be seen:
+  a listed modem without a device id, one with that device id and no SIM
+  object or ICCID yet, or a USB device of the same vid:pid as a modem with that
+  device id that MM has not listed (`readPresentSimIds`). USB devices are read
+  from `/sys/bus/usb/devices` (no subprocess, no wait for udev properties) and
+  matched by `modem.generic.physdev`, since `modem.generic.device` is the udev
+  UID, which a rule may set to a label. The NM inventory is read whole (its
+  trailing LF ends the last record; a truncated record, in the inventory, such
+as `uuid:gsm` without its state field, or in a profile's settings, counts as
+unread). A
+  modem whose MM physdev is positively not a USB device is not parked at all:
+  its settle ends without a write. A USB modem whose descriptor cannot be
+  captured yet is retried.
+- It does not park a never-activated profile (timestamp 0) that has a sibling
+  for the same device id and SIM: once disarmed, an older build's duplicate
+  cleanup, which knows nothing of park records, would prune it as its own
+  demoted clone. The ordinary two-pass cleanup handles that profile once its
+  SIM is back.
+- The settle is tracked per registration apart from the first-activation
+  intent: a refusal, a vetoed park, an incomplete audit, a store fault or a
+  failed write leaves it incomplete, and the poll tries again 30, 60, 120,
+  240, then every 300 s, also after the intent was consumed, until it
+  finishes or the registration ends. It never throws and always confirms its
+  journal entry; like any journaled mutation, only a journal operation that
+  fails (an entry write, or the directory sync when the entry is retired) can
+  raise the recovery barrier or leave the modem blocked. Each attempt that reaches the lease writes and
+  retires one entry.
+- Replay of an interrupted settle finds nothing to undo: the park records
+  describe themselves (a crash between record and write is converged by the
+  next pass), and an unchanged descriptor reports `restored` on every build.
+  A new journal `format` would not do: an older build has no inverse for it
+  and would hold the modem `failed`.
+
+Parking is the only autoconnect write the SIM swap adds to registration;
+duplicate cleanup still demotes clones as described in
+a-modem-save-spends-a-reconnect-only-when-it-must.md.
+
+Park records live in their own private store, `/data/ceralive/gsm-sim-park`
+(`CERALIVE_GSM_SIM_PARK_DIR`), never in a cellular authority kind: the boot
+inventory of every build parses those in full, and a record kind an older
+build does not know would hold recovery, and every Stream Start, forever.
+
+**Rollback to a build without parking.** What an older build meets, by
+artifact:
+
+| Artifact | Older build |
+|---|---|
+| Takeover or settle journal entry, `armed` or `executing` | Generic descriptor replay: `restored` and removed when the modem is unchanged; quarantined if it is absent, as any journaled mutation. Replay looks at the descriptor, not the bearer, on this build too: after a backend crash mid-takeover the entry is cleared while NM may still be bringing the new bearer up, so a Stream Start can be admitted during that activation, exactly as after any boot. This is an accepted limit. |
+| Takeover or settle journal entry, `completed` | Pruned. |
+| Takeover journal entry, `failed` (an activation that did not end within 180 s) | Blocks that modem until acknowledged, as in this build. |
+| Park store directory | Never read. |
+| Parked NM profile | An ordinary `autoconnect=no` manual profile. NM does not pick it, the older first activation does not dial it, and its duplicate cleanup does not prune it (never-used siblings are not parked). While its SIM stays out nothing changes. If that SIM comes back under the older build, the modem stays down until the profile is re-armed by hand (`nmcli connection modify <profile> connection.autoconnect yes`) or a build with parking re-arms it. |
+
+`modem-ready-activation.test.ts` covers the journal pre-state against the
+generic rollback; `gsm-sim-swap.test.ts` covers the stores and the duplicate
+classifier without park records.
 
 **IDENTITY IS FAIL-CLOSED.** The identity contract permits an omitted
 `stable_key`, and a target with no resolvable physical key cannot be journaled,
