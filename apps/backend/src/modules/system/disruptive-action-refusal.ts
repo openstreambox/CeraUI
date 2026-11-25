@@ -1,4 +1,5 @@
 import { notificationBroadcast } from "../ui/notifications.ts";
+import { getCarryingLiveness } from "./carrying.ts";
 import {
 	type DisruptiveRefusalReason,
 	isDisruptiveActionPending,
@@ -8,11 +9,16 @@ const CLIENT_TRAFFIC = {
 	text: "This action was not run. Try again when the box’s own stream and connected devices’ stream traffic are idle and no update is in progress.",
 	key: "notifications.disruptiveActionClientTraffic",
 } as const;
-// Unknown is not a stream: the box is idle or still finding out, so it says it
-// is checking, how long to wait, and the one step that settles it if it stays.
-const LIVENESS_UNKNOWN = {
-	text: "This action was not run. The box is still checking that no stream and no connected device’s stream traffic is running. Try again in a few minutes. If it keeps refusing, use Stop Stream on the Live page first.",
-	key: "notifications.disruptiveActionLivenessUnknown",
+// Unknown is not a stream: the box is idle or still finding out, so it says
+// which part is still checking and what helps. Stop settles only an
+// unconfirmed stream of the box's own; client traffic can only be waited out.
+const CARRYING_CHECKING = {
+	text: "This action was not run. The box is still checking whether connected devices send stream traffic through it. Try again in a few minutes.",
+	key: "notifications.disruptiveActionCarryingChecking",
+} as const;
+const STREAM_UNCONFIRMED = {
+	text: "This action was not run. The box cannot yet confirm that its own stream has stopped. Try again in a moment. If it keeps refusing, use Stop Stream on the Live page first.",
+	key: "notifications.disruptiveActionStreamUnconfirmed",
 } as const;
 const BUSY = {
 	text: "Device is busy, try again in a moment",
@@ -26,7 +32,9 @@ export function notifyDisruptiveActionRefused(
 		reason === "update_in_progress" && isDisruptiveActionPending()
 			? BUSY
 			: reason === "stream_liveness_unknown"
-				? LIVENESS_UNKNOWN
+				? getCarryingLiveness() === "unknown"
+					? CARRYING_CHECKING
+					: STREAM_UNCONFIRMED
 				: CLIENT_TRAFFIC;
 	notificationBroadcast(
 		"disruptive_action_refused",

@@ -76,6 +76,8 @@ process.env.CERALIVE_CARRYING_BOOT_CLAIM = join(
 	runtimeRoot,
 	"carrying-boot-claim",
 );
+const previousCarryingIdleRecord = process.env.CERALIVE_CARRYING_IDLE_RECORD;
+process.env.CERALIVE_CARRYING_IDLE_RECORD = join(runtimeRoot, "carrying-idle");
 // The sender census never reads the host's process table in unit tests.
 const previousSenderCensusRoot = process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT;
 process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT = join(runtimeRoot, "proc");
@@ -151,6 +153,9 @@ afterAll(async () => {
 	if (previousCarryingBootClaim === undefined)
 		delete process.env.CERALIVE_CARRYING_BOOT_CLAIM;
 	else process.env.CERALIVE_CARRYING_BOOT_CLAIM = previousCarryingBootClaim;
+	if (previousCarryingIdleRecord === undefined)
+		delete process.env.CERALIVE_CARRYING_IDLE_RECORD;
+	else process.env.CERALIVE_CARRYING_IDLE_RECORD = previousCarryingIdleRecord;
 	if (previousSenderCensusRoot === undefined)
 		delete process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT;
 	else process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT = previousSenderCensusRoot;

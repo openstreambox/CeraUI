@@ -15,11 +15,23 @@ Gaps above ten seconds restart qualification. Recent entry-level traffic withhol
 idle for 20 seconds even if a short dip resets qualification. An isolated burst
 therefore has bounded checking time, while repeated stalls cannot open idle gaps.
 A backend restart within the same boot seeds a separate two-minute checking
-window. It reports unknown, never carrying without real evidence, and ambient
+window unless the earlier process left positive evidence that it held nothing.
+The window reports unknown, never carrying without real evidence, and ambient
 keep-level traffic cannot extend it. A restart therefore cannot lose the
 remaining protection. The first start after a boot takes no such window: no
 earlier process held evidence to lose, anything carried before the reboot was
 already cut, and new client traffic is measured from the first sample interval.
+The evidence is `/run/ceralive/carrying-idle` (`CERALIVE_CARRYING_IDLE_RECORD`).
+A process writes it only after it published confirmed idle and its carrying
+marker was released, and withdraws it before it publishes any protection
+(client sessions, qualifying traffic, unreadable counters or its own startup
+window). A restart skips the window only when that record exists and the OTA
+streaming marker is absent. A failed write, a crash between the two steps, a
+marker that is present or cannot be examined, or a backend from before the
+record (the first upgrade to it) all keep the window. Absence of the marker
+alone is not evidence, because a marker write can fail while protection holds.
+Without the record, an idle box refused SSH and power actions for two minutes
+after every package install or service restart.
 The first readable sample is only a baseline: it clears "unreadable", and the
 first rate needs a second sample of the same interfaces, five seconds later.
 A phone already forwarding when the backend starts is therefore reported idle
@@ -34,7 +46,8 @@ it before restarting the backend on every upgrade while systemd runs: that is a
 restart within the boot. It does not ask systemd whether the backend ran, because
 an old prerm may already have stopped, disabled and unloaded the unit, which
 clears that record. At worst a backend that had not run yet gets the restart
-hold. A fresh install and an image build write nothing.
+hold. An upgrade whose earlier backend recorded idle skips it like any other
+restart. A fresh install and an image build write nothing.
 A two-minute hold after the last
 positive evidence covers reconnects. While an above-threshold upload is still
 qualifying, liveness is unknown, so idle actions wait without calling a short burst

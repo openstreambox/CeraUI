@@ -601,6 +601,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 		" ms — reporting the live view",
 	],
 	["capture-degraded: sources re-publish failed"],
+	["carrying idle record could not be withdrawn"],
 	["cellular audit: refused D-Bus call ", " (", ")"],
 	["cellular authority migration incomplete; records preserved"],
 	["cellular dbus backend: start resolved after abort; discarding"],

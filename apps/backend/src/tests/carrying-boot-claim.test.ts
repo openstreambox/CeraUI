@@ -46,17 +46,20 @@ test("a claim that cannot be written counts as a restart and keeps the hold", ()
 	expect(claimFirstStartThisBoot(missingParent)).toBe(false);
 });
 
-test("the first start of a boot takes no startup hold; a restart takes the two-minute hold only over a marker", () => {
+test("the first start of a boot takes no startup hold; a restart takes the two-minute hold unless the predecessor recorded idle", () => {
 	// Observed, not run: the shared tracker must not keep a hold for later files.
 	const start = spyOn(carryingTracker, "start").mockImplementation(() => {});
 	try {
-		initCarrying(true, "unknown");
+		initCarrying(true, { idleRecord: false, marker: "unknown" });
 		expect(start).not.toHaveBeenCalled();
-		// The predecessor left no marker: it protected nothing to stand in for.
-		initCarrying(false, "idle");
+		// The predecessor recorded idle and left no marker: nothing was lost.
+		initCarrying(false, { idleRecord: true, marker: "idle" });
 		expect(start).not.toHaveBeenCalled();
-		initCarrying(false, "unknown");
+		// No record (a failed write, a crash, an older backend) keeps the hold.
+		initCarrying(false, { idleRecord: false, marker: "idle" });
 		expect(start).toHaveBeenCalledTimes(1);
+		initCarrying(false, { idleRecord: true, marker: "unknown" });
+		expect(start).toHaveBeenCalledTimes(2);
 	} finally {
 		start.mockRestore();
 		setCarryingOtaProtection(false);

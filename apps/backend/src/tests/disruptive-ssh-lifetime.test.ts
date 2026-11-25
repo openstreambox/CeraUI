@@ -8,6 +8,7 @@ import { getConfig, setConfigFilePath } from "../modules/config.ts";
 import { buildControlContext } from "../modules/remote-control/control-context.ts";
 import { updateStreamLifecycleState } from "../modules/streaming/stream-lifecycle-status.ts";
 import { updateStatus } from "../modules/streaming/streaming.ts";
+import { carryingTracker } from "../modules/system/carrying.ts";
 import {
 	resetSshServiceRunner,
 	setSshServiceRunner,
@@ -82,8 +83,7 @@ for (const action of ["start", "stop", "persist"] as const) {
 	});
 }
 
-test("SSH start under unknown liveness says the box is still checking and what to do", async () => {
-	// Given a box that cannot yet confirm idle (not a live stream).
+async function refusalUnderUnknown(): Promise<unknown[] | undefined> {
 	setStreamLivenessSourceForTest(() => "unknown");
 	const broadcast = spyOn(notifications, "notificationBroadcast");
 	try {
@@ -94,15 +94,30 @@ test("SSH start under unknown liveness says the box is still checking and what t
 			success: false,
 			error: "stream_liveness_unknown",
 		});
-		const refusal = broadcast.mock.calls.find(
+		return broadcast.mock.calls.find(
 			([name]) => name === "disruptive_action_refused",
 		);
-		expect(refusal?.[7]).toBe("notifications.disruptiveActionLivenessUnknown");
-		expect(refusal?.[2]).toContain("still checking");
-		expect(refusal?.[2]).toContain("Stop Stream");
 	} finally {
 		broadcast.mockRestore();
 		setStreamLivenessSourceForTest(null);
+	}
+}
+
+test("SSH start beside an unconfirmed own stream offers Stop Stream", async () => {
+	const refusal = await refusalUnderUnknown();
+	expect(refusal?.[7]).toBe("notifications.disruptiveActionStreamUnconfirmed");
+	expect(refusal?.[2]).toContain("Stop Stream");
+});
+
+test("SSH start while client traffic is still checked says to wait, not to stop", async () => {
+	carryingTracker.session("ssh-test", null, performance.now());
+	try {
+		const refusal = await refusalUnderUnknown();
+		expect(refusal?.[7]).toBe("notifications.disruptiveActionCarryingChecking");
+		expect(refusal?.[2]).toContain("still checking");
+		expect(refusal?.[2]).not.toContain("Stop Stream");
+	} finally {
+		carryingTracker.session("ssh-test", false, performance.now());
 	}
 });
 

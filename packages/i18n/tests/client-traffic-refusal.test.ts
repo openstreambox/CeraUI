@@ -28,19 +28,28 @@ test("refusal asks for a new attempt without claiming a stream ended or queuing 
 
 for (const locale of ALL_LOCALES) {
 	test(`${locale} has unknown-liveness refusal copy`, () => {
-		const text = readCatalog(locale)["notifications.disruptiveActionLivenessUnknown"];
-		expect(typeof text).toBe("string");
-		expect(String(text).trim().length).toBeGreaterThan(0);
+		const catalog = readCatalog(locale);
+		for (const key of [
+			"notifications.disruptiveActionCarryingChecking",
+			"notifications.disruptiveActionStreamUnconfirmed",
+		]) {
+			expect(typeof catalog[key]).toBe("string");
+			expect(String(catalog[key]).trim().length).toBeGreaterThan(0);
+		}
 	});
 }
 
-test("an unknown-liveness refusal says the box is checking, how long to wait and what settles it", () => {
+test("unknown-liveness refusals say what is checking and only offer Stop for the box's own stream", () => {
 	const catalog = readCatalog("en");
-	const text = String(catalog["notifications.disruptiveActionLivenessUnknown"]);
-	expect(text).toMatch(/was not run/);
-	expect(text).toMatch(/still checking/);
-	expect(text).toMatch(/Try again in a few minutes/);
-	expect(text).toContain(String(catalog["live.stopStream"]));
-	expect(text).toContain(String(catalog["navigation.live"]));
-	expect(text).not.toMatch(/will wait|has stopped|have stopped/);
+	const carrying = String(catalog["notifications.disruptiveActionCarryingChecking"]);
+	expect(carrying).toMatch(/was not run/);
+	expect(carrying).toMatch(/still checking whether connected devices/);
+	expect(carrying).toMatch(/Try again in a few minutes/);
+	expect(carrying).not.toContain(String(catalog["live.stopStream"]));
+	const stream = String(catalog["notifications.disruptiveActionStreamUnconfirmed"]);
+	expect(stream).toMatch(/was not run/);
+	expect(stream).toMatch(/its own stream/);
+	expect(stream).toContain(String(catalog["live.stopStream"]));
+	expect(stream).toContain(String(catalog["navigation.live"]));
+	for (const text of [carrying, stream]) expect(text).not.toMatch(/will wait/);
 });

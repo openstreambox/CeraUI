@@ -1,5 +1,6 @@
-import { closeSync, openSync } from "node:fs";
+import { closeSync, lstatSync, openSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { logger } from "../../helpers/logger.ts";
 import { isSharedLanPort } from "../network/ethernet-role.ts";
 import {
 	getNetworkInterfaces,
@@ -41,14 +42,100 @@ export async function readClientUploadCounters(
 	return counters;
 }
 
+/** Positive evidence for the next backend process in this boot that this one
+ * held no carrying protection. /run/ceralive outlives a restart, like the
+ * marker and the boot claim. */
+export function carryingIdleRecordPath(): string {
+	return (
+		process.env.CERALIVE_CARRYING_IDLE_RECORD ?? "/run/ceralive/carrying-idle"
+	);
+}
+
+type IdleRecordFs = Pick<
+	typeof import("node:fs"),
+	"lstatSync" | "openSync" | "closeSync" | "rmSync"
+>;
+
+/**
+ * The record exists only while this process has published confirmed idle:
+ * it is written after the carrying marker was cleared, and withdrawn before
+ * any protection is published. A write that fails, a crash between the two
+ * steps, or a backend from before the record leaves no record, and the
+ * restart then keeps the hold. Absence of the marker alone is not idle
+ * evidence: a marker write may fail while the process still protects.
+ */
+export function createCarryingIdleRecord(
+	path: () => string = carryingIdleRecordPath,
+	fs: IdleRecordFs = { lstatSync, openSync, closeSync, rmSync },
+) {
+	// Unknown at start: whatever is on disk belongs to the earlier process.
+	let recorded: boolean | undefined;
+	return {
+		/** Read once at start, before this process publishes anything. */
+		present(): boolean {
+			try {
+				return fs.lstatSync(path()).isFile();
+			} catch {
+				return false;
+			}
+		},
+		withdraw(): boolean {
+			if (recorded === false) return true;
+			try {
+				fs.rmSync(path(), { force: true });
+				recorded = false;
+				return true;
+			} catch (error) {
+				recorded = undefined;
+				logger.warn("carrying idle record could not be withdrawn", { error });
+				return false;
+			}
+		},
+		record(): void {
+			if (recorded === true) return;
+			try {
+				fs.closeSync(fs.openSync(path(), "w", 0o600));
+				recorded = true;
+			} catch {
+				// No record keeps the next restart's hold; nothing else depends on it.
+				recorded = undefined;
+			}
+		},
+	};
+}
+export type CarryingIdleRecord = ReturnType<typeof createCarryingIdleRecord>;
+
+/**
+ * One carrying publication's persistence, in the order a crash or a failed
+ * write must not defeat: withdraw the idle record, then take the marker;
+ * release the marker, then record idle. Returns the marker state now held.
+ */
+export function persistCarryingProtection(
+	protect: boolean,
+	markerProtected: boolean | undefined,
+	io: {
+		readonly setMarker: (protect: boolean) => boolean;
+		readonly idleRecord: CarryingIdleRecord;
+	},
+): boolean | undefined {
+	if (protect) io.idleRecord.withdraw();
+	let held = markerProtected;
+	if (held !== protect && io.setMarker(protect)) held = protect;
+	if (!protect && held === false) io.idleRecord.record();
+	return held;
+}
+
+const idleRecord = createCarryingIdleRecord();
 let published: string | undefined;
 let markerProtected: boolean | undefined;
 function publishCarrying(): void {
 	const carrying = getCarryingStatus();
 	const { state, startup } = carrying;
-	const protect = state !== "idle";
-	if (markerProtected !== protect && setCarryingOtaProtection(protect))
-		markerProtected = protect;
+	markerProtected = persistCarryingProtection(
+		state !== "idle",
+		markerProtected,
+		{ setMarker: setCarryingOtaProtection, idleRecord },
+	);
 	const signature = `${state}:${startup}`;
 	if (signature === published) return;
 	published = signature;
@@ -138,31 +225,39 @@ export function claimFirstStartThisBoot(
  * there only refused restarts, power-off and SSH for two minutes after every
  * boot.
  *
- * A restart within the boot has a predecessor, but that process published
- * every protection it held in the OTA streaming marker: its stream keeps the
- * file, and so does its carrying (the carrying line, or an append to a file it
- * could not explain). The marker lives in `/run/ceralive`, which outlives a
- * restart. No marker at all means the predecessor protected nothing at its
- * last write, so there is no lost evidence to stand in for, and an idle box
- * must not refuse SSH and power actions for two minutes after every package
- * install or service restart. Anything else (the file, or a file that cannot
- * be examined) keeps the hold.
+ * A restart within the boot has a predecessor. It skips the hold only on
+ * positive evidence that the predecessor held nothing: its idle record (see
+ * `createCarryingIdleRecord`) and no OTA streaming marker. Without that an idle
+ * box refused SSH and power actions for two minutes after every package
+ * install or service restart. Anything else keeps the hold: no record (a
+ * failed write, a crash mid-publication, an older backend), or a marker that
+ * is present or cannot be examined.
  */
+export type RestartEvidence = {
+	readonly idleRecord: boolean;
+	readonly marker: "idle" | "unknown";
+};
+
 export function restartNeedsCarryingHold(
 	firstStartThisBoot: boolean,
-	markerAtStart: "idle" | "unknown",
+	evidence: RestartEvidence,
 ): boolean {
-	return !firstStartThisBoot && markerAtStart !== "idle";
+	if (firstStartThisBoot) return false;
+	return !(evidence.idleRecord && evidence.marker === "idle");
 }
 
 export function initCarrying(
 	firstStartThisBoot: boolean = claimFirstStartThisBoot(),
-	// Read before this process publishes its own carrying state below.
-	markerAtStart: "idle" | "unknown" = initialOtaStreamLiveness(),
+	// Read before this process publishes its own carrying state below, which
+	// withdraws the record while the first sample is outstanding.
+	evidence: RestartEvidence = {
+		idleRecord: idleRecord.present(),
+		marker: initialOtaStreamLiveness(),
+	},
 ): void {
 	enabled = true;
 	carryingTracker.bind(publishCarrying);
-	if (restartNeedsCarryingHold(firstStartThisBoot, markerAtStart))
+	if (restartNeedsCarryingHold(firstStartThisBoot, evidence))
 		carryingTracker.start(performance.now());
 	carryingTracker.upload(performance.now(), null);
 	publishCarrying();
