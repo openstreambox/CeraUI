@@ -1,0 +1,49 @@
+{
+	"schema_version": 1,
+	"link": "ok",
+	"stale": false,
+	"expected": true,
+	"ambiguous": false,
+	"published_mono_ms": 10000,
+	"rx_mono_ms": 10000,
+	"fields": {
+		"up": "142",
+		"armed": "1",
+		"power": "ok",
+		"redundant": "1",
+		"thermal": "hot",
+		"a": "healthy/20.00V/0.50A/52.0C/00",
+		"b": "healthy/20.00V/0.50A/30.0C/00",
+		"pack": "ready/30.0C/00",
+		"load": "20.0W",
+		"sbc": "run",
+		"last_shutdown": "none",
+		"pack_charge": "no_inhibit_required",
+		"fan": "unmonitored",
+		"pack_cal": "bench",
+		"start": "on",
+		"gaps": "0000",
+		"gaps2": "0000",
+		"seq": "104",
+		"boot": "7c1e04a2",
+		"rst": "poweron",
+		"alive": "1",
+		"hot": "a",
+		"shutdowns": "0",
+		"fw": "field-5367fef5"
+	},
+	"temperatures": {
+		"a": {
+			"celsius": 52.0,
+			"quality": "reported"
+		},
+		"b": {
+			"celsius": 30.0,
+			"quality": "reported"
+		},
+		"pack": {
+			"celsius": 30.0,
+			"quality": "reported"
+		}
+	}
+}
