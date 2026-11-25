@@ -544,3 +544,23 @@ test("every lease and read reason reads as words, never a bare token", async () 
 		document.body.innerHTML = "";
 	}
 });
+
+test("two sources with the same label both list, keyed by their metric id", async () => {
+	const view = show(
+		radio({
+			...registered,
+			metrics: {
+				"unknown.rsrq": known(-11, "dB", "QMI NAS signal-info"),
+				"mm.rsrq": known(-12, "dB", "ModemManager Signal rsrq"),
+			},
+		}),
+	);
+	const { part } = await openDetails(view);
+	const rows = [
+		...(part("radio-health-raw")?.querySelectorAll("dt") ?? []),
+	].map((dt) => dt.textContent?.trim());
+	expect(rows.filter((name) => name === "RSRQ")).toHaveLength(2);
+	const raw = part("radio-health-raw")?.textContent ?? "";
+	expect(raw).toContain("-11 dB");
+	expect(raw).toContain("-12 dB");
+});

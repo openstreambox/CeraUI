@@ -95,7 +95,7 @@ import Badge from '$lib/components/custom/Badge.svelte';
 import BondToggle from '$lib/components/custom/BondToggle.svelte';
 import NoSimBadge from '$lib/components/custom/NoSimBadge.svelte';
 import { Button } from '$lib/components/ui/button';
-import { DiagnosticsBlock } from '$lib/modem/sections';
+import { DiagnosticsBlock, deriveSim } from '$lib/modem/sections';
 import { cn } from '$lib/utils';
 import {
 	detailFields,
@@ -471,11 +471,13 @@ async function openAdminUi(rowId: string): Promise<void> {
 				{const tone = $derived(stateTone(state))}
 				{const simless = $derived(isSimlessModem(modem))}
 				{const primary = $derived(primaryLabel(modem, id))}
+				<!-- Radio health says "No SIM" only for a slot read as empty. The row's
+				     `no_sim` fold also covers an unreadable slot, which is not checked. -->
+				{const radioNoSim = $derived(deriveSim(modem).presence === 'absent')}
 				{const radioNamesNetwork = $derived(
 					openDetails[id] === true &&
 						modem.radio_health !== undefined &&
-						!simless &&
-						state !== 'no-sim' &&
+						!radioNoSim &&
 						modem.radio_health.layer.value !== null,
 				)}
 				{const detail = $derived(detailLine(modem, primary, { omitNetworkType: radioNamesNetwork }))}
@@ -901,7 +903,7 @@ async function openAdminUi(rowId: string): Promise<void> {
 									radio={modem.radio_health}
 									id={String(id)}
 									network={carrier || undefined}
-									noSim={state === 'no-sim' || simless}
+									noSim={radioNoSim}
 									connected={state === 'connected'}
 									modemName={radioModemName}
 								/>

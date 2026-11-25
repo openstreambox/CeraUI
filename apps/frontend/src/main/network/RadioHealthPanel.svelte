@@ -268,10 +268,13 @@ const REASON_TEXT = $derived<Record<string, string>>({
 });
 const reasonText = (token: string) =>
 	REASON_TEXT[token] ?? m['network.radio.reason.other']();
-const readingRows = $derived<[string, RadioMetric][]>([
-	[m['network.radio.registration'](), radio.registration],
-	[m['network.radio.networkType'](), radio.layer],
-	[m['network.radio.band'](), radio.band],
+// Each row is keyed by its metric id, not its label: two sources can share a
+// label (a headerless QMI "unknown.rsrq" and "mm.rsrq" both read "RSRQ"), and
+// a duplicate key breaks the list. The fixed rows have keys of their own.
+const readingRows = $derived<{ key: string; name: string; metric: RadioMetric }[]>([
+	{ key: '#registration', name: m['network.radio.registration'](), metric: radio.registration },
+	{ key: '#layer', name: m['network.radio.networkType'](), metric: radio.layer },
+	{ key: '#band', name: m['network.radio.band'](), metric: radio.band },
 	...Object.entries(radio.metrics)
 		// An empty generic slot says nothing once a layer reports the same metric.
 		.filter(
@@ -282,13 +285,11 @@ const readingRows = $derived<[string, RadioMetric][]>([
 					([other, reading]) => other.endsWith(`.${key}`) && reading.value !== null,
 				),
 		)
-		.map(
-			([key, metric]) =>
-				[
-					key === 'servingCell' ? m['network.radio.servingCell']() : metricLabel(key),
-					metric,
-				] as [string, RadioMetric],
-		),
+		.map(([key, metric]) => ({
+			key,
+			name: key === 'servingCell' ? m['network.radio.servingCell']() : metricLabel(key),
+			metric,
+		})),
 ]);
 
 const FINDING_CHIP = $derived<Record<string, string>>({
@@ -436,7 +437,7 @@ const history = $derived<HistoryRow[]>(
 		<div class="space-y-1">
 			<h4 class="text-sm font-medium">{m['network.radio.readings']()}</h4>
 			<dl class="divide-y" data-testid="radio-health-raw">
-				{#each readingRows as [name, metric] (name)}
+				{#each readingRows as { key, name, metric } (key)}
 					{const shown = $derived(formatValue(metric))}
 					{const at = $derived(time(metric.capturedAt))}
 					{const origin = $derived(splitSourceReason(metric.source))}
