@@ -477,6 +477,7 @@ it("explains retained encryption refusal without rendering raw diagnostics", asy
 	await tick();
 	expect(toastError).toHaveBeenCalledWith(
 		`Saved SRT encryption settings are not supported. Clear them before starting. ${startFailure.notRetriable}`,
+		VIEW_LOGS,
 	);
 	expect(JSON.stringify(toastError.mock.calls)).not.toContain(
 		"synthetic-secret",
