@@ -1221,6 +1221,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["update-orchestrator: OS attempt recovery requested"],
 	["update-orchestrator: OS attempt settled"],
 	["update-orchestrator: OS install client settled"],
+	[
+		"update-orchestrator: OS install succeeded but its stage release is unproven",
+	],
 	["update-orchestrator: OS job ownership unreadable"],
 	["update-orchestrator: OS recovery evidence unreadable"],
 	["update-orchestrator: OS stage admission refused"],
