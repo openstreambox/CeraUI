@@ -7,6 +7,7 @@
  */
 import { appContract } from "@ceraui/rpc/contracts";
 import {
+	connectionStatusSchema,
 	MODEM_RESTART_MODELS,
 	restartModemMethodSchema,
 	restartModemOutcomeSchema,
@@ -200,6 +201,7 @@ const RESTART_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
 	restartOutcome: new Set(restartModemOutcomeSchema.options),
 	restartRefusal: new Set(restartModemRefusalSchema.options),
 	restartReset: new Set(["accepted", "refused", "unknown"]),
+	connection: new Set(connectionStatusSchema.options),
 };
 
 function boundedCount(value: unknown, max: number): value is number {

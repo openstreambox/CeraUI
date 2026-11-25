@@ -5,6 +5,8 @@
  * confirmed with its cost first, and its progress and result shown above the
  * rows (the restarted modem's own row unmounts while it is gone).
  */
+
+import { resolveMessageKey } from "@ceraui/i18n/svelte";
 import type {
 	Modem,
 	RadioHealth,
@@ -13,6 +15,8 @@ import type {
 } from "@ceraui/rpc/schemas";
 import { fireEvent, render, waitFor } from "@testing-library/svelte";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { modemRefusalCopyKey } from "$lib/modem/refusal-taxonomy";
 
 import CellularSection from "./CellularSection.svelte";
 
@@ -266,6 +270,25 @@ describe("Restart modem on the cellular rows", () => {
 				"back_connected",
 			),
 		);
+	});
+
+	it("a blocked modem's refusal uses the shared copy that names the next step", async () => {
+		restart.mockResolvedValue({ started: false, refusal: "mutation_blocked" });
+		const view = renderRoster([["0", modem("RM520N-GL", "wwu1i4")]]);
+		await fireEvent.click(view.getByTestId("modem-restart"));
+		await waitFor(() => expect(confirmBody()).not.toBeNull());
+		const primary = [...document.body.querySelectorAll("button")].find(
+			(b) => b.textContent?.trim() === "Restart",
+		);
+		if (!primary) throw new Error("no Restart button");
+		await fireEvent.click(primary);
+		const shared = resolveMessageKey(modemRefusalCopyKey("mutation_blocked"));
+		await waitFor(() =>
+			expect(view.getByTestId("modem-restart-status").textContent).toContain(
+				shared,
+			),
+		);
+		expect(shared).not.toBe("This modem can’t be restarted right now.");
 	});
 
 	it("names a refusal calmly with its retry time", async () => {

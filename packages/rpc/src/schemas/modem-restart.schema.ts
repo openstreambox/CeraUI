@@ -11,9 +11,9 @@ import { modemMutationRefusalSchema } from './modems.schema';
  * configuration and connection profile intact, and that nothing got stuck:
  *
  *   DW5821e    slot module on a ROCK 5B+, `mmcli --reset` back connected after
- *              32.5 to 32.8 s (3 runs); a USB rebind after 13.4 s (2 runs).
+ *              32.5 to 32.8 s (3 runs).
  *   RM520N-GL  on the USB-C data port, `mmcli --reset` back connected after
- *              51.5 to 53.6 s (3 runs); a USB rebind after 24 to 24.8 s (2 runs).
+ *              51.5 to 53.6 s (3 runs).
  *
  * The FM350-GL is deliberately absent: ModemManager answers `Unsupported` to its
  * reset, and its recorded USB behaviour includes crash and reset loops. Anything
@@ -30,14 +30,12 @@ export const MODEM_RESTART_MODELS = [
 	{
 		family: 'dw5821e',
 		pattern: /^DW5821e\b/i,
-		usbIds: ['413c:81d7'],
 		expectedSeconds: 35,
 		boundSeconds: 120,
 	},
 	{
 		family: 'rm520n-gl',
 		pattern: /^RM520N-GL\b/i,
-		usbIds: ['2c7c:0801'],
 		expectedSeconds: 55,
 		boundSeconds: 150,
 	},
@@ -47,8 +45,6 @@ export type ModemRestartFamily = (typeof MODEM_RESTART_MODELS)[number]['family']
 
 export type ModemRestartQualification = {
 	readonly family: ModemRestartFamily;
-	/** USB `vendor:product` ids a USB rebind may act on for this model. */
-	readonly usbIds: readonly string[];
 	readonly expectedSeconds: number;
 	readonly boundSeconds: number;
 };
@@ -63,7 +59,6 @@ export function modemRestartQualification(
 		? undefined
 		: {
 				family: entry.family,
-				usbIds: entry.usbIds,
 				expectedSeconds: entry.expectedSeconds,
 				boundSeconds: entry.boundSeconds,
 			};
@@ -123,7 +118,7 @@ export type RestartModemRefusal = z.infer<typeof restartModemRefusalSchema>;
  *   not_back            no modem on that port within the wait.
  *   unchanged           ModemManager accepted the reset, but the modem never left
  *                       its index within the wait, so nothing proves it restarted.
- *   failed              ModemManager refused the reset and the USB rebind did not run or failed.
+ *   failed              ModemManager refused the reset; nothing happened to the modem.
  */
 export const restartModemOutcomeSchema = z.enum([
 	'back_connected',
@@ -134,7 +129,7 @@ export const restartModemOutcomeSchema = z.enum([
 ]);
 export type RestartModemOutcome = z.infer<typeof restartModemOutcomeSchema>;
 
-export const restartModemMethodSchema = z.enum(['mm-reset', 'usb-rebind']);
+export const restartModemMethodSchema = z.enum(['mm-reset']);
 export type RestartModemMethod = z.infer<typeof restartModemMethodSchema>;
 
 export const restartModemOutputSchema = z.object({

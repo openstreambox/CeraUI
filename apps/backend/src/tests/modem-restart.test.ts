@@ -39,11 +39,8 @@ import {
 	otherBondLinkLiveIn,
 	resetModemRestartDeps,
 	restartModem,
-	usbDeviceForInterface,
-	usbIdsOf,
 } from "../modules/modems/modem-restart.ts";
 import type { Modem } from "../modules/modems/modems-state.ts";
-import { modemRestartAdmissionRefusal } from "../modules/modems/mutation-lease.ts";
 import {
 	resetLifecycleInterlock,
 	tryAcquireLifecycle,
@@ -77,14 +74,14 @@ function scripted(opts: {
 	after?: Array<[number, Roster]>;
 	keys: Record<number, string>;
 	mmReset?: MmResetResult;
-	usbRebind?: boolean;
-	admissionRefusal?: ModemRestartDeps["admissionRefusal"];
+
 	streaming?: boolean;
 	otherLinkLive?: boolean | undefined;
 }) {
 	let now = 1_000_000;
 	let commandAt: number | undefined;
 	const calls: string[] = [];
+	let refreshes = 0;
 	const roster = (): Roster => {
 		if (commandAt === undefined) return opts.before;
 		const t = (now - commandAt) / 1000;
@@ -100,14 +97,11 @@ function scripted(opts: {
 			commandAt ??= now;
 			return opts.mmReset ?? "accepted";
 		},
-		usbRebind: async (ifname, ids) => {
-			calls.push(`usb-rebind ${ifname} ${ids.join(",")}`);
-			commandAt ??= now;
-			return opts.usbRebind ?? true;
+		refreshRoster: async () => {
+			refreshes += 1;
 		},
 		isStreaming: () => opts.streaming ?? false,
 		otherLinkLive: () => ("otherLinkLive" in opts ? opts.otherLinkLive : true),
-		admissionRefusal: opts.admissionRefusal ?? modemRestartAdmissionRefusal,
 		now: () => now,
 		sleep: async (ms) => {
 			now += ms;
@@ -117,6 +111,7 @@ function scripted(opts: {
 	return {
 		deps,
 		calls,
+		refreshes: () => refreshes,
 		advance: (s: number) => {
 			now += s * 1000;
 		},
@@ -144,7 +139,6 @@ describe("qualification", () => {
 	test("the DW5821e and RM520N-GL are qualified, with their measured costs", () => {
 		expect(modemRestartQualification("DW5821e Snapdragon X20 LTE")).toEqual({
 			family: "dw5821e",
-			usbIds: ["413c:81d7"],
 			expectedSeconds: 35,
 			boundSeconds: 120,
 		});
@@ -277,34 +271,33 @@ describe("a restart that comes back", () => {
 	});
 });
 
-describe("method chain, no retries", () => {
-	test("a refused reset falls back to one USB rebind", async () => {
-		const s = scripted({
-			before: { 4: modem("DW5821e", "wwu1u4c2") },
-			after: [[13, { 9: modem("DW5821e", "wwu1u4c2") }]],
-			keys: { 4: DELL_KEY, 9: DELL_KEY },
-			mmReset: "refused",
-		});
-		expect(await restartModem(INPUT, s.deps)).toMatchObject({
-			outcome: "back_connected",
-			method: "usb-rebind",
-		});
-		expect(s.calls).toEqual(["mm-reset 4", "usb-rebind wwu1u4c2 413c:81d7"]);
-	});
-
-	test("when both are refused it fails without a third try", async () => {
+describe("one method, no retries", () => {
+	test("a reset ModemManager refuses fails at once, with no second method", async () => {
 		const s = scripted({
 			before: { 4: modem("DW5821e", "wwu1u4c2") },
 			keys: { 4: DELL_KEY },
 			mmReset: "refused",
-			usbRebind: false,
 		});
 		expect(await restartModem(INPUT, s.deps)).toMatchObject({
 			started: true,
 			outcome: "failed",
-			method: "usb-rebind",
+			method: "mm-reset",
 		});
-		expect(s.calls).toEqual(["mm-reset 4", "usb-rebind wwu1u4c2 413c:81d7"]);
+		expect(s.calls).toEqual(["mm-reset 4"]);
+		expect(s.refreshes()).toBe(0);
+	});
+
+	test("while waiting, the roster is re-discovered at each poll", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			after: [
+				[7, {}],
+				[33, { 5: modem("DW5821e", "wwu1u4c2") }],
+			],
+			keys: { 4: DELL_KEY, 5: DELL_KEY },
+		});
+		expect((await restartModem(INPUT, s.deps)).outcome).toBe("back_connected");
+		expect(s.refreshes()).toBeGreaterThanOrEqual(16);
 	});
 
 	test("an accepted reset that never comes back gets no second action", async () => {
@@ -446,42 +439,8 @@ describe("guards", () => {
 	});
 });
 
-describe("usbDeviceForInterface", () => {
-	test("resolves the USB device above the interface", async () => {
-		const resolve = async () =>
-			"/sys/devices/platform/fc800000.usb/usb2/2-1/2-1.4/2-1.4:1.12";
-		expect(await usbDeviceForInterface("wwu1u4c2", resolve)).toBe("2-1.4");
-		const j11 = async () =>
-			"/sys/devices/platform/fc000000.usb/xhci-hcd.10.auto/usb9/9-1/9-1:1.4";
-		expect(await usbDeviceForInterface("wwu1i4", j11)).toBe("9-1");
-	});
-
-	test("refuses anything that is not a USB device under /sys/devices", async () => {
-		expect(
-			await usbDeviceForInterface(
-				"eth0",
-				async () => "/sys/devices/platform/fe1c0000.ethernet",
-			),
-		).toBeUndefined();
-		expect(
-			await usbDeviceForInterface("x", async () => "/tmp/9-1/9-1:1.4"),
-		).toBeUndefined();
-		expect(
-			await usbDeviceForInterface(
-				"../../etc",
-				async () => "/sys/devices/a/9-1/9-1:1.0",
-			),
-		).toBeUndefined();
-		expect(
-			await usbDeviceForInterface("wwan0", async () => {
-				throw new Error("ENOENT");
-			}),
-		).toBeUndefined();
-	});
-});
-
 describe("review round 1", () => {
-	test("a timed-out or ambiguous reset is observed, never followed by a USB rebind", async () => {
+	test("a timed-out or ambiguous reset is observed, never followed by another action", async () => {
 		const s = scripted({
 			before: { 4: modem("DW5821e", "wwu1u4c2") },
 			after: [
@@ -533,32 +492,6 @@ describe("review round 1", () => {
 		expect(s.calls).toEqual([]);
 	});
 
-	test("before the USB rebind, admission is checked again", async () => {
-		let late: ModemRestartDeps["admissionRefusal"] = () => undefined;
-		const s = scripted({
-			before: { 4: modem("DW5821e", "wwu1u4c2") },
-			keys: { 4: DELL_KEY },
-			mmReset: "refused",
-			admissionRefusal: (key) => late(key),
-		});
-		const slow: ModemRestartDeps = {
-			...s.deps,
-			mmReset: async (id) => {
-				late = () => "streaming_active";
-				return s.deps.mmReset(id);
-			},
-		};
-		const result = await restartModem(INPUT, slow);
-		expect(result).toMatchObject({
-			started: false,
-			refusal: "streaming_active",
-		});
-		expect(s.calls).toEqual(["mm-reset 4"]);
-		// Nothing happened to the modem, so no cooldown either.
-		late = () => undefined;
-		expect((await restartModem(INPUT, s.deps)).started).toBe(true);
-	});
-
 	test("the verdict follows the last observation: back, then gone again, is not_back", async () => {
 		const s = scripted({
 			before: { 4: modem("DW5821e", "wwu1u4c2") },
@@ -600,58 +533,38 @@ describe("review round 1", () => {
 		if (after.admitted) after.lease.release();
 	});
 
-	test("another live link must be a known, different uplink that carried data", () => {
+	test("another live link: a known, different uplink the sender is using now", () => {
 		const row = (iface: string, extra: Record<string, unknown> = {}) => ({
 			iface,
 			stale: false,
+			weight_percent: 40,
+			bitrate_bps: 120000,
 			bytes_sent_total: 1000,
 			...extra,
 		});
 		const others = ["wwu1i4"];
-		expect(otherBondLinkLiveIn([row("wwu1i4")], "wwu1u4c2", others)).toBe(true);
-		expect(otherBondLinkLiveIn([row("eth0")], "wwu1u4c2", others)).toBe(true);
-		expect(otherBondLinkLiveIn([row("wwu1u4c2")], "wwu1u4c2", others)).toBe(
+		const live = (
+			rows: ReturnType<typeof row>[],
+			target = "wwu1u4c2",
+			o = others,
+		) => otherBondLinkLiveIn(rows, target, o);
+		expect(live([row("wwu1i4")])).toBe(true);
+		expect(live([row("eth0")])).toBe(true);
+		expect(live([row("wwu1u4c2")])).toBe(false);
+		expect(live([row("clat0")])).toBe(false);
+		expect(live([row("10.0.0.2")])).toBe(false);
+		expect(live([row("link-3")])).toBe(false);
+		expect(live([row("eth0", { stale: true })])).toBe(false);
+		expect(
+			live([row("wwan9", { identity_state: "unmappable" })], "x", ["wwan9"]),
+		).toBe(false);
+		// A timed-out alternate keeps its session bytes but the sender gave it no weight.
+		expect(live([row("wwu1i4", { weight_percent: 0, bitrate_bps: 0 })])).toBe(
 			false,
 		);
-		expect(otherBondLinkLiveIn([row("clat0")], "wwu1u4c2", others)).toBe(false);
-		expect(otherBondLinkLiveIn([row("10.0.0.2")], "wwu1u4c2", others)).toBe(
-			false,
-		);
-		expect(otherBondLinkLiveIn([row("link-3")], "wwu1u4c2", others)).toBe(
-			false,
-		);
-		expect(
-			otherBondLinkLiveIn([row("eth0", { stale: true })], "wwu1u4c2", others),
-		).toBe(false);
-		expect(
-			otherBondLinkLiveIn(
-				[row("eth0", { bytes_sent_total: 0 })],
-				"wwu1u4c2",
-				others,
-			),
-		).toBe(false);
-		expect(
-			otherBondLinkLiveIn(
-				[row("wwan9", { identity_state: "unmappable" })],
-				"x",
-				["wwan9"],
-			),
-		).toBe(false);
-	});
-
-	test("the USB rebind only acts on a device with the model's USB ids", async () => {
-		const files: Record<string, string> = {
-			"/sys/bus/usb/devices/2-1.4/idVendor": "413c\n",
-			"/sys/bus/usb/devices/2-1.4/idProduct": "81d7\n",
-		};
-		const read = async (path: string) => {
-			const value = files[path];
-			if (value === undefined) throw new Error("ENOENT");
-			return value;
-		};
-		expect(await usbIdsOf("2-1.4", read)).toBe("413c:81d7");
-		expect(await usbIdsOf("9-1", read)).toBeUndefined();
-		expect(await usbIdsOf("../x", read)).toBeUndefined();
+		expect(live([row("wwu1i4", { weight_percent: 0 })])).toBe(false);
+		expect(live([row("wwu1i4", { bitrate_bps: 0 })])).toBe(false);
+		expect(live([row("wwu1i4", { bitrate_bps: undefined })])).toBe(false);
 	});
 
 	test("restart lines keep their fields in the support download", () => {
@@ -666,6 +579,7 @@ describe("review round 1", () => {
 					restartOutcome: "back_connected",
 					oldDevice: 4,
 					newDevice: 5,
+					connection: "registered",
 					elapsedSeconds: 32.6,
 				},
 			}),
@@ -679,6 +593,7 @@ describe("review round 1", () => {
 		expect(text).toContain('"restartOutcome":"back_connected"');
 		expect(text).toContain('"restartMethod":"mm-reset"');
 		expect(text).toContain('"newDevice":5');
+		expect(text).toContain('"connection":"registered"');
 		expect(text).toContain('"elapsedSeconds":32.6');
 		expect(text).toContain('"restartRefusal":"only_link_live"');
 		expect(text).not.toContain("made-up");

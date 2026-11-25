@@ -20,8 +20,9 @@
  * wait-by-port) with only the device replaced. A "reset" takes the modem out of
  * the mocked ModemManager list for {@link MOCK_RESTART_OUT_MS} and then lists it
  * again under a NEW index, on the same USB port and interface, which is what a
- * board does. The backend's own roster, the published modem rows and the
- * restart's wait all see that through the normal mmcli path. Nothing is written
+ * board does. The restart's own roster refresh (one discovery per poll) picks
+ * that up, so the published row goes away and a new one replaces it whatever
+ * the phase of the 30 s status poll. Nothing is written
  * anywhere.
  */
 import type { ModemRestartDeps } from "../../modules/modems/modem-restart.ts";
@@ -71,7 +72,6 @@ export function mockModemRestartDeps(): Partial<ModemRestartDeps> {
 			mockRestartModem(id);
 			return "accepted";
 		},
-		usbRebind: async () => false,
-		pollMs: 500,
+		pollMs: 1_000,
 	};
 }

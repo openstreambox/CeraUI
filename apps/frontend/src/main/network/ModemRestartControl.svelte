@@ -8,13 +8,14 @@
   result says what happened and the one next step if there is one.
 -->
 <script lang="ts">
-import { m } from '@ceraui/i18n/svelte';
+import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import type { RestartModemRefusal } from '@ceraui/rpc/schemas';
 import { CircleCheck, CircleX, RotateCcw, TriangleAlert, X } from '@lucide/svelte';
 
 import AppDialog from '$lib/components/dialogs/AppDialog.svelte';
 import { Button } from '$lib/components/ui/button';
 import type { ModemRestartFlow } from '$lib/modem/modem-restart.svelte';
+import { modemRefusalCopyKey } from '$lib/modem/refusal-taxonomy';
 import { cn } from '$lib/utils';
 
 let { flow }: { flow: ModemRestartFlow } = $props();
@@ -50,18 +51,34 @@ const seconds = (value: number | undefined) => String(Math.round(value ?? 0));
 
 function refusalText(refusal: RestartModemRefusal, retryAfter: number | undefined): string {
 	switch (refusal) {
+		// Restart's own refusals.
 		case 'not_qualified':
 			return m['network.restart.refused.notQualified']();
 		case 'restart_in_progress':
 			return m['network.restart.refused.another']();
 		case 'cooldown':
 			return m['network.restart.refused.cooldown']({ seconds: seconds(retryAfter) });
+		case 'unknown_modem':
+		case 'only_link_live':
+			return m['network.restart.refused.other']();
+		// The shared modem-safety refusals: the two a restart meets in passing get
+		// restart wording; the rest (a blocked, decommissioned or re-baselining
+		// modem, journal replay, an unresolved identity) use the shared copy that
+		// names the operator's next step.
 		case 'mutation_in_progress':
 			return m['network.restart.refused.busy']();
 		case 'streaming_active':
 			return m['network.restart.refused.streamStarting']();
-		default:
-			return m['network.restart.refused.other']();
+		case 'identity_unresolved':
+		case 'recovery_pending':
+		case 'mutation_blocked':
+		case 'device_decommissioned':
+		case 'rebaseline_required':
+			return resolveMessageKey(modemRefusalCopyKey(refusal));
+		default: {
+			const unhandled: never = refusal;
+			return String(unhandled);
+		}
 	}
 }
 
