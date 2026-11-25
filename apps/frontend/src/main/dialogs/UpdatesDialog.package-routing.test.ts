@@ -118,7 +118,7 @@ it.each(["available", "awaiting-idle"] as const)(
 	},
 );
 
-it.each(["os-available", "idle", "failed", "quarantined", "legacy"] as const)(
+it.each(["idle", "failed", "quarantined", "legacy"] as const)(
 	"%s package confirmation preserves the base legacy route",
 	async (regime) => {
 		// Given known capabilities, independently of the browser's pushed phase.
@@ -129,6 +129,23 @@ it.each(["os-available", "idle", "failed", "quarantined", "legacy"] as const)(
 		await clickPackageUpdate();
 		// Then known non-package phases retain the documented D478 residual, not a dead end.
 		expect(rpc.system.startUpdate).toHaveBeenCalledOnce();
+		expect(rpc.system.installUpdatesNow).not.toHaveBeenCalled();
+	},
+);
+
+it.each(["os-available", "os-staging", "os-staged"] as const)(
+	"%s puts the system image first instead of offering the packages",
+	async (next) => {
+		// Given packages on offer while the orchestrator holds a system image.
+		phase = next;
+		render(UpdatesDialog, { open: true });
+		// Then the Packages section says why, and offers no package install.
+		const line = await screen.findByTestId("update-packages-system-first");
+		expect(line.textContent?.trim()).toBe(
+			m["settings.updates.packages.systemFirst"](),
+		);
+		expect(screen.queryByTestId("update-install")).toBeNull();
+		expect(rpc.system.startUpdate).not.toHaveBeenCalled();
 		expect(rpc.system.installUpdatesNow).not.toHaveBeenCalled();
 	},
 );

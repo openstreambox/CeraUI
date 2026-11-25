@@ -2646,6 +2646,7 @@
 	"live.source.degradedCause.source-changed": "사용 중에 영상 입력 신호가 바뀌었습니다. 기기가 자동으로 다시 읽어옵니다. 계속 반복되면 카메라의 출력 설정을 확인하세요.",
 	"settings.updates.packages.title": "패키지",
 	"settings.updates.packages.notChecked": "기기가 아직 완료된 확인을 보고하지 않았습니다.",
+	"settings.updates.packages.systemFirst": "먼저 시스템 업데이트를 설치하세요. 자체 패키지가 포함되어 있으며, 더 새로운 패키지는 그 후에 제공됩니다.",
 	"settings.updates.nextCheck": "다음 자동 확인: {time}",
 	"settings.updates.nextCheckSoon": "다음 자동 확인: 가능한 한 빨리",
 	"settings.updates.checkDeferredMetered": "셀룰러 패키지 업데이트가 꺼져 있어 셀룰러가 아닌 연결을 기다리고 있습니다.",
