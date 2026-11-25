@@ -18,6 +18,7 @@ import {
 import { lifecycleStateSchema } from "@ceraui/rpc/schemas";
 import type { Server } from "bun";
 
+import { replayAuthenticatedUsbDevices } from "../modules/devices/usb-devices-wire.ts";
 import * as modemStatus from "../modules/modems/modem-status.ts";
 import { setup } from "../modules/setup.ts";
 import { seedStreamLifecycleState } from "../modules/streaming/stream-lifecycle-status.ts";
@@ -223,8 +224,11 @@ describe("the first frame after a sign-in", () => {
 			"health",
 			"notification",
 		]);
+		// The authenticated push carries the cached USB tree, as every sign-in does.
 		expect(hydration.find((frame) => "status" in frame)).toEqual({
-			status: snapshot.status,
+			status: JSON.parse(
+				JSON.stringify(replayAuthenticatedUsbDevices(snapshot.status)),
+			),
 		});
 	});
 
