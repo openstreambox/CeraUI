@@ -125,6 +125,7 @@ import {
 	isDisruptiveActionPending,
 	resetDisruptiveActionReservationForTest,
 } from "./disruptive-action-reservation.ts";
+import { readImageOwnedPackages } from "./image-owned-packages.ts";
 import { classifyPackageLayer } from "./package-layer.ts";
 import { getBootReadiness } from "./readiness.ts";
 import { readUpdateOutcome } from "./software-update-outcome.ts";
@@ -651,6 +652,7 @@ async function getCapableUpdateSize(
 		failCurrentCheck("discovery_failed");
 		return "discovery_failed";
 	}
+	const imageOwned = await readImageOwnedPackages();
 	try {
 		const sourcePolicy = await runAptCommand(
 			["/usr/bin/apt-cache", "policy"],
@@ -677,7 +679,18 @@ async function getCapableUpdateSize(
 				return policy.stdout;
 			},
 			sourcePolicy.stdout,
+			imageOwned.names,
 		);
+		if (result.withheld.length > 0)
+			logger.info(
+				"Package updates withheld: the system image ships these packages itself",
+				{
+					packages: result.withheld.map(
+						({ name, version }) => `${name}=${version}`,
+					),
+					record: imageOwned.source,
+				},
+			);
 		pendingPackageSuccess.assertEffectsAllowed();
 		aptAllRefusal = null;
 		actionableAllPackages = result.actionable;
