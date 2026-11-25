@@ -7,7 +7,10 @@ import {
 	NETIF_ERR_SHAREDLAN,
 } from "../network/network-interfaces.ts";
 import { setup } from "../setup.ts";
-import { setCarryingOtaProtection } from "../streaming/ota-streaming-marker.ts";
+import {
+	initialOtaStreamLiveness,
+	setCarryingOtaProtection,
+} from "../streaming/ota-streaming-marker.ts";
 import {
 	notificationBroadcast,
 	notificationRemove,
@@ -134,13 +137,33 @@ export function claimFirstStartThisBoot(
  * client traffic is measured by the sampler from its first interval. Holding
  * there only refused restarts, power-off and SSH for two minutes after every
  * boot.
+ *
+ * A restart within the boot has a predecessor, but that process published
+ * every protection it held in the OTA streaming marker: its stream keeps the
+ * file, and so does its carrying (the carrying line, or an append to a file it
+ * could not explain). The marker lives in `/run/ceralive`, which outlives a
+ * restart. No marker at all means the predecessor protected nothing at its
+ * last write, so there is no lost evidence to stand in for, and an idle box
+ * must not refuse SSH and power actions for two minutes after every package
+ * install or service restart. Anything else (the file, or a file that cannot
+ * be examined) keeps the hold.
  */
+export function restartNeedsCarryingHold(
+	firstStartThisBoot: boolean,
+	markerAtStart: "idle" | "unknown",
+): boolean {
+	return !firstStartThisBoot && markerAtStart !== "idle";
+}
+
 export function initCarrying(
 	firstStartThisBoot: boolean = claimFirstStartThisBoot(),
+	// Read before this process publishes its own carrying state below.
+	markerAtStart: "idle" | "unknown" = initialOtaStreamLiveness(),
 ): void {
 	enabled = true;
 	carryingTracker.bind(publishCarrying);
-	if (!firstStartThisBoot) carryingTracker.start(performance.now());
+	if (restartNeedsCarryingHold(firstStartThisBoot, markerAtStart))
+		carryingTracker.start(performance.now());
 	carryingTracker.upload(performance.now(), null);
 	publishCarrying();
 }

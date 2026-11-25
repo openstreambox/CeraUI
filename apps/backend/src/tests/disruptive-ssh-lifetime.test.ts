@@ -12,6 +12,7 @@ import {
 	resetSshServiceRunner,
 	setSshServiceRunner,
 } from "../modules/system/ssh.ts";
+import { setStreamLivenessSourceForTest } from "../modules/system/stream-liveness-source.ts";
 import { resetOrchestratorRuntimeForTest } from "../modules/system/update-orchestrator/runtime.ts";
 import * as notifications from "../modules/ui/notifications.ts";
 import { notificationRemove } from "../modules/ui/notifications.ts";
@@ -80,6 +81,30 @@ for (const action of ["start", "stop", "persist"] as const) {
 		broadcast.mockRestore();
 	});
 }
+
+test("SSH start under unknown liveness says the box is still checking and what to do", async () => {
+	// Given a box that cannot yet confirm idle (not a live stream).
+	setStreamLivenessSourceForTest(() => "unknown");
+	const broadcast = spyOn(notifications, "notificationBroadcast");
+	try {
+		const result = await call(sshStartProcedure, undefined, {
+			context: buildControlContext(),
+		});
+		expect(result).toEqual({
+			success: false,
+			error: "stream_liveness_unknown",
+		});
+		const refusal = broadcast.mock.calls.find(
+			([name]) => name === "disruptive_action_refused",
+		);
+		expect(refusal?.[7]).toBe("notifications.disruptiveActionLivenessUnknown");
+		expect(refusal?.[2]).toContain("still checking");
+		expect(refusal?.[2]).toContain("Stop Stream");
+	} finally {
+		broadcast.mockRestore();
+		setStreamLivenessSourceForTest(null);
+	}
+});
 
 test("SSH start rechecks after password provisioning before service submission", async () => {
 	// Given password provisioning held without any real credential I/O.

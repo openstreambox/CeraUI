@@ -48,9 +48,11 @@ export function otaStreamingMarkerPath(): string {
 }
 
 /** Only ENOENT proves an empty boot baseline; unreadable evidence stays protected. */
-export function initialOtaStreamLiveness(): "idle" | "unknown" {
+export function initialOtaStreamLiveness(
+	path: string = otaStreamingMarkerPath(),
+): "idle" | "unknown" {
 	try {
-		fs.lstatSync(otaStreamingMarkerPath());
+		fs.lstatSync(path);
 		return "unknown";
 	} catch (error) {
 		return isEnoent(error) ? "idle" : "unknown";
