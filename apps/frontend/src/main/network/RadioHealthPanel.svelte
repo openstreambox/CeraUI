@@ -1,8 +1,9 @@
 <!--
   RadioHealthPanel.svelte: read-only radio readout inside a cellular row's
   Details. Status first (a chip with its own icon and word, one short line, the
-  next step if there is one), then a few compact readings, then every raw
-  reading and the recent history behind a disclosure. No modem action controls.
+  next step if there is one), then a few compact readings. The whole card opens
+  every raw reading, the other modems and the recent history in a dialog. No
+  modem action controls.
 -->
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
@@ -16,13 +17,11 @@ import {
 	CircleX,
 	RadioTower,
 	Search,
-	SignalHigh,
-	SignalLow,
-	SignalMedium,
 	TriangleAlert,
 } from '@lucide/svelte';
 
 import Badge from '$lib/components/custom/Badge.svelte';
+import AppDialog from '$lib/components/dialogs/AppDialog.svelte';
 import { cn } from '$lib/utils';
 
 import {
@@ -59,6 +58,7 @@ let {
 } = $props();
 
 const headingId = $derived(`radio-health-${id}`);
+let detailsOpen = $state(false);
 const status = $derived<RadioStatusKind>(radioStatus(radio, { noSim, connected }));
 const tone = $derived(RADIO_STATUS_TONE[status]);
 // Solid token pairs: the tinted status pill measures below 4.5:1 for these
@@ -166,16 +166,6 @@ const networkText = $derived(
 );
 
 const signals = $derived(signalReadings(radio));
-const SIGNAL_ICON = {
-	high: SignalHigh,
-	medium: SignalMedium,
-	low: SignalLow,
-} satisfies Record<SignalLevel, unknown>;
-const SIGNAL_COLOR: Record<SignalLevel, string> = {
-	high: 'text-signal-good',
-	medium: 'text-signal-fair',
-	low: 'text-signal-weak',
-};
 const levelWord = (level: SignalLevel) =>
 	({
 		high: m['network.radio.level.high'](),
@@ -183,9 +173,6 @@ const levelWord = (level: SignalLevel) =>
 		low: m['network.radio.level.low'](),
 	})[level];
 
-const sending = $derived(
-	radio.neighbours.filter((n) => n.transmitting === 'yes').map((n) => modemName(n.id)),
-);
 
 const time = (at: number) =>
 	at > 0
@@ -257,14 +244,14 @@ const history = $derived<HistoryRow[]>(
 
 <section
 	aria-labelledby={headingId}
-	class="bg-muted/30 space-y-2.5 rounded-lg border p-3 text-xs"
+	class="hover:bg-muted/50 relative space-y-2 rounded-lg border p-3 text-xs transition-colors"
 	data-testid="radio-health"
 	data-status={status}
 >
 	<!-- The chip and line already say what this block is inside a modem's
 	     Details, so the heading is for screen readers only. -->
 	<h3 id={headingId} class="sr-only">{m['network.radio.title']()}</h3>
-	<div class="space-y-1">
+	<div class="space-y-1 pe-5">
 		<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
 			<Badge
 				variant={tone}
@@ -284,9 +271,13 @@ const history = $derived<HistoryRow[]>(
 			</p>
 		{/if}
 	</div>
+	<ChevronRight
+		aria-hidden="true"
+		class="text-muted-foreground absolute end-3 top-3.5 size-4 rtl:rotate-180"
+	/>
 
 	{#if status !== 'no-sim'}
-		<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 sm:max-w-2xl sm:grid-cols-[auto_1fr_auto_1fr]" data-testid="radio-health-readings">
+		<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1" data-testid="radio-health-readings">
 			<dt class="text-muted-foreground">{m['network.radio.registration']()}</dt>
 			<dd class={cn('min-w-0', registrationText === null && 'text-muted-foreground')}>
 				{registrationText ?? unavailable}
@@ -297,122 +288,114 @@ const history = $derived<HistoryRow[]>(
 				{#if networkText === null}{unavailable}{:else}<span dir="ltr">{networkText}</span>{/if}
 			</dd>
 
+			<!-- Measured RSRP as text. The bars stay on the row: they come from a
+			     different reading (ModemManager's percentage). -->
 			<dt class="text-muted-foreground">{m['network.radio.signal']()}</dt>
 			<dd class="min-w-0" data-testid="radio-health-signal">
 				{#if signals.length === 0}
 					<span class="text-muted-foreground">{unavailable}</span>
 				{:else}
-					<span class="flex flex-col gap-0.5">
-						{#each signals as reading (reading.tech)}
-							{const Icon = $derived(SIGNAL_ICON[reading.level])}
-							<span class="inline-flex items-center gap-1.5" data-signal-level={reading.level}>
-								<Icon class={cn('size-4 shrink-0', SIGNAL_COLOR[reading.level])} aria-hidden="true" />
-								<span class="font-mono tabular-nums" dir="ltr">{reading.dbm} dBm</span>
-								<span class="text-muted-foreground">
-									{levelWord(reading.level)}{#if signals.length > 1}{' · '}{reading.tech === 'nr' ? '5G' : 'LTE'}{/if}
-								</span>
-							</span>
-						{/each}
-					</span>
+					{#each signals as reading, index (reading.tech)}
+						<span class="whitespace-nowrap" data-signal-level={reading.level}
+							><span class="font-mono tabular-nums" dir="ltr">{reading.dbm} dBm</span>
+							{levelWord(reading.level)}{#if signals.length > 1}{' · '}{reading.tech === 'nr' ? '5G' : 'LTE'}{/if}</span
+						>{#if index < signals.length - 1}<br />{/if}
+					{/each}
 				{/if}
 			</dd>
 
-			{#if radio.neighbours.length > 0}
-				<dt class="text-muted-foreground">{m['network.radio.othersSending']()}</dt>
-				<dd class={cn('min-w-0', sending.length === 0 && 'text-muted-foreground')}>
-					{sending.length > 0 ? sending.join(', ') : m['network.radio.unknownValue']()}
-				</dd>
+			{#if radio.usb.available && radio.usb.events.length > 0}
+				<dt class="text-muted-foreground">{m['network.radio.usb']()}</dt>
+				<dd class="min-w-0 tabular-nums" data-testid="radio-health-usb">{radio.usb.events.length}</dd>
 			{/if}
-
-			<dt class="text-muted-foreground">{m['network.radio.usb']()}</dt>
-			<dd class={cn('min-w-0 tabular-nums', !radio.usb.available && 'text-muted-foreground')}>
-				{#if !radio.usb.available}
-					{unavailable}
-				{:else if radio.usb.events.length === 0}
-					{m['network.radio.usbNone']()}
-				{:else}
-					{radio.usb.events.length}
-				{/if}
-			</dd>
 		</dl>
 	{/if}
 
-	<details class="group border-t pt-1.5" data-testid="radio-health-sources">
-		<summary
-			class="text-muted-foreground hover:text-foreground flex min-h-[var(--touch-target-min)] cursor-pointer list-none items-center gap-1.5 font-medium select-none [&::-webkit-details-marker]:hidden"
-		>
-			<ChevronRight
-				aria-hidden="true"
-				class="size-3.5 shrink-0 transition-transform group-open:rotate-90 rtl:rotate-180 rtl:group-open:-rotate-90"
-			/>
-			{m['network.radio.sources']()}
-		</summary>
-		<div class="space-y-3 pt-1">
-			<div class="space-y-1">
-				<h4 class="font-medium">{m['network.radio.readings']()}</h4>
-				<dl class="divide-y" data-testid="radio-health-raw">
-					{#each readingRows as [name, metric] (name)}
-						{const shown = $derived(formatValue(metric))}
-						{const at = $derived(time(metric.capturedAt))}
-						<div class="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-3 py-1">
-							<dt class="text-muted-foreground">{name}</dt>
-							<dd class="min-w-0">
-								{#if shown === null}
-									<span class="text-muted-foreground">{unavailable}</span>
-								{:else}
-									<span class="font-mono tabular-nums" dir="ltr">{shown}</span>
-								{/if}
-								{#if shown !== null || metric.source !== 'not-observed'}
-									<span class="text-muted-foreground block break-words text-(length:--text-micro)" dir="ltr">
+	<!-- One button stretched over the card: the whole card opens the readings,
+	     while the markup inside stays plain text rather than button content. -->
+	<button
+		type="button"
+		class="focus-visible:ring-ring absolute inset-0 cursor-pointer rounded-lg focus-visible:ring-2 focus-visible:outline-none"
+		aria-haspopup="dialog"
+		aria-label={m['network.radio.showDetails']()}
+		data-testid="radio-health-open"
+		onclick={() => (detailsOpen = true)}
+	></button>
+</section>
+
+<AppDialog
+	bind:open={detailsOpen}
+	title={m['network.radio.title']()}
+	description={modemName(id)}
+	hideFooter
+>
+	<div class="space-y-4 text-xs" data-testid="radio-health-details">
+		<div class="space-y-1">
+			<h4 class="text-sm font-medium">{m['network.radio.readings']()}</h4>
+			<dl class="divide-y" data-testid="radio-health-raw">
+				{#each readingRows as [name, metric] (name)}
+					{const shown = $derived(formatValue(metric))}
+					{const at = $derived(time(metric.capturedAt))}
+					<div class="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-3 py-1">
+						<dt class="text-muted-foreground">{name}</dt>
+						<dd class="min-w-0">
+							{#if shown === null}
+								<span class="text-muted-foreground">{unavailable}</span>
+							{:else}
+								<span class="font-mono tabular-nums" dir="ltr">{shown}</span>
+							{/if}
+							{#if shown !== null || metric.source !== 'not-observed'}
+								<span class="text-muted-foreground block break-words text-(length:--text-micro)" dir="ltr">
 									{metric.source}{#if at && shown !== null}{' · '}{at}{/if}
 								</span>
-								{/if}
+							{/if}
+						</dd>
+					</div>
+				{/each}
+			</dl>
+		</div>
+		{#if radio.neighbours.length > 0}
+			<div class="space-y-1">
+				<h4 class="text-sm font-medium">{m['network.radio.otherModems']()}</h4>
+				<dl class="divide-y" data-testid="radio-health-neighbours">
+					{#each radio.neighbours as neighbour (neighbour.id)}
+						{const band = $derived(formatValue(neighbour.band))}
+						{const at = $derived(time(neighbour.capturedAt))}
+						<div class="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-3 py-1">
+							<dt class="text-muted-foreground">{modemName(neighbour.id)}</dt>
+							<dd class="min-w-0">
+								{neighbour.transmitting === 'yes'
+									? m['network.radio.sending']()
+									: m['network.radio.unknownValue']()}{' · '}{#if band === null}<span
+										class="text-muted-foreground">{unavailable}</span
+									>{:else}<span class="font-mono" dir="ltr">{bandLabel(band)}</span>{/if}
+								<span class="text-muted-foreground block break-words text-(length:--text-micro)" dir="ltr">
+									{neighbour.source}{#if at}{' · '}{at}{/if}
+								</span>
 							</dd>
 						</div>
 					{/each}
 				</dl>
 			</div>
-			{#if radio.neighbours.length > 0}
-				<div class="space-y-1">
-					<h4 class="font-medium">{m['network.radio.otherModems']()}</h4>
-					<dl class="divide-y" data-testid="radio-health-neighbours">
-						{#each radio.neighbours as neighbour (neighbour.id)}
-							{const band = $derived(formatValue(neighbour.band))}
-							{const at = $derived(time(neighbour.capturedAt))}
-							<div class="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-3 py-1">
-								<dt class="text-muted-foreground">{modemName(neighbour.id)}</dt>
-								<dd class="min-w-0">
-									{neighbour.transmitting === 'yes'
-										? m['network.radio.sending']()
-										: m['network.radio.unknownValue']()}{' · '}{#if band === null}<span
-											class="text-muted-foreground">{unavailable}</span
-										>{:else}<span class="font-mono" dir="ltr">{bandLabel(band)}</span>{/if}
-									<span class="text-muted-foreground block break-words text-(length:--text-micro)" dir="ltr">
-										{neighbour.source}{#if at}{' · '}{at}{/if}
-									</span>
-								</dd>
-							</div>
-						{/each}
-					</dl>
-				</div>
+		{/if}
+		<div class="space-y-1">
+			<h4 class="text-sm font-medium">{m['network.radio.history']()}</h4>
+			{#if history.length === 0}
+				<p class="text-muted-foreground">{m['network.radio.historyEmpty']()}</p>
+			{:else}
+				<ol class="space-y-0.5" data-testid="radio-health-history">
+					{#each history as row, index (`${row.at}-${index}`)}
+						<li class="grid grid-cols-[auto_1fr] gap-x-3">
+							<span class="text-muted-foreground font-mono tabular-nums" dir="ltr">{time(row.at)}</span>
+							<span class="min-w-0">
+								{row.text}{#if row.detail}<span class="text-muted-foreground block font-mono break-words" dir="ltr"
+										>{row.detail}</span
+									>{/if}
+							</span>
+						</li>
+					{/each}
+				</ol>
 			{/if}
-			<div class="space-y-1">
-				<h4 class="font-medium">{m['network.radio.history']()}</h4>
-				{#if history.length === 0}
-					<p class="text-muted-foreground">{m['network.radio.historyEmpty']()}</p>
-				{:else}
-					<ol class="max-h-48 space-y-0.5 overflow-y-auto" data-testid="radio-health-history">
-						{#each history as row, index (`${row.at}-${index}`)}
-							<li class="grid grid-cols-[auto_1fr] gap-x-3">
-								<span class="text-muted-foreground font-mono tabular-nums" dir="ltr">{time(row.at)}</span>
-								<span class="min-w-0">
-									{row.text}{#if row.detail}<span class="text-muted-foreground block font-mono sm:inline" dir="ltr"><span class="hidden sm:inline">{' · '}</span>{row.detail}</span>{/if}
-								</span>
-							</li>
-						{/each}
-					</ol>
-				{/if}
-			</div>
 		</div>
-	</details>
-</section>
+	</div>
+</AppDialog>
