@@ -13,11 +13,11 @@ Copy. Passwords have no plain-text QR and should be kept off camera and out of s
 
 Moblin: copy the password from Moblin Settings › Moblink › Password into the
 device. A local device operator can save, replace or clear it only while the
-device confirms idle. It is never displayed again. Saving does not confirm a
+device confirms it is idle. It is never displayed again. Saving does not confirm a
 connection: check Moblin and the stream itself. If Moblin's password changes,
 replace the device's copy too. One password applies to this device; any local
-Moblin streamer with that password may authenticate. Clearing stops this
-device's owned relay.
+Moblin streamer with that password may authenticate. Clearing stops the
+relay managed by this device.
 Saving requires an image provisioned for the managed relay. Clear remains
 available while idle even if that relay is unavailable or storage needs repair.
 Clearing an unsaved password does not create storage. The field asks browsers
@@ -57,7 +57,7 @@ este dispositivo; cualquier emisor Moblin local que la comparta puede autenticar
 Borrarla detiene el relé de este dispositivo. Guardarla requiere una imagen preparada
 para el relé administrado. Borrar sigue disponible cuando el dispositivo está inactivo,
 aunque el relé no esté disponible o haya que reparar el archivo guardado.
-Si el archivo está vacío o el relé se detiene inesperadamente, el estado del dispositivo
+Si el archivo está vacío o el relé se detiene inesperadamente, la sección Box health
 muestra un aviso de conexión Moblin. Reemplaza o borra la contraseña para recuperarla.
 Borrar una contraseña no guardada no crea almacenamiento. El campo pide al
 navegador y al gestor de contraseñas que no lo rellenen ni guarden; sus propias

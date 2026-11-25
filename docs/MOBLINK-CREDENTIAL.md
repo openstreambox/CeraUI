@@ -59,7 +59,7 @@ credential is restarted when available; a failed or impossible restart marks Box
 Mutations require confirmed idle, including
 carrying evidence. This does not add per-link admission, media telemetry or
 real-phone validation. Empty/unsafe stored files and unexpected child exits mark
-the existing Moblink Box-health line. Clear or replacement retracts that failure;
+the existing Moblink line in Box health. Clear or replacement retracts that failure;
 a successful save is still not authentication evidence.
 
 One credential serves all local discovered Moblin streamers that share it.
