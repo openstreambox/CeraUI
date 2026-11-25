@@ -108,7 +108,6 @@ export function diagnoseRadio(
 		[
 			"imsi-unknown-in-hlr",
 			"illegal-ms",
-			"illegal-me",
 			"gprs-not-allowed",
 			"gprs-and-non-gprs-not-allowed",
 			"imsi-unknown-in-vlr",
