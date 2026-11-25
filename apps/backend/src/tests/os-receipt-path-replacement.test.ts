@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("keeps a fresh candidate replacing the path after the descriptor's entry check", async () => {
 	// Given real files and an inode replacement at the native lstat return boundary.
-	const dir = mkdtempSync("/var/tmp/ceraui-receipt-path-");
+	const dir = mkdtempSync(`${tmpdir()}/ceraui-receipt-path-`);
 	const receipt = {
 		schema: 1,
 		version: "2026.10.64",

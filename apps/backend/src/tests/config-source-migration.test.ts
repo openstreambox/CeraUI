@@ -9,6 +9,7 @@ import {
 	test,
 } from "bun:test";
 import fs from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { CerastreamClient, StartParams } from "@ceralive/cerastream";
 import type { StreamSource } from "@ceraui/rpc/schemas";
@@ -312,7 +313,10 @@ describe("start-dispatch byte-identity — a coarse source changes nothing on th
 // ---------------------------------------------------------------------------
 
 describe("config.json round-trip through writeFileAtomicSync", () => {
-	const TMP = path.join("/tmp", `ceraui-source-roundtrip-${process.pid}.json`);
+	const TMP = path.join(
+		tmpdir(),
+		`ceraui-source-roundtrip-${process.pid}.json`,
+	);
 	afterAll(() => {
 		try {
 			fs.unlinkSync(TMP);

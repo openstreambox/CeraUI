@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 
 // Rust-sender telemetry skew guard (Phase D · Cutover).
 //
@@ -37,14 +38,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { readTelemetry, type Telemetry } from "@ceraui/srtla-send/telemetry";
 
-// Each test gets a unique stats path so a parallel run never reads a sibling's
-// file; everything lives under /tmp (Rule D — never escapes the repo root) and
-// is removed in afterEach.
+// Each test gets a unique stats path under the worker's temp directory and
+// removes it in afterEach.
 const writtenFiles = new Set<string>();
 let counter = 0;
 
 function statsPath(tag: string): string {
-	const path = `/tmp/ceralive-rust-sender-skew-${process.pid}-${counter++}-${tag}.json`;
+	const path = `${tmpdir()}/ceralive-rust-sender-skew-${process.pid}-${counter++}-${tag}.json`;
 	writtenFiles.add(path);
 	return path;
 }
@@ -294,7 +294,7 @@ describe("rust-sender telemetry skew — malformed input degrades gracefully", (
 
 	test("an absent file → null (no throw)", async () => {
 		// Reserve a path but never write it.
-		const path = `/tmp/ceralive-rust-sender-skew-absent-${process.pid}-${counter++}.json`;
+		const path = `${tmpdir()}/ceralive-rust-sender-skew-absent-${process.pid}-${counter++}.json`;
 		expect(await readTelemetry(path)).toBeNull();
 	});
 });

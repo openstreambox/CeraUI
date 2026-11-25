@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("documents that noncooperative replacement after final lstat is consumed by rename", async () => {
 	// Given a real receipt and a bypass writer at the final lstat return boundary.
-	const dir = mkdtempSync("/var/tmp/ceraui-receipt-final-path-");
+	const dir = mkdtempSync(`${tmpdir()}/ceraui-receipt-final-path-`);
 	const receipt = {
 		schema: 1,
 		version: "2026.10.64",
