@@ -12,7 +12,8 @@ import {
 	PROFILE,
 } from "./helpers/wifi-autoconnect-fixture.ts";
 
-const f = autoconnectFixture();
+// Upstream arming cases run on a radio other than the image's setup radio.
+const f = autoconnectFixture("wlan2");
 const profile = () => {
 	const value = f.profiles.get(PROFILE);
 	if (!value) throw new Error("Missing fixture profile");
@@ -48,7 +49,7 @@ test("(12) failed durable intent leaves the existing autoconnect recovery path o
 });
 
 test("startup quiesces an owned live AP without stopping it or changing its credentials", async () => {
-	f.list([`wlan0:wifi:connected:${PROFILE}`]);
+	f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 	await f.discover();
 	expect(profile()["connection.autoconnect"]).toBe("no");
 	expect(observedWifiAdapterMode(f.row())).toBe("hotspot");
@@ -64,12 +65,12 @@ test("startup quiesces an owned live AP without stopping it or changing its cred
 });
 
 test("(13) a limited row preserves its live profile and autoconnect without a same-address twin", async () => {
-	f.witnesses.set("wlan0", {
+	f.witnesses.set(f.ifname, {
 		ifindex: 3,
 		phy: "/sys/devices/policy/phy0",
 		path: PORT,
 	});
-	f.list([`wlan0:wifi:connected:${PROFILE}`]);
+	f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 	const before = structuredClone(profile());
 	await f.discover();
 	expect(profile()).toEqual(before);
@@ -81,7 +82,7 @@ test("(13) a limited row preserves its live profile and autoconnect without a sa
 test.each([1, 2])(
 	"review R1 preserves recovery with %i disconnected unreadable radios",
 	async (count) => {
-		f.witnesses.set("wlan0", {
+		f.witnesses.set(f.ifname, {
 			ifindex: 3,
 			phy: "/sys/devices/policy/phy0",
 			path: PORT,
@@ -92,7 +93,7 @@ test.each([1, 2])(
 				phy: "/sys/devices/policy/phy1",
 				path: "usb-other-port",
 			});
-			f.list(["wlan0:wifi:disconnected:", "wlan1:wifi:disconnected:"]);
+			f.list([`${f.ifname}:wifi:disconnected:`, "wlan1:wifi:disconnected:"]);
 		}
 		const before = structuredClone(profile());
 
