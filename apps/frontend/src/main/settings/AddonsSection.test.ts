@@ -153,8 +153,8 @@ describe("AddonsSection — board gating", () => {
 				await fireEvent.click(toggle);
 				// Then the existing localized refusal is shown, never a raw token.
 				await waitFor(() =>
-					expect(toastError).toHaveBeenCalledWith(
-						m["notifications.disruptiveActionRefused"](),
+					expect(toastError).toHaveBeenCalledExactlyOnceWith(
+						m["notifications.disruptiveActionClientTraffic"](),
 					),
 				);
 				expect(toggle.getAttribute("aria-checked")).toBe(String(enabled));
