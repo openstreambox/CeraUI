@@ -15187,1076 +15187,6 @@
       ]
     },
     {
-      "source": "apps/backend/src/modules/streaming/streamloop/autostart.ts",
-      "call": "broadcastMsg",
-      "message": "\"config\"",
-      "fields": [
-        {
-          "path": "srt_passphrase",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "srt_pbkeylen",
-          "types": [
-            "undefined",
-            "16",
-            "24",
-            "32"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "password",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "password_hash",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "ssh_pass",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "ssh_pass_hash",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "ssh_persistent",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "relay_server",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "relay_account",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "relay_streamid_override",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "relay_protocol",
-          "types": [
-            "undefined",
-            "\"srtla\"",
-            "\"srt\"",
-            "\"rist\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "srt_streamid",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "srt_latency",
-          "types": [
-            "undefined",
-            "number"
-          ],
-          "decision": "needed: typed scalar or closed enum"
-        },
-        {
-          "path": "fec_enabled",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "needed: typed scalar or closed enum"
-        },
-        {
-          "path": "recovery_mode",
-          "types": [
-            "undefined",
-            "\"standard\"",
-            "\"bandwidth-saver\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "stream_profile",
-          "types": [
-            "undefined",
-            "\"custom\"",
-            "\"balanced\"",
-            "\"low-latency\"",
-            "\"resilient\"",
-            "\"classic\"",
-            "\"low-latency-fec\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "profile_decided_by",
-          "types": [
-            "undefined",
-            "\"operator\"",
-            "\"device\"",
-            "\"auto\"",
-            "\"cohort\"",
-            "\"global\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "srtla_addr",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "srtla_port",
-          "types": [
-            "undefined",
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "selected_ingest_endpoint",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "asrc",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "audio_inputs",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "audio_inputs[].id",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "audio_inputs[].tracks[]",
-          "types": [
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "audio_inputs[].gain_db",
-          "types": [
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "audio_inputs[].mute",
-          "types": [
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "audio_inputs[].delay_ms",
-          "types": [
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "acodec",
-          "types": [
-            "undefined",
-            "\"opus\"",
-            "\"aac\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "audio_backend",
-          "types": [
-            "undefined",
-            "\"alsa\"",
-            "\"pipewire\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "bitrate_overlay",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "needed: typed scalar or closed enum"
-        },
-        {
-          "path": "max_br",
-          "types": [
-            "undefined",
-            "number"
-          ],
-          "decision": "needed: typed scalar or closed enum"
-        },
-        {
-          "path": "delay",
-          "types": [
-            "undefined",
-            "number"
-          ],
-          "decision": "needed: typed scalar or closed enum"
-        },
-        {
-          "path": "balancer",
-          "types": [
-            "undefined",
-            "\"adaptive\"",
-            "\"aimd\"",
-            "\"fixed\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "pipeline",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "resolution",
-          "types": [
-            "undefined",
-            "\"480p\"",
-            "\"720p\"",
-            "\"1080p\"",
-            "\"1440p\"",
-            "\"2160p\"",
-            "\"4k\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "framerate",
-          "types": [
-            "undefined",
-            "24",
-            "23.98",
-            "25",
-            "29.97",
-            "30",
-            "50",
-            "59.94",
-            "60"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "video_codec",
-          "types": [
-            "undefined",
-            "\"h264\"",
-            "\"h265\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "selected_video_input",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "video_passthrough",
-          "types": [
-            "undefined",
-            "\"auto\"",
-            "\"force\"",
-            "\"off\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "failover_rate_policy",
-          "types": [
-            "undefined",
-            "\"adapt\"",
-            "\"retime\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "source",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "source_stable_id",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "last_streamed_source",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "last_streamed_source_stable_id",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "input_mode",
-          "types": [
-            "undefined",
-            "\"unknown\"",
-            "\"audio\"",
-            "\"hdmi\"",
-            "\"uvc_h264\"",
-            "\"uvc_h265\"",
-            "\"mjpeg\"",
-            "\"camlink\"",
-            "\"test\"",
-            "\"network\"",
-            "\"raw_video\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "source_preference",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "source_preference[]",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "previewEncode",
-          "types": [
-            "undefined",
-            "\"software\"",
-            "\"hardware\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "composition",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "composition.secondary_input_id",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "composition.layout",
-          "types": [
-            "\"custom\"",
-            "\"pbp-left-right\"",
-            "\"pbp-top-bottom\"",
-            "\"pip-bottom-left\"",
-            "\"pip-bottom-right\"",
-            "\"pip-top-left\"",
-            "\"pip-top-right\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "composition.alpha",
-          "types": [
-            "undefined",
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "composition.rect",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "composition.rect.x",
-          "types": [
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "composition.rect.y",
-          "types": [
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "composition.rect.width",
-          "types": [
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "composition.rect.height",
-          "types": [
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "last_seen_devices",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "last_seen_devices[].id",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "last_seen_devices[].displayName",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "last_seen_devices[].kind",
-          "types": [
-            "\"unknown\"",
-            "\"audio\"",
-            "\"hdmi\"",
-            "\"uvc_h264\"",
-            "\"uvc_h265\"",
-            "\"mjpeg\"",
-            "\"camlink\"",
-            "\"test\"",
-            "\"network\"",
-            "\"raw_video\"",
-            "\"usb\"",
-            "\"other\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "last_seen_devices[].pipelineId",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "last_seen_devices[].devicePath",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "last_seen_devices[].stableId",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "last_seen_devices[].previousIds",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "last_seen_devices[].previousIds[]",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "captive_portal_enabled",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "autostart",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "needed: typed scalar or closed enum"
-        },
-        {
-          "path": "remote_key",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "device_id",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "remote_provider",
-          "types": [
-            "undefined",
-            "\"custom\"",
-            "\"ceralive\"",
-            "\"belabox\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "custom_provider",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "custom_provider.name",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "custom_provider.host",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "custom_provider.path",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "custom_provider.secure",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "custom_provider.cloudUrl",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "pairing_secret",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "detectionMethod",
-          "types": [
-            "undefined",
-            "\"belabox\"",
-            "\"subscription\"",
-            "\"manual\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "kiosk_enabled",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "kiosk_last_state",
-          "types": [
-            "undefined",
-            "\"disabled\"",
-            "\"enabled-stopped\"",
-            "\"enabled-running\"",
-            "\"enabled-failed\"",
-            "\"failed-no-display\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "kiosk_display",
-          "types": [
-            "undefined",
-            "\"lcd\"",
-            "\"eink\"",
-            "\"mono\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "kiosk_touch",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "kiosk_motion",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "kiosk_performance",
-          "types": [
-            "undefined",
-            "\"low\"",
-            "\"balanced\"",
-            "\"high\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "addons",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "addons.*.enabled",
-          "types": [
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "addons.*.phase",
-          "types": [
-            "\"error\"",
-            "\"idle\"",
-            "\"installing\"",
-            "\"active\"",
-            "\"pending\"",
-            "\"disabling\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "addons.*.autoDisabled",
-          "types": [
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "addons.*.versionMaterialized",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "addons.*.osVersionMaterialized",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "addons.*.userConfig",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "addons.*.userConfig.*",
-          "types": [
-            "unknown"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "addons.*.lastError",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "two_radio_enabled",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "network_ingest",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "network_ingest.rtmp_enabled",
-          "types": [
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "network_ingest.srt_enabled",
-          "types": [
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "sources_visibility",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "sources_visibility.hide_test_pattern",
-          "types": [
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "country",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "wifi_modes",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "wifi_modes.*",
-          "types": [
-            "\"station\"",
-            "\"hotspot\"",
-            "\"hybrid\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "wifi_setup_stations",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "wifi_setup_stations[]",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "eth_roles",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "eth_roles.*",
-          "types": [
-            "\"uplink\"",
-            "\"shared-lan\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "eth_shared_profiles",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "eth_shared_profiles.*",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "bond_opt_out",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "bond_opt_out.*",
-          "types": [
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "usb_serial_shared",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "usb_serial_shared[]",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "modem_provisioning",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "modem_backend",
-          "types": [
-            "undefined",
-            "\"mmcli\"",
-            "\"dbus\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "fm350_internal_calls",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "fm350_internal_calls.*",
-          "types": [
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "modem_shadow",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "modem_capabilities",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "modem_capabilities.band_lock",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "modem_capabilities.sms",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "modem_capabilities.five_g_pref",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "modem_capabilities.fcc_auto_unlock",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "modem_capabilities.gps",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "modem_capabilities.ussd",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "modem_capabilities.esim",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        }
-      ]
-    },
-    {
       "source": "apps/backend/src/modules/system/sensors.ts",
       "call": "broadcastMsg",
       "message": "\"sensors\"",
@@ -33543,6 +32473,1076 @@
       ]
     },
     {
+      "source": "apps/backend/src/modules/streaming/streamloop/autostart.ts",
+      "call": "broadcastMsg",
+      "message": "\"config\"",
+      "fields": [
+        {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "password",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "password_hash",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "ssh_pass",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "ssh_pass_hash",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "ssh_persistent",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "relay_server",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "relay_account",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "relay_streamid_override",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "relay_protocol",
+          "types": [
+            "undefined",
+            "\"srtla\"",
+            "\"srt\"",
+            "\"rist\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_streamid",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_latency",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "needed: typed scalar or closed enum"
+        },
+        {
+          "path": "fec_enabled",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "needed: typed scalar or closed enum"
+        },
+        {
+          "path": "recovery_mode",
+          "types": [
+            "undefined",
+            "\"standard\"",
+            "\"bandwidth-saver\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "stream_profile",
+          "types": [
+            "undefined",
+            "\"custom\"",
+            "\"balanced\"",
+            "\"low-latency\"",
+            "\"resilient\"",
+            "\"classic\"",
+            "\"low-latency-fec\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "profile_decided_by",
+          "types": [
+            "undefined",
+            "\"operator\"",
+            "\"device\"",
+            "\"auto\"",
+            "\"cohort\"",
+            "\"global\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srtla_addr",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srtla_port",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "selected_ingest_endpoint",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "asrc",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "audio_inputs",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "audio_inputs[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "audio_inputs[].tracks[]",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "audio_inputs[].gain_db",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "audio_inputs[].mute",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "audio_inputs[].delay_ms",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "acodec",
+          "types": [
+            "undefined",
+            "\"opus\"",
+            "\"aac\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "audio_backend",
+          "types": [
+            "undefined",
+            "\"alsa\"",
+            "\"pipewire\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bitrate_overlay",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "needed: typed scalar or closed enum"
+        },
+        {
+          "path": "max_br",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "needed: typed scalar or closed enum"
+        },
+        {
+          "path": "delay",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "needed: typed scalar or closed enum"
+        },
+        {
+          "path": "balancer",
+          "types": [
+            "undefined",
+            "\"adaptive\"",
+            "\"aimd\"",
+            "\"fixed\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "pipeline",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "resolution",
+          "types": [
+            "undefined",
+            "\"480p\"",
+            "\"720p\"",
+            "\"1080p\"",
+            "\"1440p\"",
+            "\"2160p\"",
+            "\"4k\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "framerate",
+          "types": [
+            "undefined",
+            "24",
+            "23.98",
+            "25",
+            "29.97",
+            "30",
+            "50",
+            "59.94",
+            "60"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "video_codec",
+          "types": [
+            "undefined",
+            "\"h264\"",
+            "\"h265\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "selected_video_input",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "video_passthrough",
+          "types": [
+            "undefined",
+            "\"auto\"",
+            "\"force\"",
+            "\"off\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "failover_rate_policy",
+          "types": [
+            "undefined",
+            "\"adapt\"",
+            "\"retime\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "source",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "source_stable_id",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "last_streamed_source",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "last_streamed_source_stable_id",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "input_mode",
+          "types": [
+            "undefined",
+            "\"unknown\"",
+            "\"audio\"",
+            "\"hdmi\"",
+            "\"uvc_h264\"",
+            "\"uvc_h265\"",
+            "\"mjpeg\"",
+            "\"camlink\"",
+            "\"test\"",
+            "\"network\"",
+            "\"raw_video\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "source_preference",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "source_preference[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "previewEncode",
+          "types": [
+            "undefined",
+            "\"software\"",
+            "\"hardware\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "composition",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "composition.secondary_input_id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "composition.layout",
+          "types": [
+            "\"custom\"",
+            "\"pbp-left-right\"",
+            "\"pbp-top-bottom\"",
+            "\"pip-bottom-left\"",
+            "\"pip-bottom-right\"",
+            "\"pip-top-left\"",
+            "\"pip-top-right\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "composition.alpha",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "composition.rect",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "composition.rect.x",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "composition.rect.y",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "composition.rect.width",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "composition.rect.height",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "last_seen_devices",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "last_seen_devices[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "last_seen_devices[].displayName",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "last_seen_devices[].kind",
+          "types": [
+            "\"unknown\"",
+            "\"audio\"",
+            "\"hdmi\"",
+            "\"uvc_h264\"",
+            "\"uvc_h265\"",
+            "\"mjpeg\"",
+            "\"camlink\"",
+            "\"test\"",
+            "\"network\"",
+            "\"raw_video\"",
+            "\"usb\"",
+            "\"other\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "last_seen_devices[].pipelineId",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "last_seen_devices[].devicePath",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "last_seen_devices[].stableId",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "last_seen_devices[].previousIds",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "last_seen_devices[].previousIds[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "captive_portal_enabled",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "autostart",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "needed: typed scalar or closed enum"
+        },
+        {
+          "path": "remote_key",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "device_id",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "remote_provider",
+          "types": [
+            "undefined",
+            "\"custom\"",
+            "\"ceralive\"",
+            "\"belabox\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "custom_provider",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "custom_provider.name",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "custom_provider.host",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "custom_provider.path",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "custom_provider.secure",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "custom_provider.cloudUrl",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "pairing_secret",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "detectionMethod",
+          "types": [
+            "undefined",
+            "\"belabox\"",
+            "\"subscription\"",
+            "\"manual\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "kiosk_enabled",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "kiosk_last_state",
+          "types": [
+            "undefined",
+            "\"disabled\"",
+            "\"enabled-stopped\"",
+            "\"enabled-running\"",
+            "\"enabled-failed\"",
+            "\"failed-no-display\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "kiosk_display",
+          "types": [
+            "undefined",
+            "\"lcd\"",
+            "\"eink\"",
+            "\"mono\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "kiosk_touch",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "kiosk_motion",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "kiosk_performance",
+          "types": [
+            "undefined",
+            "\"low\"",
+            "\"balanced\"",
+            "\"high\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "addons",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "addons.*.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "addons.*.phase",
+          "types": [
+            "\"error\"",
+            "\"idle\"",
+            "\"installing\"",
+            "\"active\"",
+            "\"pending\"",
+            "\"disabling\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "addons.*.autoDisabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "addons.*.versionMaterialized",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "addons.*.osVersionMaterialized",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "addons.*.userConfig",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "addons.*.userConfig.*",
+          "types": [
+            "unknown"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "addons.*.lastError",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "two_radio_enabled",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "network_ingest",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "network_ingest.rtmp_enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "network_ingest.srt_enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "sources_visibility",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "sources_visibility.hide_test_pattern",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "country",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_modes",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_modes.*",
+          "types": [
+            "\"station\"",
+            "\"hotspot\"",
+            "\"hybrid\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_setup_stations",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_setup_stations[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "eth_roles",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "eth_roles.*",
+          "types": [
+            "\"uplink\"",
+            "\"shared-lan\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "eth_shared_profiles",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "eth_shared_profiles.*",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bond_opt_out",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bond_opt_out.*",
+          "types": [
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_serial_shared",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_serial_shared[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "modem_provisioning",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "modem_backend",
+          "types": [
+            "undefined",
+            "\"mmcli\"",
+            "\"dbus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "modem_shadow",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "modem_capabilities",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "modem_capabilities.band_lock",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "modem_capabilities.sms",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "modem_capabilities.five_g_pref",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "modem_capabilities.fcc_auto_unlock",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "modem_capabilities.gps",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "modem_capabilities.ussd",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "modem_capabilities.esim",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
       "source": "apps/backend/src/rpc/procedures/audio-mix.procedure.ts",
       "call": "broadcastMsg",
       "message": "\"config\"",
@@ -47312,7 +47312,7 @@
     "apps/backend/src/modules/modems/modems-state.ts": "664049da3a73481068a483da604719cbea8abe290995f907a9e07eebc69cc3a5",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
     "apps/backend/src/modules/network/network-ingest.ts": "fcb33cbff26195a53375f9ae12c5f85bbb76cc2bbb7d63d76a90cf2562eb8e77",
-    "apps/backend/src/modules/network/network-interfaces.ts": "2b78f592b5921dcd862dd0d4bbadfdc9acd49613dfaff2a2ef5093414eadd55a",
+    "apps/backend/src/modules/network/network-interfaces.ts": "50f8920087890bea45ed33a51cdd6b0a234db4c65f6152f31fbd2ce1fb060eee",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "2221782a8312e2ffddc545a6f4434e62cf53d0f82948d49987a5a9263fe60d26",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "59e35c76047fe4bfa5484cbbeaae996507cc0f1f778641eb83dc6248f72b6395",
