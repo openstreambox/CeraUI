@@ -60,21 +60,27 @@ for (const source of program.getSourceFiles()) {
 	)
 		continue;
 	function walk(n) {
+		// A producer may call the transport directly or through an injected
+		// dependency (`deps.broadcastMsg(...)`); both reach the same socket.
+		const callee = ts.isCallExpression(n)
+			? ts.isIdentifier(n.expression)
+				? n.expression.text
+				: ts.isPropertyAccessExpression(n.expression)
+					? n.expression.name.text
+					: undefined
+			: undefined;
 		if (
-			ts.isCallExpression(n) &&
-			ts.isIdentifier(n.expression) &&
-			['buildMsg', 'broadcastMsg', 'broadcastMsgExcept', 'broadcastMsgLocal'].includes(
-				n.expression.text,
-			)
+			callee &&
+			['buildMsg', 'broadcastMsg', 'broadcastMsgExcept', 'broadcastMsgLocal'].includes(callee)
 		) {
-			const offset = n.expression.text === 'broadcastMsgExcept' ? 1 : 0;
+			const offset = callee === 'broadcastMsgExcept' ? 1 : 0;
 			const name = n.arguments[offset];
 			const payload = n.arguments[offset + 1];
 			if (name && payload) {
 				dependencies.add(sourceName);
 				inventory.push({
 					source: sourceName,
-					call: n.expression.text,
+					call: callee,
 					message: checker.typeToString(checker.getTypeAtLocation(name)),
 					fields: fields(checker.getTypeAtLocation(payload)),
 				});
