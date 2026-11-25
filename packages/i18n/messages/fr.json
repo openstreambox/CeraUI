@@ -839,6 +839,23 @@
 	],
 	"live.setup.noLinks": "Aucun lien",
 	"live.setup.title": "Préparation du direct",
+	"live.bar.beforeLive": "Avant de passer en direct",
+	"live.bar.checking": "Vérification avant le direct…",
+	"live.bar.showAll": "Tout afficher",
+	"live.bar.scrollForAll": "Faites défiler pour tout voir",
+	"live.goLive.fix.chooseAnotherSource": "Choisir une autre source",
+	"live.bar.blockerCount": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "{count} problème à régler",
+				"countPlural=many": "{count} problèmes à régler",
+				"countPlural=other": "{count} problèmes à régler",
+				"countPlural=*": "{count} problèmes à régler"
+			}
+		}
+	],
 	"live.source.activeConfigured": "Configuré",
 	"live.source.activeLive": "En direct",
 	"live.source.audioAmbiguousBody": "Cette caméra signale plus d'un périphérique audio qui lui appartient : nous ne devinerons pas lequel vous voulez. Choisissez le bon ci-dessous.",
@@ -3154,23 +3171,6 @@
 	"live.connectionsCard.title": "Connexions",
 	"live.audioCard.title": "Audio",
 	"live.telemetryCard.title": "Télémétrie",
-	"live.bar.beforeLive": "Avant de passer en direct",
-	"live.bar.checking": "Vérification avant le direct…",
-	"live.bar.showAll": "Tout afficher",
-	"live.bar.scrollForAll": "Faites défiler pour tout voir",
-	"live.goLive.fix.chooseAnotherSource": "Choisir une autre source",
-	"live.bar.blockerCount": [
-		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
-			"match": {
-				"countPlural=one": "{count} problème à régler",
-				"countPlural=many": "{count} problèmes à régler",
-				"countPlural=other": "{count} problèmes à régler",
-				"countPlural=*": "{count} problèmes à régler"
-			}
-		}
-	],
 	"network.hotspot.steeringPending": "Routage en attente",
 	"network.view.hotspotRadio": "Radio point d'accès",
 	"network.view.hotspotRadioChoose": "Choisir une radio",

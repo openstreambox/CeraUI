@@ -834,6 +834,22 @@
 	],
 	"live.setup.noLinks": "कोई लिंक नहीं",
 	"live.setup.title": "स्ट्रीम सेटअप",
+	"live.bar.beforeLive": "लाइव होने से पहले",
+	"live.bar.checking": "तैयारी की जाँच हो रही है…",
+	"live.bar.showAll": "सभी देखें",
+	"live.bar.scrollForAll": "सभी आइटम देखने के लिए स्क्रोल करें",
+	"live.goLive.fix.chooseAnotherSource": "दूसरा स्रोत चुनें",
+	"live.bar.blockerCount": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "{count} समस्या ठीक करें",
+				"countPlural=other": "{count} समस्याएँ ठीक करें",
+				"countPlural=*": "{count} समस्याएँ ठीक करें"
+			}
+		}
+	],
 	"live.source.activeConfigured": "कॉन्फ़िगर किया गया",
 	"live.source.activeLive": "लाइव",
 	"live.source.audioAmbiguousBody": "यह कैमरा अपने एक से अधिक ऑडियो डिवाइस बताता है, इसलिए हम अनुमान नहीं लगाएंगे कि आपको कौन सा चाहिए। नीचे सही डिवाइस चुनें।",
@@ -3140,22 +3156,6 @@
 	"live.connectionsCard.title": "कनेक्शन",
 	"live.audioCard.title": "ऑडियो",
 	"live.telemetryCard.title": "टेलीमेट्री",
-	"live.bar.beforeLive": "लाइव होने से पहले",
-	"live.bar.checking": "तैयारी की जाँच हो रही है…",
-	"live.bar.showAll": "सभी देखें",
-	"live.bar.scrollForAll": "सभी आइटम देखने के लिए स्क्रोल करें",
-	"live.goLive.fix.chooseAnotherSource": "दूसरा स्रोत चुनें",
-	"live.bar.blockerCount": [
-		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
-			"match": {
-				"countPlural=one": "{count} समस्या ठीक करें",
-				"countPlural=other": "{count} समस्याएँ ठीक करें",
-				"countPlural=*": "{count} समस्याएँ ठीक करें"
-			}
-		}
-	],
 	"network.hotspot.steeringPending": "रूटिंग लंबित है",
 	"network.view.hotspotRadio": "हॉटस्पॉट रेडियो",
 	"network.view.hotspotRadioChoose": "रेडियो चुनें",

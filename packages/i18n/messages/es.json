@@ -839,6 +839,23 @@
 	],
 	"live.setup.noLinks": "Sin enlaces",
 	"live.setup.title": "Preparar transmisión",
+	"live.bar.beforeLive": "Antes de transmitir en vivo",
+	"live.bar.checking": "Comprobando si todo está listo…",
+	"live.bar.showAll": "Ver todo",
+	"live.bar.scrollForAll": "Desplázate para ver todo",
+	"live.goLive.fix.chooseAnotherSource": "Elegir otra fuente",
+	"live.bar.blockerCount": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "{count} cosa por resolver",
+				"countPlural=many": "{count} cosas por resolver",
+				"countPlural=other": "{count} cosas por resolver",
+				"countPlural=*": "{count} cosas por resolver"
+			}
+		}
+	],
 	"live.source.activeConfigured": "Configurado",
 	"live.source.activeLive": "En vivo",
 	"live.source.audioAmbiguousBody": "Esta cámara informa de más de un dispositivo de audio propio, así que no vamos a adivinar cuál quieres. Elige el correcto abajo.",
@@ -3181,23 +3198,6 @@
 	"live.audioMixer.error.audio_mix_active": "Esta transmisión mezcla varias entradas. Detén la transmisión para cambiar la entrada principal.",
 	"live.audioMixer.error.refused": "El dispositivo rechazó este cambio, así que no cambió nada.",
 	"live.telemetryCard.title": "Telemetría",
-	"live.bar.beforeLive": "Antes de transmitir en vivo",
-	"live.bar.checking": "Comprobando si todo está listo…",
-	"live.bar.showAll": "Ver todo",
-	"live.bar.scrollForAll": "Desplázate para ver todo",
-	"live.goLive.fix.chooseAnotherSource": "Elegir otra fuente",
-	"live.bar.blockerCount": [
-		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
-			"match": {
-				"countPlural=one": "{count} cosa por resolver",
-				"countPlural=many": "{count} cosas por resolver",
-				"countPlural=other": "{count} cosas por resolver",
-				"countPlural=*": "{count} cosas por resolver"
-			}
-		}
-	],
 	"network.cellular.reason.himiUfiRouter": "Este HIMI U01 no pudo iniciar su conexión de datos. Puede que su propio router esté usando la conexión móvil: usa el modo router (red USB) o un módem convencional. Consulta docs.ceralive.tv/es/hardware/cellular-modems/.",
 	"network.hotspot.steeringPending": "Enrutamiento pendiente",
 	"network.view.hotspotRadio": "Radio del punto de acceso",
