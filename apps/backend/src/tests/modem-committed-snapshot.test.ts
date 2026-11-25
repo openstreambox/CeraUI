@@ -79,7 +79,10 @@ describe("committed modem snapshot", () => {
 			broadcastRadioHealth();
 			expect(frames.length).toBe(1);
 			const frame = JSON.parse(frames[0] ?? "{}");
-			expect(Object.keys(frame.status.modems["1"])).toEqual(["radio_health"]);
+			expect(Object.keys(frame.status.modems["1"])).toEqual([
+				"status",
+				"radio_health",
+			]);
 			expect(frame.status.modems["1"].radio_health.finding.kind).toBe(
 				"unknown",
 			);
@@ -107,7 +110,8 @@ describe("committed modem snapshot", () => {
 			broadcastRadioHealth();
 			const frame = JSON.parse(frames[0] ?? "{}");
 			expect(Object.keys(frame.status.modems).sort()).toEqual(["1", "2"]);
-			expect(frame.status.modems["1"].status).toBeUndefined();
+			// The committed status, never the staged signal.
+			expect(frame.status.modems["1"].status.signal).toBe(0);
 		} finally {
 			removeClient(client);
 		}

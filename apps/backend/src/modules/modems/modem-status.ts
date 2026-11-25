@@ -231,16 +231,25 @@ export function broadcastModems(
  * Publish radio enrichment for the committed roster only. Diagnostic sampling
  * runs outside the modem update lock, so live state may hold a staged change or
  * removal; this never reads it. Each committed row gets its cached radio record
- * and nothing else, so no control or status field can be replayed.
+ * beside the status it was committed with, so no staged status or control
+ * field can be replayed.
  */
 export function broadcastRadioHealth(): void {
-	const modems: Record<string, { radio_health: RadioHealth }> = {};
+	const modems: Record<
+		string,
+		Pick<ModemsResponseModemBase, "status"> & {
+			radio_health: RadioHealth;
+		}
+	> = {};
 	for (const [id, committed] of Object.entries(committedModemsWireMessage)) {
 		if (!("ifname" in committed) || typeof committed.ifname !== "string")
 			continue;
 		const radio_health = radioForModem(id, committed);
 		committedModemsWireMessage[id] = { ...committed, radio_health };
-		modems[id] = { radio_health };
+		modems[id] =
+			committed.status === undefined
+				? { radio_health }
+				: { status: committed.status, radio_health };
 	}
 	broadcastMsg("status", { modems });
 }
