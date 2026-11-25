@@ -4,12 +4,11 @@ import { holdUpdateProgress } from '@ceraui/rpc/package-progress';
 import type { UpdateOutcome, UpdateProgress, UpdateState, UpdateTarget } from '@ceraui/rpc/schemas';
 import WifiOffIcon from '@lucide/svelte/icons/wifi-off';
 import { setContext } from 'svelte';
-import { MediaQuery } from 'svelte/reactivity';
 import { OfflinePage, PWAStatus } from '$lib/components/custom/pwa';
 import { Button } from '$lib/components/ui/button';
 import * as Tooltip from '$lib/components/ui/tooltip';
 import UpdatingOverlay from '$lib/components/updating-overlay.svelte';
-import { DESKTOP_CHROME_QUERY, publishHeight } from '$lib/layout';
+import { publishHeight } from '$lib/layout';
 import { rpc } from '$lib/rpc';
 import { getSessionReady } from '$lib/rpc/session-epoch.svelte';
 import { getUpdateState, getUpdating } from '$lib/rpc/subscriptions.svelte';
@@ -272,11 +271,6 @@ $effect(() => {
 // store by one render, which is a flash of the pre-auth shell on every re-mount.
 const authStatus = $derived(authStatusStore.value);
 
-// MainView parks its fixed bottom dock exactly when the app shell is up below
-// the desktop-chrome query; the install banner then sits above it.
-const isDesktopChrome = new MediaQuery(DESKTOP_CHROME_QUERY);
-const dockShown = $derived(Boolean(authStatus) && !showOfflinePage && !isDesktopChrome.current);
-
 $effect(() => {
 	if (!authStatus || !getSessionReady()) return;
 	const sendHeartbeat = () => {
@@ -395,7 +389,7 @@ $effect(() => {
 	{/if}
 
 	<!-- PWA Status and Notifications -->
-	<PWAStatus aboveDock={dockShown} />
+	<PWAStatus />
 
 	<LayoutToastHost />
 </Tooltip.Provider>
