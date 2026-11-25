@@ -27,20 +27,33 @@ export function deriveStreamLiveness(
 
 let testSource: (() => StreamLiveness) | undefined;
 
-export function getStreamLiveness(
-	options: { readonly waiveCarryingStartupHold?: boolean } = {},
-): StreamLiveness {
-	if (testSource) return testSource();
+function sessionEvidence(): Omit<StreamLivenessEvidence, "carrying"> {
 	const leaf = streamLiveness();
-	return deriveStreamLiveness({
-		carrying: options.waiveCarryingStartupHold
-			? carryingTracker.read(performance.now(), true)
-			: getCarryingLiveness(),
+	return {
 		reconciled: isStreamReconciliationCompleted(),
 		live: getIsStreaming() || leaf === "streaming",
 		lifecycle: getStreamLifecycleState(),
 		sentinel: leaf === "idle" ? "absent" : "unknown",
+	};
+}
+
+export function getStreamLiveness(
+	options: { readonly waiveCarryingStartupHold?: boolean } = {},
+): StreamLiveness {
+	if (testSource) return testSource();
+	return deriveStreamLiveness({
+		carrying: options.waiveCarryingStartupHold
+			? carryingTracker.read(performance.now(), true)
+			: getCarryingLiveness(),
+		...sessionEvidence(),
 	});
+}
+
+/** The box's own stream session alone, without client carrying evidence: says
+ * which part of an unknown answer a Stop could settle. */
+export function getOwnStreamLiveness(): StreamLiveness {
+	if (testSource) return testSource();
+	return deriveStreamLiveness(sessionEvidence());
 }
 
 export function isStreamConfirmedIdle(): boolean {

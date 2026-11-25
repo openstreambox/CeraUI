@@ -1,4 +1,11 @@
-import { closeSync, openSync } from "node:fs";
+import {
+	closeSync,
+	openSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isSharedLanPort } from "../network/ethernet-role.ts";
 import {
@@ -7,7 +14,10 @@ import {
 	NETIF_ERR_SHAREDLAN,
 } from "../network/network-interfaces.ts";
 import { setup } from "../setup.ts";
-import { setCarryingOtaProtection } from "../streaming/ota-streaming-marker.ts";
+import {
+	initialOtaStreamLiveness,
+	setCarryingOtaProtection,
+} from "../streaming/ota-streaming-marker.ts";
 import {
 	notificationBroadcast,
 	notificationRemove,
@@ -127,6 +137,103 @@ export function claimFirstStartThisBoot(
 	}
 }
 
+/** Bumped by every backend start in a boot; /run/ceralive outlives a restart. */
+export function carryingGenerationPath(): string {
+	return (
+		process.env.CERALIVE_CARRYING_GENERATION ??
+		"/run/ceralive/carrying-generation"
+	);
+}
+
+/** Written only by a clean exit that found the whole box idle. */
+export function carryingIdleExitPath(): string {
+	return (
+		process.env.CERALIVE_CARRYING_IDLE_EXIT ??
+		"/run/ceralive/carrying-idle-exit"
+	);
+}
+
+type RestartEvidenceFs = Pick<
+	typeof import("node:fs"),
+	"readFileSync" | "writeFileSync" | "renameSync" | "rmSync"
+>;
+
+/**
+ * Positive evidence that the process this one replaces held nothing when it
+ * stopped. Each start bumps a per-boot generation; a clean exit that finds
+ * stream liveness idle (no stream, no session doubt, no carrying evidence)
+ * writes its own generation into the idle-exit record. A restart trusts the
+ * record only when it names the generation it is replacing, so a record can
+ * never outlive the process that wrote it: a crash, a watchdog kill, a stream
+ * or any protection at exit, a failed write, a read-only directory, or a
+ * backend from before this record (the first upgrade to it) all leave no
+ * matching record and keep the hold. Nothing has to be withdrawn in time.
+ */
+export function createCarryingRestartEvidence(
+	paths: {
+		readonly generation: () => string;
+		readonly idleExit: () => string;
+	} = { generation: carryingGenerationPath, idleExit: carryingIdleExitPath },
+	fs: RestartEvidenceFs = { readFileSync, writeFileSync, renameSync, rmSync },
+) {
+	const readNumber = (path: string): number | undefined => {
+		try {
+			const text = fs.readFileSync(path, "utf8");
+			if (!/^\d+\n$/.test(text)) return undefined;
+			const value = Number(text);
+			return Number.isSafeInteger(value) ? value : undefined;
+		} catch {
+			return undefined;
+		}
+	};
+	const writeNumber = (path: string, value: number): boolean => {
+		try {
+			fs.writeFileSync(`${path}.new`, `${value}\n`, { mode: 0o600 });
+			fs.renameSync(`${path}.new`, path);
+			return true;
+		} catch {
+			try {
+				fs.rmSync(`${path}.new`, { force: true });
+			} catch {
+				// A sibling left behind is never read; the next write replaces it.
+			}
+			return false;
+		}
+	};
+	let generation: number | undefined;
+	return {
+		/** Once, at start: whether the replaced process exited idle. Bumping
+		 * the generation must succeed, or later exits could not be told apart. */
+		start(): boolean {
+			const previous = readNumber(paths.generation());
+			const idleExit = readNumber(paths.idleExit());
+			// Past any recorded exit too, so a lost or damaged generation can
+			// never make an old record name the process being replaced.
+			const next = Math.max(previous ?? 0, idleExit ?? 0) + 1;
+			generation = writeNumber(paths.generation(), next) ? next : undefined;
+			return (
+				generation !== undefined &&
+				previous !== undefined &&
+				idleExit === previous
+			);
+		},
+		/** At the first termination signal, before any teardown changes state. */
+		recordExit(liveness: "streaming" | "idle" | "unknown"): boolean {
+			if (generation === undefined || liveness !== "idle") return false;
+			return writeNumber(paths.idleExit(), generation);
+		},
+	};
+}
+
+const restartEvidence = createCarryingRestartEvidence();
+
+/** Called from the termination handler with the box's current liveness. */
+export function recordCarryingIdleExit(
+	liveness: "streaming" | "idle" | "unknown",
+): boolean {
+	return restartEvidence.recordExit(liveness);
+}
+
 /**
  * The startup hold stands in for client evidence an earlier backend process
  * held and lost with its memory. The first start after a boot has no such
@@ -134,13 +241,38 @@ export function claimFirstStartThisBoot(
  * client traffic is measured by the sampler from its first interval. Holding
  * there only refused restarts, power-off and SSH for two minutes after every
  * boot.
+ *
+ * A restart within the boot has a predecessor. It skips the hold only on
+ * positive evidence that the predecessor held nothing: its clean idle exit
+ * (`createCarryingRestartEvidence`) and no OTA streaming marker. Without that
+ * an idle box refused SSH and power actions for two minutes after every
+ * package install or service restart. A marker that is present or cannot be
+ * examined keeps the hold even beside an idle exit.
  */
+export type RestartEvidence = {
+	readonly idleExit: boolean;
+	readonly marker: "idle" | "unknown";
+};
+
+export function restartNeedsCarryingHold(
+	firstStartThisBoot: boolean,
+	evidence: RestartEvidence,
+): boolean {
+	if (firstStartThisBoot) return false;
+	return !(evidence.idleExit && evidence.marker === "idle");
+}
+
 export function initCarrying(
 	firstStartThisBoot: boolean = claimFirstStartThisBoot(),
+	evidence: RestartEvidence = {
+		idleExit: restartEvidence.start(),
+		marker: initialOtaStreamLiveness(),
+	},
 ): void {
 	enabled = true;
 	carryingTracker.bind(publishCarrying);
-	if (!firstStartThisBoot) carryingTracker.start(performance.now());
+	if (restartNeedsCarryingHold(firstStartThisBoot, evidence))
+		carryingTracker.start(performance.now());
 	carryingTracker.upload(performance.now(), null);
 	publishCarrying();
 }

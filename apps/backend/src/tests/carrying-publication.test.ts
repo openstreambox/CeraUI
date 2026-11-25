@@ -20,8 +20,9 @@ test("a backend restart stays protected and repeated reports do not rewrite the 
 	const write = spyOn(fs, "writeFileSync");
 	const broadcast = spyOn(notifications, "notificationBroadcast");
 	try {
-		// An earlier process ran in this boot: its client evidence is lost.
-		initCarrying(false);
+		// An earlier process ran in this boot without recording idle: its client
+		// evidence is lost.
+		initCarrying(false, { idleExit: false, marker: "unknown" });
 		expect(status.mock.calls).toContainEqual([
 			"status",
 			{ carrying: { state: "unknown", startup: true } },

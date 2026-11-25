@@ -1108,6 +1108,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["sharing-diag refresh degraded"],
 	["sharing-diag: ", " read failed"],
 	["shutdown: ", " cleanup failed"],
+	["shutdown: idle exit record failed"],
 	["signalSenders: ", " to ", " failed"],
 	["sim-pin2 card status read failed: ", ""],
 	["simulateDevReboot: close failed"],
