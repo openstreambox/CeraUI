@@ -52,7 +52,9 @@ export function createEquivalenceNm(
 				if (args.join(" ") === "--terse --fields uuid,type connection show")
 					return "";
 				if (
-					args.includes("IN-USE,BSSID,SSID,MODE,CHAN,RATE,SIGNAL,BARS,SECURITY")
+					args.includes(
+						"IN-USE,BSSID,SSID,MODE,CHAN,RATE,SIGNAL,BARS,SECURITY,DEVICE",
+					)
 				)
 					return "";
 			}
