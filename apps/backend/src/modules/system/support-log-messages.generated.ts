@@ -176,6 +176,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Ignoring modem config for unconfigured modem ", ""],
 	["Ignoring modem config for unknown modem ", ""],
 	["Ignoring modem config for unknown modem (no id)"],
+	["Image package record unusable; keeping the built-in image package list"],
 	["Initialized ", " pipeline sources for ", ""],
 	["Internet connectivity HTTP check error ", ""],
 	["Internet reachable via ", " (", ")"],
@@ -275,6 +276,10 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Package check uplink gate failed; waiting"],
 	["Package success persistence retry withheld scheduler effects"],
 	["Package success replay requires local maintenance; fence remains closed"],
+	["Package updates withheld: the system image ships these packages itself"],
+	[
+		"Persisted update settings rejected; update checks stop until the file is fixed",
+	],
 	["Production mode: Serving static files from ./public"],
 	["Proxy error: ", ""],
 	["RPC ", " err"],

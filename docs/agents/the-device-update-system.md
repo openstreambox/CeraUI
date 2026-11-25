@@ -37,7 +37,11 @@ ORCHESTRATOR. The feature notes, stated at the level a CeraUI change needs:
   Queued OS/kernel downloads re-read consent at dispatch; a successful switch
   revocation invalidates captured permission across preparation awaits. Read
   errors refuse download, while exact-candidate one-job approval remains valid.
-  Deferred package checks cannot starve OS checks in the idle scheduler.
+  Deferred package checks cannot starve OS checks in the idle scheduler, and a
+  waiting package offer (`available`) runs the due OS check in place; a found
+  image supersedes the offer. Capable discovery withholds the image's own
+  packages (`image-owned-packages.ts`: the image's local-override pin, else a
+  fixed list).
   A first image offer waiting for cellular download approval also permits due
   package checks. The image candidate and pending approval survive package work;
   OS staging still requires approval and discovery re-admits the held offer.
