@@ -36,6 +36,7 @@ import type {
 	ConfigMessage,
 	NetifMessage,
 	Pipelines,
+	RelayMessage,
 	SourcesMessage,
 	StartFailureCaptureCause,
 } from '@ceraui/rpc/schemas';
