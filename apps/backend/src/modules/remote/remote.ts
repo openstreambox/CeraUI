@@ -63,6 +63,7 @@ import {
 import { setup } from "../setup.ts";
 import { hasCapability } from "../system/board-capabilities.ts";
 import { addAuthedSocket } from "../ui/auth.ts";
+import { getNotificationRelaySnapshot } from "../ui/notifications.ts";
 import { type StatusResponseMessage, sendInitialStatus } from "../ui/status.ts";
 import {
 	broadcastMsg,
@@ -74,6 +75,7 @@ import {
 	markConnectionActive,
 	setSocketSenderId,
 } from "../ui/websocket-server.ts";
+import { createNotificationPeerRelay } from "./notification-relay.ts";
 import {
 	buildRelaysMsg,
 	handleRemoteRelays,
@@ -269,7 +271,8 @@ function handleRemote(conn: WebSocket, msg: RemoteMessage) {
 				);
 				if (value === true) {
 					addAuthedSocket(conn);
-					sendInitialStatus(conn);
+					sendInitialStatus(conn, { notifications: false });
+					startRemoteNotifications();
 					broadcastMsgLocal(
 						"status",
 						{ remote: true } satisfies StatusResponseMessage,
@@ -328,7 +331,26 @@ function remoteRetry() {
 	remoteConnectTimer = setTimeout(remoteConnect, 1000);
 }
 
+let notificationTimer: ReturnType<typeof setInterval> | undefined;
+const notificationRelay = createNotificationPeerRelay(
+	"legacy",
+	getNotificationRelaySnapshot,
+	() => (remoteWs?.readyState === 1 ? remoteWs : undefined),
+);
+function startRemoteNotifications() {
+	clearInterval(notificationTimer);
+	notificationRelay.flush(true);
+	notificationTimer = setInterval(() => notificationRelay.flush(), 250);
+	notificationTimer.unref();
+}
+
+function stopRemoteNotifications() {
+	clearInterval(notificationTimer);
+	notificationTimer = undefined;
+}
+
 function remoteClose(conn: WebSocket) {
+	stopRemoteNotifications();
 	remoteRetry();
 
 	conn.removeListener("close", remoteClose);
@@ -388,6 +410,7 @@ function isLoopbackHost(host: string | undefined): boolean {
 }
 
 async function remoteConnect() {
+	stopRemoteNotifications();
 	if (remoteConnectTimer !== undefined) {
 		clearTimeout(remoteConnectTimer);
 		remoteConnectTimer = undefined;
