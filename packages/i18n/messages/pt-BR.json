@@ -2881,6 +2881,7 @@
 	"live.source.degradedCause.source-changed": "O sinal da entrada de vídeo mudou enquanto estava em uso. O dispositivo o recaptura sozinho — se continuar acontecendo, verifique as configurações de saída da câmera.",
 	"settings.updates.packages.title": "Pacotes",
 	"settings.updates.packages.notChecked": "O dispositivo ainda não informou uma verificação concluída.",
+	"settings.updates.packages.systemFirst": "Instale primeiro a atualização do sistema. Ela traz seus próprios pacotes, e o que for mais novo é oferecido depois.",
 	"settings.updates.nextCheck": "Próxima verificação automática: {time}",
 	"settings.updates.nextCheckSoon": "Próxima verificação automática: assim que possível",
 	"settings.updates.checkDeferredMetered": "Aguardando uma conexão que não seja celular, pois as atualizações de pacotes pela rede celular estão desativadas.",

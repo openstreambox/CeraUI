@@ -84,6 +84,52 @@ function clockAtAttemptStart(
 	return { ...clock, lastAttemptAt: now };
 }
 
+type OsCheckSucceeded = Extract<
+	OrchestratorEvent,
+	{ readonly type: "CHECK_SUCCEEDED_OS" }
+>;
+
+// An image offer replaces whatever the check started from: from `available`
+// it supersedes the package offer, because the A/B image carries its own packages.
+function enterOsOffer(
+	state: OrchestratorState,
+	event: OsCheckSucceeded,
+): OrchestratorState {
+	const superseded =
+		event.candidateKey !== undefined &&
+		state.osStageRecovery !== undefined &&
+		state.osStageRecovery.candidateKey !== event.candidateKey;
+	const migrated =
+		state.osStageDiscoveryRetryAt !== undefined &&
+		event.candidateKey !== undefined
+			? {
+					candidateKey: event.candidateKey,
+					activeAttemptId: null,
+					failedRounds: 1,
+					nextRetryAt: state.osStageDiscoveryRetryAt,
+					mode: "automatic" as const,
+					reason: "rauc_install_failed",
+				}
+			: undefined;
+	const recovery = superseded ? undefined : (migrated ?? state.osStageRecovery);
+	const retryAt = recovery?.mode === "automatic" ? recovery.nextRetryAt : null;
+	return enter(
+		superseded || migrated ? withoutOsStageRecovery(state) : state,
+		event.now,
+		{
+			phase: "os-available",
+			failureReason: null,
+			...(migrated ? { osStageRecovery: migrated } : {}),
+			osCheck: clockAfterSuccess(
+				event.now,
+				retryAt === null || retryAt === undefined
+					? event.nextAttemptAt
+					: Math.min(event.nextAttemptAt, retryAt),
+			),
+		},
+	);
+}
+
 export function reduceOrchestrator(
 	state: OrchestratorState,
 	event: OrchestratorEvent,
@@ -208,44 +254,8 @@ function reduceChecking(
 				phase: "available",
 				packageCheck: clockAfterSuccess(event.now, event.nextAttemptAt),
 			});
-		case "CHECK_SUCCEEDED_OS": {
-			const superseded =
-				event.candidateKey !== undefined &&
-				state.osStageRecovery !== undefined &&
-				state.osStageRecovery.candidateKey !== event.candidateKey;
-			const migrated =
-				state.osStageDiscoveryRetryAt !== undefined &&
-				event.candidateKey !== undefined
-					? {
-							candidateKey: event.candidateKey,
-							activeAttemptId: null,
-							failedRounds: 1,
-							nextRetryAt: state.osStageDiscoveryRetryAt,
-							mode: "automatic" as const,
-							reason: "rauc_install_failed",
-						}
-					: undefined;
-			const recovery = superseded
-				? undefined
-				: (migrated ?? state.osStageRecovery);
-			const retryAt =
-				recovery?.mode === "automatic" ? recovery.nextRetryAt : null;
-			return enter(
-				superseded || migrated ? withoutOsStageRecovery(state) : state,
-				event.now,
-				{
-					phase: "os-available",
-					failureReason: null,
-					...(migrated ? { osStageRecovery: migrated } : {}),
-					osCheck: clockAfterSuccess(
-						event.now,
-						retryAt === null || retryAt === undefined
-							? event.nextAttemptAt
-							: Math.min(event.nextAttemptAt, retryAt),
-					),
-				},
-			);
-		}
+		case "CHECK_SUCCEEDED_OS":
+			return enterOsOffer(state, event);
 		case "CHECK_FAILED": {
 			const clockPatch =
 				event.kind === "packages"
@@ -294,6 +304,33 @@ function reduceAvailable(
 				phase: "checking",
 				packageCheck: clockAtAttemptStart(state.packageCheck, event.now),
 			});
+		// A waiting package offer must not hide a system image, so the image
+		// check runs in place: the offer stays unless an image is found.
+		case "OS_CHECK_STARTED":
+			return {
+				...state,
+				osCheck: clockAtAttemptStart(state.osCheck, event.now),
+			};
+		case "CHECK_SUCCEEDED_OS":
+			return enterOsOffer(state, event);
+		case "CHECK_SUCCEEDED_NONE":
+			if (event.kind !== "os") return state;
+			return {
+				...withoutOsStageRecovery(state),
+				osCheck: clockAfterSuccess(event.now, event.nextAttemptAt),
+			};
+		// The package offer is untouched; failureReason keeps its package meaning.
+		case "CHECK_FAILED":
+			if (event.kind !== "os") return state;
+			return {
+				...state,
+				osCheck: clockAfterFailure(
+					state.osCheck,
+					event.now,
+					event.rateLimited,
+					event.nextAttemptAt,
+				),
+			};
 		default:
 			return state;
 	}

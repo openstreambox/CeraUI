@@ -931,7 +931,8 @@ export async function checkUpdatesNow(): Promise<ManualCheckOutcome> {
 	if (!canStartManualCheck(state.phase))
 		return { started: false, reason: "busy" };
 	await runPackageCheckCycle();
-	if (state.phase === "idle") {
+	// Found packages must not hide a system image either.
+	if (state.phase === "idle" || state.phase === "available") {
 		const capabilities = await deps.loadCapabilities();
 		if (
 			capabilities.mode === "capable" &&
@@ -2914,22 +2915,7 @@ export async function runOrchestratorTick(): Promise<void> {
 			return;
 		}
 		const now = deps.now();
-		const retryAt =
-			state.osStageRecovery?.mode === "automatic"
-				? state.osStageRecovery.nextRetryAt
-				: null;
-		const osClock =
-			retryAt !== null &&
-			retryAt !== undefined &&
-			state.osCheck.consecutiveFailures === 0
-				? {
-						...state.osCheck,
-						nextAttemptAt: Math.min(
-							state.osCheck.nextAttemptAt ?? retryAt,
-							retryAt,
-						),
-					}
-				: state.osCheck;
+		const osClock = osScheduleClock();
 		let packageCheckRan = false;
 		if (
 			aptUpdatesEnabled() &&
@@ -2960,7 +2946,8 @@ export async function runOrchestratorTick(): Promise<void> {
 		}
 	} else if (state.phase === "available") {
 		const settings = await deps.loadSettings();
-		if (settings.packagesAuto) {
+		await maybeCheckOsWhilePackagesWait(settings);
+		if (getOrchestratorState().phase === "available" && settings.packagesAuto) {
 			dispatch({ type: "AWAIT_IDLE_FOR_INSTALL", now: deps.now() });
 		}
 	} else if (state.phase === "awaiting-idle") {
@@ -3041,6 +3028,47 @@ async function runPackageCheckAfterCellularGate(
 	return "ran";
 }
 
+// The image check's clock, brought forward to an automatic restage's retry.
+function osScheduleClock(): OrchestratorState["osCheck"] {
+	const retryAt =
+		state.osStageRecovery?.mode === "automatic"
+			? state.osStageRecovery.nextRetryAt
+			: null;
+	return retryAt !== null &&
+		retryAt !== undefined &&
+		state.osCheck.consecutiveFailures === 0
+		? {
+				...state.osCheck,
+				nextAttemptAt: Math.min(
+					state.osCheck.nextAttemptAt ?? retryAt,
+					retryAt,
+				),
+			}
+		: state.osCheck;
+}
+
+// Offered packages must not hide a system image: the A/B image carries its own
+// packages, so a found image replaces the package offer (reducer, `available`).
+async function maybeCheckOsWhilePackagesWait(
+	settings: UpdateSettings,
+): Promise<void> {
+	if (state.phase !== "available" || packageInstallStarting) return;
+	const capabilities = await readCapabilityRegime();
+	if (
+		capabilities?.mode !== "capable" ||
+		!capabilities.features.includes("rauc-verity-streaming") ||
+		getOrchestratorState().phase !== "available" ||
+		!scheduledCheckDue({
+			now: deps.now(),
+			clock: osScheduleClock(),
+			kind: "os",
+			settings,
+		})
+	)
+		return;
+	await runOsCheckAfterCellularGate(settings);
+}
+
 async function runOsCheckAfterCellularGate(
 	settings: UpdateSettings,
 ): Promise<void> {
@@ -3057,8 +3085,13 @@ async function runOsCheckAfterCellularGate(
 	});
 	if (!gate.allowed) return;
 	const now = deps.now();
+	const besidePackageOffer = state.phase === "available";
 	dispatch({ type: "OS_CHECK_STARTED", now });
 	const result = await deps.checkOsManifest(settings.channel);
+	// A package install that started meanwhile owns the device: drop this
+	// result, so the image is checked again once the install has settled.
+	if (besidePackageOffer && getOrchestratorState().phase !== "available")
+		return;
 	osBoardNotOffered = result.boardNotOffered === true;
 	osChannelUnpublished = result.channelUnpublished === true;
 	const outcomeNow = deps.now();

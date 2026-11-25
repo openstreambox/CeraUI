@@ -2866,6 +2866,7 @@
 	"live.source.degradedCause.source-changed": "Das Signal des Videoeingangs hat sich während der Nutzung geändert. Das Gerät greift es von selbst wieder auf — passiert das öfter, prüfe die Ausgabeeinstellungen der Kamera.",
 	"settings.updates.packages.title": "Pakete",
 	"settings.updates.packages.notChecked": "Das Gerät hat noch keine abgeschlossene Prüfung gemeldet.",
+	"settings.updates.packages.systemFirst": "Installiere zuerst das Systemupdate. Es bringt eigene Pakete mit; Neueres wird danach angeboten.",
 	"settings.updates.nextCheck": "Nächste automatische Prüfung: {time}",
 	"settings.updates.nextCheckSoon": "Nächste automatische Prüfung: so bald wie möglich",
 	"settings.updates.checkDeferredMetered": "Warten auf eine Verbindung ohne Mobilfunk, da Paketupdates über Mobilfunk ausgeschaltet sind.",
