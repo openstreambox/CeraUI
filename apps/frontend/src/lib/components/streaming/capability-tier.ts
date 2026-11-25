@@ -6,8 +6,9 @@
  *
  *   • `engineUnavailable`      — the engine isn't answering `get-capabilities`.
  *   • `engineStarting`         — the engine is booting; caps are not final yet.
- *   • `schemaVersionMismatch`  — the engine speaks a newer/older caps schema, so
- *                                some options may be approximate.
+ *   • `schemaVersionMismatch`  — the engine speaks a newer (or unparsable) caps
+ *                                schema, so some options may be approximate. An
+ *                                older engine is not flagged by the backend.
  *
  * This pure, rune-free module collapses those flags into ONE discriminated UI
  * state so the banner + control-gating render from a single, testable source.

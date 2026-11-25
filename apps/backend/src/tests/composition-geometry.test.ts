@@ -24,10 +24,14 @@ import {
 	getConfigFilePath,
 	setConfigFilePath,
 } from "../modules/config.ts";
-import { clearCapabilitiesCache } from "../modules/streaming/capabilities.ts";
+import {
+	clearCapabilitiesCache,
+	invalidateCapabilities,
+} from "../modules/streaming/capabilities.ts";
 import { cerastreamBackend } from "../modules/streaming/cerastream-backend.ts";
 import {
 	changeEngineRuntimeConfig,
+	createApplyNowGate,
 	setApplyNowGateForTest,
 } from "../modules/streaming/config-change-bridge.ts";
 import {
@@ -35,6 +39,12 @@ import {
 	defaultStagingDeps,
 } from "../modules/streaming/config-change-staging.ts";
 import { initPipelines } from "../modules/streaming/pipelines.ts";
+import {
+	postStartFeatureNotice,
+	resetStartFeatureNoticeForTest,
+	START_FEATURES_NOTIFICATION,
+	type StartFeatureNoticeBridge,
+} from "../modules/streaming/start-feature-notice.ts";
 import { setConfigProcedure } from "../rpc/procedures/streaming.procedure.ts";
 import { makeRpcContext } from "./helpers/bond-toggle-fixture.ts";
 
@@ -367,4 +377,129 @@ test("live, a write without apply_now is only saved for the next start: the runn
 	expect(dispatched).toBe(0);
 	expect(result).not.toHaveProperty("configChange");
 	expect(getConfig().composition).toEqual(placedAt(PLACED));
+});
+
+// A live placement goes to the engine running the session. A snapshot retained
+// from a retired engine (or from a failed refresh) still lists
+// `composition-geometry` and passes the save gate, so the apply-now dispatch
+// itself must see evidence from the current connection.
+function countingLiveGate(refresh?: () => Promise<void>) {
+	const sent: unknown[] = [];
+	setApplyNowGateForTest({
+		isStreamLive: () => true,
+		...(refresh === undefined ? {} : { refreshSessionCapabilities: refresh }),
+		dispatch: async (delta) => {
+			sent.push(delta);
+			return { result: "applied", attemptId: "place" };
+		},
+	});
+	return sent;
+}
+
+test("live, a placement authorized only by a retired engine's snapshot is not sent", async () => {
+	invalidateCapabilities();
+	const sent = countingLiveGate();
+
+	const result = await save({ composition_rect: PLACED, apply_now: true });
+
+	expect(sent).toEqual([]);
+	expect(result).toMatchObject({
+		success: false,
+		configChange: { result: "rejected", reason: "change_config_unsupported" },
+	});
+	expect(getConfig().composition).toEqual(SAVED);
+});
+
+test("live, a placement is refused when the session's own engine only has preset layouts", async () => {
+	invalidateCapabilities();
+	const sent = countingLiveGate(() => engineFeatures(["composition"]));
+
+	const result = await save({ composition_rect: PLACED, apply_now: true });
+
+	expect(sent).toEqual([]);
+	expect(result.configChange).toEqual({
+		result: "rejected",
+		reason: "change_config_unsupported",
+	});
+	expect(getConfig().composition).toEqual(SAVED);
+});
+
+test("live, a placement goes out once the session's own engine confirms geometry", async () => {
+	invalidateCapabilities();
+	const sent = countingLiveGate(() => engineFeatures(GEOMETRY));
+
+	const result = await save({ composition_rect: PLACED, apply_now: true });
+
+	expect(sent).toEqual([{ composition: placedAt(PLACED) }]);
+	expect(result.configChange?.result).toBe("applied");
+});
+
+test("the apply-now gate refuses a custom layout without current geometry evidence", async () => {
+	invalidateCapabilities();
+	const changes: unknown[] = [];
+	const gate = createApplyNowGate({
+		snapshot: () => ({ state: "streaming" }) as never,
+		changeConfig: async (delta) => {
+			changes.push(delta);
+			return { result: "applied", attemptId: "gate" };
+		},
+	});
+
+	const custom = await gate.dispatch({ composition: placedAt(PLACED) });
+	const preset = await gate.dispatch({ composition: { ...SAVED } });
+
+	expect(custom).toEqual({
+		result: "rejected",
+		reason: "change_config_unsupported",
+	});
+	expect(changes).toEqual([{ composition: { ...SAVED } }]);
+	expect(preset.result).toBe("applied");
+});
+
+// The start went without its custom layout (its capability read timed out);
+// once a live placement is applied on air, the notice must stop saying so.
+function noticeBridge() {
+	const shown = new Map<string, string>();
+	const bridge: StartFeatureNoticeBridge = {
+		notify: (name, _type, msg) => {
+			shown.set(name, msg);
+		},
+		notificationExists: (name) => shown.has(name),
+		removeNotification: (name) => {
+			shown.delete(name);
+		},
+	};
+	return { bridge, shown };
+}
+
+test("live, an applied placement clears a notice that the start went without its layout", async () => {
+	const { bridge, shown } = noticeBridge();
+	postStartFeatureNotice(bridge, ["custom-layout"], false);
+	countingLiveGate();
+	try {
+		const result = await save({ composition_rect: PLACED, apply_now: true });
+		expect(result.configChange?.result).toBe("applied");
+		expect(shown.has(START_FEATURES_NOTIFICATION)).toBe(false);
+	} finally {
+		resetStartFeatureNoticeForTest();
+	}
+});
+
+test("live, a refused placement leaves that notice in place", async () => {
+	const { bridge, shown } = noticeBridge();
+	postStartFeatureNotice(bridge, ["custom-layout"], false);
+	setApplyNowGateForTest({
+		isStreamLive: () => true,
+		dispatch: async () => ({
+			result: "reverted",
+			attemptId: "place",
+			reason: "change_rejected",
+		}),
+	});
+	try {
+		await save({ composition_rect: PLACED, apply_now: true });
+		expect(shown.has(START_FEATURES_NOTIFICATION)).toBe(true);
+	} finally {
+		resetStartFeatureNoticeForTest();
+	}
 });
