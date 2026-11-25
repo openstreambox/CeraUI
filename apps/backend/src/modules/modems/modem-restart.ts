@@ -251,7 +251,7 @@ export async function restartModem(
 	restarting = stableKey;
 	try {
 		const outcome = await withModemRestartLease(stableKey, () =>
-			runRestart(id, modem, stableKey, qualification, deps),
+			runRestart(id, stableKey, qualification, deps),
 		);
 		if (!outcome.ok) return refuse(outcome.refusal, context);
 		lastAttemptEnded.set(stableKey, deps.now());
@@ -263,7 +263,6 @@ export async function restartModem(
 
 async function runRestart(
 	id: number,
-	modem: Modem,
 	stableKey: string,
 	qualification: ModemRestartQualification,
 	deps: ModemRestartDeps,
