@@ -50,6 +50,7 @@ function show(record: RadioHealth, props: Record<string, unknown> = {}) {
 		radio: record,
 		id: "1",
 		network: "Example",
+		connected: true,
 		...props,
 	});
 	const panel = view.getByTestId("radio-health");
@@ -263,5 +264,108 @@ test("the panel is a named region with a screen-reader heading, chip first", () 
 	);
 	expect(getByRole("heading", { name: "Radio health" }).className).toContain(
 		"sr-only",
+	);
+});
+
+describe("round two: honest status", () => {
+	test("registered without a data connection is not OK", () => {
+		const { status, chip, summary } = show(radio(registered), {
+			connected: false,
+		});
+		expect(status).toBe("registered");
+		expect(chip).toBe("Registered");
+		expect(summary).toBe("Registered, but no data connection yet.");
+	});
+
+	test("only the exact registered states count; unknown reads as not checked", () => {
+		const statusOf = (value: string) => {
+			const view = show(radio({ registration: known(value, "state") }));
+			view.unmount();
+			return view.status;
+		};
+		expect(statusOf("home-sms-only")).toBe("not-registered");
+		expect(statusOf("unknown")).toBe("unchecked");
+	});
+
+	test("a missing SIM outranks a cached SIM finding", () => {
+		const { status } = show(
+			radio({
+				finding: { kind: "sim-account", confidence: "likely", evidence: [] },
+			}),
+			{ noSim: true },
+		);
+		expect(status).toBe("no-sim");
+	});
+
+	test("the solid chip uses a status token pair", () => {
+		const chip = show(
+			radio({
+				finding: { kind: "data-path", confidence: "likely", evidence: [] },
+			}),
+		).getByTestId("radio-health-status");
+		expect(chip.className).toContain("bg-status-error");
+		expect(chip.className).toContain("text-status-error-foreground");
+	});
+});
+
+test("signal level cut-offs are inclusive at -90 and -105 dBm", () => {
+	const level = (dbm: number) => {
+		const view = show(
+			radio({ ...registered, metrics: { "lte.rsrp": known(dbm, "dBm") } }),
+		);
+		const value = view
+			.getByTestId("radio-health-signal")
+			.querySelector("[data-signal-level]")
+			?.getAttribute("data-signal-level");
+		view.unmount();
+		return value;
+	};
+	expect(level(-90)).toBe("high");
+	expect(level(-90.5)).toBe("medium");
+	expect(level(-105)).toBe("medium");
+	expect(level(-105.5)).toBe("low");
+});
+
+test("an unavailable network value keeps the page direction", () => {
+	const { getByTestId } = show(radio());
+	const cells = getByTestId("radio-health-readings").querySelectorAll("dd");
+	for (const cell of cells) expect(cell.getAttribute("dir")).toBeNull();
+	expect(
+		getByTestId("radio-health-readings").querySelector('[dir="ltr"]'),
+	).toBeNull();
+});
+
+test("details keep neighbour band, source and time, and finding evidence", () => {
+	const { getByTestId } = show(
+		radio({
+			...registered,
+			neighbours: [
+				{
+					id: "2",
+					band: known("LTE B7", "band"),
+					transmitting: "yes",
+					source: "tx_bytes",
+					capturedAt: at,
+				},
+			],
+			timeline: [
+				{
+					at,
+					finding: {
+						kind: "data-path",
+						confidence: "likely",
+						evidence: ["two-failed-path-probes"],
+					},
+				},
+			],
+		}),
+	);
+	const neighbours = getByTestId("radio-health-neighbours").textContent ?? "";
+	expect(neighbours).toContain("Modem 2");
+	expect(neighbours).toContain("Sending");
+	expect(neighbours).toContain("B7");
+	expect(neighbours).toContain("tx_bytes");
+	expect(getByTestId("radio-health-history").textContent).toContain(
+		"two-failed-path-probes",
 	);
 });

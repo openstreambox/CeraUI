@@ -42,14 +42,16 @@ qualification on the target hardware before deployment.
 
 Findings are informational, never admission or recovery commands:
 
-- A refusal identifies **SIM or account** only for an explicit subscriber or account rejection on the observed home network. Congestion, network failures and unidentified causes remain Unknown.
+- A refusal identifies **SIM or account** only for an explicit subscriber or account rejection on the observed home network. A refused device (`illegal-me`), congestion, network failures and unidentified causes remain Unknown; the cellular row names the specific reason.
 - **Data path** requires registration, attached packet service and at least two fresh failed path probes already owned by the host. No new traffic is generated.
 - **Possible disturbance** requires independent radio evidence of an idle neighbour becoming active, a healthy baseline and a subsequent USB event or comparable quality drop. Payload counter increases cannot establish this contrast. The deployed sampler has no independent radio-idle source, so it does not emit this finding. Synthetic evidence tests cover the positive and negative cases; correlation still cannot establish a cause.
 
 The panel leads with a status chip (icon and word), one short line and the next
-step when there is one. A fresh registration with no finding reads **OK**, a
-missing registration reads **Not checked**, and a modem without a SIM or still
-searching says so without blaming the SIM. Registration, network type and band,
+step when there is one. A registered modem whose row is connected, with no
+finding, reads **OK**; registered without a data connection reads
+**Registered**; a missing or unknown registration reads **Not checked**; a
+modem without a SIM or still searching says so without blaming the SIM. A
+missing SIM outranks any cached finding. Registration, network type and band,
 signal (RSRP in dBm with bars and a word), other modems sending and USB events
 follow as label/value rows. The signal word is a rough guide (-90 dBm and above
 Strong, down to -105 dBm Fair, below that Weak) and never a finding. Every raw
@@ -81,8 +83,9 @@ un problema de la SIM. Dos pruebas existentes fallidas, con registro y servicio
 de datos concedido, pueden indicar un problema de la ruta de datos. La actividad de datos y un evento USB no bastan para indicar interferencia. Sin una observación independiente de silencio de radio seguida de transmisión, el diagnóstico permanece desconocido.
 
 El panel empieza con una etiqueta de estado (icono y palabra), una frase corta y
-el siguiente paso cuando lo hay. Un registro reciente sin hallazgos dice **OK**;
-sin registro dice **Sin comprobar**. Después vienen el registro, el tipo de red y
+el siguiente paso cuando lo hay. Un módem registrado y conectado sin hallazgos
+dice **OK**; registrado sin conexión de datos dice **Registrado**; sin registro
+dice **Sin comprobar**. Después vienen el registro, el tipo de red y
 la banda, la señal (RSRP en dBm con barras y una palabra), los otros módems que
 transmiten y los eventos USB. Todas las mediciones con su fuente y hora, y el
 historial, quedan plegadas en **Detalles**.

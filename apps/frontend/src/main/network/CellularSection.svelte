@@ -895,6 +895,7 @@ async function openAdminUi(rowId: string): Promise<void> {
 									id={String(id)}
 									network={carrier || undefined}
 									noSim={state === 'no-sim' || simless}
+									connected={state === 'connected'}
 									modemName={radioModemName}
 								/>
 							{/if}

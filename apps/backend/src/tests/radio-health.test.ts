@@ -226,3 +226,17 @@ test("congestion and network failures never imply an account problem", () => {
 			).kind,
 		).toBe("unknown");
 });
+
+test("a refused device (illegal-me) is never reported as a SIM or account problem", () => {
+	expect(
+		diagnoseRadio(
+			sample(1000, {
+				refused: true,
+				rejectedNetwork: "00101",
+				rejectionCause: "illegal-me",
+			}),
+			undefined,
+			{},
+		).kind,
+	).toBe("unknown");
+});

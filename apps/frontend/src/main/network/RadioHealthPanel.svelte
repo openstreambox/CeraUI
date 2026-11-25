@@ -14,6 +14,7 @@ import {
 	CircleHelp,
 	CircleOff,
 	CircleX,
+	RadioTower,
 	Search,
 	SignalHigh,
 	SignalLow,
@@ -31,6 +32,7 @@ import {
 	networkType,
 	RADIO_STATUS_TONE,
 	type RadioStatusKind,
+	type RadioTone,
 	radioStatus,
 	registrationWord,
 	type SignalLevel,
@@ -42,6 +44,7 @@ let {
 	id,
 	network,
 	noSim = false,
+	connected = false,
 	modemName = (other: string) => m['network.radio.neighbour']({ id: other }),
 }: {
 	radio: RadioHealth;
@@ -49,16 +52,27 @@ let {
 	/** The carrier name, when the row knows it. */
 	network?: string | undefined;
 	noSim?: boolean;
+	/** The row reports a data connection (bearer up). */
+	connected?: boolean;
 	/** How the cellular section names another modem's row. */
 	modemName?: (id: string) => string;
 } = $props();
 
 const headingId = $derived(`radio-health-${id}`);
-const status = $derived<RadioStatusKind>(radioStatus(radio, noSim));
+const status = $derived<RadioStatusKind>(radioStatus(radio, { noSim, connected }));
 const tone = $derived(RADIO_STATUS_TONE[status]);
+// Solid token pairs: the tinted status pill measures below 4.5:1 for these
+// tones on the panel. Dark red takes the dark page colour for the same reason.
+const CHIP_CLASS: Record<RadioTone, string> = {
+	success: 'bg-status-success text-status-success-foreground',
+	warning: 'bg-status-warning text-status-warning-foreground',
+	error: 'bg-status-error text-status-error-foreground dark:text-background',
+	neutral: 'bg-status-neutral text-status-neutral-foreground',
+};
 
 const STATUS_ICON = {
 	ok: CircleCheck,
+	registered: RadioTower,
 	'sim-account': CircleX,
 	'data-path': CircleX,
 	disturbed: TriangleAlert,
@@ -71,6 +85,7 @@ const StatusIcon = $derived(STATUS_ICON[status]);
 const chip = $derived(
 	{
 		ok: m['network.radio.chip.ok'](),
+		registered: m['network.radio.chip.registered'](),
 		'sim-account': m['network.radio.chip.simRefused'](),
 		'data-path': m['network.radio.chip.noData'](),
 		disturbed: m['network.radio.chip.interference'](),
@@ -86,6 +101,8 @@ const line = $derived.by(() => {
 	switch (status) {
 		case 'ok':
 			return m['network.radio.line.ok']();
+		case 'registered':
+			return m['network.radio.line.registered']();
 		case 'sim-account':
 			return network
 				? m['network.radio.line.sim']({ network })
@@ -220,15 +237,19 @@ const history = $derived<HistoryRow[]>(
 		...radio.timeline.map((event) => ({
 			at: event.at,
 			text: FINDING_CHIP[event.finding.kind] ?? event.finding.kind,
-			detail: event.observation
-				? [
-						bandLabel(event.observation.band.value),
-						formatValue(event.observation.rsrp),
-						formatValue(event.observation.quality),
-					]
-						.filter(Boolean)
-						.join(' · ')
-				: '',
+			// The evidence tokens stay: they are what supported a finding.
+			detail: [
+				...(event.observation
+					? [
+							bandLabel(event.observation.band.value),
+							formatValue(event.observation.rsrp),
+							formatValue(event.observation.quality),
+						]
+					: []),
+				...event.finding.evidence,
+			]
+				.filter(Boolean)
+				.join(' · '),
 		})),
 	].sort((a, b) => b.at - a.at),
 );
@@ -245,7 +266,12 @@ const history = $derived<HistoryRow[]>(
 	<h3 id={headingId} class="sr-only">{m['network.radio.title']()}</h3>
 	<div class="space-y-1">
 		<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-			<Badge variant={tone} data-testid="radio-health-status" data-tone={tone}>
+			<Badge
+				variant={tone}
+				class={CHIP_CLASS[tone]}
+				data-testid="radio-health-status"
+				data-tone={tone}
+			>
 				<StatusIcon class="size-3.5" aria-hidden="true" />
 				{chip}
 			</Badge>
@@ -267,8 +293,8 @@ const history = $derived<HistoryRow[]>(
 			</dd>
 
 			<dt class="text-muted-foreground">{m['network.radio.network']()}</dt>
-			<dd class={cn('min-w-0', networkText === null && 'text-muted-foreground')} dir="ltr">
-				{networkText ?? unavailable}
+			<dd class={cn('min-w-0', networkText === null && 'text-muted-foreground')}>
+				{#if networkText === null}{unavailable}{:else}<span dir="ltr">{networkText}</span>{/if}
 			</dd>
 
 			<dt class="text-muted-foreground">{m['network.radio.signal']()}</dt>
@@ -331,9 +357,11 @@ const history = $derived<HistoryRow[]>(
 						<div class="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-3 py-1">
 							<dt class="text-muted-foreground">{name}</dt>
 							<dd class="min-w-0">
-								<span class={cn(shown === null ? 'text-muted-foreground' : 'font-mono tabular-nums')} dir="ltr">
-									{shown ?? unavailable}
-								</span>
+								{#if shown === null}
+									<span class="text-muted-foreground">{unavailable}</span>
+								{:else}
+									<span class="font-mono tabular-nums" dir="ltr">{shown}</span>
+								{/if}
 								{#if shown !== null || metric.source !== 'not-observed'}
 									<span class="text-muted-foreground block break-words text-(length:--text-micro)" dir="ltr">
 									{metric.source}{#if at && shown !== null}{' · '}{at}{/if}
@@ -344,6 +372,30 @@ const history = $derived<HistoryRow[]>(
 					{/each}
 				</dl>
 			</div>
+			{#if radio.neighbours.length > 0}
+				<div class="space-y-1">
+					<h4 class="font-medium">{m['network.radio.otherModems']()}</h4>
+					<dl class="divide-y" data-testid="radio-health-neighbours">
+						{#each radio.neighbours as neighbour (neighbour.id)}
+							{const band = $derived(formatValue(neighbour.band))}
+							{const at = $derived(time(neighbour.capturedAt))}
+							<div class="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-3 py-1">
+								<dt class="text-muted-foreground">{modemName(neighbour.id)}</dt>
+								<dd class="min-w-0">
+									{neighbour.transmitting === 'yes'
+										? m['network.radio.sending']()
+										: m['network.radio.unknownValue']()}{' · '}{#if band === null}<span
+											class="text-muted-foreground">{unavailable}</span
+										>{:else}<span class="font-mono" dir="ltr">{bandLabel(band)}</span>{/if}
+									<span class="text-muted-foreground block break-words text-(length:--text-micro)" dir="ltr">
+										{neighbour.source}{#if at}{' · '}{at}{/if}
+									</span>
+								</dd>
+							</div>
+						{/each}
+					</dl>
+				</div>
+			{/if}
 			<div class="space-y-1">
 				<h4 class="font-medium">{m['network.radio.history']()}</h4>
 				{#if history.length === 0}
