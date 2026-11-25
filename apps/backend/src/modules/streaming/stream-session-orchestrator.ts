@@ -220,6 +220,20 @@ export type StreamSessionOrchestratorDeps = {
 	 * singleton and proven through the real `streaming.start` procedure instead.
 	 */
 	readonly admitLifecycle?: () => LifecycleAdmission;
+	/**
+	 * A dead-bearer reconnect's link teardown (`lifecycle-admission.ts`). Every
+	 * origin waits it out rather than failing, because no start origin retries
+	 * a refusal; the hold is bounded and no new one begins while a Start waits.
+	 * After `budgetMs` the Start goes on to admission, which refuses it with
+	 * `modem_transition_active` if the interlock is somehow still held.
+	 */
+	readonly linkTeardown?: {
+		/** Resolves when the current teardown releases; undefined when none holds. */
+		readonly settled: () => Promise<void> | undefined;
+		/** Blocks new teardowns until the returned function runs. */
+		readonly beginWait: () => () => void;
+		readonly budgetMs: number;
+	};
 	/** Confirm the shutdown block before any media launch effect. */
 	/** Last admission step, in the same tick as the launch. False when the OTA
 	 * marker would still read carrying-only beside it; the Start is then
@@ -342,6 +356,15 @@ export type StreamSessionOrchestrator = {
 		event: Extract<EventParams, { type: "status" }>,
 	) => void;
 };
+
+/** `promise`, or `ms` elapsing, whichever comes first; the timer never outlives it. */
+function settledWithin(promise: Promise<void>, ms: number): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const elapsed = new Promise<void>((resolve) => {
+		timer = setTimeout(resolve, Math.max(0, ms));
+	});
+	return Promise.race([promise, elapsed]).finally(() => clearTimeout(timer));
+}
 
 export function createStreamSessionOrchestrator(
 	deps: StreamSessionOrchestratorDeps,
@@ -486,6 +509,27 @@ export function createStreamSessionOrchestrator(
 			deps.getStreamingStatus?.() === false
 		)
 			await reconcile();
+
+		// A link teardown is waited out within its budget. Asked again after
+		// every wake; the loop's last ask, the end of the wait and the admission
+		// below run with no await between them, so a new teardown cannot slip in.
+		// No teardown: no await at all.
+		const teardown = deps.linkTeardown;
+		if (teardown?.settled() !== undefined) {
+			const endWait = teardown.beginWait();
+			// Monotonic: an NTP step at boot must not end the wait early.
+			const deadline = performance.now() + teardown.budgetMs;
+			try {
+				for (
+					let pending = teardown.settled();
+					pending !== undefined && performance.now() < deadline;
+					pending = teardown.settled()
+				)
+					await settledWithin(pending, deadline - performance.now());
+			} finally {
+				endWait();
+			}
+		}
 
 		if (!currentIntent()) return { result: "cancelled", attemptId };
 		if (

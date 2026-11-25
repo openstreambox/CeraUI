@@ -16,7 +16,10 @@ import { currentRuntimeObservationUncertainty } from "./engine-runtime-observati
 import { queryEngineRuntimeStreaming } from "./engine-runtime-state.ts";
 import { engineUnitStopped } from "./engine-unit-state.ts";
 import {
+	beginLinkTeardownWait,
 	globalStreamHold,
+	linkTeardownSettled,
+	START_LINK_TEARDOWN_WAIT_MS,
 	tryAcquireLifecycle,
 } from "./lifecycle-admission.ts";
 import {
@@ -186,6 +189,11 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	ensureShutdownProtection: ensureEncoderShutdownProtection,
 	claimLaunchMarker: claimOtaMarkerForLaunch,
 	admitLifecycle: () => tryAcquireLifecycle("streaming"),
+	linkTeardown: {
+		settled: linkTeardownSettled,
+		beginWait: beginLinkTeardownWait,
+		budgetMs: START_LINK_TEARDOWN_WAIT_MS,
+	},
 	awaitRecovery: awaitRecoveryBarrier,
 	recoveryPending: isRecoveryPending,
 	blockingMutation: globalStreamHold,

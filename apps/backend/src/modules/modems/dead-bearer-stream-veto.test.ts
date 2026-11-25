@@ -5,6 +5,7 @@ import {
 	resetClatTranslationStateForTest,
 	setClatTranslationsForTest,
 } from "../network/clat-translation.ts";
+import { resetLinkTeardownPendingForTest } from "../network/link-teardown-pending.ts";
 import type { UplinkHealthRecord } from "../network/uplink-health/model.ts";
 import type { BondEntry } from "../streaming/bind-map.ts";
 import {
@@ -28,6 +29,7 @@ import { resetRecoveryBarrier } from "../streaming/recovery-barrier.ts";
 import {
 	DEAD_BEARER_HOLD_MS,
 	DEAD_BEARER_MIN_FAILURES,
+	type NmDeviceState,
 	runDeadBearerRecovery,
 	setDeadBearerDepsForTest,
 } from "./dead-bearer-recovery.ts";
@@ -73,6 +75,8 @@ let now = 0;
 /** Wall clock for health and telemetry timestamps. */
 let wall = 0;
 let calls: string[];
+/** The modem's NM device as NetworkManager would report it. */
+let nmDevice: NmDeviceState | undefined;
 
 function snapshot(connections: Conn[]): Telemetry {
 	return {
@@ -171,6 +175,7 @@ beforeEach(() => {
 	now = 0;
 	wall = 1_800_000_000_000;
 	calls = [];
+	nmDevice = { state: "100", connection: UUID };
 	// Another file's translation must not make wwan0 look translated here.
 	resetClatTranslationStateForTest();
 	setTelemetryClockForTest(() => wall);
@@ -205,16 +210,24 @@ beforeEach(() => {
 		noteDial: () => {},
 		disconnect: async (uuid) => {
 			calls.push(`down ${uuid}`);
+			nmDevice = { state: "30", connection: undefined };
 		},
 		connect: async (uuid) => {
 			calls.push(`up ${uuid}`);
+			nmDevice = { state: "100", connection: uuid };
 			return true;
+		},
+		resolveDevice: async () => "cdc-wdm0",
+		deviceState: async () => nmDevice,
+		sleep: async (ms) => {
+			now += ms;
 		},
 	});
 });
 
 afterEach(() => {
 	setDeadBearerDepsForTest(null);
+	resetLinkTeardownPendingForTest();
 	stopLinkTelemetry();
 	clearBindMapReport();
 	resetBindMapReportListeners();
