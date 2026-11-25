@@ -295,9 +295,14 @@ export async function applyHotspotProfilePolicy(
 				if (ownership === "disarm") {
 					// Keep the saved hotspot intent for CeraUI's restore, on the same
 					// terms as the hotspot branch below, then disarm.
-					const verifiedOnly = candidates.every(
-						(row) => row.classification === "verified",
+					const twinPhys = new Set(
+						[...observation.identities.values()]
+							.filter((row) => row.permanentMac === mac)
+							.map((row) => row.lifetime?.phyPath),
 					);
+					const verifiedOnly =
+						!candidates.some((row) => row.classification !== "verified") ||
+						twinPhys.size >= 2;
 					if (
 						!station &&
 						!failedFirstStart &&
