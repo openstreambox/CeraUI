@@ -13,7 +13,10 @@ import {
 	isHeldOutByModemBlock,
 	onNetworkInterfacesChange,
 } from "../modules/network/network-interfaces.ts";
-import { getUsbPhysicalDescriptor } from "../modules/network/router-cellular-scan.ts";
+import {
+	getUsbPhysicalDescriptor,
+	isUsbReplacementPending,
+} from "../modules/network/router-cellular-scan.ts";
 import {
 	globalStreamHold,
 	streamingBlockingMutation,
@@ -638,4 +641,21 @@ test("a fresh scan republishes an unchanged unblocked device after its name reap
 	} finally {
 		unsubscribe();
 	}
+});
+
+test("a replugged USB Wi-Fi radio keeps its own lifetime, not the USB replacement hold", async () => {
+	box = await realisticBox();
+	await box.scan([ETHERNET, ...MODEMS, USB_WIFI]);
+	expect(getNetworkInterfaces()[USB_WIFI.ifname]).toMatchObject({ usb: true });
+	expect(box.bonded()).toContain(USB_WIFI.ifname);
+
+	// Unplugged: the radio's wireless sysfs is gone with it.
+	await box.scan([ETHERNET, ...MODEMS]);
+	expect(box.bonded()).not.toContain(USB_WIFI.ifname);
+
+	// Plugged back in without a serial or udev path to anchor it.
+	await box.scan([ETHERNET, ...MODEMS, USB_WIFI]);
+	await box.scan([ETHERNET, ...MODEMS, USB_WIFI]);
+	expect(isUsbReplacementPending(USB_WIFI.ifname)).toBe(false);
+	expect(box.bonded()).toContain(USB_WIFI.ifname);
 });
