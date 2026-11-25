@@ -270,9 +270,9 @@ test("an empty generic slot is dropped once a layer reports that metric", async 
 test("the card's button says what it opens", () => {
 	const { getByRole } = show(radio(registered));
 	expect(
-		getByRole("button", { name: "Show readings and history" }).getAttribute(
-			"aria-haspopup",
-		),
+		getByRole("button", {
+			name: "Show readings and history for Modem 1",
+		}).getAttribute("aria-haspopup"),
 	).toBe("dialog");
 });
 
@@ -302,7 +302,8 @@ describe("round two: honest status", () => {
 			view.unmount();
 			return view.status;
 		};
-		expect(statusOf("home-sms-only")).toBe("not-registered");
+		expect(statusOf("home-sms-only")).toBe("registered");
+		expect(statusOf("roaming-csfb-not-preferred")).toBe("registered");
 		expect(statusOf("unknown")).toBe("unchecked");
 	});
 
@@ -423,4 +424,29 @@ test("signal level cut-offs are inclusive at -90 and -105 dBm", async () => {
 	expect(signalLevel(-90.5)).toBe("medium");
 	expect(signalLevel(-105)).toBe("medium");
 	expect(signalLevel(-105.5)).toBe("low");
+});
+
+test("limited registrations are named, never OK and never not registered", () => {
+	const smsOnly = show(
+		radio({ registration: known("home-sms-only", "state") }),
+	);
+	expect(smsOnly.chip).toBe("Registered");
+	expect(smsOnly.summary).toBe("Registered for SMS only, so no data.");
+	expect(smsOnly.getByTestId("radio-health-readings").textContent).toContain(
+		"SMS only",
+	);
+	smsOnly.unmount();
+	const csfb = show(
+		radio({ registration: known("home-csfb-not-preferred", "state") }),
+	);
+	expect(csfb.status).toBe("registered");
+	expect(csfb.summary).toBe("Registered and connected.");
+});
+
+test("the dialog body takes keyboard focus so a long list can scroll", async () => {
+	const view = show(radio(registered));
+	const { details } = await openDetails(view);
+	expect(details.getAttribute("tabindex")).toBe("0");
+	expect(details.tagName).toBe("SECTION");
+	expect(details.getAttribute("aria-label")).toBe("Readings and history");
 });

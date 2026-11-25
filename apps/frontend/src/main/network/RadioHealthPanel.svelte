@@ -126,7 +126,11 @@ const line = $derived.by(() => {
 		case 'ok':
 			return m['network.radio.line.ok']();
 		case 'registered':
-			return m['network.radio.line.registered']();
+			return reg === 'sms-only'
+				? m['network.radio.line.smsOnly']()
+				: connected
+					? m['network.radio.line.registeredConnected']()
+					: m['network.radio.line.registered']();
 		case 'sim-account':
 			return network
 				? m['network.radio.line.sim']({ network })
@@ -173,6 +177,7 @@ const REG_LABEL = $derived<Record<string, string>>({
 	home: m['network.radio.reg.home'](),
 	roaming: m['network.radio.reg.roaming'](),
 	registered: m['network.radio.reg.registered'](),
+	'sms-only': m['network.radio.reg.smsOnly'](),
 	searching: m['network.radio.reg.searching'](),
 	idle: m['network.radio.reg.idle'](),
 	denied: m['network.radio.reg.denied'](),
@@ -334,9 +339,9 @@ const history = $derived<HistoryRow[]>(
 	     while the markup inside stays plain text rather than button content. -->
 	<button
 		type="button"
-		class="focus-visible:ring-ring absolute inset-0 cursor-pointer rounded-lg focus-visible:ring-2 focus-visible:outline-none"
+		class="focus-visible:ring-ring absolute inset-0 cursor-pointer rounded-lg focus-visible:ring-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-transparent"
 		aria-haspopup="dialog"
-		aria-label={m['network.radio.showDetails']()}
+		aria-label={m['network.radio.showDetails']({ modem: modemName(id) })}
 		data-testid="radio-health-open"
 		onclick={() => (detailsOpen = true)}
 	></button>
@@ -348,7 +353,13 @@ const history = $derived<HistoryRow[]>(
 	description={modemName(id)}
 	hideFooter
 >
-	<div class="space-y-4 text-xs" data-testid="radio-health-details">
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex (This read-only scroll region needs keyboard focus; Close is the dialog's only other tab stop.) -->
+	<!-- biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need to focus this named read-only region to scroll the dialog body. -->
+	<section tabindex="0"
+		class="space-y-4 rounded-md text-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+		data-testid="radio-health-details"
+		aria-label={m['network.radio.readingsRegion']()}
+	>
 		{#if radio.capturedAt > 0}
 			<p class="text-muted-foreground tabular-nums" data-testid="radio-health-timing">
 				{m['network.radio.lastReading']({ time: time(radio.capturedAt) ?? '' })}{' · '}{nextText}
@@ -441,5 +452,5 @@ const history = $derived<HistoryRow[]>(
 				</ol>
 			{/if}
 		</div>
-	</div>
+	</section>
 </AppDialog>
