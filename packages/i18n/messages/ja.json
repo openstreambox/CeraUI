@@ -3657,5 +3657,17 @@
 	"notifications.power.sink": "電源ボードがモバイルバッテリーの充電チップと通信できません。そのモバイルバッテリーはデバイスを起動できず、休止状態にもなれません。",
 	"notifications.power.unproven": "電源ボードはデバイスに給電しているモバイルバッテリーを確認できません。予備バッテリーが過熱しても、デバイスの電源は自動的には切れません。",
 	"notifications.power.jump": "予備バッテリーの温度が急上昇しました。センサーが故障している可能性があります。この高い温度が続くと、1 分後にデバイスの電源が切れます。",
-	"notifications.power.status": "{text}"
+	"notifications.power.status": "{text}",
+	"network.changeSafety.askBefore.own": "この変更で {via} 経由のボックス接続が切れます。",
+	"network.changeSafety.askBefore.unknown": "この変更でボックスとの接続が切れる可能性があります。",
+	"network.changeSafety.askBefore.undo": "変更する（{seconds} 秒以内に確認しなければ元に戻る）",
+	"network.changeSafety.askBefore.keep": "わかっています：接続を切って、元に戻さないでください。再び接続するには、接続の切り替えかボックスのリセットが必要になるかもしれません。",
+	"network.changeSafety.confirm.prompt": "接続できていますか？{seconds} 秒以内に確認しないと、ボックスが変更を元に戻します。",
+	"network.changeSafety.confirm.action": "確認",
+	"network.changeSafety.notice.disconnected": "時間内に誰も確認しなかったため、ボックスが変更を元に戻しました。それでも変更しますか？",
+	"network.changeSafety.notice.restart": "確認前にネットワークが再起動したため、ボックスが元に戻しました。それでも変更しますか？",
+	"network.changeSafety.notice.make": "変更する",
+	"network.changeSafety.notice.leave": "元に戻したままにする",
+	"network.changeSafety.kept.undo": "直前のネットワーク変更を元に戻す",
+	"network.changeSafety.summary.ethernetRole": "{ifname} のポート役割の変更"
 }
