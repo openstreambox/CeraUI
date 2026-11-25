@@ -422,10 +422,15 @@ test("a continuous USB link keeps its token on an index read failure and advance
 	await updateNetif();
 	const initial = getNetworkInterfaceIncarnation(MODEM);
 	expect(initial).toBeDefined();
+	// Neither ip nor the sysfs index answers: the sysfs node alone shows the
+	// same kernel netdev, so the token stays.
 	f.setIpUnavailable();
+	f.setSysfsIndexUnavailable();
 	await updateNetif();
 	expect(getNetworkInterfaceIncarnation(MODEM)).toBe(initial);
 
+	// Same node and index under a new MAC: same netdev, new local ingress token.
+	f.setSysfsIndexUnavailable(false);
 	f.setOutput(output.replace("02:00:00:00:00:01", "02:00:00:00:00:02"));
 	await updateNetif();
 	expect(getNetworkInterfaceIncarnation(MODEM)).not.toBe(initial);
@@ -593,4 +598,90 @@ test("supersession during the awaited I/O turn cannot publish the older OS snaps
 		await p;
 		await f.settle();
 	}
+});
+
+test("a MAC change on the same netdev advances the token even when its first poll is superseded", async () => {
+	const output = firstSightIfconfig(MODEM, IP);
+	const f = fixture(output, []);
+	f.set(MODEM, ok("usb"));
+	await updateNetif();
+	const initial = getNetworkInterfaceIncarnation(MODEM);
+	expect(initial).toBeDefined();
+
+	// The first poll records the new MAC, then waits on a sibling's scan and is
+	// superseded by a second poll that sees the same new MAC.
+	f.block("eth9");
+	f.set("eth9", ok("pci"));
+	f.setOutput(
+		`${output.replace("02:00:00:00:00:01", "02:00:00:00:00:02")}\n\n${firstSightIfconfig("eth9", "192.0.2.2")}`,
+	);
+	const first = updateNetif();
+	await f.enteredFor("eth9");
+	const second = updateNetif();
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	f.release();
+	jest.advanceTimersByTime(2000);
+	await first;
+	await second;
+	await f.settle();
+	expect(getNetworkInterfaceIncarnation(MODEM)).not.toBe(initial);
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toContain(MODEM);
+});
+
+test("a name first seen through its USB descriptor alone keeps the replacement hold after removal", async () => {
+	const output = firstSightIfconfig(MODEM, IP);
+	const f = fixture(output, []);
+	f.set(MODEM, err("EIO"));
+	await updateNetif();
+	await f.settle();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toContain(MODEM);
+
+	f.setOutput("");
+	await updateNetif();
+	expect(netIfBuildMsg()[MODEM]).toBeUndefined();
+
+	// The successor's scan cannot run and its bus stays unreadable: only the
+	// hold keeps it out past the identity deadline.
+	f.setIndex(MODEM, 29);
+	f.setOutput(output);
+	f.block(MODEM);
+	const p = updateNetif();
+	try {
+		await f.enteredFor(MODEM);
+		jest.advanceTimersByTime(2000);
+		await p;
+		f.clock.now += 20_000;
+		expect(genSrtlaBondEntries().map((entry) => entry.iface)).not.toContain(
+			MODEM,
+		);
+	} finally {
+		f.release();
+		await p;
+	}
+	await f.settle();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toContain(MODEM);
+});
+
+test("a USB scan that sees a non-USB name replaced holds the successor like the poll does", async () => {
+	const output = firstSightIfconfig("eth9", "192.0.2.2");
+	const f = fixture(output, []);
+	f.set("eth9", ok("pci"));
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+
+	// The scan, not the poll, is first to see a different netdev under the
+	// name, and neither the bus nor a descriptor identifies the successor.
+	f.setIndex("eth9", 29);
+	f.set("eth9", err("EIO"));
+	await f.settle();
+	await updateNetif();
+	f.clock.now += 20_000;
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).not.toContain(
+		"eth9",
+	);
+
+	// A current non-USB bus read is positive evidence and lifts the hold.
+	f.set("eth9", ok("pci"));
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
 });
