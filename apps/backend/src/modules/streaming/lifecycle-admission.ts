@@ -121,8 +121,11 @@ export function tryAcquireLifecycle(who: LifecycleHolder): LifecycleAdmission {
 	// `"modem-transition"` holder, so it has to refuse a requester here too —
 	// otherwise a stream admission could slip past a mutation that took the
 	// generalized path.
+	// A Restart modem holds a journal-class key so a Stream Start stays
+	// admissible, but a subsystem-wide modem transition must still wait for it.
 	const devices = [...activeMutations.values()].filter(
-		(holder) => !holder.journalOnly,
+		(holder) =>
+			!holder.journalOnly || (holder.restart && who === "modem-transition"),
 	).length;
 	if (devices > 0) {
 		logger.debug("lifecycle interlock refused: a modem mutation is held", {
@@ -235,10 +238,18 @@ export interface MutationBlock {
 	readonly blocksStreaming: boolean;
 }
 
-/** journalOnly: an operator/recovery journal owner, which never touches the stream. */
+/**
+ * journalOnly: an operator/recovery journal owner, which never touches the stream.
+ * restart: an operator's Restart modem, journal-class for Stream Start but still
+ * exclusive against a subsystem-wide modem transition.
+ */
 const activeMutations = new Map<
 	string,
-	{ readonly token: number; readonly journalOnly: boolean }
+	{
+		readonly token: number;
+		readonly journalOnly: boolean;
+		readonly restart: boolean;
+	}
 >();
 const mutationBlocks = new Map<string, MutationBlock>();
 let nextMutationToken = 0;
@@ -283,10 +294,11 @@ export function tryAcquireModemMutation(
 function grantKeyLease(
 	stableKey: string,
 	journalOnly: boolean,
+	restart = false,
 ): ModemMutationLease {
 	nextMutationToken += 1;
 	const token = nextMutationToken;
-	activeMutations.set(stableKey, { token, journalOnly });
+	activeMutations.set(stableKey, { token, journalOnly, restart });
 	return {
 		stableKey,
 		release: () => {
@@ -318,6 +330,19 @@ export function tryAcquireModemJournalKey(
 	return activeMutations.has(stableKey)
 		? undefined
 		: grantKeyLease(stableKey, true);
+}
+
+/**
+ * The per-key lease for an operator's Restart modem: excludes every other
+ * mutation of the same modem and any subsystem-wide modem transition, never a
+ * Stream Start. Never awaits; undefined means held.
+ */
+export function tryAcquireModemRestartKey(
+	stableKey: string,
+): ModemMutationLease | undefined {
+	return activeMutations.has(stableKey)
+		? undefined
+		: grantKeyLease(stableKey, true, true);
 }
 
 /**

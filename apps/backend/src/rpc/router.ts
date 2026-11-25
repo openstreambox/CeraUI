@@ -53,6 +53,7 @@ import {
 	getUsbModeOptionsProcedure,
 	listMutationBlocksProcedure,
 	rebaselineMutationProcedure,
+	restartModemProcedure,
 	scanModemProcedure,
 	setFccUnlockProcedure,
 	setFiveGPreferenceProcedure,
@@ -207,6 +208,7 @@ const stableRoutes = {
 	modems: base.router({
 		getAll: getAllModemsProcedure,
 		getRadioHealth: getRadioHealthProcedure,
+		restart: restartModemProcedure,
 		esimOperation: esimOperationProcedure,
 		configure: configureModemProcedure,
 		scan: scanModemProcedure,

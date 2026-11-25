@@ -50,6 +50,7 @@ import {
 	usbModeOptionsInputSchema,
 	usbModeOptionsOutputSchema,
 } from '../schemas';
+import { restartModemInputSchema, restartModemOutputSchema } from '../schemas/modem-restart.schema';
 import { radioHealthListSchema } from '../schemas/radio-health.schema';
 
 export const modemsContract = oc.router({
@@ -64,6 +65,15 @@ export const modemsContract = oc.router({
 	 * Configure a modem
 	 */
 	configure: oc.input(modemConfigInputSchema).output(modemConfigOutputSchema),
+
+	/**
+	 * Restart one modem from software, for the models a bench run qualified
+	 * (`MODEM_RESTART_MODELS`). Answers when the modem is back, or when the wait
+	 * ends. Refused for any other model, while another modem restarts, during the
+	 * per-modem cooldown, and, while a stream runs and no other connection carries
+	 * it, unless the operator confirmed that cost (`onlyLinkConfirmed`).
+	 */
+	restart: oc.input(restartModemInputSchema).output(restartModemOutputSchema),
 
 	/**
 	 * Scan for available networks

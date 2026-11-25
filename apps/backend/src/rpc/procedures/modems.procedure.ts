@@ -1,4 +1,9 @@
 import { radioHealthListSchema } from "@ceraui/rpc/schemas";
+import { mockModemRestartDeps } from "../../mocks/providers/modem-restart.ts";
+import {
+	defaultModemRestartDeps,
+	restartModem,
+} from "../../modules/modems/modem-restart.ts";
 import { getRadioHealth } from "../../modules/modems/radio-health-runtime.ts";
 /**
  * Modems Procedures
@@ -33,6 +38,8 @@ import {
 	modemUssdInputSchema,
 	modemUssdOutputSchema,
 	readCapabilityGates,
+	restartModemInputSchema,
+	restartModemOutputSchema,
 	setFccUnlockInputSchema,
 	setFccUnlockOutputSchema,
 	setFiveGPreferenceInputSchema,
@@ -82,6 +89,7 @@ import { applyFiveGPreference } from "../../modules/modems/five-g-apply.ts";
 import { readModemGps, setModemGps } from "../../modules/modems/gps.ts";
 import {
 	mmGetModemPorts,
+	mmResetModem,
 	type SimPukUnlockResult,
 	type SimUnlockResult,
 	unlockSimPin,
@@ -787,6 +795,27 @@ export const setUsbModeProcedure = modemProcedure
  * `resolveModemIndex` to find, so it answers the honest `unknown_modem` rather
  * than a claim about hardware it does not have.
  */
+/**
+ * Restart one bench-qualified modem (`modem-restart.ts`). The reply arrives when
+ * the modem is back or the wait ends, up to the model's bound (150 s at most), so
+ * the client gives this procedure its own timeout.
+ */
+export const restartModemProcedure = modemProcedure
+	.input(restartModemInputSchema)
+	.output(restartModemOutputSchema)
+	.handler(({ input }) =>
+		restartModem(
+			input,
+			shouldMockModems()
+				? {
+						...defaultModemRestartDeps,
+						mmReset: mmResetModem,
+						...mockModemRestartDeps(),
+					}
+				: { ...defaultModemRestartDeps, mmReset: mmResetModem },
+		),
+	);
+
 export const setFiveGPreferenceProcedure = modemProcedure
 	.input(setFiveGPreferenceInputSchema)
 	.output(setFiveGPreferenceOutputSchema)

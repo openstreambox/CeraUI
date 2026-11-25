@@ -3,8 +3,9 @@
   Details. Status first (a chip with its own icon and word, one short line, the
   next step if there is one), then registration and network. Signal stays on the
   row; the measured values are in the dialog. The whole card opens
-  every raw reading, the other modems and the recent history in a dialog. No
-  modem action controls.
+  every raw reading, the other modems and the recent history in a dialog. The
+  only control is the optional Restart modem button the row passes in for a
+  "no data" finding; the panel itself never acts on the modem.
 -->
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
@@ -23,6 +24,7 @@ import {
 	SignalMedium,
 	TriangleAlert,
 } from '@lucide/svelte';
+import type { Snippet } from 'svelte';
 
 import Badge from '$lib/components/custom/Badge.svelte';
 import AppDialog from '$lib/components/dialogs/AppDialog.svelte';
@@ -52,6 +54,8 @@ let {
 	noSim = false,
 	connected = false,
 	modemName = (other: string) => m['network.radio.neighbour']({ id: other }),
+	restartAction,
+	restartSeconds,
 }: {
 	radio: RadioHealth;
 	id: string;
@@ -62,6 +66,14 @@ let {
 	connected?: boolean;
 	/** How the cellular section names another modem's row. */
 	modemName?: (id: string) => string;
+	/**
+	 * The row's Restart modem button, passed only for a model with a qualified
+	 * software restart. With it, a "no data" finding suggests restarting instead
+	 * of replugging and shows the button under the next step.
+	 */
+	restartAction?: Snippet | undefined;
+	/** How long the restart takes this model, for the next-step wording. */
+	restartSeconds?: number | undefined;
 } = $props();
 
 const headingId = $derived(`radio-health-${id}`);
@@ -189,7 +201,9 @@ const next = $derived.by(() => {
 		case 'sim-account':
 			return m['network.radio.next.sim']();
 		case 'data-path':
-			return m['network.radio.next.data']();
+			return restartAction && restartSeconds !== undefined
+				? m['network.radio.next.restart']({ seconds: String(restartSeconds) })
+				: m['network.radio.next.data']();
 		case 'disturbed':
 			return m['network.radio.next.disturbed']();
 		case 'no-sim':
@@ -357,6 +371,13 @@ const history = $derived<HistoryRow[]>(
 				<ArrowRight class="mt-0.5 size-3.5 shrink-0 rtl:rotate-180" aria-hidden="true" />
 				<span><span class="sr-only">{m['network.radio.nextStep']()}: </span>{next}</span>
 			</p>
+		{/if}
+		{#if status === 'data-path' && restartAction}
+			<!-- Above the stretched card button, so a click restarts rather than
+			     opening the readings. -->
+			<div class="relative z-10 pt-1" data-testid="radio-health-restart">
+				{@render restartAction()}
+			</div>
 		{/if}
 	</div>
 	<ChevronRight

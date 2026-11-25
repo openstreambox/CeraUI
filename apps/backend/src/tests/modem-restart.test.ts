@@ -1,0 +1,601 @@
+/*
+    CeraUI - web UI for the CeraLive project
+    Copyright (C) 2024-2025 CeraLive project
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+/**
+ * Restart modem: qualification, guards, the method chain, and finding the modem
+ * again under a new ModemManager index. The device side is a scripted roster:
+ * each test says which modems are listed at which simulated second, the way the
+ * bench saw them (old index gone, then a new index on the same port).
+ */
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+import {
+	MODEM_RESTART_COOLDOWN_SECONDS,
+	modemRestartQualification,
+	type RestartModemInput,
+} from "@ceraui/rpc/schemas";
+
+import { RunTimeoutError } from "../helpers/run.ts";
+import {
+	classifyMmResetError,
+	type MmResetResult,
+} from "../modules/modems/mmcli.ts";
+import {
+	type ModemRestartDeps,
+	otherBondLinkLiveIn,
+	resetModemRestartDeps,
+	restartModem,
+} from "../modules/modems/modem-restart.ts";
+import type { Modem } from "../modules/modems/modems-state.ts";
+import {
+	resetLifecycleInterlock,
+	tryAcquireLifecycle,
+	tryAcquireModemJournalKey,
+} from "../modules/streaming/lifecycle-admission.ts";
+import { resetRecoveryBarrier } from "../modules/streaming/recovery-barrier.ts";
+import { event, exported } from "./support/journal-records.ts";
+
+const DELL_KEY = "platform-fc800000.usb-usb-0:1.4";
+const RM520_KEY = "platform-xhci-hcd.10.auto-usb-0:1";
+
+function modem(model: string, ifname: string, connection = "connected"): Modem {
+	return {
+		ifname,
+		name: model,
+		sim_network: "",
+		model,
+		network_type: { supported: {}, active: null },
+		status: { connection, network_type: "4g", signal: 60, roaming: false },
+	} as Modem;
+}
+
+type Roster = Record<number, Modem>;
+
+/**
+ * A simulated clock and a roster that changes at given seconds after the first
+ * command. `keys` maps ModemManager index to stable key, as the ID_PATH map does.
+ */
+function scripted(opts: {
+	before: Roster;
+	after?: Array<[number, Roster]>;
+	keys: Record<number, string>;
+	mmReset?: MmResetResult;
+
+	streaming?: boolean;
+	otherLinkLive?: boolean | undefined;
+}) {
+	let now = 1_000_000;
+	let commandAt: number | undefined;
+	const calls: string[] = [];
+	let refreshes = 0;
+	const roster = (): Roster => {
+		if (commandAt === undefined) return opts.before;
+		const t = (now - commandAt) / 1000;
+		let current = opts.before;
+		for (const [at, r] of opts.after ?? []) if (t >= at) current = r;
+		return current;
+	};
+	const deps: ModemRestartDeps = {
+		modems: roster,
+		stableKeyForId: (id) => opts.keys[id],
+		mmReset: async (id) => {
+			calls.push(`mm-reset ${id}`);
+			commandAt ??= now;
+			return opts.mmReset ?? "accepted";
+		},
+		refreshRoster: async () => {
+			refreshes += 1;
+		},
+		isStreaming: () => opts.streaming ?? false,
+		otherLinkLive: () => ("otherLinkLive" in opts ? opts.otherLinkLive : true),
+		now: () => now,
+		sleep: async (ms) => {
+			now += ms;
+		},
+		pollMs: 2_000,
+	};
+	return {
+		deps,
+		calls,
+		refreshes: () => refreshes,
+		advance: (s: number) => {
+			now += s * 1000;
+		},
+	};
+}
+
+const INPUT: RestartModemInput = {
+	device: "4",
+	stableKey: DELL_KEY,
+	confirm: true,
+};
+
+beforeEach(() => {
+	resetModemRestartDeps();
+	resetLifecycleInterlock();
+	resetRecoveryBarrier();
+});
+afterEach(() => {
+	resetModemRestartDeps();
+	resetLifecycleInterlock();
+	resetRecoveryBarrier();
+});
+
+describe("qualification", () => {
+	test("the DW5821e and RM520N-GL are qualified, with their measured costs", () => {
+		expect(modemRestartQualification("DW5821e Snapdragon X20 LTE")).toEqual({
+			family: "dw5821e",
+			expectedSeconds: 35,
+			boundSeconds: 120,
+		});
+		expect(modemRestartQualification("RM520N-GL")?.family).toBe("rm520n-gl");
+	});
+
+	test("the FM350, EM7455 and anything unlisted are not", () => {
+		for (const model of [
+			"FM350-GL",
+			"EM7455",
+			"RM500Q-GL",
+			"SIM7600G-H",
+			"",
+			undefined,
+		])
+			expect(modemRestartQualification(model)).toBeUndefined();
+	});
+
+	test("an unqualified modem is refused before anything runs", async () => {
+		const s = scripted({
+			before: { 4: modem("FM350-GL", "enx1") },
+			keys: { 4: "k" },
+		});
+		expect(await restartModem(INPUT, s.deps)).toMatchObject({
+			started: false,
+			refusal: "not_qualified",
+		});
+		expect(s.calls).toEqual([]);
+	});
+
+	test("an unknown selector is refused", async () => {
+		const s = scripted({ before: {}, keys: {} });
+		expect((await restartModem(INPUT, s.deps)).refusal).toBe("unknown_modem");
+		expect(
+			(
+				await restartModem(
+					{ device: "-m 4", stableKey: DELL_KEY, confirm: true },
+					s.deps,
+				)
+			).refusal,
+		).toBe("unknown_modem");
+	});
+
+	test("a modem without a stable key is refused", async () => {
+		const s = scripted({
+			before: { 4: modem("RM520N-GL", "wwu1i4") },
+			keys: {},
+		});
+		expect((await restartModem(INPUT, s.deps)).refusal).toBe(
+			"identity_unresolved",
+		);
+		expect(s.calls).toEqual([]);
+	});
+});
+
+describe("a restart that comes back", () => {
+	test("found again under a new index on the same port, connected", async () => {
+		// Bench shape (Dell): gone at 7 s, listed as m5 at 30 s, connected at 33 s.
+		const s = scripted({
+			before: { 4: modem("DW5821e Snapdragon X20 LTE", "wwu1u4c2") },
+			after: [
+				[7, {}],
+				[
+					30,
+					{ 5: modem("DW5821e Snapdragon X20 LTE", "wwu1u4c2", "registered") },
+				],
+				[33, { 5: modem("DW5821e Snapdragon X20 LTE", "wwu1u4c2") }],
+			],
+			keys: { 4: DELL_KEY, 5: DELL_KEY },
+		});
+		const result = await restartModem(INPUT, s.deps);
+		expect(result).toMatchObject({
+			started: true,
+			outcome: "back_connected",
+			method: "mm-reset",
+			device: "5",
+		});
+		expect(result.elapsedSeconds).toBeGreaterThanOrEqual(33);
+		expect(result.elapsedSeconds).toBeLessThanOrEqual(36);
+		expect(s.calls).toEqual(["mm-reset 4"]);
+	});
+
+	test("an index change alone counts as having left (the roster never saw a gap)", async () => {
+		const s = scripted({
+			before: { 2: modem("RM520N-GL", "wwu1i4") },
+			after: [[24, { 6: modem("RM520N-GL", "wwu1i4") }]],
+			keys: { 2: RM520_KEY, 6: RM520_KEY },
+		});
+		const result = await restartModem(
+			{ device: "2", stableKey: RM520_KEY, confirm: true },
+			s.deps,
+		);
+		expect(result).toMatchObject({ outcome: "back_connected", device: "6" });
+	});
+
+	test("the other modem is never mistaken for the restarted one", async () => {
+		const other = modem("RM520N-GL", "wwu1i4");
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2"), 2: other },
+			after: [[7, { 2: other }]],
+			keys: { 4: DELL_KEY, 2: RM520_KEY },
+		});
+		const result = await restartModem(INPUT, s.deps);
+		expect(result.outcome).toBe("not_back");
+		expect(result.elapsedSeconds).toBeGreaterThanOrEqual(120);
+	});
+
+	test("back but not connected within the bound reports the state it is in", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			after: [
+				[7, {}],
+				[30, { 5: modem("DW5821e", "wwu1u4c2", "registered") }],
+			],
+			keys: { 4: DELL_KEY, 5: DELL_KEY },
+		});
+		expect(await restartModem(INPUT, s.deps)).toMatchObject({
+			outcome: "back_not_connected",
+			device: "5",
+			connection: "registered",
+		});
+	});
+
+	test("a modem that never left is 'unchanged', never a success", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			keys: { 4: DELL_KEY },
+		});
+		expect((await restartModem(INPUT, s.deps)).outcome).toBe("unchanged");
+	});
+});
+
+describe("one method, no retries", () => {
+	test("a reset ModemManager refuses fails at once, with no second method", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			keys: { 4: DELL_KEY },
+			mmReset: "refused",
+		});
+		expect(await restartModem(INPUT, s.deps)).toMatchObject({
+			started: true,
+			outcome: "failed",
+			method: "mm-reset",
+		});
+		expect(s.calls).toEqual(["mm-reset 4"]);
+		expect(s.refreshes()).toBe(0);
+	});
+
+	test("while waiting, the roster is re-discovered at each poll", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			after: [
+				[7, {}],
+				[33, { 5: modem("DW5821e", "wwu1u4c2") }],
+			],
+			keys: { 4: DELL_KEY, 5: DELL_KEY },
+		});
+		expect((await restartModem(INPUT, s.deps)).outcome).toBe("back_connected");
+		expect(s.refreshes()).toBeGreaterThanOrEqual(16);
+	});
+
+	test("an accepted reset that never comes back gets no second action", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			after: [[7, {}]],
+			keys: { 4: DELL_KEY },
+		});
+		expect((await restartModem(INPUT, s.deps)).outcome).toBe("not_back");
+		expect(s.calls).toEqual(["mm-reset 4"]);
+	});
+});
+
+describe("guards", () => {
+	const dellBack = () =>
+		scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			after: [
+				[7, {}],
+				[33, { 5: modem("DW5821e", "wwu1u4c2") }],
+			],
+			keys: { 4: DELL_KEY, 5: DELL_KEY },
+		});
+
+	test("cooldown: the same modem waits three minutes after an attempt", async () => {
+		const s = dellBack();
+		expect((await restartModem(INPUT, s.deps)).outcome).toBe("back_connected");
+		const again = await restartModem(
+			{ device: "5", stableKey: DELL_KEY, confirm: true },
+			s.deps,
+		);
+		expect(again.refusal).toBe("cooldown");
+		expect(again.retryAfterSeconds).toBe(MODEM_RESTART_COOLDOWN_SECONDS);
+		s.advance(MODEM_RESTART_COOLDOWN_SECONDS);
+		const later = await restartModem(
+			{ device: "5", stableKey: DELL_KEY, confirm: true },
+			s.deps,
+		);
+		expect(later.refusal).toBeUndefined();
+		expect(later.started).toBe(true);
+	});
+
+	test("one at a time: a second modem is refused while the first restarts", async () => {
+		let release: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const s = dellBack();
+		const slow: ModemRestartDeps = {
+			...s.deps,
+			mmReset: async (id) => {
+				await gate;
+				return s.deps.mmReset(id);
+			},
+		};
+		const rm = scripted({
+			before: { 2: modem("RM520N-GL", "wwu1i4") },
+			keys: { 2: RM520_KEY },
+		});
+		const first = restartModem(INPUT, slow);
+		expect(
+			(
+				await restartModem(
+					{ device: "2", stableKey: RM520_KEY, confirm: true },
+					rm.deps,
+				)
+			).refusal,
+		).toBe("restart_in_progress");
+		release();
+		expect((await first).outcome).toBe("back_connected");
+		expect(rm.calls).toEqual([]);
+	});
+
+	test("only link carrying a live stream: refused unless confirmed", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			after: [
+				[7, {}],
+				[33, { 5: modem("DW5821e", "wwu1u4c2") }],
+			],
+			keys: { 4: DELL_KEY, 5: DELL_KEY },
+			streaming: true,
+			otherLinkLive: false,
+		});
+		expect(await restartModem(INPUT, s.deps)).toMatchObject({
+			started: false,
+			refusal: "only_link_live",
+		});
+		expect(s.calls).toEqual([]);
+		expect(
+			(await restartModem({ ...INPUT, onlyLinkConfirmed: true }, s.deps))
+				.outcome,
+		).toBe("back_connected");
+	});
+
+	test("missing link telemetry while streaming counts as the only link", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			keys: { 4: DELL_KEY },
+			streaming: true,
+			otherLinkLive: undefined,
+		});
+		expect((await restartModem(INPUT, s.deps)).refusal).toBe("only_link_live");
+	});
+
+	test("streaming with another live link needs only the normal confirmation", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			after: [
+				[7, {}],
+				[33, { 5: modem("DW5821e", "wwu1u4c2") }],
+			],
+			keys: { 4: DELL_KEY, 5: DELL_KEY },
+			streaming: true,
+			otherLinkLive: true,
+		});
+		expect((await restartModem(INPUT, s.deps)).outcome).toBe("back_connected");
+	});
+
+	test("another change on the same modem holds its lease: refused, no cooldown", async () => {
+		const held = tryAcquireModemJournalKey(DELL_KEY);
+		const s = dellBack();
+		expect((await restartModem(INPUT, s.deps)).refusal).toBe(
+			"mutation_in_progress",
+		);
+		expect(s.calls).toEqual([]);
+		held?.release();
+		expect((await restartModem(INPUT, s.deps)).outcome).toBe("back_connected");
+	});
+
+	test("a stream being launched refuses it; a restart never takes the stream lock", async () => {
+		const launch = tryAcquireLifecycle("streaming");
+		expect(launch.admitted).toBe(true);
+		const s = dellBack();
+		expect((await restartModem(INPUT, s.deps)).refusal).toBe(
+			"streaming_active",
+		);
+		if (launch.admitted) launch.lease.release();
+	});
+});
+
+describe("review round 1", () => {
+	test("a timed-out or ambiguous reset is observed, never followed by another action", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			after: [
+				[7, {}],
+				[33, { 5: modem("DW5821e", "wwu1u4c2") }],
+			],
+			keys: { 4: DELL_KEY, 5: DELL_KEY },
+			mmReset: "unknown",
+		});
+		expect(await restartModem(INPUT, s.deps)).toMatchObject({
+			outcome: "back_connected",
+			method: "mm-reset",
+		});
+		expect(s.calls).toEqual(["mm-reset 4"]);
+	});
+
+	test("only ModemManager's own refusal counts as refused", () => {
+		const exit = (stderr: string) =>
+			Object.assign(new Error("exit 1"), { code: 1, stderr });
+		expect(
+			classifyMmResetError(
+				exit("error: couldn't reset the modem: 'Unsupported'"),
+			),
+		).toBe("refused");
+		expect(
+			classifyMmResetError(
+				exit("error: couldn't reset the modem: 'Timeout was reached'"),
+			),
+		).toBe("unknown");
+		expect(classifyMmResetError(exit("error: couldn't find modem"))).toBe(
+			"unknown",
+		);
+		expect(classifyMmResetError(new RunTimeoutError("mmcli", "", ""))).toBe(
+			"unknown",
+		);
+		expect(classifyMmResetError(new Error("spawn failed"))).toBe("unknown");
+	});
+
+	test("a request whose index now names another modem is refused", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			keys: { 4: DELL_KEY },
+		});
+		const stale = await restartModem(
+			{ ...INPUT, stableKey: RM520_KEY },
+			s.deps,
+		);
+		expect(stale.refusal).toBe("unknown_modem");
+		expect(s.calls).toEqual([]);
+	});
+
+	test("the verdict follows the last observation: back, then gone again, is not_back", async () => {
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			after: [
+				[7, {}],
+				[30, { 5: modem("DW5821e", "wwu1u4c2", "registered") }],
+				[60, {}],
+			],
+			keys: { 4: DELL_KEY, 5: DELL_KEY },
+		});
+		expect((await restartModem(INPUT, s.deps)).outcome).toBe("not_back");
+	});
+
+	test("a restart blocks a subsystem-wide modem transition but never a Stream Start", async () => {
+		let during: { stream: boolean; transition: boolean } | undefined;
+		const s = scripted({
+			before: { 4: modem("DW5821e", "wwu1u4c2") },
+			after: [
+				[7, {}],
+				[33, { 5: modem("DW5821e", "wwu1u4c2") }],
+			],
+			keys: { 4: DELL_KEY, 5: DELL_KEY },
+		});
+		const probing: ModemRestartDeps = {
+			...s.deps,
+			mmReset: async (id) => {
+				const transition = tryAcquireLifecycle("modem-transition");
+				if (transition.admitted) transition.lease.release();
+				const stream = tryAcquireLifecycle("streaming");
+				if (stream.admitted) stream.lease.release();
+				during = { stream: stream.admitted, transition: transition.admitted };
+				return s.deps.mmReset(id);
+			},
+		};
+		expect((await restartModem(INPUT, probing)).outcome).toBe("back_connected");
+		expect(during).toEqual({ stream: true, transition: false });
+		const after = tryAcquireLifecycle("modem-transition");
+		expect(after.admitted).toBe(true);
+		if (after.admitted) after.lease.release();
+	});
+
+	test("another live link: a known, different uplink the sender is using now", () => {
+		const row = (iface: string, extra: Record<string, unknown> = {}) => ({
+			iface,
+			stale: false,
+			weight_percent: 40,
+			bitrate_bps: 120000,
+			bytes_sent_total: 1000,
+			...extra,
+		});
+		const others = ["wwu1i4"];
+		const live = (
+			rows: ReturnType<typeof row>[],
+			target = "wwu1u4c2",
+			o = others,
+		) => otherBondLinkLiveIn(rows, target, o);
+		expect(live([row("wwu1i4")])).toBe(true);
+		expect(live([row("eth0")])).toBe(true);
+		expect(live([row("wwu1u4c2")])).toBe(false);
+		expect(live([row("clat0")])).toBe(false);
+		expect(live([row("10.0.0.2")])).toBe(false);
+		expect(live([row("link-3")])).toBe(false);
+		expect(live([row("eth0", { stale: true })])).toBe(false);
+		expect(
+			live([row("wwan9", { identity_state: "unmappable" })], "x", ["wwan9"]),
+		).toBe(false);
+		// A timed-out alternate keeps its session bytes but the sender gave it no weight.
+		expect(live([row("wwu1i4", { weight_percent: 0, bitrate_bps: 0 })])).toBe(
+			false,
+		);
+		expect(live([row("wwu1i4", { weight_percent: 0 })])).toBe(false);
+		expect(live([row("wwu1i4", { bitrate_bps: 0 })])).toBe(false);
+		expect(live([row("wwu1i4", { bitrate_bps: undefined })])).toBe(false);
+	});
+
+	test("restart lines keep their fields in the support download", () => {
+		const text = exported(
+			event({
+				level: "info",
+				msg: "modem restart finished",
+				module: "modems",
+				meta: {
+					restartFamily: "dw5821e",
+					restartMethod: "mm-reset",
+					restartOutcome: "back_connected",
+					oldDevice: 4,
+					newDevice: 5,
+					connection: "registered",
+					elapsedSeconds: 32.6,
+				},
+			}),
+			event({
+				level: "warn",
+				msg: "modem restart refused",
+				module: "modems",
+				meta: { restartRefusal: "only_link_live", restartFamily: "made-up" },
+			}),
+		);
+		expect(text).toContain('"restartOutcome":"back_connected"');
+		expect(text).toContain('"restartMethod":"mm-reset"');
+		expect(text).toContain('"newDevice":5');
+		expect(text).toContain('"connection":"registered"');
+		expect(text).toContain('"elapsedSeconds":32.6');
+		expect(text).toContain('"restartRefusal":"only_link_live"');
+		expect(text).not.toContain("made-up");
+	});
+});

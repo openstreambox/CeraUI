@@ -48,10 +48,15 @@ import type {
 import { MODEM_MUTATION_JOURNAL_VERSION } from "@ceraui/rpc/schemas";
 
 import { logger } from "../../helpers/logger.ts";
+import { isForwardActive } from "../streaming/forward-activity.ts";
 import {
+	currentLifecycleHolder,
+	getMutationBlocks,
 	type ModemMutationLease,
 	tryAcquireModemMutation,
+	tryAcquireModemRestartKey,
 } from "../streaming/lifecycle-admission.ts";
+import { isRecoveryPending } from "../streaming/recovery-barrier.ts";
 import { refreshMutationBlocks } from "./mutation-blocks.ts";
 import {
 	commitMutationEntry,
@@ -214,5 +219,60 @@ export async function withJournaledModemMutation<T>(
 	} finally {
 		acquired.lease.release();
 		await refreshMutationBlocks().catch(() => undefined);
+	}
+}
+
+/**
+ * The lease for an operator's Restart modem.
+ *
+ * A restart changes no setting, so it needs no journal entry and no rollback:
+ * the modem comes back by itself or it does not, and a backend that dies
+ * mid-restart leaves nothing to restore. What it does need is exclusion: it
+ * takes the same per-modem key every other mutation of this modem takes, so a
+ * settings save, a band lock or a second restart of the SAME modem is refused
+ * with `mutation_in_progress` while it runs.
+ *
+ * Unlike {@link withModemMutation} it does not refuse a running stream. Whether a
+ * restart may cost the stream is the restart's own decision (it refuses when the
+ * modem is the only connection carrying it, unless the operator confirmed), and
+ * the key it holds is a journal-class key, so a Stream Start is never refused
+ * because a modem is restarting. It still never begins during journal replay, on
+ * a blocked identity, or while a stream is being launched or forwarded, so it
+ * cannot change the link set under an admission in progress.
+ */
+/**
+ * Why a Restart modem may not begin (or continue to its fallback) right now, or
+ * undefined when it may. Shared by the lease and the recheck before a USB
+ * rebind, so both apply the same rule.
+ */
+export function modemRestartAdmissionRefusal(
+	stableKey: string,
+): ModemMutationRefusal | undefined {
+	if (isRecoveryPending()) return "recovery_pending";
+	const block = getMutationBlocks().find(
+		(candidate) => candidate.stableKey === stableKey,
+	);
+	if (block) return block.refusal;
+	if (isForwardActive()) return "streaming_active";
+	const holder = currentLifecycleHolder();
+	if (holder !== undefined)
+		return holder === "streaming" ? "streaming_active" : "mutation_in_progress";
+	return undefined;
+}
+
+export async function withModemRestartLease<T>(
+	stableKey: string | undefined,
+	run: () => Promise<T>,
+): Promise<MutationOutcome<T>> {
+	if (stableKey === undefined || stableKey === "")
+		return refuse("identity_unresolved");
+	const refusal = modemRestartAdmissionRefusal(stableKey);
+	if (refusal) return refuse(refusal);
+	const lease = tryAcquireModemRestartKey(stableKey);
+	if (!lease) return refuse("mutation_in_progress");
+	try {
+		return { ok: true, value: await run() };
+	} finally {
+		lease.release();
 	}
 }

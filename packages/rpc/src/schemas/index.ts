@@ -17,6 +17,7 @@ export * from './fan.schema';
 export * from './fcc-unlock.schema';
 export * from './heartbeat.schema';
 export * from './modem-apply-scope';
+export * from './modem-restart.schema';
 export * from './modems.schema';
 export * from './network.schema';
 export * from './notifications.schema';
