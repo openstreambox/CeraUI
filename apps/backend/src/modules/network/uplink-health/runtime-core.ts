@@ -46,6 +46,12 @@ export interface UplinkHealthRuntimeCoreDeps {
 	) => ProbeCandidate[];
 	readonly identity: (iface: string) => UplinkIdentity;
 	readonly notify?: (records: readonly UplinkHealthRecord[]) => void;
+	/** The name's netdev lifetime; a probe issued in another lifetime is dropped. */
+	readonly lifetime?: (iface: string) => number | undefined;
+	/** Subscribes to netdev retirements; called on first tick, released on dispose. */
+	readonly onRetired?: (listener: (iface: string) => void) => () => void;
+	/** Forgets per-name publication state for a retired netdev. */
+	readonly retired?: (iface: string) => void;
 }
 
 export class UplinkHealthRuntimeCore {
@@ -64,12 +70,14 @@ export class UplinkHealthRuntimeCore {
 	#completedRound = 0;
 	#generation = 0;
 	#unsubscribe: (() => void) | undefined;
+	#unsubscribeRetirement: (() => void) | undefined;
 	readonly #samples = new Map<
 		string,
 		{
 			readonly present: boolean;
 			readonly ip: string | undefined;
 			readonly eligible: boolean;
+			readonly lifetime: number | undefined;
 			readonly generation: number;
 			round: number;
 		}
@@ -89,6 +97,10 @@ export class UplinkHealthRuntimeCore {
 		this.#unsubscribe ??= this.#deps.onInterfacesChange?.(() =>
 			this.#sampleInterfaces(this.#deps.interfaces(), this.#deps.now()),
 		);
+		this.#unsubscribeRetirement ??= this.#deps.onRetired?.((iface) => {
+			this.#deps.retired?.(iface);
+			queueMicrotask(() => this.#publishIfChanged());
+		});
 		const round = ++this.#round;
 		const now = this.#deps.now();
 		const interfaces = this.#deps.interfaces();
@@ -132,6 +144,8 @@ export class UplinkHealthRuntimeCore {
 				round >= (this.#samples.get(candidate.name)?.round ?? 0) &&
 				generations.get(candidate.name) ===
 					this.#samples.get(candidate.name)?.generation &&
+				this.#samples.get(candidate.name)?.lifetime ===
+					this.#deps.lifetime?.(candidate.name) &&
 				(entry?.ip ?? entry?.ipv6) === candidate.ip &&
 				this.#deps.exclusionReason(entry) === undefined
 			);
@@ -203,6 +217,8 @@ export class UplinkHealthRuntimeCore {
 	dispose(): void {
 		this.#unsubscribe?.();
 		this.#unsubscribe = undefined;
+		this.#unsubscribeRetirement?.();
+		this.#unsubscribeRetirement = undefined;
 	}
 
 	#sampleInterfaces(
@@ -217,12 +233,14 @@ export class UplinkHealthRuntimeCore {
 			const present = entry !== undefined;
 			const ip = entry?.ip ?? entry?.ipv6;
 			const eligible = this.#deps.exclusionReason(entry) === undefined;
+			const lifetime = this.#deps.lifetime?.(iface);
 			const previous = this.#samples.get(iface);
 			if (
 				!previous ||
 				previous.present !== present ||
 				previous.ip !== ip ||
-				previous.eligible !== eligible
+				previous.eligible !== eligible ||
+				previous.lifetime !== lifetime
 			) {
 				// Events record even A -> B -> A changes entirely between ticks.
 				// Never reuse a generation after removed samples are retired.
@@ -230,6 +248,7 @@ export class UplinkHealthRuntimeCore {
 					present,
 					ip,
 					eligible,
+					lifetime,
 					generation: ++this.#generation,
 					round: this.#round,
 				});
