@@ -1219,6 +1219,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["Command timed out: ", ""],
 	["Concurrent live cycle"],
 	["Coordinator reconciliation required"],
+	["DNS deadline"],
 	["DNS query failed and no cached value is available"],
 	["Default-route observation rejected"],
 	["Duplicate journal operation"],
