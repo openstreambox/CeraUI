@@ -198,20 +198,18 @@ describe("status first", () => {
 });
 
 describe("compact readings", () => {
-	test("signal shows the value, unit and a level word per layer", () => {
-		const { getByTestId } = show(radio(registered));
-		const signal = getByTestId("radio-health-signal");
-		expect(signal.textContent).toContain("-95 dBm");
-		expect(signal.textContent).toContain("Fair");
-		expect(signal.textContent).toContain("-112 dBm");
-		expect(signal.textContent).toContain("Weak");
-		expect(signal.querySelectorAll("[data-signal-level]").length).toBe(2);
-	});
-
 	test("network type and band are short", () => {
 		const { getByTestId } = show(radio(registered));
 		expect(getByTestId("radio-health-readings").textContent).toContain(
 			"5G NSA · B3 + n78",
+		);
+	});
+
+	test("the card has no signal line; the row keeps the signal", () => {
+		const { queryByTestId, getByTestId } = show(radio(registered));
+		expect(queryByTestId("radio-health-signal")).toBeNull();
+		expect(getByTestId("radio-health-readings").textContent).not.toContain(
+			"dBm",
 		);
 	});
 
@@ -226,11 +224,6 @@ describe("compact readings", () => {
 			}),
 		);
 		expect(some.getByTestId("radio-health-usb").textContent?.trim()).toBe("1");
-	});
-
-	test("the compact view repeats no signal bars", () => {
-		const { getByTestId } = show(radio(registered));
-		expect(getByTestId("radio-health-signal").querySelector("svg")).toBeNull();
 	});
 });
 
@@ -330,24 +323,6 @@ describe("round two: honest status", () => {
 		expect(chip.className).toContain("bg-status-error");
 		expect(chip.className).toContain("text-status-error-foreground");
 	});
-});
-
-test("signal level cut-offs are inclusive at -90 and -105 dBm", () => {
-	const level = (dbm: number) => {
-		const view = show(
-			radio({ ...registered, metrics: { "lte.rsrp": known(dbm, "dBm") } }),
-		);
-		const value = view
-			.getByTestId("radio-health-signal")
-			.querySelector("[data-signal-level]")
-			?.getAttribute("data-signal-level");
-		view.unmount();
-		return value;
-	};
-	expect(level(-90)).toBe("high");
-	expect(level(-90.5)).toBe("medium");
-	expect(level(-105)).toBe("medium");
-	expect(level(-105.5)).toBe("low");
 });
 
 test("an unavailable network value keeps the page direction", () => {

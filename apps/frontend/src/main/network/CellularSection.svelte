@@ -471,7 +471,13 @@ async function openAdminUi(rowId: string): Promise<void> {
 				{const tone = $derived(stateTone(state))}
 				{const simless = $derived(isSimlessModem(modem))}
 				{const primary = $derived(primaryLabel(modem, id))}
-				{const detail = $derived(detailLine(modem, primary))}
+				{const radioNamesNetwork = $derived(
+					modem.radio_health !== undefined &&
+						!simless &&
+						state !== 'no-sim' &&
+						(modem.radio_health.layer.value !== null || modem.radio_health.band.value !== null),
+				)}
+				{const detail = $derived(detailLine(modem, primary, { omitNetworkType: radioNamesNetwork }))}
 				{const slot = $derived(slotBadgeLabel(modem, primary))}
 				{const instrument = $derived(resolveSignalInstrument(modem))}
 				{const signal = $derived(instrument.kind === 'device-stack' ? instrument.tier : undefined)}
