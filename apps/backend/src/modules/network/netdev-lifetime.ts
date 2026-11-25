@@ -107,6 +107,14 @@ export function netdevChanged(
 ): boolean {
 	if (before?.present === true && after.present === false) return true;
 	if (sameKernelNetdev(before, after)) return false;
+	// Two partial witnesses that share no index or node cannot show continuity;
+	// merging them would let a different netdev extend this lifetime.
+	if (
+		hasNetdevWitness(before) &&
+		hasNetdevWitness(after) &&
+		!netdevMatches(before, after)
+	)
+		return true;
 	return (["ifindex", "node", "mac"] as const).some((key) => {
 		const old = before?.[key];
 		const next = after[key];
@@ -133,6 +141,21 @@ function netdevContinues(
 	after: NetdevWitness,
 ): boolean {
 	return netdevMatches(before, after) && !netdevChanged(before, after);
+}
+
+/**
+ * Evidence that a hold may be released for the same netdev: positive continuity
+ * whenever either read carries kernel evidence. A partial, one-sided or disjoint
+ * pair is not proof. Only when neither read has any (no sysfs witness at all, as
+ * for a witness-less name) does the presence epoch alone stand for the lifetime.
+ */
+export function netdevEvidenceContinues(
+	before: NetdevWitness | undefined,
+	after: NetdevWitness,
+): boolean {
+	if (!hasNetdevWitness(before) && !hasNetdevWitness(after))
+		return !netdevChanged(before, after);
+	return netdevContinues(before, after);
 }
 
 /**

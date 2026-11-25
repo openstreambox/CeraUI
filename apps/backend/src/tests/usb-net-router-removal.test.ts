@@ -322,6 +322,10 @@ test("poll-only replacement resets bond admission and counter baseline without b
 	spyOn(runner, "run").mockImplementation(async (bin) =>
 		bin === "ifconfig" ? output : ipSample(ROUTER, index, IP),
 	);
+	// Sysfs reports the same kernel index as `ip`, as on a real host.
+	spyOn(netdevPresence, "ifindex").mockImplementation((name) =>
+		name === ROUTER ? index : undefined,
+	);
 	await updateNetif();
 	expect(addressedBond()).toBeDefined();
 

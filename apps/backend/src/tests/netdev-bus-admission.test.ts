@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, expect, jest, spyOn, test } from "bun:test";
 import { logger } from "../helpers/logger.ts";
 import {
+	netdevLifetime,
+	netdevWitness,
+} from "../modules/network/netdev-lifetime.ts";
+import {
 	getNetworkInterfaceIncarnation,
 	handleNetifMonitorEvent,
 	netIfBuildMsg,
@@ -758,4 +762,347 @@ test("wireless sysfs read while another netdev takes the name cannot lift a held
 	});
 	await updateNetif();
 	expect(scanModule.isUsbReplacementPending(RADIO)).toBe(true);
+});
+
+test("a replacement a poll sample saw is kept until a completed sample, even when no later read can show it", async () => {
+	const output = firstSightIfconfig("eth9", "192.0.2.2");
+	const f = fixture(output, []);
+	f.set("eth9", ok("pci"));
+	// Recorded by index alone: the node is unreadable at first publication.
+	f.setSysfsNodeUnavailable();
+	await updateNetif();
+	const initial = getNetworkInterfaceIncarnation("eth9");
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+
+	// The next sample reads the node before ifconfig; a different netdev takes
+	// the name meanwhile and is readable only by its node, so the sample sees
+	// the change and retries. By the retry's own reads nothing is readable.
+	f.setSysfsNodeUnavailable(false);
+	f.setIpUnavailable();
+	const first = Promise.withResolvers<void>();
+	const retry = Promise.withResolvers<void>();
+	const ticks = async () => {
+		for (let tick = 0; tick < 3; tick++)
+			await new Promise<void>((resolve) => setImmediate(resolve));
+	};
+	f.holdIfconfig(first.promise);
+	const p = updateNetif();
+	await ticks();
+	f.setIndex("eth9", 29);
+	f.setSysfsIndexUnavailable();
+	f.set("eth9", err("EIO"));
+	first.resolve();
+	f.holdIfconfig(retry.promise);
+	await ticks();
+	f.setSysfsNodeUnavailable();
+	retry.resolve();
+	await p;
+	// The next completed sample still cannot show the change; the observation
+	// the first sample made retires the lifetime.
+	await updateNetif();
+	f.clock.now += 20_000;
+	expect(getNetworkInterfaceIncarnation("eth9")).not.toBe(initial);
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).not.toContain(
+		"eth9",
+	);
+});
+
+test("a scan whose first read already differs from the recorded netdev retires it without a corroborating final read", async () => {
+	const output = firstSightIfconfig("eth9", "192.0.2.2");
+	const f = fixture(output, []);
+	f.set("eth9", ok("pci"));
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+
+	// A different netdev holds the name when the scan starts; by its end no
+	// sysfs witness is readable, and the poll cannot see the change either.
+	f.setIndex("eth9", 29);
+	f.setIpUnavailable();
+	f.block("eth9");
+	const scan = f.settle();
+	await f.enteredFor("eth9");
+	f.setSysfsIndexUnavailable();
+	f.setSysfsNodeUnavailable();
+	f.set("eth9", err("EIO"));
+	f.release();
+	await scan;
+	await updateNetif();
+	f.clock.now += 20_000;
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).not.toContain(
+		"eth9",
+	);
+});
+
+test("a confirmed replacement holds a Wi-Fi name with no USB history until its successor shows wireless evidence", async () => {
+	const RADIO = "wlan9";
+	const f = fixture(firstSightIfconfig(RADIO, "192.0.2.3"), []);
+	f.set(RADIO, ok("pci"));
+	await updateNetif();
+	expect(scanModule.isUsbReplacementPending(RADIO)).toBe(false);
+
+	// A different netdev takes the name; it reads as USB and shows no wireless
+	// sysfs, so nothing yet says it is a radio with its own lifetime.
+	f.setIndex(RADIO, 29);
+	f.set(RADIO, ok("usb"));
+	await updateNetif();
+	expect(scanModule.isUsbReplacementPending(RADIO)).toBe(true);
+});
+
+test("a held radio's removal is not judged by a name-only wireless lookup that may describe another radio", async () => {
+	const RADIO = "wlan9";
+	const f = fixture(firstSightIfconfig(RADIO, "192.0.2.3"), []);
+	f.set(RADIO, ok("usb"));
+	await updateNetif();
+
+	// Removed; whatever answers for the name's wireless sysfs at that moment is
+	// not the radio that was published.
+	spyOn(wifiInterfaceReaders, "pathExists").mockReturnValue(true);
+	f.setOutput("");
+	await updateNetif();
+	expect(scanModule.isUsbReplacementPending(RADIO)).toBe(true);
+});
+
+test("wireless sysfs read while the name turns into a node-only netdev cannot release a row validated by index alone", async () => {
+	const RADIO = "wlan9";
+	const f = fixture(firstSightIfconfig(RADIO, "192.0.2.3"), []);
+	f.set(RADIO, ok("usb"));
+	f.setSysfsNodeUnavailable();
+	await updateNetif();
+	scanModule.holdUsbReplacementIdentity(RADIO);
+
+	// While the wireless sysfs is read, a later radio takes the name and is
+	// readable only by its node: disjoint from the index that validated the row.
+	f.setIpUnavailable();
+	let swapped = false;
+	spyOn(wifiInterfaceReaders, "pathExists").mockImplementation((path) => {
+		if (!path.startsWith(`/sys/class/net/${RADIO}/`)) return false;
+		if (!swapped) {
+			swapped = true;
+			f.setIndex(RADIO, 29);
+			f.setSysfsNodeUnavailable(false);
+			f.setSysfsIndexUnavailable();
+		}
+		return true;
+	});
+	await updateNetif();
+	expect(swapped).toBe(true);
+	expect(scanModule.isUsbReplacementPending(RADIO)).toBe(true);
+});
+
+test("a non-USB bus read that reaches a node-only netdev cannot release a row validated by index alone", async () => {
+	const output = firstSightIfconfig("eth9", "192.0.2.2");
+	const f = fixture(output, []);
+	f.set("eth9", err("EIO"));
+	f.setSysfsNodeUnavailable();
+	await updateNetif();
+	scanModule.holdUsbReplacementIdentity("eth9");
+
+	// The positive bus read happens while a different netdev takes the name,
+	// readable only by a node the index-only witness cannot be matched against.
+	f.setIpUnavailable();
+	let swapped = false;
+	f.set("eth9", async () => {
+		if (!swapped) {
+			swapped = true;
+			f.setIndex("eth9", 29);
+			f.setSysfsNodeUnavailable(false);
+			f.setSysfsIndexUnavailable();
+		}
+		return ok("pci");
+	});
+	await updateNetif();
+	expect(swapped).toBe(true);
+	expect(scanModule.isUsbReplacementPending("eth9")).toBe(true);
+});
+
+test("a witness disjoint from the recorded one retires the lifetime instead of merging into it", async () => {
+	const output = firstSightIfconfig("eth9", "192.0.2.2");
+	const f = fixture(output, []);
+	f.set("eth9", ok("pci"));
+	f.setSysfsNodeUnavailable();
+	await updateNetif();
+	const initial = getNetworkInterfaceIncarnation("eth9");
+
+	// Recorded by index alone; the next poll can read only a node. Nothing
+	// shows the two are one netdev, so the old lifetime must not absorb it.
+	f.setIndex("eth9", 29);
+	f.setSysfsNodeUnavailable(false);
+	f.setSysfsIndexUnavailable();
+	f.setIpUnavailable();
+	await updateNetif();
+	expect(getNetworkInterfaceIncarnation("eth9")).not.toBe(initial);
+});
+
+test("a non-USB bus read while the netdev becomes unreadable cannot release a held name", async () => {
+	const output = firstSightIfconfig("eth9", "192.0.2.2");
+	const f = fixture(output, []);
+	f.set("eth9", err("EIO"));
+	await updateNetif();
+	scanModule.holdUsbReplacementIdentity("eth9");
+
+	// The bus read is positive, but by the time it lands neither the index
+	// nor the node is readable: nothing ties the read to the recorded netdev.
+	f.setIpUnavailable();
+	let unreadable = false;
+	f.set("eth9", async () => {
+		if (!unreadable) {
+			unreadable = true;
+			f.setSysfsIndexUnavailable();
+			f.setSysfsNodeUnavailable();
+		}
+		return ok("pci");
+	});
+	await updateNetif();
+	expect(unreadable).toBe(true);
+	expect(scanModule.isUsbReplacementPending("eth9")).toBe(true);
+});
+
+test("a superseded poll that saw the replacement does not retire the successor a newer poll published", async () => {
+	const output = firstSightIfconfig("eth9", "192.0.2.2");
+	const f = fixture(output, []);
+	f.set("eth9", ok("pci"));
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+
+	// The old poll reads the predecessor and waits on ifconfig.
+	const gate = Promise.withResolvers<void>();
+	const ticks = async () => {
+		for (let tick = 0; tick < 3; tick++)
+			await new Promise<void>((resolve) => setImmediate(resolve));
+	};
+	f.holdIfconfig(gate.promise);
+	const old = updateNetif();
+	await ticks();
+	// A different netdev takes the name; a newer poll retires the predecessor
+	// and publishes the successor.
+	f.setIndex("eth9", 29);
+	f.holdIfconfig(Promise.resolve());
+	await updateNetif();
+	const successor = getNetworkInterfaceIncarnation("eth9");
+	expect(successor).toBeDefined();
+	expect(scanModule.isUsbReplacementPending("eth9")).toBe(false);
+
+	// The old poll resumes and sees the change it no longer owns.
+	gate.resolve();
+	await old;
+	await updateNetif();
+	expect(getNetworkInterfaceIncarnation("eth9")).toBe(successor);
+	expect(scanModule.isUsbReplacementPending("eth9")).toBe(false);
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+});
+
+test("wireless sysfs cannot release a held radio when the final witness has a different node under the recorded index", async () => {
+	const RADIO = "wlan9";
+	const f = fixture(firstSightIfconfig(RADIO, "192.0.2.3"), []);
+	f.set(RADIO, ok("usb"));
+	await updateNetif();
+	scanModule.holdUsbReplacementIdentity(RADIO);
+
+	// Recorded (index, A). The read before the wireless lookup sees the index
+	// and no node; the read after it sees the same index with node B, a reused
+	// index under a different netdev.
+	f.setSysfsNodeUnavailable();
+	let swapped = false;
+	spyOn(wifiInterfaceReaders, "pathExists").mockImplementation((path) => {
+		if (!path.startsWith(`/sys/class/net/${RADIO}/`)) return false;
+		if (!swapped) {
+			swapped = true;
+			f.setSysfsNodeUnavailable(false);
+			f.setNode(RADIO, 99);
+		}
+		return true;
+	});
+	await updateNetif();
+	expect(swapped).toBe(true);
+	expect(scanModule.isUsbReplacementPending(RADIO)).toBe(true);
+});
+
+test("a bus read of a witness-less held row cannot be vouched for by a successor a later scan recorded", async () => {
+	const output = firstSightIfconfig("eth9", "192.0.2.2");
+	const f = fixture(output, []);
+	f.set("eth9", ok("pci"));
+	f.setIpUnavailable();
+	f.setSysfsIndexUnavailable();
+	f.setSysfsNodeUnavailable();
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+
+	// Held and not yet covered by a scan. The PCI read finishes while the name
+	// is still witness-less; then an unanchored successor appears and the
+	// poll's own scan records its witness in the same presence epoch.
+	scanModule.resetUsbNetMarkers();
+	scanModule.holdUsbReplacementIdentity("eth9");
+	f.block("eth9");
+	const p = updateNetif();
+	try {
+		await f.enteredFor("eth9");
+		for (let tick = 0; tick < 3; tick++)
+			await new Promise<void>((resolve) => setImmediate(resolve));
+		f.setSysfsIndexUnavailable(false);
+		f.setSysfsNodeUnavailable(false);
+		f.setIndex("eth9", 29);
+		f.release();
+		await p;
+		expect(netdevWitness("eth9")?.node).toBe("1:29");
+		expect(scanModule.isUsbReplacementPending("eth9")).toBe(true);
+	} finally {
+		f.release();
+		await p;
+	}
+});
+
+test("a monitor removal of a witness-less row with USB history keeps the replacement hold", async () => {
+	const output = firstSightIfconfig(MODEM, IP);
+	const f = fixture(output, [MODEM]);
+	f.set(MODEM, ok("usb"));
+	f.setIpUnavailable();
+	f.setSysfsIndexUnavailable();
+	f.setSysfsNodeUnavailable();
+	// The bus read records USB history before any scan covers the name.
+	const p = updateNetif();
+	try {
+		await bound(f, p);
+		expect(scanModule.usbNetScanCovers(MODEM)).toBe(false);
+
+		// The monitor sees the name gone; nothing fences the poll for a row
+		// without a witness, but its USB history still holds the successor.
+		f.setOutput("");
+		handleNetifMonitorEvent({
+			type: "device-state",
+			device: MODEM,
+			state: "disconnected",
+		});
+		expect(scanModule.isUsbReplacementPending(MODEM)).toBe(true);
+	} finally {
+		f.release();
+		await p;
+	}
+});
+
+test("a poll cannot fuse the index ip addr reported with a node read after the name changed", async () => {
+	const output = firstSightIfconfig("eth9", "192.0.2.2");
+	const f = fixture(output, []);
+	f.set("eth9", ok("pci"));
+	// A monitor-only row recorded by its index alone.
+	f.setIndex("eth9", 10);
+	f.setSysfsNodeUnavailable();
+	handleNetifMonitorEvent({
+		type: "device-state",
+		device: "eth9",
+		state: "connected",
+	});
+	expect(netdevWitness("eth9")).toMatchObject({ ifindex: 10, node: undefined });
+	const lifetime = netdevLifetime("eth9");
+
+	// `ip addr` lists the predecessor's index; right after it a different
+	// netdev takes the name. Sysfs answers only by node from here on.
+	f.setSysfsNodeUnavailable(false);
+	f.setSysfsIndexUnavailable();
+	f.afterIpAddr(() => f.setIndex("eth9", 29));
+	await updateNetif();
+	expect(netdevWitness("eth9")).not.toMatchObject({
+		ifindex: 10,
+		node: "1:29",
+	});
+	expect(netdevLifetime("eth9")).not.toBe(lifetime);
 });
