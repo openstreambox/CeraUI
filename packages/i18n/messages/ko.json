@@ -2856,7 +2856,7 @@
 	"network.radio.line.idle": "네트워크에 등록되지 않았습니다.",
 	"network.radio.line.unchecked": "이번에는 확인할 수 없었습니다.",
 	"network.radio.next.sim": "요금제와 남은 데이터를 확인하거나 SIM을 다른 모뎀에서 사용해 보세요.",
-	"network.radio.next.data": "이 모뎀을 다시 시작해 보세요. 약 1분 동안 오프라인이 됩니다.",
+	"network.radio.next.data": "이 모뎀을 뽑았다가 다시 꽂으세요. 약 1분 동안 오프라인이 됩니다.",
 	"network.radio.next.disturbed": "안테나나 모뎀 사이를 더 띄우세요.",
 	"network.radio.next.noSim": "무선을 확인하려면 SIM을 넣으세요.",
 	"network.radio.next.unchecked": "다음 측정 때 업데이트됩니다.",

@@ -2856,7 +2856,7 @@
 	"network.radio.line.idle": "ネットワークに登録されていません。",
 	"network.radio.line.unchecked": "今回は確認できませんでした。",
 	"network.radio.next.sim": "プランと残りのデータ量を確認するか、SIM を別のモデムで試してください。",
-	"network.radio.next.data": "このモデムを再起動してみてください。約 1 分間オフラインになります。",
+	"network.radio.next.data": "このモデムを抜いて、もう一度差し込んでください。約 1 分間オフラインになります。",
 	"network.radio.next.disturbed": "アンテナまたはモデム同士をもっと離してください。",
 	"network.radio.next.noSim": "無線を確認するには SIM を挿入してください。",
 	"network.radio.next.unchecked": "次の測定で更新されます。",

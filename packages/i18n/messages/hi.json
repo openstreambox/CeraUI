@@ -2901,7 +2901,7 @@
 	"network.radio.line.idle": "किसी नेटवर्क पर पंजीकृत नहीं।",
 	"network.radio.line.unchecked": "इस बार जाँच नहीं हो सकी।",
 	"network.radio.next.sim": "प्लान और बचा डेटा जाँचें, या SIM को दूसरे मॉडेम में आज़माएँ।",
-	"network.radio.next.data": "इस मॉडेम को रीस्टार्ट करके देखें। यह लगभग एक मिनट ऑफ़लाइन रहेगा।",
+	"network.radio.next.data": "इस मॉडेम को निकालकर फिर से लगाएँ। यह लगभग एक मिनट ऑफ़लाइन रहेगा।",
 	"network.radio.next.disturbed": "एंटेना या मॉडेम को एक-दूसरे से और दूर रखें।",
 	"network.radio.next.noSim": "रेडियो जाँचने के लिए SIM डालें।",
 	"network.radio.next.unchecked": "अगली रीडिंग के साथ अपडेट होगा।",

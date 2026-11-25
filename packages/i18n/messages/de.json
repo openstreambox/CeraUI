@@ -2901,7 +2901,7 @@
 	"network.radio.line.idle": "Nicht in einem Netz registriert.",
 	"network.radio.line.unchecked": "Diesmal nicht prüfbar.",
 	"network.radio.next.sim": "Tarif und Restdatenvolumen prüfen oder die SIM in einem anderen Modem testen.",
-	"network.radio.next.data": "Modem neu starten. Es ist etwa eine Minute offline.",
+	"network.radio.next.data": "Modem abziehen und wieder einstecken. Es ist etwa eine Minute offline.",
 	"network.radio.next.disturbed": "Antennen oder Modems weiter auseinander stellen.",
 	"network.radio.next.noSim": "Eine SIM einlegen, um den Funk zu prüfen.",
 	"network.radio.next.unchecked": "Wird mit der nächsten Messung aktualisiert.",

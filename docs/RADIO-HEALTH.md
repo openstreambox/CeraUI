@@ -63,8 +63,8 @@ modems' bands and whether they were sending data, and the timeline with the
 evidence behind each finding.
 
 The panel uses words and symbols alongside calm suggested actions. It contains
-no modem action controls. Restart is a suggestion with its expected interruption,
-not an executable action. The recent timeline is for inspection after streaming.
+no modem action controls. Replugging is a suggestion with its expected interruption;
+CeraUI has no software modem restart. The recent timeline is for inspection after streaming.
 
 Host tests cover subscriber refusals, synthetic path failures, USB resets during payload activity, independent radio contrasts, journal decoding and parser units. The replay fixture is entirely synthetic, with both matching events and negative controls.
 

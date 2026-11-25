@@ -2913,7 +2913,7 @@
 	"network.radio.line.idle": "غير مسجل على أي شبكة.",
 	"network.radio.line.unchecked": "تعذر الفحص هذه المرة.",
 	"network.radio.next.sim": "تحقق من الباقة والبيانات المتبقية، أو جرّب الشريحة في مودم آخر.",
-	"network.radio.next.data": "جرّب إعادة تشغيل هذا المودم. يبقى غير متصل لنحو دقيقة.",
+	"network.radio.next.data": "افصل هذا المودم ثم أعد توصيله. يبقى غير متصل لنحو دقيقة.",
 	"network.radio.next.disturbed": "أبعد الهوائيات أو المودمات عن بعضها.",
 	"network.radio.next.noSim": "أدخل شريحة لفحص الراديو.",
 	"network.radio.next.unchecked": "يتحدث مع القراءة التالية.",
