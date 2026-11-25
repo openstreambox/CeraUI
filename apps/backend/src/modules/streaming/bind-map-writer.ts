@@ -103,6 +103,10 @@ export interface BindMapWriterDeps {
 	/** Pauses between the writer's own retries while the newest snapshot is not
 	 * on disk; the last one repeats. Defaults to `BIND_MAP_RETRY_DELAYS_MS`. */
 	readonly retryDelaysMs?: readonly number[];
+	/** Revalidate captured source authority inside the serialized writer. */
+	readonly prepareEntries?: (
+		entries: readonly BondEntry[],
+	) => Promise<readonly BondEntry[]>;
 	/**
 	 * Runs inside the serialized writer, once per publication that ran or timed
 	 * out, in execution order and before any caller sees its receipt. The
@@ -213,8 +217,9 @@ export function defaultSidecarPath(ipsFile: string): string {
  * retains its identity: a fresh generation cannot be silently published without
  * reloading the sender. Failed/uncertain publications invalidate that no-op cache.
  *
- * Publications run one at a time. At most one more waits behind the one in
- * flight; a newer submission replaces the waiting snapshot (latest wins) and the
+ * Publications run one at a time. Ordinary updates share one pending slot.
+ * CLAT withdrawals retain FIFO slots before later admissions. A newer ordinary
+ * submission replaces the waiting ordinary snapshot (latest wins) and the
  * replaced callers resolve with the receipt of the publication that replaced
  * them. A flapping link therefore costs two publications, not one per event.
  * The writer's own retries use the same queue; they are never a second one.
@@ -250,7 +255,7 @@ let lastSuccessful:
 	| undefined;
 
 interface Snapshot {
-	readonly entries: readonly BondEntry[];
+	entries: readonly BondEntry[];
 	readonly deps: BindMapWriterDeps;
 }
 
@@ -259,6 +264,8 @@ type Waiter = ReturnType<typeof Promise.withResolvers<BindMapPublication>>;
 interface Submission {
 	snapshot: Snapshot;
 	waiters: Waiter[];
+	/** A removal must reach disk before any subsequent admission. */
+	readonly withdrawal: boolean;
 	/** Answers the waiters while new file I/O is held back (see `blocked`). */
 	waitTimer?: ReturnType<typeof setTimeout> | undefined;
 }
@@ -285,7 +292,7 @@ interface StaleState {
 /** A live attempt is in flight. */
 let running = false;
 let abandonedUnsettled = 0;
-let pending: Submission | undefined;
+let pending: Submission[] = [];
 let newest: Snapshot | undefined;
 let stale: StaleState | undefined;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -316,8 +323,8 @@ export function resetBindMapWriter(): void {
 	lastSuccessful = undefined;
 	running = false;
 	abandonedUnsettled = 0;
-	if (pending?.waitTimer !== undefined) clearTimeout(pending.waitTimer);
-	pending = undefined;
+	for (const submission of pending) clearTimeout(submission.waitTimer);
+	pending = [];
 	newest = undefined;
 	stale = undefined;
 	cancelRetry();
@@ -362,7 +369,7 @@ export function getBindMapPublicationHealth(): BindMapPublicationHealth {
  * backoff timer, or an abandoned attempt's file operations, do not count.
  */
 export function whenBindMapWriterIdle(): Promise<void> {
-	if (!running && pending === undefined) return Promise.resolve();
+	if (!running && pending.length === 0) return Promise.resolve();
 	return new Promise((resolve) => idleWaiters.push(resolve));
 }
 
@@ -428,23 +435,36 @@ export function publishBondMapping(
 	// Capture caller-owned rows at submission; compare writer state only at execution.
 	const snapshot: Snapshot = { entries: snapshotMapping(provided), deps };
 	const waiter = Promise.withResolvers<BindMapPublication>();
+	const withdrawal =
+		newest?.entries.some(
+			(entry) =>
+				entry.clatGeneration !== undefined &&
+				!snapshot.entries.some((next) => sameMapping([entry], [next])),
+		) ?? false;
 	newest = snapshot;
 	// This submission is the retry now; a later failure schedules a fresh one.
 	cancelRetry();
-	submit(snapshot, waiter);
+	submit(snapshot, waiter, withdrawal);
 	return waiter.promise;
 }
 
-function submit(snapshot: Snapshot, waiter?: Waiter): void {
-	if (pending !== undefined) {
-		pending.snapshot = snapshot;
-		if (waiter) pending.waiters.push(waiter);
-		if (blocked()) armWait(pending);
+function submit(snapshot: Snapshot, waiter?: Waiter, withdrawal = false): void {
+	const tail = pending.at(-1);
+	// Pure updates can still coalesce. Once a removal has a queue slot, no later
+	// admission can replace it, even if the IP bytes are unchanged.
+	if (tail && !tail.withdrawal && !withdrawal) {
+		tail.snapshot = snapshot;
+		if (waiter) tail.waiters.push(waiter);
+		if (blocked()) armWait(tail);
 		return;
 	}
-	const submission: Submission = { snapshot, waiters: waiter ? [waiter] : [] };
-	if (running || blocked()) {
-		pending = submission;
+	const submission: Submission = {
+		snapshot,
+		waiters: waiter ? [waiter] : [],
+		withdrawal,
+	};
+	if (running || blocked() || pending.length > 0) {
+		pending.push(submission);
 		if (blocked()) armWait(submission);
 	} else start(submission);
 }
@@ -460,7 +480,8 @@ function armWait(submission: Submission): void {
 	const { deps } = submission.snapshot;
 	submission.waitTimer = setTimeout(() => {
 		submission.waitTimer = undefined;
-		if (pending !== submission || submission.waiters.length === 0) return;
+		if (!pending.includes(submission) || submission.waiters.length === 0)
+			return;
 		const publication = timedOut();
 		notifySettled(submission, publication);
 		const waiters = submission.waiters;
@@ -486,7 +507,7 @@ function start(submission: Submission): void {
 	cancelRetry();
 	if (submission.waitTimer !== undefined) clearTimeout(submission.waitTimer);
 	submission.waitTimer = undefined;
-	const { entries, deps } = submission.snapshot;
+	const { deps } = submission.snapshot;
 	const attempt: Attempt = {
 		session,
 		reuseEpoch,
@@ -498,7 +519,7 @@ function start(submission: Submission): void {
 	const deadline = new Promise<"timed_out">((resolve) => {
 		timer = setTimeout(() => resolve("timed_out"), deadlineOf(deps));
 	});
-	const work = publishBondMappingSerial(entries, deps, attempt);
+	const work = publishBondMappingSerial(submission.snapshot, attempt);
 	const outcome: Promise<Outcome> = work.then(
 		(publication) => ({ publication }),
 		(error: unknown) => ({ error }),
@@ -631,19 +652,18 @@ function finish(submission: Submission, result: Outcome | undefined): void {
 
 function drain(): void {
 	if (running) return;
-	if (pending !== undefined) {
+	if (pending.length > 0) {
 		if (blocked()) {
 			// Written once an abandoned attempt settles; its callers hear back sooner.
-			armWait(pending);
+			for (const submission of pending) armWait(submission);
 			return;
 		}
-		const next = pending;
-		pending = undefined;
-		start(next);
+		const next = pending.shift();
+		if (next) start(next);
 		return;
 	}
 	if (stale !== undefined && newest !== undefined) scheduleRetry();
-	if (running || pending !== undefined) return;
+	if (running || pending.length > 0) return;
 	const waiters = idleWaiters;
 	idleWaiters = [];
 	for (const resolve of waiters) resolve();
@@ -671,7 +691,7 @@ function scheduleRetry(): void {
 		retryTimer = undefined;
 		if (owner !== session || stale === undefined || newest === undefined)
 			return;
-		if (running || pending !== undefined) return; // a newer run covers it
+		if (running || pending.length > 0) return; // a newer run covers it
 		logger.warn("bind-map: republishing the newest mapping", {
 			failures: stale.failures,
 			staleForMs: Date.now() - stale.since,
@@ -682,10 +702,30 @@ function scheduleRetry(): void {
 }
 
 async function publishBondMappingSerial(
-	entries: readonly BondEntry[],
-	deps: BindMapWriterDeps,
+	snapshot: Snapshot,
 	attempt: Attempt,
 ): Promise<BindMapPublication> {
+	const { deps } = snapshot;
+
+	// Reserve before either publication. Failure is diagnostic only; publication keeps its normal authority.
+	await observeSafely(() =>
+		(deps.reserve ?? (async () => undefined))(
+			generation + 1,
+			createHash("sha256")
+				.update(renderIpsFile(snapshot.entries), "utf8")
+				.digest("hex"),
+			snapshot.entries,
+		),
+	);
+
+	// No cached translator authority may wait through another publication or the
+	// observer's I/O. Failed revalidation removes that source from this write.
+	if (deps.prepareEntries)
+		snapshot.entries = snapshotMapping(
+			await deps.prepareEntries(snapshot.entries),
+		);
+	if (!isLive(attempt)) throw new AbandonedPublication();
+	const entries = snapshot.entries;
 	const ipsContent = renderIpsFile(entries),
 		digest = createHash("sha256").update(ipsContent, "utf8").digest("hex"),
 		mappable = entries.every(isMappableEntry),
@@ -701,15 +741,6 @@ async function publishBondMappingSerial(
 			lastPublished === undefined ||
 			!sameMapping(lastPublished, entries) ||
 			(mappable && !identical);
-
-	// Reserve before either publication. Failure is diagnostic only; publication keeps its normal authority.
-	await observeSafely(() =>
-		(deps.reserve ?? (async () => undefined))(
-			generation + 1,
-			createHash("sha256").update(ipsContent, "utf8").digest("hex"),
-			entries,
-		),
-	);
 
 	try {
 		await publishAtomically(deps, attempt, deps.ipsFile, ipsContent);
