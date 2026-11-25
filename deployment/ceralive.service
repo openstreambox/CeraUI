@@ -17,6 +17,10 @@ WorkingDirectory=/opt/ceralive/
 ExecStart=/usr/local/bin/ceralive
 KillMode=mixed
 Restart=always
+RestartSec=2s
+WatchdogSec=30s
+# A stopped or wedged owner must close its inhibitor descriptor immediately.
+WatchdogSignal=SIGKILL
 SyslogIdentifier=ceralive
 
 [Install]
