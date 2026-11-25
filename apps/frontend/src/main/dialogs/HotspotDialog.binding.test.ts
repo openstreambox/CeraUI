@@ -1303,7 +1303,7 @@ describe("mode owner and echoed settlement use the dispatched lifetime", () => {
 					context: { stationLinkLive: true, hotspotLive: false },
 				},
 			});
-			await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+			await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 			await ready();
 			await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 			await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
@@ -1360,7 +1360,7 @@ describe("mode owner and echoed settlement use the dispatched lifetime", () => {
 				context: { stationLinkLive: true, hotspotLive: false },
 			},
 		});
-		await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+		await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 		await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
 		await tick();
 		wire.message("status", { wifi: { "0": row("radio-B") } });
@@ -1400,7 +1400,7 @@ describe("mode owner and echoed settlement use the dispatched lifetime", () => {
 				context: { stationLinkLive: true, hotspotLive: false },
 			},
 		});
-		await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+		await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 		await ready();
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
@@ -1636,7 +1636,7 @@ describe("operations after an unobserved-radio refusal", () => {
 		render(WifiModeSelector, {
 			props: { view: modeView("radio-A"), context },
 		});
-		await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+		await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 		await ready();
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
@@ -1698,7 +1698,7 @@ describe("operations after an unobserved-radio refusal", () => {
 		const view = render(WifiModeSelector, {
 			props: { view: modeView("radio-A"), context },
 		});
-		await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+		await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 		await ready();
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
@@ -1743,7 +1743,7 @@ describe("operations after an unobserved-radio refusal", () => {
 		render(WifiModeSelector, {
 			props: { view: modeView("radio-A"), context },
 		});
-		await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+		await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 		await ready();
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
@@ -1914,7 +1914,7 @@ it("preserves another client's mode transition when it wins after our handoff", 
 			context: { stationLinkLive: true, hotspotLive: false },
 		},
 	});
-	await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+	await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 	await ready();
 	await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 	await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
@@ -1947,7 +1947,7 @@ it("settles this client's mode attempt from its own busy frame before its RPC re
 			context: { stationLinkLive: true, hotspotLive: false },
 		},
 	});
-	await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+	await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 	await ready();
 	await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 	await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
