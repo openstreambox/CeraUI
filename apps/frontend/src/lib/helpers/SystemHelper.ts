@@ -1,13 +1,11 @@
 import type {
 	AudioCodecs,
-	ConfigMessage,
 	CustomProviderInput,
 	ProviderSelection,
 	StreamingConfigInput,
 } from "@ceraui/rpc/schemas";
 
 import { rpc } from "$lib/rpc/client";
-import { NotSentError } from "$lib/rpc/rpc-error";
 import { createPassword } from "$lib/stores/auth-status.svelte";
 import { sendSessionTransition } from "$lib/streaming/compositionWrites.svelte";
 
@@ -134,7 +132,7 @@ export const stopStreaming = async () => {
 };
 
 export const startStreaming = async (
-	readmit: () => ConfigMessage | undefined,
+	readmit: () => StreamingConfigInput | undefined,
 	onSent?: () => void,
 ) => {
 	try {
