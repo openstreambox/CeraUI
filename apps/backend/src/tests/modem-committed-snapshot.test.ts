@@ -160,6 +160,43 @@ describe("committed modem snapshot", () => {
 		}
 	});
 
+	test("the reset still reaches subscribers when the sampler saw the swap first", async () => {
+		resetRadioHealthForTest();
+		const before = { ...modem("one"), iccid: "8900000000000000001" } as Modem;
+		setModem(1, before);
+		broadcastModems();
+		const committed = getCommittedSnapshot();
+		const deps = (live: Modem) => ({
+			enabled: async () => true,
+			registration: () => ({ value: "home", capturedAt: Date.now() }),
+			readNas: async () => ({ signal: "", band: "" }),
+			readText: async () => "100",
+			realpath: async () => "/sys/1-1/1-1:1.4",
+			run: async () => "",
+			health: () => undefined,
+			modem: () => live as never,
+		});
+		await refreshRadioHealth(committed, Date.now(), deps(before));
+		const swapped = { ...before, iccid: "8900000000000000002" } as Modem;
+		setModem(1, swapped);
+		// The poll samples before the swap is committed: it skips the row.
+		await refreshRadioHealth(committed, Date.now() + 1, deps(swapped));
+		const frames: string[] = [];
+		const client = {
+			data: { isAuthenticated: true, lastActive: Date.now() },
+			send: (frame: string) => frames.push(frame),
+		} as unknown as AppWebSocket;
+		addClient(client);
+		try {
+			broadcastModems({});
+			const frame = JSON.parse(frames.at(-1) ?? "{}");
+			expect(frame.status.modems["1"].radio_health.capturedAt).toBe(0);
+		} finally {
+			removeClient(client);
+			resetRadioHealthForTest();
+		}
+	});
+
 	test("getAll serves the last complete commit while mutable state is changing", async () => {
 		// Given one fully-published modem snapshot
 		setModem(1, modem("committed"));

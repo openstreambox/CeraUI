@@ -173,13 +173,14 @@ export async function refreshRadioHealth(
 			const internal = deps.modem(Number(id));
 			// Sample only while the live modem is still the committed one: a
 			// staged SIM or device swap waits for the next committed roster.
+			// The previous key stays: it is what makes the next committed frame
+			// carry the reset to subscribers.
 			if (
 				internal &&
 				((internal.ifname !== undefined && internal.ifname !== modem.ifname) ||
 					(internal.iccid ?? "") !== (modem.iccid ?? ""))
 			) {
 				next[id] = record;
-				previous.delete(id);
 				continue;
 			}
 			const observed = deps.registration?.(internal);
@@ -342,12 +343,12 @@ export async function refreshRadioHealth(
 			// under the committed identity.
 			const after = deps.modem(Number(id));
 			if (
-				after &&
-				((after.ifname !== undefined && after.ifname !== modem.ifname) ||
-					(after.iccid ?? "") !== (modem.iccid ?? ""))
+				(internal && !after) ||
+				(after &&
+					((after.ifname !== undefined && after.ifname !== modem.ifname) ||
+						(after.iccid ?? "") !== (modem.iccid ?? "")))
 			) {
 				next[id] = emptyRadio(now);
-				previous.delete(id);
 				continue;
 			}
 			const health = deps.health(modem.ifname);
