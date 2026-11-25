@@ -16,7 +16,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-/* Network interface list */
 import { EventEmitter } from "node:events";
 import { isSimlessForBond } from "@ceraui/rpc";
 import type {
@@ -28,7 +27,6 @@ import type {
 } from "@ceraui/rpc/schemas";
 import { NETIF_DUPLICATE_IPV4_ERROR } from "@ceraui/rpc/schemas";
 import type WebSocket from "ws";
-
 import { ipToInt, isSameSubnet } from "../../helpers/ip-addresses.ts";
 import { logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
@@ -60,12 +58,15 @@ import {
 	isConcurrentApIfname,
 	isSupportedWifiIfname,
 } from "../wifi/wifi-concurrent-interface.ts";
+import { getWifiInterfacesByMacAddress } from "../wifi/wifi-connections.ts";
 import {
 	wifiDeviceListAdd,
 	wifiDeviceListEndUpdate,
 	wifiDeviceListStartUpdate,
 } from "../wifi/wifi-device-list.ts";
+import { isApMode } from "../wifi/wifi-hotspot-types.ts";
 import { scheduleWifiUpdate } from "../wifi/wifi-interfaces.ts";
+import { isWirelessInterface } from "../wifi/wifi-radio-identity.ts";
 import {
 	bondPhysicalId,
 	isBondOptedOut,
@@ -348,6 +349,12 @@ export function isDupIpOnly(int: NetworkInterface): boolean {
 	return int.error === NETIF_ERR_DUPIPV4;
 }
 
+export function isWifiApInterface(name: string): boolean {
+	return Object.values(getWifiInterfacesByMacAddress()).some(
+		(entry) => entry?.ifname === name && isApMode(entry),
+	);
+}
+
 export function isBondIdentityPending(
 	name: string,
 	int: NetworkInterface,
@@ -395,6 +402,7 @@ function admitsBondLink(
 		mappable: (name: string, ip: string) => boolean;
 	},
 ): boolean {
+	if (isWifiApInterface(name)) return false;
 	if (!int.ip) return false;
 	if (bondIdentityPending(name, int, view.deadlineElapsed)) return false;
 	if (isConcurrentApIfname(name)) return false;
@@ -438,8 +446,19 @@ export function applyConcurrentApBondGate(
 	for (const name in interfaces) {
 		const int = interfaces[name];
 		if (!int) continue;
-		if (isConcurrentApIfname(name)) setNetifError(int, NETIF_ERR_HOTSPOT);
+		if (isConcurrentApIfname(name) || isWifiApInterface(name)) {
+			setNetifError(int, NETIF_ERR_HOTSPOT);
+		} else if ((int.error & NETIF_ERR_HOTSPOT) !== 0) {
+			clearNetifError(int, NETIF_ERR_HOTSPOT);
+			if (int.error === 0 && !isBondOptedOut(name)) int.enabled = true;
+		}
 	}
+}
+
+export function refreshWifiApClientZones(): void {
+	const before = JSON.stringify(netif);
+	applyConcurrentApBondGate(netif);
+	if (before !== JSON.stringify(netif)) triggerNetworkInterfacesChange();
 }
 
 /*
@@ -885,6 +904,9 @@ async function refreshDongleState(): Promise<void> {
 }
 
 export function initNetworkInterfaceMonitoring() {
+	void import("./two-radio/runtime.ts")
+		.then((m) => m.initTwoRadioLive())
+		.catch((error) => logger.warn(`Two-radio owner unavailable: ${error}`));
 	onNetifChange(broadcastNetif);
 	void updateNetif();
 	setInterval(() => {
@@ -1156,6 +1178,7 @@ async function refreshNetifFromOs(): Promise<void> {
 			entries.filter((entry) => !withdrawn.has(entry.name)),
 			ipOverrides,
 			undefined,
+			undefined,
 			buses,
 			undefined,
 			replaced,
@@ -1175,7 +1198,7 @@ async function readNetifSample() {
 	for (const name of ifindices.keys()) {
 		if (!before.has(name)) before.set(name, readNetdevWitness(name));
 	}
-	const entries = parseIfconfigEntries(await run("ifconfig", []));
+	const entries = parseIfconfigEntries(await run("ifconfig", ["-a"]));
 	const ifnames: string[] = [];
 	const witnesses = new Map<string, NetdevWitness>();
 	const indexedNames = new Map(
@@ -1234,6 +1257,7 @@ export function processIfconfigOutput(
 	stdout: string,
 	ipOverrides?: Map<string, IpAddrSelection>,
 	now: number = getms(),
+	wirelessInterface: (name: string) => boolean = isWirelessInterface,
 	buses?: ReadonlyMap<string, NetdevBusEvidence>,
 	ifindices?: ReadonlyMap<string, number>,
 	pollReplacements?: ReadonlySet<string>,
@@ -1242,6 +1266,7 @@ export function processIfconfigOutput(
 		parseIfconfigEntries(stdout),
 		ipOverrides,
 		now,
+		wirelessInterface,
 		buses,
 		ifindices,
 		pollReplacements,
@@ -1252,6 +1277,7 @@ function publishIfconfigEntries(
 	entries: readonly IfconfigEntry[],
 	ipOverrides?: Map<string, IpAddrSelection>,
 	now: number = getms(),
+	wirelessInterface: (name: string) => boolean = isWirelessInterface,
 	buses?: ReadonlyMap<string, NetdevBusEvidence>,
 	ifindices?: ReadonlyMap<string, number>,
 	pollReplacements?: ReadonlySet<string>,
@@ -1287,7 +1313,7 @@ function publishIfconfigEntries(
 			const mac = int.match(/ether ([0-9a-f:]+)/)?.[1];
 
 			// update the list of WiFi devices
-			if (isSupportedWifiIfname(name)) {
+			if (wirelessInterface(name)) {
 				if (mac) {
 					wifiDeviceListAdd(name, mac, isRunning ? inetAddr : null);
 				}
@@ -1317,7 +1343,7 @@ function publishIfconfigEntries(
 			}
 			if (replaced) {
 				intsChanged = true;
-				if (isSupportedWifiIfname(name)) wifiIncarnationChanged = true;
+				if (wirelessInterface(name) || isSupportedWifiIfname(name)) wifiIncarnationChanged = true;
 			}
 			polledNames.add(name);
 			let tp = 0;
@@ -1431,6 +1457,9 @@ function publishIfconfigEntries(
 		scheduleWifiUpdate(1000);
 	}
 
+	for (const name in newInterfaces) {
+		if (newInterfaces[name]?.error !== netif[name]?.error) intsChanged = true;
+	}
 	netif = newInterfaces;
 	for (const name of new Set([...previousIfnames, ...Object.keys(netif)])) {
 		if (!netif[name]) retireNetdev(name);

@@ -293,13 +293,19 @@ function fallbackMode(iface: WifiInterface): WifiAdapterMode {
  * radio set changes or the mode control confirms, so a hotspot started from its
  * own dialog leaves it saying `station`. The snapshot is pushed with every Wi-Fi
  * frame, so an AP it shows up outranks that stale `station`; otherwise the answer
- * stands, and it alone tells hybrid from hotspot.
+ * stands, and it alone tells hybrid from hotspot. The reverse holds too: a
+ * cached `hotspot` under a snapshot that shows the radio as a station (the AP
+ * was stopped from the API, another client or the device) is stale, so the
+ * snapshot decides.
  */
 function observedModeOf(
 	entry: WifiAdapterModeEntry | undefined,
 	iface: WifiInterface,
 ): WifiAdapterMode {
 	if (entry === undefined) return fallbackMode(iface);
+	if (entry.mode === "hotspot" && iface.mode === "station") {
+		return fallbackMode(iface);
+	}
 	if (entry.mode !== "station") return entry.mode;
 	if (isApRadio(iface)) return "hotspot";
 	return hotspotIsActive(iface) ? "hybrid" : "station";
