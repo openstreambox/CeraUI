@@ -570,5 +570,9 @@ test("a Start deadline sends cleanup before a late busy refusal arrives", async 
 
 	gate.resolve();
 	await h.startSettled;
-	expect(h.clients).toHaveLength(1);
+	// The train sends that Stop on its own independent control connection (#15);
+	// no further connection or Start follows the late refusal.
+	expect(h.clients).toHaveLength(2);
+	expect(h.clients[0]?.calls).not.toContain("stop");
+	expect(h.clients[1]?.calls).toEqual(["stop", "close"]);
 });
