@@ -314,3 +314,37 @@ test("a staged SIM swap on the same id is neither sampled nor served from the ol
 	expect(getRadioHealth(swapped, 91000)["1"]?.timeline.length).toBe(1);
 	expect(getRadioHealth(committed, 91000)["1"]).toBeUndefined();
 });
+
+test("a swap staged during the awaited reads is not stored under the committed identity", async () => {
+	const live = {
+		ifname: "fixture1",
+		iccid: "8900000000000000001",
+		model: "RM520N-GL",
+	};
+	const committed = {
+		"1": {
+			ifname: "fixture1",
+			stable_key: "port-1",
+			iccid: live.iccid,
+			model: "RM520N-GL",
+		},
+	};
+	const deps = {
+		enabled: async () => true,
+		registration: () => ({ value: "home", capturedAt: 1000 }),
+		readNas: async () => {
+			live.iccid = "8900000000000000002"; // the SIM changes mid-read
+			return { signal: "LTE:\n RSRP: '-90 dBm'", band: "" };
+		},
+		readText: async () => "100",
+		realpath: async () => "/sys/1-1/1-1:1.4",
+		run: async () => "",
+		health: () => undefined,
+		modem: () => live as never,
+	};
+	await refreshRadioHealth(committed, 1000, deps);
+	expect(getRadioHealth(committed, 1000)["1"]).toBeUndefined();
+	expect(radioForModem("1", committed["1"], 1000).metrics["lte.rsrp"]).toBe(
+		undefined,
+	);
+});

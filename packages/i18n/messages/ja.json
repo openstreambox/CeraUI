@@ -2871,6 +2871,8 @@
 	"network.radio.reason.replugged": "モデムが抜かれたか、差し直されました",
 	"network.radio.reason.modemError": "モデムがエラーを返しました",
 	"network.radio.reason.mmUnreadable": "ModemManager を読み取れませんでした",
+	"network.radio.reason.busy": "ポートが使用中でした",
+	"network.radio.reason.tooLong": "応答が長すぎました",
 	"network.radio.reason.other": "読み取りに失敗しました",
 	"network.radio.reg.home": "ホームネットワーク",
 	"network.radio.reg.roaming": "ローミング",

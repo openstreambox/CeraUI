@@ -2871,6 +2871,8 @@
 	"network.radio.reason.replugged": "모뎀이 분리되었거나 다시 연결되었습니다",
 	"network.radio.reason.modemError": "모뎀이 오류로 응답했습니다",
 	"network.radio.reason.mmUnreadable": "ModemManager를 읽을 수 없습니다",
+	"network.radio.reason.busy": "포트가 사용 중이었습니다",
+	"network.radio.reason.tooLong": "응답이 너무 길었습니다",
 	"network.radio.reason.other": "읽기에 실패했습니다",
 	"network.radio.reg.home": "홈 네트워크",
 	"network.radio.reg.roaming": "로밍",

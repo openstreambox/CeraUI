@@ -355,7 +355,16 @@ export async function runModemStatusPoll(): Promise<void> {
 	// Diagnostic I/O must not hold the lock needed by hotplug and configuration,
 	// so it samples the committed roster, never mutable state mid-change.
 	try {
-		await refreshRadioHealth(getCommittedModemsWireMessage());
+		// Committed rows only, and only those still present: a modem removed
+		// mid-reconciliation is not sampled.
+		const committed = getCommittedModemsWireMessage();
+		await refreshRadioHealth(
+			Object.fromEntries(
+				Object.entries(committed).filter(
+					([id]) => getModem(Number(id)) !== undefined,
+				),
+			),
+		);
 	} catch {
 		logger.warn("Radio diagnostics unavailable for this poll");
 	}

@@ -62,6 +62,15 @@ let refreshing = false;
 type RadioIdentityRow = Partial<
 	Pick<WireModemEntry, "ifname" | "stable_key" | "iccid">
 >;
+/**
+ * True when this committed row is a different modem or SIM than the one the
+ * cached record was sampled for, so subscribers must receive the reset.
+ */
+export function radioNeedsReset(id: string, row: object): boolean {
+	const before = previous.get(id);
+	return before !== undefined && before.key !== radioIdentity(row);
+}
+
 /** One modem's identity as the committed roster states it. */
 export function radioIdentity(row: RadioIdentityRow): string {
 	return `${row.stable_key ?? ""}:${row.ifname ?? ""}:${row.iccid ?? ""}`;
@@ -329,6 +338,18 @@ export async function refreshRadioHealth(
 				available: kernel !== undefined && port !== undefined,
 				events: events.slice(-128),
 			};
+			// The reads above awaited; a swap staged meanwhile must not be stored
+			// under the committed identity.
+			const after = deps.modem(Number(id));
+			if (
+				after &&
+				((after.ifname !== undefined && after.ifname !== modem.ifname) ||
+					(after.iccid ?? "") !== (modem.iccid ?? ""))
+			) {
+				next[id] = emptyRadio(now);
+				previous.delete(id);
+				continue;
+			}
 			const health = deps.health(modem.ifname);
 			const numeric = Object.entries(record.metrics);
 			evidence[id] = {

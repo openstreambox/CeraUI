@@ -7,6 +7,7 @@ import {
 import {
 	broadcastModems,
 	broadcastRadioHealth,
+	getCommittedModemsWireMessage as getCommittedSnapshot,
 } from "../modules/modems/modem-status.ts";
 import {
 	getModemIds,
@@ -14,6 +15,10 @@ import {
 	removeModem,
 	setModem,
 } from "../modules/modems/modems-state.ts";
+import {
+	refreshRadioHealth,
+	resetRadioHealthForTest,
+} from "../modules/modems/radio-health-runtime.ts";
 import { addClient, removeClient } from "../rpc/events.ts";
 import { getAllModemsProcedure } from "../rpc/procedures/modems.procedure.ts";
 import type { AppWebSocket, RPCContext } from "../rpc/types.ts";
@@ -120,6 +125,39 @@ describe("committed modem snapshot", () => {
 		})) as Record<string, { status?: { signal?: number } }>;
 		expect(result["1"]?.status?.signal).toBe(0);
 		expect(Object.keys(result).sort()).toEqual(["1", "2"]);
+	});
+
+	test("a status-only commit after a SIM swap still carries the radio reset", async () => {
+		resetRadioHealthForTest();
+		const before = { ...modem("one"), iccid: "8900000000000000001" } as Modem;
+		setModem(1, before);
+		broadcastModems();
+		const committed = getCommittedSnapshot();
+		await refreshRadioHealth(committed, Date.now(), {
+			enabled: async () => true,
+			registration: () => ({ value: "home", capturedAt: Date.now() }),
+			readNas: async () => ({ signal: "", band: "" }),
+			readText: async () => "100",
+			realpath: async () => "/sys/1-1/1-1:1.4",
+			run: async () => "",
+			health: () => undefined,
+			modem: () => before as never,
+		});
+		setModem(1, { ...before, iccid: "8900000000000000002" } as Modem);
+		const frames: string[] = [];
+		const client = {
+			data: { isAuthenticated: true, lastActive: Date.now() },
+			send: (frame: string) => frames.push(frame),
+		} as unknown as AppWebSocket;
+		addClient(client);
+		try {
+			broadcastModems({});
+			const frame = JSON.parse(frames.at(-1) ?? "{}");
+			expect(frame.status.modems["1"].radio_health.capturedAt).toBe(0);
+		} finally {
+			removeClient(client);
+			resetRadioHealthForTest();
+		}
 	});
 
 	test("getAll serves the last complete commit while mutable state is changing", async () => {

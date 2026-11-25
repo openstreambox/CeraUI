@@ -2919,6 +2919,8 @@
 	"network.radio.reason.replugged": "le modem a été débranché ou rebranché",
 	"network.radio.reason.modemError": "le modem a répondu par une erreur",
 	"network.radio.reason.mmUnreadable": "impossible de lire ModemManager",
+	"network.radio.reason.busy": "le port était occupé",
+	"network.radio.reason.tooLong": "la réponse était trop longue",
 	"network.radio.reason.other": "la lecture a échoué",
 	"network.radio.reg.home": "Réseau d’origine",
 	"network.radio.reg.roaming": "Itinérance",

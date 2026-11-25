@@ -2916,6 +2916,8 @@
 	"network.radio.reason.replugged": "das Modem wurde ab- oder neu eingesteckt",
 	"network.radio.reason.modemError": "das Modem hat mit einem Fehler geantwortet",
 	"network.radio.reason.mmUnreadable": "ModemManager konnte nicht gelesen werden",
+	"network.radio.reason.busy": "der Port war belegt",
+	"network.radio.reason.tooLong": "die Antwort war zu lang",
 	"network.radio.reason.other": "das Auslesen ist fehlgeschlagen",
 	"network.radio.reg.home": "Heimnetz",
 	"network.radio.reg.roaming": "Roaming",

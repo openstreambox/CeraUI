@@ -259,11 +259,11 @@ const REASON_TEXT = $derived<Record<string, string>>({
 	'port-stuck': m['network.radio.reason.noAnswer'](),
 	'repeated-timeouts': m['network.radio.reason.noAnswer'](),
 	timeout: m['network.radio.reason.noAnswer'](),
-	'port-not-quiet': m['network.radio.reason.noAnswer'](),
+	'port-not-quiet': m['network.radio.reason.busy'](),
 	'device-changed': m['network.radio.reason.replugged'](),
 	'port-failed': m['network.radio.reason.replugged'](),
 	'modem-error': m['network.radio.reason.modemError'](),
-	'reply-too-long': m['network.radio.reason.modemError'](),
+	'reply-too-long': m['network.radio.reason.tooLong'](),
 	'modem-unreadable': m['network.radio.reason.mmUnreadable'](),
 });
 const reasonText = (token: string) =>

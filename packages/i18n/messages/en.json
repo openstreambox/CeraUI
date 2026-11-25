@@ -2916,6 +2916,8 @@
 	"network.radio.reason.replugged": "the modem was unplugged or replugged",
 	"network.radio.reason.modemError": "the modem answered with an error",
 	"network.radio.reason.mmUnreadable": "ModemManager couldn't be read",
+	"network.radio.reason.busy": "the port was busy",
+	"network.radio.reason.tooLong": "the answer was too long",
 	"network.radio.reason.other": "the read failed",
 	"network.radio.reg.home": "Home network",
 	"network.radio.reg.roaming": "Roaming",

@@ -2928,6 +2928,8 @@
 	"network.radio.reason.replugged": "تم فصل المودم أو إعادة توصيله",
 	"network.radio.reason.modemError": "رد المودم بخطأ",
 	"network.radio.reason.mmUnreadable": "تعذرت قراءة ModemManager",
+	"network.radio.reason.busy": "كان المنفذ مشغولًا",
+	"network.radio.reason.tooLong": "كان الرد طويلًا جدًا",
 	"network.radio.reason.other": "فشلت القراءة",
 	"network.radio.reg.home": "الشبكة الأساسية",
 	"network.radio.reg.roaming": "تجوال",

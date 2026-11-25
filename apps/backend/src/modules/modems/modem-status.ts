@@ -1,5 +1,5 @@
 import type { RadioHealth } from "@ceraui/rpc/schemas";
-import { radioForModem } from "./radio-health-runtime.ts";
+import { radioForModem, radioNeedsReset } from "./radio-health-runtime.ts";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -212,6 +212,16 @@ export function broadcastModems(
 		modemsFullState === undefined
 			? complete
 			: buildModemsWireMessage(modemsFullState);
+	// A partial (status-only) frame still carries the radio reset when the
+	// committed modem or SIM is no longer the one the cached record belongs to.
+	for (const [id, row] of Object.entries(modems)) {
+		const committed = complete[id];
+		if (committed && !("radio_health" in row) && radioNeedsReset(id, committed))
+			(row as { radio_health?: RadioHealth }).radio_health = radioForModem(
+				id,
+				committed as never,
+			);
+	}
 	broadcastMsg("status", { modems });
 
 	// The roaming advisory reconciles AFTER the payload is on the wire, and is
