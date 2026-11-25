@@ -29,6 +29,7 @@ import {
 } from "vitest";
 
 import {
+	beginOperation,
 	clearOperation,
 	getOperationPhase,
 } from "$lib/rpc/async-operation.svelte";
@@ -60,6 +61,7 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => {
 });
 
 const MANUAL_KEY = "wifi-scan:0";
+const OTHER_KEY = "wifi-scan:1";
 /** The key the retired background op used. Nothing may ever begin it again. */
 const RETIRED_AUTO_KEY = "wifi-scan-auto:0";
 
@@ -119,11 +121,13 @@ beforeEach(() => {
 	publishWifi({ "0": radio(), "1": radio() });
 	clearOperation(MANUAL_KEY);
 	clearOperation(RETIRED_AUTO_KEY);
+	clearOperation(OTHER_KEY);
 });
 
 afterEach(() => {
 	clearOperation(MANUAL_KEY);
 	clearOperation(RETIRED_AUTO_KEY);
+	clearOperation(OTHER_KEY);
 	vi.useRealTimers();
 });
 
@@ -136,6 +140,91 @@ async function openAndSettleFirstScan(): Promise<void> {
 }
 
 describe("WifiSelectorDialog — generation-confirmed scans", () => {
+	for (const outcome of ["applied", "refusal", "rejection"] as const) {
+		it(`does not use deferred A's baseline for B's pending scan when A returns ${outcome}`, async () => {
+			const result = Promise.withResolvers<unknown>();
+			scan.mockReturnValueOnce(result.promise);
+			publishWifi({ "0": radio(3), "1": { ...radio(9), ifname: "wlan1" } });
+			beginOperation(OTHER_KEY);
+			const view = render(WifiSelectorDialog, {
+				props: { open: true, deviceId: "0" },
+			});
+			await settle();
+			await fireEvent.click(screen.getByTestId("wifi-scan-button"));
+			await settle();
+			expect(manualSpinnerShown()).toBe(true);
+			const completeA = () => {
+				if (outcome === "rejection") result.reject(new Error("scan refused"));
+				else
+					result.resolve({
+						success: outcome === "applied",
+						error: "scan_failed",
+					});
+			};
+			try {
+				await view.rerender({ open: true, deviceId: "1" });
+				await settle();
+				expect(getOperationPhase(OTHER_KEY)).toBe("pending");
+				expect(getOperationPhase(MANUAL_KEY)).toBe("pending");
+				expect(manualSpinnerShown()).toBe(false);
+				expect(scan).toHaveBeenCalledTimes(1);
+				// An explicit B tap joins its existing run with B's current baseline.
+				await fireEvent.click(screen.getByTestId("wifi-scan-button"));
+				await settle();
+				expect(manualSpinnerShown()).toBe(true);
+				expect(getOperationPhase(OTHER_KEY)).toBe("pending");
+				completeA();
+				await settle();
+				publishWifi({ "0": radio(100), "1": { ...radio(9), ifname: "wlan1" } });
+				await settle();
+				expect(getOperationPhase(OTHER_KEY)).toBe("pending");
+				expect(getOperationPhase(MANUAL_KEY)).toBe(
+					outcome === "applied" ? "pending" : "failed",
+				);
+				publishWifi({
+					...getWifiFeed(),
+					"1": { ...radio(10), ifname: "wlan1" },
+				});
+				await settle();
+				expect(getOperationPhase(OTHER_KEY)).toBe("confirmed");
+				expect(manualSpinnerShown()).toBe(false);
+				expect(scan).toHaveBeenCalledTimes(1);
+			} finally {
+				completeA();
+				await settle();
+			}
+		});
+	}
+
+	it("confirms an explicit B scan only after B advances from its own dispatch baseline", async () => {
+		const a = Promise.withResolvers<unknown>();
+		scan.mockReturnValueOnce(a.promise);
+		publishWifi({ "0": radio(3), "1": { ...radio(9), ifname: "wlan1" } });
+		const view = render(WifiSelectorDialog, {
+			props: { open: true, deviceId: "0" },
+		});
+		await settle();
+		await view.rerender({ open: true, deviceId: "1" });
+		await settle();
+		try {
+			await fireEvent.click(screen.getByTestId("wifi-scan-button"));
+			await settle();
+			expect(scan).toHaveBeenCalledTimes(2);
+			expect(scan).toHaveBeenLastCalledWith({ device: "1" });
+			expect(getOperationPhase(OTHER_KEY)).toBe("pending");
+			publishWifi({ "0": radio(100), "1": { ...radio(9), ifname: "wlan1" } });
+			await settle();
+			expect(getOperationPhase(OTHER_KEY)).toBe("pending");
+			publishWifi({ ...getWifiFeed(), "1": { ...radio(10), ifname: "wlan1" } });
+			await settle();
+			expect(getOperationPhase(OTHER_KEY)).toBe("confirmed");
+			expect(getOperationPhase(MANUAL_KEY)).toBe("pending");
+		} finally {
+			a.resolve({ success: true });
+			await settle();
+		}
+	});
+
 	it("confirms a manual scan ONLY when its own adapter's generation advances", async () => {
 		// Given: an open dialog whose first (background) scan has settled, and an
 		// operator-initiated scan in flight.

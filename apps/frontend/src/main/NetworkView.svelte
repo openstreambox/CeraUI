@@ -20,6 +20,7 @@ import {
 	getUplinks,
 	getWifi,
 } from '$lib/rpc/subscriptions.svelte';
+import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
 import { getHudState } from '$lib/stores/hud.svelte';
 import { getLinkNames } from '$lib/stores/link-names.svelte';
 import type { LinkSignal } from '$lib/types/hud';
@@ -31,6 +32,7 @@ import CollisionBands from './network/CollisionBands.svelte';
 import { activeSimLock, isBlockingSimLock } from './network/cellular-row';
 import EthernetSection from './network/EthernetSection.svelte';
 import HotspotSection from './network/HotspotSection.svelte';
+import { chooseHotspotRadio } from './network/hotspot-radio-target';
 import SharingSection from './network/SharingSection.svelte';
 import { isWiredSectionEntry, modemClaimedIfnames } from './network/section-assignment';
 import UnclaimedAdaptersBand from './network/UnclaimedAdaptersBand.svelte';
@@ -74,17 +76,15 @@ const isLoading = $derived(
 );
 
 // WiFi interfaces split so hotspot + station can be shown SIMULTANEOUSLY
-// (never one-or-the-other): a hotspot-mode interface carries a `hotspot` field.
+// (never one-or-the-other). Only a LIVE AP counts here: a radio that is off still
+// carries its saved `hotspot` setup, which is not a hotspot that is on.
 const wifiEntries = $derived(Object.entries(wifi ?? {}) as [string, WifiInterface][]);
-const hotspotInterfaces = $derived(wifiEntries.filter(([, iface]) => hotspotIsActive(iface)));
+const hotspotInterfaces = $derived(wifiEntries.filter(([id, iface]) => hotspotIsActive(iface, getWifiAdapterModeEntry(id))));
 
-// Hotspot target for the configurator dialog: prefer an already-active hotspot
-// interface, else the first hotspot-capable WiFi radio, else any WiFi radio.
-const hotspotTarget = $derived(
-	hotspotInterfaces[0] ??
-		wifiEntries.find(([, iface]) => iface.supports_hotspot) ??
-		wifiEntries[0],
-);
+// Preserve an explicit radio selection across roster changes; otherwise prefer
+// an active hotspot, then an idle AP-capable radio.
+let selectedHotspotRadio = $state<string>();
+const hotspotTarget = $derived(chooseHotspotRadio(wifiEntries, selectedHotspotRadio));
 
 let hotspotDialogOpen = $state(false);
 let wifiCountryOpen = $state(false);
@@ -261,7 +261,13 @@ function openModemConfig(id: string) {
 			{staleInterfaces}
 			onConfigure={configureNetif}
 		/>
-		<HotspotSection {hotspotInterfaces} {hotspotTarget} onSetup={() => (hotspotDialogOpen = true)} />
+		<HotspotSection
+			{hotspotInterfaces}
+			{hotspotTarget}
+			radios={wifiEntries}
+			onSelect={(id) => { selectedHotspotRadio = id; }}
+			onSetup={() => (hotspotDialogOpen = true)}
+		/>
 		<BluetoothSection status={bluetooth} {audioBackend} />
 	{/if}
 </div>
