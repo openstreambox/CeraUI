@@ -2934,7 +2934,7 @@
 	"network.radio.usbNone": "لا شيء",
 	"network.radio.neighbour": "المودم {id}",
 	"network.radio.anotherModem": "مودم آخر",
-	"network.radio.sources": "المصادر والسجل",
+	"network.radio.sources": "التفاصيل",
 	"network.radio.readings": "كل القراءات",
 	"network.radio.history": "السجل",
 	"network.radio.historyEmpty": "لا يوجد سجل بعد.",

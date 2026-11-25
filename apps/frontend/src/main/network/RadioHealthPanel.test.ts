@@ -211,7 +211,7 @@ describe("compact readings", () => {
 	});
 });
 
-test("sources and history start collapsed and keep every raw reading", () => {
+test("the details disclosure starts collapsed and keep every raw reading", () => {
 	const { getByTestId } = show(
 		radio({
 			...registered,
@@ -248,4 +248,10 @@ test("an empty generic slot is dropped once a layer reports that metric", () => 
 	);
 	expect(names).toContain("LTE RSRP");
 	expect(names).not.toContain("RSRP");
+});
+
+test("the raw readings disclosure is labelled Details, not sources", () => {
+	const { getByTestId } = show(radio(registered));
+	const summary = getByTestId("radio-health-sources").querySelector("summary");
+	expect(summary?.textContent?.trim()).toBe("Details");
 });

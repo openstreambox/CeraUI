@@ -2877,7 +2877,7 @@
 	"network.radio.usbNone": "无",
 	"network.radio.neighbour": "调制解调器 {id}",
 	"network.radio.anotherModem": "另一个调制解调器",
-	"network.radio.sources": "来源和历史",
+	"network.radio.sources": "详细信息",
 	"network.radio.readings": "全部读数",
 	"network.radio.history": "历史",
 	"network.radio.historyEmpty": "暂无历史。",

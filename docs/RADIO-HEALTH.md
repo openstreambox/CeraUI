@@ -54,7 +54,7 @@ signal (RSRP in dBm with bars and a word), other modems sending and USB events
 follow as label/value rows. The signal word is a rough guide (-90 dBm and above
 Strong, down to -105 dBm Fair, below that Weak) and never a finding. Every raw
 reading with its source and time, and the timeline, sit behind a collapsed
-**Sources and history**.
+**Details**.
 
 The panel uses words and symbols alongside calm suggested actions. It contains
 no modem action controls. Restart is a suggestion with its expected interruption,
@@ -85,7 +85,7 @@ el siguiente paso cuando lo hay. Un registro reciente sin hallazgos dice **OK**;
 sin registro dice **Sin comprobar**. Después vienen el registro, el tipo de red y
 la banda, la señal (RSRP en dBm con barras y una palabra), los otros módems que
 transmiten y los eventos USB. Todas las mediciones con su fuente y hora, y el
-historial, quedan plegadas en **Fuentes e historial**.
+historial, quedan plegadas en **Detalles**.
 
 Las acciones son sugerencias, sin botones que actúen sobre el módem. Las pruebas
 en el equipo real aún **NO SE HAN EJECUTADO**.
