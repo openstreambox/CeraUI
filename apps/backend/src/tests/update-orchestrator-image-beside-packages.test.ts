@@ -558,6 +558,51 @@ describe("runtime: offered packages no longer hide a system image", () => {
 		expect(getOsUpdateSummary().candidate).toBeNull();
 	});
 
+	test("an idle tick stalled in its uplink read stands down for Check now", async () => {
+		// Given an idle device with the image check due, and a tick that read the
+		// stable channel and then stalls in the uplink read of its image check.
+		let channel: "stable" | "beta" = "stable";
+		const uplinkStall = Promise.withResolvers<boolean>();
+		const settingsHold = Promise.withResolvers<void>();
+		let uplinkReads = 0;
+		let holdSettings = false;
+		let settingsHeld = false;
+		const channels: string[] = [];
+		setup(async () => noImage, {
+			getPackageInstallWireState: () => ({ kind: "idle" }) as UpdateState,
+			loadSettings: async () => {
+				if (holdSettings) {
+					holdSettings = false;
+					settingsHeld = true;
+					await settingsHold.promise;
+				}
+				return { ...(await settings(false)()), channel };
+			},
+			onlyMeteredCandidateExists: () =>
+				++uplinkReads === 1 ? uplinkStall.promise : Promise.resolve(false),
+			checkOsManifest: async (requested) => {
+				channels.push(requested ?? "");
+				return requested === "beta" ? noImage : imageFound;
+			},
+		});
+		setOrchestratorStateForTest(initialOrchestratorState(0));
+		const tick = runOrchestratorTick();
+		while (uplinkReads === 0) await Bun.sleep(1);
+		// When the channel changes, and Check now (no package offers) is reading
+		// its settings as the stalled tick resumes.
+		channel = "beta";
+		holdSettings = true;
+		const check = checkUpdatesNow();
+		while (!settingsHeld) await Bun.sleep(1);
+		uplinkStall.resolve(false);
+		await tick;
+		settingsHold.resolve();
+		expect(await check).toEqual({ started: true });
+		// Then the image check ran once, on the new channel.
+		expect(channels).toEqual(["beta"]);
+		expect(getOsUpdateSummary().candidate).toBeNull();
+	});
+
 	test("a failed package check does not hold back the image check", async () => {
 		// Given an idle device whose package check fails.
 		const h = setup(imageFound, {

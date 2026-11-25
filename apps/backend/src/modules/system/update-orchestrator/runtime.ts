@@ -3144,17 +3144,25 @@ async function runOsCheckAfterCellularGate(
 	// phase) supersedes it.
 	const attempt = ++osCheckGeneration;
 	const packageGeneration = packageCheckGeneration;
+	const superseded = () =>
+		attempt !== osCheckGeneration ||
+		packageGeneration !== packageCheckGeneration;
 	// Starting a package install owns the device until its unit is recorded.
 	const packagesMovedOn = () =>
 		besidePackageOffer &&
 		(getOrchestratorState().phase !== startPhase ||
 			packageInstallStarting ||
-			attempt !== osCheckGeneration ||
-			packageGeneration !== packageCheckGeneration);
+			superseded());
 	if (packagesMovedOn()) return attempt;
 	const onlyMetered = await deps.onlyMeteredCandidateExists();
 	if (osSettlementPersistence.pending) return attempt;
-	if (getOrchestratorState().phase !== startPhase || packagesMovedOn())
+	// From any phase: a check started during the uplink read (Check now) has
+	// fresher settings, so this one stands down before it starts.
+	if (
+		getOrchestratorState().phase !== startPhase ||
+		superseded() ||
+		packagesMovedOn()
+	)
 		return attempt;
 	const gate = decideCellularGate({
 		onlyMeteredCandidateExists: onlyMetered,

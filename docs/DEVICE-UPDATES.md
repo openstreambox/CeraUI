@@ -1377,7 +1377,7 @@ On a capable image, package discovery never offers a package the image ships
 as its own reviewed build. The names come from the image's
 `/etc/apt/preferences.d/ceralive-local-override` (one `Package`/`Pin`/`Pin-Priority`
 stanza per local override, `Pin: release a=now` or `Pin: version <v>` (a version
-`dpkg --validate-version` accepts) with a
+`dpkg --validate-version --` accepts) with a
 priority above the origin pin's 990 and within APT's 32767). An image without that file, or with one that does not
 parse, falls back to `ceralive-device`, `libmm-glib0` and `modemmanager`.
 Withheld rows still count for the CeraLive update notice: its verdict stays

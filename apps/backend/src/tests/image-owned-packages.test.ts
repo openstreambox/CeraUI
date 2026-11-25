@@ -181,7 +181,8 @@ describe("the image's local-override pin", () => {
 	});
 });
 
-// `dpkg --validate-version` on the workstation (dpkg 1.23.7), 25 Nov 2026.
+// `dpkg --validate-version -- <version>` on the workstation (dpkg 1.23.7),
+// 25 Nov 2026; the `--` matters, since a leading minus is otherwise an option.
 const dpkgVerdicts: ReadonlyArray<readonly [string, boolean]> = [
 	["1:2.3:4-1", true],
 	["2.3--1", true],
@@ -205,11 +206,11 @@ const dpkgVerdicts: ReadonlyArray<readonly [string, boolean]> = [
 	["1.0-1:2", false],
 	["+1:2", true],
 	["+0:1", true],
-	["-0:1", false],
+	["-0:1", true],
 	["-1:2", false],
 	["+:1", false],
 	["-:1", false],
-	["-00:1", false],
+	["-00:1", true],
 	["++1:2", false],
 	["1 :2", false],
 	["0x1:2", false],
@@ -221,6 +222,15 @@ const dpkgVerdicts: ReadonlyArray<readonly [string, boolean]> = [
 	["1:-2", false],
 	[" +1:2 ", true],
 	["1.0\t", true],
+	[" 1.0", true],
+	["\u00a01.0", false],
+	["1.0\u00a0", false],
+	["\v1.0", false],
+	["\r1.0", false],
+	["\f1.0", false],
+	["-+0:1", false],
+	["+-0:1", false],
+	[" -0:1", true],
 ];
 
 describe("pin versions follow dpkg", () => {
