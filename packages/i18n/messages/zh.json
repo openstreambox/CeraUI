@@ -1997,7 +1997,7 @@
 	"network.sharing.band.sharingOffTitle": "共享已关闭",
 	"network.sharing.band.sharingOffBody": "要共享本设备的网络，请开启热点，或将某个有线端口设为共享局域网。",
 	"network.sharing.band.noHealthyUplinkTitle": "没有可用的上行链路",
-	"network.sharing.band.noHealthyUplinkBody": "所有上行链路都已中断，所连设备无法上网。推流本身不受影响。",
+	"network.sharing.band.noHealthyUplinkBody": "没有可用的上行链路。本设备会阻止所连设备发起新的 IPv4 上网连接，本设备自身的推流路由不变。",
 	"network.sharing.band.steeringUnavailableTitle": "链路分流不可用",
 	"network.sharing.band.steeringUnavailableBody": "CeraUI 无法应用最新的设备上行链路分配方案。之前的设置可能仍然生效；如果没有之前的设置，设备将使用默认路由。",
 	"network.sharing.band.uplinksUnreportedTitle": "上行链路状态未上报",

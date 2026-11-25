@@ -2220,7 +2220,7 @@
 	"network.sharing.band.sharingOffTitle": "المشاركة متوقفة",
 	"network.sharing.band.sharingOffBody": "شغّل نقطة الاتصال، أو اضبط منفذًا سلكيًا على شبكة محلية مشتركة، لمشاركة إنترنت هذا الجهاز.",
 	"network.sharing.band.noHealthyUplinkTitle": "لا توجد وصلة صاعدة سليمة",
-	"network.sharing.band.noHealthyUplinkBody": "جميع الوصلات الصاعدة متوقفة، لذا لا منفذ للأجهزة المتصلة إلى الخارج. أما البث نفسه فلا يتأثر.",
+	"network.sharing.band.noHealthyUplinkBody": "لا تتوفر وصلة صاعدة. يحظر الجهاز اتصالات الإنترنت الجديدة عبر IPv4 من الأجهزة المتصلة، وتبقى مسارات البث الخاصة به دون تغيير.",
 	"network.sharing.band.steeringUnavailableTitle": "توزيع الأجهزة على الوصلات غير متاح",
 	"network.sharing.band.steeringUnavailableBody": "تعذّر على CeraUI تطبيق أحدث توزيع للأجهزة على الوصلات الصاعدة. قد يبقى الإعداد السابق نشطًا؛ وإن لم يكن هناك إعداد سابق، تستخدم الأجهزة المسار الافتراضي.",
 	"network.sharing.band.uplinksUnreportedTitle": "لم يُبلَّغ عن حالة الوصلات الصاعدة",
