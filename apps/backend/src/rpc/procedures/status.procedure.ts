@@ -40,6 +40,7 @@ import {
 	getResolvedAsrcReason,
 } from "../../modules/streaming/auto-audio.ts";
 import { getLastCapabilities } from "../../modules/streaming/capabilities.ts";
+import { isConnectionRestarting } from "../../modules/streaming/connection-restarting.ts";
 import { getDevicesMessage } from "../../modules/streaming/devices.ts";
 import { getEngineBitrateStatus } from "../../modules/streaming/engine-bitrate-status.ts";
 import { buildBondMapping } from "../../modules/streaming/link-mapping-report.ts";
@@ -116,6 +117,7 @@ export const getStatusProcedure = authedProcedure
 			engine_bitrate: getEngineBitrateStatus(),
 			preview_encoder_realized: getPreviewEncoderRealizedStatus(),
 			cellular_initializing: !getCellularStack().ready,
+			connection_restarting: isConnectionRestarting(),
 			unclaimed_adapters: getUnclaimedAdapters(),
 		};
 	});
@@ -170,6 +172,7 @@ export function buildInitialStatus() {
 			engine_bitrate: getEngineBitrateStatus(),
 			preview_encoder_realized: getPreviewEncoderRealizedStatus(),
 			cellular_initializing: !getCellularStack().ready,
+			connection_restarting: isConnectionRestarting(),
 			unclaimed_adapters: getUnclaimedAdapters(),
 		},
 		netif: netIfBuildMsg(),

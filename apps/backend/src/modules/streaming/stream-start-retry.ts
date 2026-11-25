@@ -225,7 +225,7 @@ function diagnostic(
 export async function runStartWithRetry(
 	deps: StartRetryRunDeps,
 ): Promise<StartRetryRunResult> {
-	const policy = deps.retryPolicy ?? DEFAULT_START_RETRY_POLICY;
+	let policy = deps.retryPolicy ?? DEFAULT_START_RETRY_POLICY;
 	const now = deps.now ?? Date.now;
 	const startedAt = now();
 	let attempts = 0;
@@ -303,12 +303,23 @@ export async function runStartWithRetry(
 					? { ...classified, class: "engine_restarting" }
 					: classified;
 			const elapsedMs = Math.max(0, now() - startedAt);
-			const delayMs = nextBackoffDelayMs(attempts - 1, policy);
-			const remainingMs = policy.totalBudgetMs - elapsedMs;
+			const retryPolicy =
+				failure.code === "relay_session_busy"
+					? {
+							...policy,
+							maxAttempts: Math.min(5, policy.maxAttempts),
+							totalBudgetMs: Math.min(45000, policy.totalBudgetMs),
+							baseDelayMs: 1000,
+							maxDelayMs: 8000,
+						}
+					: policy;
+			policy = retryPolicy;
+			const delayMs = nextBackoffDelayMs(attempts - 1, retryPolicy);
+			const remainingMs = retryPolicy.totalBudgetMs - elapsedMs;
 
 			if (
 				liveness === "idle" &&
-				shouldRetryStart(failure, { attempts, elapsedMs }, policy) &&
+				shouldRetryStart(failure, { attempts, elapsedMs }, retryPolicy) &&
 				delayMs < remainingMs
 			) {
 				deps.reportRetry?.(
