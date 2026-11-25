@@ -627,6 +627,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	],
 	["engine reconnect: heal broadcast failed, will retry: ", ""],
 	["engine reconnect: rechecking engine in ", "ms (attempt ", ")"],
+	["engine reconnect: reconciliation for a waiting carrying line failed: ", ""],
 	["error: attempted to send persistent unicast notification"],
 	["ethernet role reconcile: ", " could not be restored to shared-lan (", ")"],
 	["ethernet role reconcile: ", " is not present; leaving shared-lan pending"],
