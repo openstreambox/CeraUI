@@ -150,7 +150,14 @@ export type OrchestratorEvent =
 	| { readonly type: "DOWNLOAD_RESUME_UNIT_ABSENT"; readonly now: number }
 	// Image apt source: a queued plan nobody asked for, or an install refused
 	// before APT launched. Package-only: nothing ran, so nothing failed.
-	| { readonly type: "PACKAGE_PLAN_RELEASED"; readonly now: number }
+	// Bound to the phase entry it was issued for: a stale release is a no-op.
+	| {
+			readonly type: "PACKAGE_PLAN_RELEASED";
+			readonly now: number;
+			readonly from: "awaiting-idle" | "downloading";
+			readonly enteredAt: number;
+			readonly packageAttempt: OrchestratorState["packageAttempt"];
+	  }
 	| { readonly type: "COMMIT_PHASE_ENTERED"; readonly now: number }
 	| {
 			readonly type: "COMMIT_PROGRESS";

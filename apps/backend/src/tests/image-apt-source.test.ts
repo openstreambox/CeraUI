@@ -32,6 +32,8 @@ import { setImageOwnedPackagesReaderForTest } from "../modules/system/image-owne
 import {
 	createSoftwareUpdateProcessMonitor,
 	getUpdateState,
+	packageFailedBeforeLaunch,
+	periodicCheckForSoftwareUpdates,
 	resetAptReachabilityProbeForTest,
 	resetSoftwareUpdateCheckRunner,
 	resetSoftwareUpdateState,
@@ -39,8 +41,10 @@ import {
 	runUpdateDiscoveryAndReport,
 	setAptCommandRunnerForTest,
 	setAptReachabilityProbeForTest,
+	setPeriodicUplinkGateForTest,
 	setSoftwareUpdateCheckRunner,
 	startSoftwareUpdate,
+	triggerManualUpdateCheck,
 } from "../modules/system/software-updates.ts";
 import {
 	buildCeraliveSources,
@@ -747,6 +751,8 @@ async function capableBox(options: {
 	readonly refresh?: string;
 	readonly refreshStderr?: string;
 	readonly clock?: boolean;
+	// The simulation plans nothing.
+	readonly nothing?: boolean;
 }) {
 	const dir = await tempDir();
 	const capability = path.join(dir, "capabilities.json");
@@ -798,6 +804,13 @@ async function capableBox(options: {
 			return { exitCode: 0, stdout: "", stderr: "" };
 		if (argv.includes("-s") && argv.includes("install"))
 			return { exitCode: 100, stdout: "", stderr: "pinned recheck stops here" };
+		if (argv.includes("-s") && options.nothing)
+			return {
+				exitCode: 0,
+				stdout:
+					"Calculating upgrade...\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n",
+				stderr: "",
+			};
 		if (argv.includes("-s"))
 			return {
 				exitCode: 0,
@@ -1189,5 +1202,166 @@ W: Some index files failed to download. They have been ignored, or old ones used
 		} finally {
 			box.cleanup();
 		}
+	});
+});
+
+let periodicDay = 0;
+const silently = async <T>(work: () => Promise<T>): Promise<T> => {
+	const spies = [
+		spyOn(logger, "info").mockImplementation(() => logger),
+		spyOn(logger, "warn").mockImplementation(() => logger),
+	];
+	try {
+		return await work();
+	} finally {
+		for (const spy of spies) spy.mockRestore();
+	}
+};
+describe("the refresh's own verdict stands", () => {
+	const UNREACHABLE = {
+		ipv4: "no_route",
+		ipv6: "no_route",
+		used: "none",
+		verdict: "unreachable",
+		detail: [],
+	} as const;
+	const CAPTIVE_STDERR =
+		"E: Failed to fetch https://updates.example.org/  does the network require authentication?\n";
+	const settled = async () => {
+		for (let i = 0; i < 400; i++) {
+			await Bun.sleep(5);
+			if (getUpdateState().kind !== "checking") return;
+		}
+		throw new Error("check did not settle");
+	};
+	const quiet = () => [
+		spyOn(logger, "info").mockImplementation(() => logger),
+		spyOn(logger, "warn").mockImplementation(() => logger),
+		spyOn(logger, "error").mockImplementation(() => logger),
+	];
+
+	it.each([
+		["unreachable", "repos_unreachable"],
+		["captive", "captive_portal"],
+	] as const)(
+		"a manual check keeps %s, not refresh_failed",
+		async (kind, reason) => {
+			useImageSource();
+			const box = await capableBox(
+				kind === "captive"
+					? { refreshStderr: CAPTIVE_STDERR, nothing: true }
+					: { nothing: true },
+			);
+			// No offer left from earlier tests: it would hide the check's result.
+			await silently(() => runUpdateDiscoveryAndReport(REFRESH));
+			box.commands.length = 0;
+			if (kind === "unreachable")
+				setAptReachabilityProbeForTest(async () => UNREACHABLE);
+			const spies = quiet();
+			try {
+				expect(triggerManualUpdateCheck()).toBe(true);
+				await settled();
+				expect(getUpdateState()).toMatchObject({
+					kind: "check_failed",
+					reason,
+				});
+				expect(box.commands.some((argv) => argv.includes("-s"))).toBe(false);
+			} finally {
+				for (const spy of spies) spy.mockRestore();
+				box.cleanup();
+			}
+		},
+	);
+
+	it.each([
+		["unreachable", "repos_unreachable"],
+		["captive", "captive_portal"],
+	] as const)(
+		"a periodic check keeps %s, not refresh_failed",
+		async (kind, reason) => {
+			useImageSource();
+			const box = await capableBox(
+				kind === "captive"
+					? { refreshStderr: CAPTIVE_STDERR, nothing: true }
+					: { nothing: true },
+			);
+			// No offer left from earlier tests: it would hide the check's result.
+			await silently(() => runUpdateDiscoveryAndReport(REFRESH));
+			box.commands.length = 0;
+			if (kind === "unreachable")
+				setAptReachabilityProbeForTest(async () => UNREACHABLE);
+			// The loop schedules its next run: record that timer and clear it.
+			const original = globalThis.setTimeout;
+			const timers: ReturnType<typeof setTimeout>[] = [];
+			const schedule = spyOn(globalThis, "setTimeout").mockImplementation(((
+				handler: () => void,
+				delay?: number,
+			) => {
+				const timer = original(handler, delay);
+				timers.push(timer);
+				return timer;
+			}) as typeof setTimeout);
+			setPeriodicUplinkGateForTest(async () => true);
+			// Days on, so the loop is due whatever an earlier run scheduled.
+			const [seconds, nanoseconds] = process.hrtime();
+			const clock = spyOn(process, "hrtime").mockReturnValue([
+				seconds + 86_400 * ++periodicDay,
+				nanoseconds,
+			]);
+			const spies = quiet();
+			try {
+				periodicCheckForSoftwareUpdates();
+				for (let i = 0; i < 400 && box.commands.length === 0; i++)
+					await Bun.sleep(5);
+				await settled();
+				// The loop's discovery ran after the refresh failed.
+				await Bun.sleep(20);
+				expect(getUpdateState()).toMatchObject({
+					kind: "check_failed",
+					reason,
+				});
+				expect(box.commands.some((argv) => argv.includes("-s"))).toBe(false);
+			} finally {
+				for (const timer of timers) clearTimeout(timer);
+				schedule.mockRestore();
+				clock.mockRestore();
+				setPeriodicUplinkGateForTest(null);
+				for (const spy of spies) spy.mockRestore();
+				box.cleanup();
+			}
+		},
+	);
+});
+
+describe("an install that ends before apt's unit launches", () => {
+	it("says so in one typed answer, whatever the reason text", async () => {
+		useImageSource();
+		const box = await capableBox({});
+		setAptReachabilityProbeForTest(async () => ({
+			ipv4: "no_route",
+			ipv6: "no_route",
+			used: "none",
+			verdict: "unreachable",
+			detail: [],
+		}));
+		const spies = [
+			spyOn(logger, "info").mockImplementation(() => logger),
+			spyOn(logger, "warn").mockImplementation(() => logger),
+		];
+		try {
+			expect(startSoftwareUpdate()).toEqual({ started: true });
+			for (let i = 0; i < 200 && getUpdateState().kind !== "failed"; i++)
+				await Bun.sleep(5);
+			expect(getUpdateState()).toMatchObject({
+				kind: "failed",
+				reason:
+					"Failed to fetch the updated package list; aborting the update.",
+			});
+			expect(packageFailedBeforeLaunch()).toBe(true);
+		} finally {
+			for (const spy of spies) spy.mockRestore();
+			box.cleanup();
+		}
+		expect(packageFailedBeforeLaunch()).toBe(false);
 	});
 });

@@ -18,13 +18,18 @@ import {
 	setImageAptSourceReaderForTest,
 	setImageClockGateFlagForTest,
 } from "../modules/system/image-apt-source.ts";
-import { buildDetachedAptAllCommand } from "../modules/system/software-update-service.ts";
+import {
+	buildDetachedAptAllCommand,
+	buildDetachedAptUpgradeCommand,
+	InvalidDetachedAptUpgradeArgumentsError,
+} from "../modules/system/software-update-service.ts";
 import {
 	expectedAptAllScript,
 	isExpectedAptAllInstallArgv,
 	validateDetachedAptServiceIdentity,
 } from "../modules/system/software-update-service-contract.ts";
 import { buildAptRefreshArgs } from "../modules/system/software-updates.ts";
+import { reduceOrchestrator } from "../modules/system/update-orchestrator/reducer.ts";
 import {
 	checkUpdatesNow,
 	getOrchestratorState,
@@ -263,11 +268,16 @@ describe("the record's URI goes through the URL parser too", () => {
 });
 
 // The orchestrator with an offer of one emergency fix.
-function orchestrator(wire: () => UpdateState) {
+function orchestrator(
+	wire: () => UpdateState,
+	beforeLaunch = false,
+	quarantine = testQuarantine(),
+) {
 	const counts = { installs: 0, osChecks: 0 };
 	setOrchestratorRuntimeDepsForTest(
 		fakeDeps({
-			quarantine: testQuarantine(),
+			quarantine,
+			packageFailedBeforeLaunch: () => beforeLaunch,
 			loadCapabilities: async () => ({
 				mode: "capable",
 				features: ["apt-all-packages", "rauc-verity-streaming"],
@@ -306,13 +316,43 @@ const openClock = () => {
 	setImageClockGateFlagForTest(flag);
 };
 
-describe("an install refused before APT launched", () => {
-	it.each(["dpkg_interrupted", "refresh_failed", "check_unavailable"])(
+describe("an install that ended before apt's unit launched", () => {
+	it.each<[string, UpdateState]>([
+		["dpkg_interrupted", { kind: "failed", reason: "dpkg_interrupted" }],
+		["refresh_failed", { kind: "failed", reason: "refresh_failed" }],
+		["check_unavailable", { kind: "failed", reason: "check_unavailable" }],
+		[
+			"an unreachable repository",
+			{ kind: "failed", reason: "The software repositories are unreachable." },
+		],
+		[
+			"a captive portal",
+			{
+				kind: "failed",
+				reason: "A captive portal prevented the software update.",
+			},
+		],
+		[
+			"a failed refresh",
+			{
+				kind: "failed",
+				reason:
+					"Failed to fetch the updated package list; aborting the update.",
+			},
+		],
+		[
+			"the space preflight",
+			{
+				kind: "update_preflight_failed",
+				preflight_reason: "insufficient_space",
+			},
+		],
+	])(
 		"%s settles as a package result and keeps the image check eligible",
-		async (reason) => {
+		async (_label, wire) => {
 			withImageSource();
 			openClock();
-			const counts = orchestrator(() => ({ kind: "failed", reason }));
+			const counts = orchestrator(() => wire, true);
 			setOrchestratorStateForTest({
 				...initialOrchestratorState(0),
 				phase: "downloading",
@@ -326,13 +366,16 @@ describe("an install refused before APT launched", () => {
 		},
 	);
 
-	it("an APT failure after launch still fails the update", async () => {
+	it("an apt failure after launch still fails the update", async () => {
 		withImageSource();
 		openClock();
-		orchestrator(() => ({
-			kind: "failed",
-			reason: `E: Failed to fetch https://${HOST}/pool/main/m/modemmanager.deb  403  Forbidden`,
-		}));
+		orchestrator(
+			() => ({
+				kind: "failed",
+				reason: "discovery_failed",
+			}),
+			false,
+		);
 		setOrchestratorStateForTest({
 			...initialOrchestratorState(0),
 			phase: "downloading",
@@ -343,13 +386,155 @@ describe("an install refused before APT launched", () => {
 
 	it("without the record, the same refusal fails the update as before", async () => {
 		withoutImageSource();
-		orchestrator(() => ({ kind: "failed", reason: "discovery_failed" }));
+		orchestrator(() => ({ kind: "failed", reason: "discovery_failed" }), true);
 		setOrchestratorStateForTest({
 			...initialOrchestratorState(0),
 			phase: "downloading",
 		});
 		await runOrchestratorTick();
 		expect(getOrchestratorState().phase).toBe("failed");
+	});
+});
+
+describe("a release only ever releases the plan it was issued for", () => {
+	const at = (phase: "awaiting-idle" | "downloading", enteredAt: number) => ({
+		...initialOrchestratorState(0),
+		phase,
+		enteredAt,
+	});
+	const release = (
+		from: "awaiting-idle" | "downloading",
+		enteredAt: number,
+	) => ({
+		type: "PACKAGE_PLAN_RELEASED" as const,
+		now: 5,
+		from,
+		enteredAt,
+		packageAttempt: undefined,
+	});
+
+	it("is a no-op once the phase moved on", () => {
+		const downloading = at("downloading", 3);
+		expect(reduceOrchestrator(downloading, release("awaiting-idle", 3))).toBe(
+			downloading,
+		);
+		const later = at("awaiting-idle", 4);
+		expect(reduceOrchestrator(later, release("awaiting-idle", 3))).toBe(later);
+	});
+
+	it("releases the current entry", () => {
+		expect(
+			reduceOrchestrator(at("awaiting-idle", 3), release("awaiting-idle", 3))
+				.phase,
+		).toBe("idle");
+		expect(
+			reduceOrchestrator(at("downloading", 3), release("downloading", 3)).phase,
+		).toBe("idle");
+	});
+
+	it("a manual install during the queued plan's cleanup never gets released", async () => {
+		withImageSource();
+		openClock();
+		// The cleanup's write is held open while the user asks to install.
+		const gate = Promise.withResolvers<void>();
+		const quarantine = testQuarantine();
+		const clear = quarantine.clearPending.bind(quarantine);
+		let held = true;
+		quarantine.clearPending = async () => {
+			if (held) {
+				held = false;
+				await gate.promise;
+			}
+			return clear();
+		};
+		const counts = orchestrator(() => offer, false, quarantine);
+		const info = spyOn(logger, "info").mockImplementation(() => logger);
+		try {
+			setOrchestratorStateForTest({
+				...initialOrchestratorState(0),
+				phase: "awaiting-idle",
+			});
+			const tick = runOrchestratorTick();
+			await Bun.sleep(0);
+			const manual = installUpdatesNow({ scope: "packages" });
+			// Long enough for the request to reach its launch decision.
+			for (let i = 0; i < 20; i++) await Bun.sleep(1);
+			gate.resolve();
+			await tick;
+			const outcome = await manual;
+			// Either the click was held off while the plan went, or its install
+			// survived: never a live transaction released to idle.
+			if (outcome.started) {
+				expect(getOrchestratorState().phase).toBe("downloading");
+				expect(counts.installs).toBe(1);
+			} else {
+				expect(["busy", "not_available"]).toContain(outcome.reason);
+				expect(counts.installs).toBe(0);
+				expect(getOrchestratorState().phase).toBe("idle");
+			}
+		} finally {
+			info.mockRestore();
+		}
+	});
+});
+
+describe("launch needs the source pair on an image with its own source", () => {
+	it("refuses to build an install unit without it", () => {
+		withImageSource();
+		const bare = [
+			...CONFOLD,
+			"install",
+			"modemmanager=1.24.2-2~ceralive.3+osb3",
+		];
+		expect(() => buildDetachedAptAllCommand(bare, "any", OUTPUT)).toThrow(
+			InvalidDetachedAptUpgradeArgumentsError,
+		);
+		expect(() =>
+			buildDetachedAptUpgradeCommand(
+				[
+					"-y",
+					"-o",
+					"Dpkg::Options::=--force-confdef",
+					"-o",
+					"Dpkg::Options::=--force-confold",
+					"install",
+					"cerastream",
+				],
+				OUTPUT,
+			),
+		).toThrow(InvalidDetachedAptUpgradeArgumentsError);
+		// With it, the unit is built.
+		expect(() =>
+			buildDetachedAptAllCommand(
+				buildAptAllInstallArgs(PIN, "any"),
+				"any",
+				OUTPUT,
+			),
+		).not.toThrow();
+	});
+
+	it("without the record, builds as before", () => {
+		withoutImageSource();
+		expect(() =>
+			buildDetachedAptUpgradeCommand(
+				[
+					"-y",
+					"-o",
+					"Dpkg::Options::=--force-confdef",
+					"-o",
+					"Dpkg::Options::=--force-confold",
+					"install",
+					"cerastream",
+				],
+				OUTPUT,
+			),
+		).not.toThrow();
+		const bare = [
+			...CONFOLD,
+			"install",
+			"modemmanager=1.24.2-2~ceralive.3+osb3",
+		];
+		expect(() => buildDetachedAptAllCommand(bare, "any", OUTPUT)).not.toThrow();
 	});
 });
 

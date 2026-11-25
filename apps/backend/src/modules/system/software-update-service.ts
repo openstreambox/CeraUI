@@ -9,6 +9,10 @@
 */
 
 import { spawnWithTimeout } from "../../helpers/spawn-policy.ts";
+import {
+	imageAptSourceInUse,
+	isImageAptSourcePair,
+} from "./image-apt-source.ts";
 import { classifyPackageLayer } from "./package-layer.ts";
 import {
 	prepareSoftwareUpdateOutput,
@@ -81,7 +85,11 @@ export function buildDetachedAptUpgradeCommand(
 	aptArgs: readonly string[],
 	outputPaths: SoftwareUpdateOutputPaths,
 ): string[] {
-	if (!isExpectedAptUpgradeArgv(["/usr/bin/apt-get", ...aptArgs])) {
+	// The legacy roster upgrade never runs on an image with its own apt source.
+	if (
+		imageAptSourceInUse() ||
+		!isExpectedAptUpgradeArgv(["/usr/bin/apt-get", ...aptArgs])
+	) {
 		throw new InvalidDetachedAptUpgradeArgumentsError();
 	}
 	const installAt = aptArgs.indexOf("install");
@@ -132,6 +140,14 @@ export function buildDetachedAptAllCommand(
 		verdict === "any"
 			? []
 			: ["-o", `Acquire::ForceIPv${verdict === "force_ipv4" ? "4" : "6"}=true`];
+	// An image with its own apt source launches only with its source pair right
+	// before `install` (an earlier backend's unit without it is still adopted).
+	const at = installArgs.indexOf("install");
+	if (
+		imageAptSourceInUse() &&
+		!isImageAptSourcePair(installArgs.slice(at - 4, at))
+	)
+		throw new InvalidDetachedAptUpgradeArgumentsError();
 	const script = expectedAptAllScript(installArgs, family);
 	const trusted = softwareUpdateOutputPaths();
 	if (

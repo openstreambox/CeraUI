@@ -51,10 +51,10 @@ import {
 	aptUpdatesEnabled,
 	getLastInstallUnitVerdict,
 	getUpdateState,
-	IMAGE_SOURCE_PRELAUNCH_REFUSALS,
 	type InstallUnitVerdict,
 	imageSourceClockWaits,
 	isAptAllDiscovery,
+	packageFailedBeforeLaunch,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
 	type SoftwareUpdateError,
@@ -288,6 +288,8 @@ export interface OrchestratorRuntimeDeps {
 	readonly runPackageCheck: () => Promise<SoftwareUpdateError>;
 	readonly startPackageInstall: () => UpdateStartOutcome;
 	readonly getPackageInstallWireState: () => UpdateState;
+	/** The current install attempt ended before its apt unit launched. */
+	readonly packageFailedBeforeLaunch: () => boolean;
 	readonly stopPackageInstallUnit: () => Promise<void>;
 	readonly killAndRestartRaucForStream: () => Promise<void>;
 	readonly isCommitStageRunning: () => Promise<boolean>;
@@ -423,6 +425,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	runPackageCheck: runSoftwareUpdateCheck,
 	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
 	getPackageInstallWireState: getUpdateState,
+	packageFailedBeforeLaunch,
 	stopPackageInstallUnit: stopPackageInstallUnitForStream,
 	killAndRestartRaucForStream,
 	isCommitStageRunning: async () =>
@@ -1456,6 +1459,19 @@ async function maybeStartPackageInstall(opts: {
 	}
 }
 
+// The release for the phase entry and attempt holding now.
+function releaseEvent(
+	from: "awaiting-idle" | "downloading",
+): Extract<OrchestratorEvent, { type: "PACKAGE_PLAN_RELEASED" }> {
+	return {
+		type: "PACKAGE_PLAN_RELEASED",
+		now: deps.now(),
+		from,
+		enteredAt: state.enteredAt,
+		packageAttempt: state.packageAttempt,
+	};
+}
+
 async function pollPackageInstallProgress(): Promise<void> {
 	if (state.phase !== "downloading" && state.phase !== "committing") return;
 	const wire = deps.getPackageInstallWireState();
@@ -1487,19 +1503,22 @@ async function pollPackageInstallProgress(): Promise<void> {
 		return;
 	}
 	if (
-		wire.kind === "failed" &&
+		(wire.kind === "failed" || wire.kind === "update_preflight_failed") &&
 		state.phase === "downloading" &&
 		imageAptSourceInUse() &&
-		IMAGE_SOURCE_PRELAUNCH_REFUSALS.has(wire.reason)
+		deps.packageFailedBeforeLaunch()
 	) {
-		// Refused before APT launched: a package-only result, not the shared
-		// failed phase, so the image check stays eligible.
+		// Ended before apt's unit launched (any refusal or a failed download):
+		// a package-only result, not the shared failed phase, so the image
+		// check stays eligible.
+		const release = releaseEvent("downloading");
 		await deps.quarantine.clearPending();
-		dispatch({ type: "PACKAGE_PLAN_RELEASED", now });
+		dispatch(release);
+		const reason = wire.kind === "failed" ? wire.reason : wire.preflight_reason;
 		notifyUpdate({
 			kind: "refused",
-			id: `packages:${wire.reason}`,
-			reason: wire.reason,
+			id: `packages:${reason}`,
+			reason,
 		});
 		return;
 	}
@@ -2986,13 +3005,24 @@ export async function runOrchestratorTick(): Promise<void> {
 			dispatch({ type: "AWAIT_IDLE_FOR_INSTALL", now: deps.now() });
 		}
 	} else if (state.phase === "awaiting-idle") {
-		if (imageAptSourceInUse() && !manualPackageAdmission) {
-			// A plan queued automatically, or persisted across a restart.
+		if (
+			imageAptSourceInUse() &&
+			!manualPackageAdmission &&
+			!packageInstallStarting
+		) {
+			// A plan queued automatically, or persisted across a restart. The
+			// install latch keeps a manual install out until the plan is gone.
 			logger.info(
 				"Queued package install dropped: the image apt source installs only when asked",
 			);
-			await deps.quarantine.clearPending();
-			dispatch({ type: "PACKAGE_PLAN_RELEASED", now: deps.now() });
+			const release = releaseEvent("awaiting-idle");
+			packageInstallStarting = true;
+			try {
+				await deps.quarantine.clearPending();
+			} finally {
+				packageInstallStarting = false;
+			}
+			dispatch(release);
 		} else await maybeStartPackageInstall({ bypassIdle: false });
 	} else if (state.phase === "downloading" || state.phase === "committing") {
 		await readjudicateDeferredDownload();

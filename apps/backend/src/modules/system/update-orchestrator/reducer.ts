@@ -349,7 +349,7 @@ function reduceAwaitingIdle(
 				packageAttempt: event.packageAttempt,
 			});
 		case "PACKAGE_PLAN_RELEASED":
-			return releasePackagePlan(state, event.now);
+			return releasePackagePlan(state, event);
 		default:
 			return state;
 	}
@@ -359,13 +359,21 @@ function reduceAwaitingIdle(
 // decides what is offered, and the image check stays eligible.
 function releasePackagePlan(
 	state: OrchestratorState,
-	now: number,
+	event: Extract<OrchestratorEvent, { type: "PACKAGE_PLAN_RELEASED" }>,
 ): OrchestratorState {
-	return enter(state, now, {
+	// Only the plan it was issued for: never a transaction started meanwhile.
+	if (
+		state.phase !== event.from ||
+		state.enteredAt !== event.enteredAt ||
+		JSON.stringify(state.packageAttempt ?? null) !==
+			JSON.stringify(event.packageAttempt ?? null)
+	)
+		return state;
+	return enter(state, event.now, {
 		phase: "idle",
 		progress: null,
 		failureReason: null,
-		packageCheck: { ...state.packageCheck, nextAttemptAt: now },
+		packageCheck: { ...state.packageCheck, nextAttemptAt: event.now },
 	});
 }
 
@@ -402,7 +410,7 @@ function reduceDownloading(
 				packageCheck: { ...state.packageCheck, nextAttemptAt: event.now },
 			});
 		case "PACKAGE_PLAN_RELEASED":
-			return releasePackagePlan(state, event.now);
+			return releasePackagePlan(state, event);
 		default:
 			return state;
 	}

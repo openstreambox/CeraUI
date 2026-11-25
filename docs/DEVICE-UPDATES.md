@@ -541,7 +541,7 @@ gaps for overlap with the independent legacy launcher. Transition table from
 | `downloading` | `DOWNLOAD_FAILED` | `failed` |
 | `downloading` | `DOWNLOAD_ABORTED_FOR_STREAM` | `available` |
 | `downloading` | `DOWNLOAD_RESUME_UNIT_ABSENT` | `idle` with the package check due now (resume only, when a probe proved the install unit gone) |
-| `awaiting-idle` / `downloading` | `PACKAGE_PLAN_RELEASED` | `idle` with the package check due now (image apt source only: a queued plan without a request, or an install refused before apt launched) |
+| `awaiting-idle` / `downloading` | `PACKAGE_PLAN_RELEASED` | `idle` with the package check due now (image apt source only: a queued plan without a request, or an install that ended before apt launched; a no-op unless phase, `enteredAt` and attempt still match) |
 | `committing` | `COMMIT_PROGRESS` | `committing` |
 | `committing` | `COMMIT_SUCCEEDED` | `restarting-services` |
 | `committing` | `COMMIT_FAILED` | `quarantined` |
@@ -1405,7 +1405,10 @@ strictly. With a valid record:
   update state, the `updating.result` status frame, refusal diagnostics and
   logged apt output show the source by host only. The detached unit's output is
   redacted line by line as the backend reads it; apt itself still writes it to
-  the root-only `/run` output files.
+  the root-only `/run/ceralive/software-update.{stdout,stderr}` spool. That
+  spool outlasts the unit's cleanup (a restarted backend re-reads it to
+  reattach) and is kept until the next install recreates it, or a reboot
+  clears `/run`.
 - Package checks wait until the image's clock gate wrote
   `/run/ceralive/clock-gate-open`: apt refuses a Release signed in the box
   clock's future, which a cold boot without RTC is. Until then the check has not
@@ -1420,9 +1423,15 @@ strictly. With a valid record:
   restart the backend. The next check after the repair runs normally.
 - Installs are manual only, whatever `packagesAuto` says. A plan queued without
   a request in this process (including one persisted across a restart) is
-  dropped back to `idle`. An install refused before apt launched (clock, dpkg,
-  refresh, discovery) also returns to `idle` with the package check due, not to
-  `failed`, so image checks stay eligible.
+  dropped back to `idle`; the drop holds the install latch, so a manual install
+  waits for it, and the release only applies to the phase entry and attempt it
+  was issued for. Every install that ends before apt's unit launched (clock,
+  dpkg, refresh, unreachable or captive repository, discovery, space preflight,
+  failed download) is reported as one typed outcome
+  (`packageFailedBeforeLaunch`) and returns to `idle` with the package check
+  due, not to `failed`, so image checks stay eligible. In this mode the unit
+  is never launched without the source pair; the legacy roster upgrade is
+  refused.
 
 A record that is present but does not validate refuses package checks and
 installs (`discovery_failed`), and never falls back to the first-party

@@ -406,6 +406,7 @@ export function resetSoftwareUpdateState(): void {
 	resetAptAllRefusalLogForTest();
 	aptAllMode = false;
 	discoveredPackages = [];
+	installUnitLaunched = false;
 }
 
 export type SoftwareUpdateRecoveryDeps = {
@@ -1105,18 +1106,21 @@ function imageSourceRefused(capabilities: UpdateCapabilities): boolean {
 	return true;
 }
 
+// Whether this install attempt launched (or reattached to) the detached unit.
+let installUnitLaunched = false;
+
 /**
- * Install refusals that settle before APT launches on an image with its own
- * apt source (the clock, dpkg's journal, the refresh, discovery): nothing ran.
+ * The current install attempt ended before apt's install unit launched: a
+ * refusal (clock, dpkg, refresh, reachability, captive portal, discovery,
+ * space preflight) or a failed download, with nothing installed. One typed
+ * answer for the orchestrator, whatever the reason text says.
  */
-export const IMAGE_SOURCE_PRELAUNCH_REFUSALS: ReadonlySet<string> = new Set([
-	"check_unavailable",
-	"dpkg_interrupted",
-	"refresh_failed",
-	"discovery_failed",
-	"removals_required",
-	"first_party_held_back",
-]);
+export function packageFailedBeforeLaunch(): boolean {
+	return (
+		!installUnitLaunched &&
+		(lastUpdateFailure !== null || lastPreflightFailure !== null)
+	);
+}
 
 let clockWaitLogged = false;
 /**
@@ -1505,7 +1509,8 @@ export async function runUpdateDiscoveryAndReport(
 			image !== undefined &&
 			(refresh === undefined || !refreshedImageSuites(refresh, image))
 		) {
-			failCurrentCheck("refresh_failed");
+			// The refresh's own verdict (unreachable, captive portal) stands.
+			if (lastCheckFailure === null) failCurrentCheck("refresh_failed");
 			return "refresh_failed";
 		}
 		const network = await openAptNetwork(capabilities);
@@ -1890,6 +1895,7 @@ export function startSoftwareUpdate(
 	}
 
 	currentUpdateIdentity = availableIdentity;
+	installUnitLaunched = false;
 	lastUpdateFailure = null;
 	lastUpdateSucceeded = false;
 	lastPreflightFailure = null;
@@ -2400,6 +2406,7 @@ async function prepareSoftwareUpdate(
 	// running it in this unit's cgroup then lets that restart kill the package
 	// transaction itself. PID 1 owns this service, and the next backend process
 	// reattaches to its durable output instead of relaunching apt.
+	installUnitLaunched = true;
 	void monitor.finish(
 		capable
 			? runDetachedAptAll(detachedArgs, finalFamily, monitor.handlers)
@@ -2519,9 +2526,11 @@ async function recoverSoftwareUpdate(
 		// That window is exactly what let the update-orchestrator's own resume
 		// (resume.ts resumeCommitting()) observe neither a live nor a settled
 		// state and misclassify a successful recovery as unresolved.
+		installUnitLaunched = true;
 		await monitor.finish(recovered.completion, getRecoveredUpdateExitHook());
 	} else {
 		// Still running: this can take minutes. Never block boot on it.
+		installUnitLaunched = true;
 		void monitor.finish(recovered.completion, getRecoveredUpdateExitHook());
 	}
 	return true;
