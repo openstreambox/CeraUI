@@ -1010,9 +1010,10 @@ test("the /boot FAT fault classification reaches the downloaded settings record"
 		settings: { ...base.settings, bootFat },
 	}));
 	const manifest = await previewBundle();
+	// The settings record plus the device state record.
 	expect(manifest.sections[1]).toEqual({
 		id: "settings",
-		entries: 1,
+		entries: 2,
 		redactions: 0,
 	});
 	const { lines } = await unpack(await download());
