@@ -323,6 +323,15 @@ if [ "$1" = "configure" ]; then
     # $2 is the previously configured version, so a non-empty value means UPGRADE.
     # A fresh install keeps today's behaviour: installed and enabled, never started.
     if [ -n "$2" ] && [ -d "$SYSTEMD_RUN_DIR" ]; then
+        # An upgrade on a running system is a restart within this boot: a
+        # backend may have held client traffic in memory. Packages before the
+        # boot claim never wrote it, and an old prerm may already have stopped,
+        # disabled and unloaded the unit (which clears systemd's record of its
+        # start), so write it unconditionally here. /run is cleared at boot, so
+        # the claim never outlives this boot; at worst a backend that had not
+        # run yet gets the two-minute restart hold.
+        claim="${CERALIVE_CARRYING_BOOT_CLAIM:-/run/ceralive/carrying-boot-claim}"
+        { : >> "$claim" && chmod 0600 "$claim"; } 2>/dev/null || true
         if command -v deb-systemd-invoke >/dev/null 2>&1; then
             deb-systemd-invoke restart ceralive.service || true
         else
