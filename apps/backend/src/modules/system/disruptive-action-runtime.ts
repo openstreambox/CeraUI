@@ -1,3 +1,5 @@
+import { setup } from "../setup.ts";
+import { carryingTracker } from "./carrying.ts";
 import {
 	type DisruptiveActionDecision,
 	decideDisruptiveAction,
@@ -32,7 +34,13 @@ export function getDisruptiveActionDecision(options?: {
 	)
 		return { allowed: false, reason: "update_in_progress" };
 	return decideDisruptiveAction({
-		streamLiveness: getStreamLiveness(),
+		streamLiveness:
+			options?.powerAction === "poweroff" &&
+			setup.engine === "none" &&
+			getStreamLiveness() === "unknown" &&
+			carryingTracker.startupChecking(performance.now())
+				? "idle"
+				: getStreamLiveness(),
 		updateBusy: [
 			...getOrchestratorDisruptionBusyReasons().filter(
 				(reason) =>
