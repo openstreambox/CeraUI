@@ -3222,6 +3222,7 @@
 	"network.sharing.policy.healthTitle": "Uplink health",
 	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
 	"notifications.clientCarrying": "The box is carrying client traffic. Updates, restarts, power-off and idle link changes will wait.",
+	"notifications.bootFatFault": "The box started normally. Its startup files need a check at the next service visit. Nothing to do now.",
 	"notifications.powerWaitingForUpdate": "Shutting down once the running update has finished.",
 	"notifications.powerStuckOnUpdate": "Still waiting for the running update after 15 minutes. The box shuts down when it finishes.",
 	"notifications.powerShuttingDown": "Shutting down.",

@@ -3237,6 +3237,7 @@
 	"network.sharing.policy.healthTitle": "Salud de los enlaces",
 	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos.",
 	"notifications.clientCarrying": "La caja transporta tráfico de clientes. Las actualizaciones, los reinicios, el apagado y los cambios de enlaces por inactividad esperarán.",
+	"notifications.bootFatFault": "La caja arrancó con normalidad. Sus archivos de arranque necesitan una revisión en el próximo servicio técnico. No hay que hacer nada ahora.",
 	"notifications.powerWaitingForUpdate": "El equipo se apagará cuando termine la actualización en curso.",
 	"notifications.powerStuckOnUpdate": "La actualización sigue en curso después de 15 minutos. El equipo se apagará en cuanto termine.",
 	"notifications.powerShuttingDown": "Apagando.",

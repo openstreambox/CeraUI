@@ -2965,6 +2965,7 @@
 	"network.sharing.policy.healthTitle": "업링크 상태",
 	"network.sharing.policy.healthBody": "{total} 업링크의 {usable}는 고려할 만큼 건강합니다. 클라이언트 장치 라우팅 정책에 따라 제외될 수 있습니다.",
 	"notifications.clientCarrying": "박스가 클라이언트 트래픽을 전달 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
+	"notifications.bootFatFault": "박스가 정상적으로 시작되었습니다. 시작 파일은 다음 점검 때 확인이 필요합니다. 지금은 할 일이 없습니다.",
 	"notifications.powerWaitingForUpdate": "진행 중인 업데이트가 끝나면 전원을 끕니다.",
 	"notifications.powerStuckOnUpdate": "15분이 지났지만 업데이트가 아직 진행 중입니다. 업데이트가 끝나면 전원이 꺼집니다.",
 	"notifications.powerShuttingDown": "전원을 끄는 중입니다.",

@@ -3237,6 +3237,7 @@
 	"notifications.power.jump": "Die Temperatur des Reserveakkus ist plötzlich gestiegen. Der Sensor ist möglicherweise defekt. Bleibt sie so hoch, schaltet sich das Gerät in einer Minute ab.",
 	"notifications.power.status": "{text}",
 	"notifications.clientCarrying": "Die Box überträgt Clientverkehr. Updates, Neustarts, Ausschalten und Verbindungswechsel bei Inaktivität warten.",
+	"notifications.bootFatFault": "Die Box ist normal gestartet. Ihre Startdateien sollten beim nächsten Service geprüft werden. Jetzt ist nichts zu tun.",
 	"notifications.powerWaitingForUpdate": "Die Box fährt herunter, sobald das laufende Update fertig ist.",
 	"notifications.powerStuckOnUpdate": "Nach 15 Minuten wird noch auf das laufende Update gewartet. Die Box fährt herunter, sobald es fertig ist.",
 	"notifications.powerShuttingDown": "Die Box fährt herunter.",
