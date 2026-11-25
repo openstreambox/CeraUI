@@ -300,7 +300,7 @@ const history = $derived<HistoryRow[]>(
 			<p class="text-sm font-medium leading-snug" data-testid="radio-health-summary">{line}</p>
 		</div>
 		{#if next}
-			<p class="text-muted-foreground flex items-start gap-1.5 leading-snug" data-testid="radio-health-next">
+			<p class="text-muted-foreground flex items-start gap-1.5 leading-snug tabular-nums" data-testid="radio-health-next">
 				<ArrowRight class="mt-0.5 size-3.5 shrink-0 rtl:rotate-180" aria-hidden="true" />
 				<span><span class="sr-only">{m['network.radio.nextStep']()}: </span>{next}</span>
 			</p>
@@ -350,7 +350,7 @@ const history = $derived<HistoryRow[]>(
 >
 	<div class="space-y-4 text-xs" data-testid="radio-health-details">
 		{#if radio.capturedAt > 0}
-			<p class="text-muted-foreground" data-testid="radio-health-timing">
+			<p class="text-muted-foreground tabular-nums" data-testid="radio-health-timing">
 				{m['network.radio.lastReading']({ time: time(radio.capturedAt) ?? '' })}{' · '}{nextText}
 			</p>
 		{/if}
