@@ -91,6 +91,16 @@ test.describe("@visual image 3 devices", () => {
 				await page.locator("details").evaluateAll((nodes) => {
 					for (const node of nodes) node.setAttribute("open", "");
 				});
+				const toggles = page.getByRole("button", { name: "Details" });
+				expect(await toggles.count()).toBeGreaterThan(0);
+				for (const toggle of await toggles.all()) {
+					if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+						await toggle.click();
+					}
+					await expect(toggle).toHaveAttribute("aria-expanded", "true");
+					const panel = await toggle.getAttribute("aria-controls");
+					await expect(page.locator(`[id="${panel}"]`)).toBeVisible();
+				}
 				const opened = await page.evaluate(
 					() => document.documentElement.scrollHeight,
 				);

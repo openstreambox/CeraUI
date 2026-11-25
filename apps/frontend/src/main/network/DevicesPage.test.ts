@@ -180,8 +180,8 @@ describe("Devices page", () => {
 		});
 		const retry = view.getByTestId("helper-retry");
 		const usb2 = view.getByTestId("helper-usb2");
-		expect(retry.closest("details")).not.toBeNull();
-		expect(usb2.closest("details")).not.toBeNull();
+		expect(retry.closest('[data-testid="device-details"]')).not.toBeNull();
+		expect(usb2.closest('[data-testid="device-details"]')).not.toBeNull();
 		await fireEvent.click(retry);
 		expect(view.getByTestId("helper-retry-confirm")).toBeTruthy();
 		expect(view.getByText("Retry this port? The link can drop.")).toBeTruthy();
@@ -258,11 +258,96 @@ describe("Devices page", () => {
 		expect(internals.hasAttribute("open")).toBe(false);
 		const controllerCaption = internals.querySelector("summary")?.textContent;
 		expect(controllerCaption).toContain("USB controllers in the box");
-		expect(controllerCaption).not.toContain("Details for helpers");
-		expect(view.getAllByText("Details for helpers").length).toBeGreaterThan(0);
+		expect(controllerCaption).not.toContain("Details");
+		expect(
+			view.getAllByRole("button", { name: "Details" }).length,
+		).toBeGreaterThan(0);
+		expect(view.container.textContent).not.toMatch(/helper/i);
 		expect(internals.textContent).toContain("EHCI Host Controller");
 		expect(internals.textContent).toContain("fc880000.usb");
 		expect(view.getByText("Lower blue port")).toBeTruthy();
+	});
+
+	it("names each Details toggle and exposes whether its row is open", async () => {
+		const view = render(DevicesPage, {
+			props: { wire: WIRE, onBack: () => undefined },
+		});
+		const toggles = view.getAllByRole("button", { name: "Details" });
+		// The empty USB-C row has no details here; the modem row has one.
+		expect(toggles).toHaveLength(1);
+		const toggle = toggles[0] as HTMLButtonElement;
+		// Icon only: the name comes from the label, not from visible text.
+		expect(toggle.textContent?.trim()).toBe("");
+		expect(toggle.getAttribute("aria-label")).toBe("Details");
+		expect(toggle.querySelector("svg")?.getAttribute("aria-hidden")).toBe(
+			"true",
+		);
+		// A phone-sized target and the shared button's visible focus ring.
+		expect(toggle.className).toContain("size-11");
+		expect(toggle.className).toContain("focus-visible:ring-3");
+		const panel = document.getElementById(
+			toggle.getAttribute("aria-controls") ?? "",
+		);
+		expect(panel).not.toBeNull();
+		expect(toggle.getAttribute("aria-expanded")).toBe("false");
+		expect(panel?.hidden).toBe(true);
+		await fireEvent.click(toggle);
+		expect(toggle.getAttribute("aria-expanded")).toBe("true");
+		expect(panel?.hidden).toBe(false);
+		expect(panel?.textContent).toContain("fc400000.usb");
+		await fireEvent.click(toggle);
+		expect(toggle.getAttribute("aria-expanded")).toBe("false");
+		expect(panel?.hidden).toBe(true);
+	});
+
+	it("indents one step per level and keeps follow-on lines in the text column", () => {
+		const hubWire: UsbDevicesWire = {
+			status: "ok",
+			board: "rock-5b-plus",
+			nodes: [
+				{
+					...(WIRE.nodes[1] as UsbDevicesWire["nodes"][number]),
+					key: "hub",
+					kind: "hub",
+					product: null,
+					portPath: "1",
+					hubPorts: 4,
+				},
+				{
+					...(WIRE.nodes[1] as UsbDevicesWire["nodes"][number]),
+					key: "child",
+					parentKey: "hub",
+					portPath: "1.1",
+					socketKey: "A3-bot>hub.1",
+					scope: "hub-port",
+					label: ">hub.1",
+					name: "Hub port 1",
+				},
+			],
+		};
+		const view = render(DevicesPage, {
+			props: { wire: hubWire, onBack: () => undefined },
+		});
+		const rows = view.getAllByTestId("device-row");
+		expect(rows.map((row) => row.dataset.depth)).toEqual(["0", "1"]);
+		expect(rows.map((row) => row.style.paddingInlineStart)).toEqual([
+			"calc(1rem + 0 * var(--devices-step))",
+			"calc(1rem + 1 * var(--devices-step))",
+		]);
+		const ports = view.getByTestId("devices-ports");
+		expect(ports.style.getPropertyValue("--devices-step")).toBe("1.25rem");
+		// The child hangs off the hub's dot; the hub's own line runs on to it.
+		expect(
+			rows[1]?.querySelector('[data-testid="device-branch"]'),
+		).not.toBeNull();
+		// Reason, hint and details start in the title column, never under the dot.
+		for (const row of rows) {
+			for (const part of row.querySelectorAll(
+				'[data-testid="device-hint"], [data-testid="device-details"]',
+			)) {
+				expect(part.className).toContain("col-start-2");
+			}
+		}
 	});
 
 	it("says the tree is still being read", () => {

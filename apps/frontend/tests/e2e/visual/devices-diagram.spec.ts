@@ -1,5 +1,14 @@
+import type { Locator } from '@playwright/test';
 import { expect, test } from '../fixtures/index.js';
 import { ensureAuthenticated, navigateTo, setLocale, setTheme } from '../helpers/index.js';
+
+/** Opens a row's Details from either state and checks the button reports it. */
+async function openDetails(row: Locator): Promise<void> {
+	const toggle = row.getByRole('button', { name: 'Details' });
+	if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+	await expect(row.getByTestId('device-details')).toBeVisible();
+}
 
 /**
  * The port-edge diagram, large enough to read, with the contact bars clear of
@@ -58,7 +67,7 @@ test.describe('@visual devices diagram', () => {
 				await diagram.screenshot({ path: `${OUT}/diagram-${width}-${theme}.png` });
 
 				const usbC = page.getByTestId('device-empty');
-				await usbC.getByText('Details for helpers').click();
+				await openDetails(usbC);
 				await expect(usbC).toContainText('VBUS regulator');
 				await expect(usbC).toContainText('Enabled');
 				await expect(usbC).toContainText('Recovered');
@@ -117,12 +126,7 @@ test.describe('@visual devices diagram', () => {
 				continue;
 			}
 			const usbC = page.getByTestId('device-empty');
-			const details = usbC.locator('details');
-			await expect(details).toBeVisible();
-			if ((await details.getAttribute('open')) === null) {
-				await details.locator('summary').click();
-			}
-			await expect(details).toHaveAttribute('open', '');
+			await openDetails(usbC);
 			if (name === 'j11') {
 				await expect(usbC).toContainText('Power role');
 				await expect(usbC).toContainText('Source');

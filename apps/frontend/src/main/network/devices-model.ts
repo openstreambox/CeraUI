@@ -50,8 +50,17 @@ export type DeviceRowState =
 
 export type DeviceRow = {
 	readonly key: string;
+	/** Levels below the port heading: 0 is the device on the socket. */
 	readonly depth: number;
+	/** The last row among its siblings, so its tree line ends at its dot. */
 	readonly lastChild: boolean;
+	/** Rows below it hang off this row, so its line runs on to them. */
+	readonly hasChildren: boolean;
+	/**
+	 * One entry per ancestor level from 1 to depth - 1: true when that
+	 * ancestor has a later sibling, so its tree line passes this row.
+	 */
+	readonly guides: readonly boolean[];
 	readonly state: DeviceRowState;
 	readonly kind: UsbDeviceWireNode["kind"] | null;
 	readonly product: string | null;
@@ -170,16 +179,18 @@ export function devicesPageModel(
 		const anchor = nodes.find((node) => node.socketKey === id) ?? nodes[0];
 		if (anchor === undefined) continue;
 		const builtIn = anchor.scope === "built-in" || id === "built-in";
-		const ordered = nodes.slice().sort((a, b) => compareNodes(a, b, byKey));
-		const rows = ordered.map((node, index) =>
-			toRow(
-				node,
+		const rows = treeOrder(nodes, anchor, byKey).map((entry) => ({
+			...toRow(
+				entry.node,
 				byKey,
 				anchor.key,
 				builtIn ? null : socketLabel(anchor),
-				index === ordered.length - 1,
+				entry.lastChild,
 			),
-		);
+			depth: entry.depth,
+			hasChildren: entry.hasChildren,
+			guides: entry.guides,
+		}));
 		built.push({
 			id,
 			name: builtIn ? "" : anchor.name,
@@ -200,6 +211,8 @@ export function devicesPageModel(
 				...toRow(node, byKey, node.key, null, false),
 				depth: 0,
 				lastChild: false,
+				hasChildren: false,
+				guides: [],
 			}));
 		const index = built.findIndex((group) => group.builtIn);
 		if (index === -1) {
@@ -348,6 +361,63 @@ function compareNodes(
 	return (a.portPath ?? "").localeCompare(b.portPath ?? "", "en");
 }
 
+type TreeEntry = {
+	readonly node: UsbDeviceWireNode;
+	readonly depth: number;
+	readonly lastChild: boolean;
+	readonly hasChildren: boolean;
+	readonly guides: readonly boolean[];
+};
+
+/**
+ * Rows in tree order: each device directly under its parent, children in
+ * port order. A node whose parent is not in this group (the USB 2 and USB 3
+ * views of one socket sit under different controllers) starts its own branch
+ * at depth 0: depth counts only parents that are rows here.
+ */
+function treeOrder(
+	nodes: readonly UsbDeviceWireNode[],
+	anchor: UsbDeviceWireNode,
+	byKey: Map<string, UsbDeviceWireNode>,
+): TreeEntry[] {
+	const inGroup = new Set(nodes.map((node) => node.key));
+	const children = new Map<string, UsbDeviceWireNode[]>();
+	const tops: UsbDeviceWireNode[] = [];
+	for (const node of nodes) {
+		const parent = node.key === anchor.key ? null : node.parentKey;
+		if (parent !== null && inGroup.has(parent)) {
+			const list = children.get(parent) ?? [];
+			list.push(node);
+			children.set(parent, list);
+		} else {
+			tops.push(node);
+		}
+	}
+	const byPort = (a: UsbDeviceWireNode, b: UsbDeviceWireNode) =>
+		compareNodes(a, b, byKey);
+	const out: TreeEntry[] = [];
+	const seen = new Set<string>();
+	const walk = (
+		node: UsbDeviceWireNode,
+		depth: number,
+		lastChild: boolean,
+		guides: readonly boolean[],
+	) => {
+		if (seen.has(node.key)) return;
+		seen.add(node.key);
+		const kids = (children.get(node.key) ?? []).slice().sort(byPort);
+		out.push({ node, depth, lastChild, hasChildren: kids.length > 0, guides });
+		// A child at depth + 1 sees this row's line when this row has a later sibling.
+		const next = depth >= 1 ? [...guides, !lastChild] : guides;
+		kids.forEach((kid, index) => {
+			walk(kid, depth + 1, index === kids.length - 1, next);
+		});
+	};
+	const sortedTops = tops.slice().sort(byPort);
+	for (const node of sortedTops) walk(node, 0, false, []);
+	return out;
+}
+
 function depthOf(
 	node: UsbDeviceWireNode,
 	byKey: Map<string, UsbDeviceWireNode>,
@@ -381,6 +451,8 @@ function toRow(
 		key: node.key,
 		depth: depthInGroup(node, anchorKey, byKey),
 		lastChild: last && node.key !== anchorKey,
+		hasChildren: false,
+		guides: [],
 		state: rowState(node, empty),
 		kind: empty ? null : node.kind,
 		product: empty ? null : node.product,

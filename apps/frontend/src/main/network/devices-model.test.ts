@@ -397,6 +397,123 @@ describe("devices page model", () => {
 		]);
 	});
 
+	it("lists a hub's children under it in tree order, with their tree lines", () => {
+		const generic = (
+			key: string,
+			portPath: string,
+			parentKey: string | null,
+			kind: UsbDeviceWireNode["kind"],
+		) =>
+			node({
+				key,
+				parentKey,
+				socketKey: `0000:00:14.0:${portPath}`,
+				name: `USB port ${portPath}`,
+				label: null,
+				controller: "0000:00:14.0",
+				portPath,
+				kind,
+				scope: "generic",
+				colour: null,
+			});
+		const page = devicesPageModel(
+			wire([
+				// Deliberately out of order: the inner hub's child before its siblings.
+				generic("inner-child", "1.1.2", "inner", "modem"),
+				generic("hub", "1", null, "hub"),
+				generic("second", "1.2", "hub", "wifi"),
+				generic("inner", "1.1", "hub", "hub"),
+			]),
+		);
+		if (page.status !== "ok") throw new Error("expected a tree");
+		const rows = page.groups[0]?.rows ?? [];
+		expect(
+			rows.map((row) => [row.key, row.depth, row.lastChild, row.hasChildren]),
+		).toEqual([
+			["hub", 0, false, true],
+			["inner", 1, false, true],
+			["inner-child", 2, true, false],
+			["second", 1, true, false],
+		]);
+		// The hub's line passes the inner hub's child on its way to "second".
+		expect(rows.map((row) => row.guides)).toEqual([[], [], [true], []]);
+	});
+
+	it("starts the USB 2 and USB 3 views of one socket each at depth 0", () => {
+		const page = devicesPageModel(
+			wire([
+				node({
+					key: "root2",
+					socketKey: "fc400000.usb:root",
+					name: "USB root hub",
+					label: null,
+					portPath: null,
+					kind: "hub",
+					scope: "root",
+				}),
+				node({
+					key: "root3",
+					socketKey: "fcd00000.usb:root",
+					name: "USB root hub",
+					label: null,
+					controller: "fcd00000.usb",
+					portPath: null,
+					speedClass: "usb3",
+					kind: "hub",
+					scope: "root",
+				}),
+				node({
+					key: "hub2",
+					parentKey: "root2",
+					socketKey: "A3-bot",
+					name: "Lower blue port",
+					kind: "hub",
+				}),
+				node({
+					key: "hub3",
+					parentKey: "root3",
+					socketKey: "A3-bot",
+					name: "Lower blue port",
+					controller: "fcd00000.usb",
+					speedClass: "usb3",
+					kind: "hub",
+				}),
+				node({
+					key: "modem",
+					parentKey: "hub2",
+					socketKey: "A3-bot>hub.1",
+					name: "Hub port 1",
+					label: ">hub.1",
+					scope: "hub-port",
+					portPath: "1.1",
+					kind: "modem",
+				}),
+				node({
+					key: "capture",
+					parentKey: "hub3",
+					socketKey: "A3-bot>hub.2",
+					name: "Hub port 2",
+					label: ">hub.2",
+					scope: "hub-port",
+					controller: "fcd00000.usb",
+					portPath: "1.2",
+					speedClass: "usb3",
+					kind: "capture",
+				}),
+			]),
+		);
+		if (page.status !== "ok") throw new Error("expected a tree");
+		const port = page.groups.find((group) => group.id === "A3-bot");
+		expect(
+			port?.rows.map((row) => [row.key, row.depth, row.lastChild, row.guides]),
+		).toEqual([
+			["hub2", 0, false, []],
+			["modem", 1, true, []],
+			["hub3", 0, false, []],
+			["capture", 1, true, []],
+		]);
+	});
+
 	it("counts the design story without treating an empty port as a device", () => {
 		const page = devicesPageModel(
 			wire([

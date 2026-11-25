@@ -7,7 +7,8 @@
 <script lang="ts">
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import type { DeviceCalm, UsbDevicesWire, UsbEventWire, UsbHelperHold, UsbHelperWire } from '@ceraui/rpc/schemas';
-import { ChevronRight, Copy, Info, Usb } from '@lucide/svelte';
+import { ChevronDown, ChevronRight, Copy, Info, Usb } from '@lucide/svelte';
+import { Button } from '$lib/components/ui/button';
 import { rpc } from '$lib/rpc/client';
 import DevicesPortEdge, { type EdgeTone } from './DevicesPortEdge.svelte';
 import { deviceCountSentence } from './device-counts';
@@ -68,6 +69,31 @@ async function runHelperAction(
 	}
 }
 const page = $derived(devicesPageModel(wire, helper));
+
+/** Expanded rows by key; a fixture example may start open. */
+let openRows = $state<Record<string, boolean>>({});
+
+function isOpen(row: DeviceRow): boolean {
+	return openRows[row.key] ?? row.exampleDetails;
+}
+
+function toggle(row: DeviceRow): void {
+	openRows = { ...openRows, [row.key]: !isOpen(row) };
+}
+
+function detailsId(key: string): string {
+	return `device-details-${key.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+}
+
+/** Text start of a row: the port padding plus one step per level. */
+function indent(depth: number): string {
+	return `calc(1rem + ${depth} * var(--devices-step))`;
+}
+
+/** The tree line of a level runs through the centre of that level's dot. */
+function lineAt(level: number): string {
+	return `calc(1rem + ${level} * var(--devices-step) + 0.25rem - 0.5px)`;
+}
 const summary = $derived(devicesSummary(wire, calm));
 
 const LINK_COLOR = [
@@ -449,6 +475,7 @@ const marks = $derived({
 		<div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
 			<section
 				class="bg-card order-2 overflow-hidden rounded-xl border lg:order-1"
+				style:--devices-step="1.25rem"
 				data-testid="devices-ports"
 				aria-label={m['network.devices.cardTitle']()}
 			>
@@ -480,49 +507,62 @@ const marks = $derived({
 							{/if}
 						</div>
 						{#each group.rows as row (row.key)}
+							{const panelId = $derived(detailsId(row.key))}
+							{const open = $derived(isOpen(row))}
+							{const toggleable = $derived(row.state === 'empty' ? row.helper !== null : row.state !== 'unplugged')}
 							<div
-								class="relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-4 py-2.5 {row.depth > 0
-									? 'pl-10'
-									: ''}"
+								class="relative grid grid-cols-[0.5rem_minmax(0,1fr)_auto_auto] items-start gap-x-3 gap-y-1 py-2.5 pe-2"
+								style:padding-inline-start={indent(row.depth)}
 								data-testid={row.state === 'empty' ? 'device-empty' : 'device-row'}
 								data-state={row.state}
 								data-kind={row.kind ?? ''}
+								data-depth={row.depth}
 							>
+								{#each row.guides as passes, level (level)}
+									{#if passes}
+										<span
+											class="bg-border absolute inset-y-0 w-px"
+											style:inset-inline-start={lineAt(level)}
+											data-testid="device-guide"
+											aria-hidden="true"
+										></span>
+									{/if}
+								{/each}
 								{#if row.depth > 0}
 									<span
-										class="border-border absolute top-0 left-6 border-l {row.lastChild ? 'h-5' : 'bottom-0'}"
+										class="bg-border absolute top-0 w-px {row.lastChild ? 'h-5' : 'bottom-0'}"
+										style:inset-inline-start={lineAt(row.depth - 1)}
+										data-testid="device-branch"
 										aria-hidden="true"
 									></span>
-									<span class="border-border absolute top-5 left-6 w-2.5 border-t" aria-hidden="true"></span>
+									<span
+										class="bg-border absolute top-5 h-px"
+										style:inset-inline-start={lineAt(row.depth - 1)}
+										style:width="calc(var(--devices-step) - 0.25rem)"
+										aria-hidden="true"
+									></span>
 								{/if}
+								{#if row.hasChildren}
+									<span
+										class="bg-border absolute top-6 bottom-0 w-px"
+										style:inset-inline-start={lineAt(row.depth)}
+										aria-hidden="true"
+									></span>
+								{/if}
+								<span class="mt-1.5 size-2 shrink-0 rounded-full {dotClass(row.state)}" aria-hidden="true"></span>
 								{#if row.state === 'empty'}
-									<p class="text-muted-foreground col-span-3 pl-6 text-sm">{m['network.devices.empty']()}</p>
-									{#if row.helper}
-										<details class="group col-span-3 pl-6 text-sm">
-											<summary
-												class="text-muted-foreground focus-visible:ring-ring inline-flex min-h-11 cursor-pointer items-center gap-1 rounded-md focus-visible:ring-2 focus-visible:outline-none"
-											>
-												<ChevronRight aria-hidden="true" class="size-4 transition-transform group-open:rotate-90" />
-												{m['network.devices.details']()}
-											</summary>
-											<dl class="bg-muted grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg p-2.5 text-xs">
-												{@render helperFacts(row)}
-											</dl>
-											{@render helperActions(row)}
-										</details>
-									{/if}
+									<p class="text-muted-foreground col-span-2 text-sm" data-testid="device-title">{m['network.devices.empty']()}</p>
 								{:else}
-									<span class="mt-1.5 size-2 shrink-0 rounded-full {dotClass(row.state)}" aria-hidden="true"></span>
-									<p class="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium">
+									<p class="min-w-0 text-sm font-medium [overflow-wrap:anywhere]" data-testid="device-title">
 										{#if row.slot}
-											<span class="text-muted-foreground font-mono text-xs font-normal">{row.slot}</span>
+											<span class="text-muted-foreground me-1.5 font-mono text-xs font-normal whitespace-nowrap">{row.slot}</span>
 										{/if}
-										<span class:text-muted-foreground={row.state === 'unplugged'}>
+										<span class="me-1.5 whitespace-nowrap" class:text-muted-foreground={row.state === 'unplugged'}>
 											{row.state === 'unplugged' ? m['network.devices.state.empty']() : kindLabel(row)}
 										</span>
 										{#if row.linkSlot}
 											<span
-												class="rounded px-1 font-mono text-[11px] leading-5 font-semibold"
+												class="me-1.5 inline-block rounded px-1 font-mono text-[11px] leading-5 font-semibold"
 												style:color={LINK_COLOR[row.linkSlot]}
 												style:background={`color-mix(in oklab, ${LINK_COLOR[row.linkSlot]} 14%, transparent)`}
 											>
@@ -535,77 +575,90 @@ const marks = $derived({
 											<span class="text-muted-foreground font-normal">{row.product}</span>
 										{/if}
 									</p>
-									<span class="pt-0.5 text-xs font-semibold {stateClass(row.state)}">{stateLabel(row.state)}</span>
-									{#if reason(row)}
-										<p class="text-muted-foreground col-span-2 text-sm">
-											{reason(row)}
-											{#if row.reasonKey === 'turned-off'}
-												<button type="button" class="text-foreground font-medium" onclick={onBack}>
-													{m['network.devices.reason.backToNetwork']()}
-												</button>
-											{/if}
-										</p>
-									{/if}
-									{#if row.hint}
-										<p class="text-muted-foreground col-span-2 flex items-start gap-1.5 text-sm" data-testid="device-hint">
-											<Info
-												aria-hidden="true"
-												class="mt-0.5 size-3.5 shrink-0 {row.hint === 'capture-usb2' ? 'text-status-warning' : 'text-status-info'}"
-											/>
-											<span>
-												{#if row.hint === 'rm520-usb2'}
-													{m['network.devices.hint.rm520Usb2']()}
-												{:else if row.hint === 'rm520-usb3'}
-													{m['network.devices.hint.rm520Usb3']()}
-												{:else if row.hint === 'capture-usb3'}
-													{m['network.devices.hint.captureUsb3']()}
-												{:else}
-													{m['network.devices.hint.captureUsb2']()}
-												{/if}
-											</span>
-										</p>
-									{/if}
-									{#if row.state !== 'unplugged'}
-									<details class="group col-span-2 text-sm" open={row.exampleDetails ? true : undefined}>
-										<summary
-											class="text-muted-foreground focus-visible:ring-ring inline-flex min-h-11 cursor-pointer items-center gap-1 rounded-md focus-visible:ring-2 focus-visible:outline-none"
-										>
-											<ChevronRight aria-hidden="true" class="size-4 transition-transform group-open:rotate-90" />
-											{m['network.devices.details']()}
-										</summary>
-										<dl class="bg-muted grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg p-2.5 text-xs">
-											<dt class="text-muted-foreground">{m['network.devices.detail.port']()}</dt>
-											<dd class="font-mono" dir="ltr">{row.place ?? ''}</dd>
-											<dt class="text-muted-foreground">{m['network.devices.detail.linux']()}</dt>
-											<dd class="font-mono" dir="ltr">{row.controller ?? ''}{row.portPath ? ` · ${row.portPath}` : ''}</dd>
-											<dt class="text-muted-foreground">{m['network.devices.detail.speed']()}</dt>
-											<dd class="font-mono" dir="ltr">{speedText(row)}</dd>
+									<span class="pt-0.5 text-xs font-semibold whitespace-nowrap {stateClass(row.state)}">{stateLabel(row.state)}</span>
+								{/if}
+								{#if toggleable}
+									<Button
+										variant="ghost"
+										size="icon"
+										class="text-muted-foreground relative z-[1] -my-2.5 size-11 [&_svg]:transition-transform aria-expanded:[&_svg]:rotate-180"
+										aria-expanded={open}
+										aria-controls={panelId}
+										aria-label={m['network.devices.details']()}
+										title={m['network.devices.details']()}
+										data-testid="device-details-toggle"
+										onclick={() => toggle(row)}
+									>
+										<ChevronDown aria-hidden="true" />
+									</Button>
+								{:else}
+									<span aria-hidden="true"></span>
+								{/if}
+								{#if row.state !== 'empty' && reason(row)}
+									<p class="text-muted-foreground col-span-3 col-start-2 text-sm">
+										{reason(row)}
+										{#if row.reasonKey === 'turned-off'}
+											<button type="button" class="text-foreground font-medium" onclick={onBack}>
+												{m['network.devices.reason.backToNetwork']()}
+											</button>
+										{/if}
+									</p>
+								{/if}
+								{#if row.state !== 'empty' && row.hint}
+									<p class="text-muted-foreground col-span-3 col-start-2 flex items-start gap-1.5 text-sm" data-testid="device-hint">
+										<Info
+											aria-hidden="true"
+											class="mt-0.5 size-3.5 shrink-0 {row.hint === 'capture-usb2' ? 'text-status-warning' : 'text-status-info'}"
+										/>
+										<span>
 											{#if row.hint === 'rm520-usb2'}
-												<dt class="text-muted-foreground">{m['network.devices.detail.whyUsb2']()}</dt>
-												<dd>{m['network.devices.detail.whyUsb2Value']()}</dd>
+												{m['network.devices.hint.rm520Usb2']()}
+											{:else if row.hint === 'rm520-usb3'}
+												{m['network.devices.hint.rm520Usb3']()}
+											{:else if row.hint === 'capture-usb3'}
+												{m['network.devices.hint.captureUsb3']()}
+											{:else}
+												{m['network.devices.hint.captureUsb2']()}
 											{/if}
-											<dt class="text-muted-foreground">{m['network.devices.detail.usbId']()}</dt>
-											<dd class="font-mono" dir="ltr">
-												{row.vendorId && row.productId ? `${row.vendorId}:${row.productId}` : ''}
-												{#if row.kind === 'modem' && row.vendorId}
-													· {m['network.devices.detail.modemMode']()}
+										</span>
+									</p>
+								{/if}
+								{#if toggleable}
+									<div id={panelId} class="col-span-3 col-start-2 pt-1 text-sm" hidden={!open} data-testid="device-details">
+										<dl class="bg-muted grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg p-2.5 text-xs">
+											{#if row.state !== 'empty'}
+												<dt class="text-muted-foreground">{m['network.devices.detail.port']()}</dt>
+												<dd class="font-mono" dir="ltr">{row.place ?? ''}</dd>
+												<dt class="text-muted-foreground">{m['network.devices.detail.linux']()}</dt>
+												<dd class="font-mono" dir="ltr">{row.controller ?? ''}{row.portPath ? ` · ${row.portPath}` : ''}</dd>
+												<dt class="text-muted-foreground">{m['network.devices.detail.speed']()}</dt>
+												<dd class="font-mono" dir="ltr">{speedText(row)}</dd>
+												{#if row.hint === 'rm520-usb2'}
+													<dt class="text-muted-foreground">{m['network.devices.detail.whyUsb2']()}</dt>
+													<dd>{m['network.devices.detail.whyUsb2Value']()}</dd>
 												{/if}
-											</dd>
-											{#if row.since}
-												<dt class="text-muted-foreground">{m['network.devices.detail.since']()}</dt>
+												<dt class="text-muted-foreground">{m['network.devices.detail.usbId']()}</dt>
 												<dd class="font-mono" dir="ltr">
-													{m['network.devices.detail.sinceValue']({ time: row.since, count: row.drops ?? 0 })}
+													{row.vendorId && row.productId ? `${row.vendorId}:${row.productId}` : ''}
+													{#if row.kind === 'modem' && row.vendorId}
+														· {m['network.devices.detail.modemMode']()}
+													{/if}
 												</dd>
-											{/if}
-											{#if row.linkId}
-												<dt class="text-muted-foreground">{m['network.devices.detail.link']()}</dt>
-												<dd class="font-mono break-all" dir="ltr">{row.linkId}</dd>
+												{#if row.since}
+													<dt class="text-muted-foreground">{m['network.devices.detail.since']()}</dt>
+													<dd class="font-mono" dir="ltr">
+														{m['network.devices.detail.sinceValue']({ time: row.since, count: row.drops ?? 0 })}
+													</dd>
+												{/if}
+												{#if row.linkId}
+													<dt class="text-muted-foreground">{m['network.devices.detail.link']()}</dt>
+													<dd class="font-mono break-all" dir="ltr">{row.linkId}</dd>
+												{/if}
 											{/if}
 											{@render helperFacts(row)}
 										</dl>
 										{@render helperActions(row)}
-									</details>
-									{/if}
+									</div>
 								{/if}
 							</div>
 						{/each}
@@ -633,7 +686,7 @@ const marks = $derived({
 											{/if}
 										</p>
 										<span class="pt-0.5 text-xs font-semibold {stateClass(row.state)}">{stateLabel(row.state)}</span>
-										<p class="text-muted-foreground col-span-2 font-mono text-xs" dir="ltr">
+										<p class="text-muted-foreground col-span-2 col-start-2 font-mono text-xs" dir="ltr">
 											{row.controller ?? ''}{row.portPath ? ` · ${row.portPath}` : ''}
 											{#if row.vendorId && row.productId}
 												· {row.vendorId}:{row.productId}
@@ -667,7 +720,6 @@ const marks = $derived({
 				<section data-testid="device-events" class="bg-card order-3 scroll-mt-24 overflow-hidden rounded-xl border">
 					<div class="flex items-center justify-between gap-2 px-4 py-3">
 						<h2 class="text-sm font-semibold tracking-tight">{m['network.devices.events.heading']()}</h2>
-						<span class="text-muted-foreground text-xs">{m['network.devices.events.helpers']()}</span>
 					</div>
 					{#if events.length === 0}
 						<p class="text-muted-foreground px-4 pb-3 text-sm">{m['network.devices.events.empty']()}</p>
