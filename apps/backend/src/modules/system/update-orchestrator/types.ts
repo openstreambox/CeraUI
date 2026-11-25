@@ -148,16 +148,6 @@ export type OrchestratorEvent =
 	// The phase can lag a short commit, so this proves nothing about dpkg; it
 	// drops the interrupted plan and makes the package check due (resume.ts).
 	| { readonly type: "DOWNLOAD_RESUME_UNIT_ABSENT"; readonly now: number }
-	// Image apt source: a queued plan nobody asked for, or an install refused
-	// before APT launched. Package-only: nothing ran, so nothing failed.
-	// Bound to the phase entry it was issued for: a stale release is a no-op.
-	| {
-			readonly type: "PACKAGE_PLAN_RELEASED";
-			readonly now: number;
-			readonly from: "awaiting-idle" | "downloading";
-			readonly enteredAt: number;
-			readonly packageAttempt: OrchestratorState["packageAttempt"];
-	  }
 	| { readonly type: "COMMIT_PHASE_ENTERED"; readonly now: number }
 	| {
 			readonly type: "COMMIT_PROGRESS";
@@ -285,3 +275,9 @@ export type StreamAdmission =
 	  };
 
 export type StreamStartAction = "abort-network" | "continue-local" | "none";
+
+/**
+ * Image apt source: an install that ended before its apt unit launched. A
+ * package-only failure: the next package check or image check leaves it.
+ */
+export const PACKAGE_INSTALL_REFUSED = "package_install_refused";

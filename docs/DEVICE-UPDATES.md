@@ -541,7 +541,8 @@ gaps for overlap with the independent legacy launcher. Transition table from
 | `downloading` | `DOWNLOAD_FAILED` | `failed` |
 | `downloading` | `DOWNLOAD_ABORTED_FOR_STREAM` | `available` |
 | `downloading` | `DOWNLOAD_RESUME_UNIT_ABSENT` | `idle` with the package check due now (resume only, when a probe proved the install unit gone) |
-| `awaiting-idle` / `downloading` | `PACKAGE_PLAN_RELEASED` | `idle` with the package check due now (image apt source only: a queued plan without a request, or an install that ended before apt launched; a no-op unless phase, `enteredAt` and attempt still match) |
+| `downloading` | `DOWNLOAD_FAILED` with `package_install_refused` | `failed` with the package check due now (image apt source only: the install ended before its apt unit launched) |
+| `failed` (`package_install_refused` only) | `PACKAGE_CHECK_STARTED` / `OS_CHECK_STARTED` | `checking`, as from `idle` |
 | `committing` | `COMMIT_PROGRESS` | `committing` |
 | `committing` | `COMMIT_SUCCEEDED` | `restarting-services` |
 | `committing` | `COMMIT_FAILED` | `quarantined` |
@@ -1421,19 +1422,25 @@ strictly. With a valid record:
   and installs are refused (`dpkg_interrupted`). The operator repairs it with
   `dpkg --configure -a`; CeraUI does not run it, because maintainer scripts may
   restart the backend. The next check after the repair runs normally.
-- Installs are manual only, whatever `packagesAuto` says. A plan queued without
-  a request in this process (including one persisted across a restart) is
-  dropped back to `idle`; the drop holds the install latch, so a manual install
-  waits for it, and the release only applies to the phase entry and attempt it
-  was issued for. Every install that ends before apt's unit launched (clock,
-  dpkg, refresh, unreachable or captive repository, discovery, space preflight,
-  failed download, a start systemd refused) is recorded once per attempt
-  (`currentPackageInstallAttempt`: `refused` or `stream`, `launched` only after
-  systemd accepted the unit) and returns to `idle` with the package check due,
-  or to the offer for a stream, not to `failed`, so image checks stay eligible.
-  The path table is in [the update-system contract](agents/the-device-update-system.md#image-apt-source-every-way-an-install-attempt-ends-before-launch). In this mode the unit
-  is never launched without the source pair; the legacy roster upgrade is
-  refused.
+- Installs are manual only, whatever `packagesAuto` says. A plan persisted
+  from an earlier process is not a request: at startup it goes back to `idle`
+  with the package check due. In this mode the unit is never launched without
+  the source pair, and the legacy roster upgrade is refused.
+- An install that ends before its apt unit launched (clock, dpkg, refresh,
+  unreachable or captive repository, discovery, nothing installable, pinned
+  recheck, space preflight, failed download, a stream before launch, a start
+  systemd refused outright) shows "Update failed" with its reason, once. The
+  orchestrator records it as `failed` with `package_install_refused` and makes
+  the package check due at once. The scheduled tick runs that check (still
+  under the cellular rule) and the image check from it, and Check now starts
+  from it as from `idle`. A successful discovery clears the failure, so the
+  offer comes back at the next check; no offer is restored in place. The
+  pending package list stays until that check clears it (nothing reached
+  dpkg; quarantine records only a failed commit). An uncertain `systemd-run`
+  (client error or timeout) is not a refusal: the fixed unit is inspected and,
+  if it exists or cannot be read, observed as launched. A stream during the
+  download keeps the usual path back to the offer. The path table is in
+  [the update-system contract](agents/the-device-update-system.md#image-apt-source-every-way-an-install-ends-before-launch).
 
 A record that is present but does not validate refuses package checks and
 installs (`discovery_failed`), and never falls back to the first-party

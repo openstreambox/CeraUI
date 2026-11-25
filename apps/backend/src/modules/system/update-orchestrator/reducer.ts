@@ -24,10 +24,11 @@ import {
 	isRecordedSyncFailure,
 	isRecordedSyncRefusal,
 } from "./sync-failure-recovery.ts";
-import type {
-	OrchestratorEvent,
-	OrchestratorScheduleClock,
-	OrchestratorState,
+import {
+	type OrchestratorEvent,
+	type OrchestratorScheduleClock,
+	type OrchestratorState,
+	PACKAGE_INSTALL_REFUSED,
 } from "./types.ts";
 
 function withoutOsStageRecovery(state: OrchestratorState): OrchestratorState {
@@ -348,33 +349,9 @@ function reduceAwaitingIdle(
 				progress: null,
 				packageAttempt: event.packageAttempt,
 			});
-		case "PACKAGE_PLAN_RELEASED":
-			return releasePackagePlan(state, event);
 		default:
 			return state;
 	}
-}
-
-// Back to `idle` with the package check due now: discovery, not the old plan,
-// decides what is offered, and the image check stays eligible.
-function releasePackagePlan(
-	state: OrchestratorState,
-	event: Extract<OrchestratorEvent, { type: "PACKAGE_PLAN_RELEASED" }>,
-): OrchestratorState {
-	// Only the plan it was issued for: never a transaction started meanwhile.
-	if (
-		state.phase !== event.from ||
-		state.enteredAt !== event.enteredAt ||
-		JSON.stringify(state.packageAttempt ?? null) !==
-			JSON.stringify(event.packageAttempt ?? null)
-	)
-		return state;
-	return enter(state, event.now, {
-		phase: "idle",
-		progress: null,
-		failureReason: null,
-		packageCheck: { ...state.packageCheck, nextAttemptAt: event.now },
-	});
 }
 
 function reduceDownloading(
@@ -396,6 +373,12 @@ function reduceDownloading(
 				phase: "failed",
 				progress: null,
 				failureReason: event.reason,
+				// Nothing reached dpkg: the next package check is due now.
+				...(event.reason === PACKAGE_INSTALL_REFUSED
+					? {
+							packageCheck: { ...state.packageCheck, nextAttemptAt: event.now },
+						}
+					: {}),
 			});
 		case "DOWNLOAD_ABORTED_FOR_STREAM":
 			return enter(state, event.now, { phase: "available", progress: null });
@@ -409,8 +392,6 @@ function reduceDownloading(
 				progress: null,
 				packageCheck: { ...state.packageCheck, nextAttemptAt: event.now },
 			});
-		case "PACKAGE_PLAN_RELEASED":
-			return releasePackagePlan(state, event);
 		default:
 			return state;
 	}
@@ -770,6 +751,15 @@ function reduceFailed(
 	event: OrchestratorEvent,
 ): OrchestratorState {
 	switch (event.type) {
+		// An install that never launched: a fresh check (package or image)
+		// leaves it exactly as one leaves `idle`.
+		case "PACKAGE_CHECK_STARTED":
+		case "OS_CHECK_STARTED":
+			if (state.failureReason !== PACKAGE_INSTALL_REFUSED) return state;
+			return reduceIdle(
+				{ ...state, phase: "idle", progress: null, failureReason: null },
+				event,
+			);
 		case "SYNC_REFUSAL_RELEASED": {
 			if (!isRecordedSyncRefusal(state.failureReason)) return state;
 			const { recoveredNotice: _notice, ...rest } = state;

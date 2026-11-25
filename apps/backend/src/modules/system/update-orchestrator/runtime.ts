@@ -48,15 +48,13 @@ import { withServiceReservation } from "../disruptive-service-reservation.ts";
 import { getIdleStatus } from "../idle-activity.ts";
 import { imageAptSourceInUse } from "../image-apt-source.ts";
 import {
-	ATTEMPT_REASON_LIMIT,
 	aptUpdatesEnabled,
-	currentPackageInstallAttempt,
 	getLastInstallUnitVerdict,
 	getUpdateState,
 	type InstallUnitVerdict,
 	imageSourceClockWaits,
 	isAptAllDiscovery,
-	type PackageInstallAttempt,
+	packageFailedBeforeLaunch,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
 	type SoftwareUpdateError,
@@ -267,6 +265,7 @@ import {
 	type OrchestratorEvent,
 	type OrchestratorPhase,
 	type OrchestratorState,
+	PACKAGE_INSTALL_REFUSED,
 } from "./types.ts";
 import { armUpdateAdmissionDeadline } from "./update-admission-deadline.ts";
 
@@ -290,8 +289,8 @@ export interface OrchestratorRuntimeDeps {
 	readonly runPackageCheck: () => Promise<SoftwareUpdateError>;
 	readonly startPackageInstall: () => UpdateStartOutcome;
 	readonly getPackageInstallWireState: () => UpdateState;
-	/** The current install attempt and how it ended (software-updates.ts). */
-	readonly packageInstallAttempt: () => PackageInstallAttempt;
+	/** Image apt source: the current install ended before its unit launched. */
+	readonly packageFailedBeforeLaunch: () => boolean;
 	readonly stopPackageInstallUnit: () => Promise<void>;
 	readonly killAndRestartRaucForStream: () => Promise<void>;
 	readonly isCommitStageRunning: () => Promise<boolean>;
@@ -427,7 +426,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	runPackageCheck: runSoftwareUpdateCheck,
 	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
 	getPackageInstallWireState: getUpdateState,
-	packageInstallAttempt: currentPackageInstallAttempt,
+	packageFailedBeforeLaunch,
 	stopPackageInstallUnit: stopPackageInstallUnitForStream,
 	killAndRestartRaucForStream,
 	isCommitStageRunning: async () =>
@@ -554,8 +553,7 @@ let packageInstallStarting = false;
 // Image apt source: an install launches only for a request made in this
 // process (installUpdatesNow); a queued or persisted plan is not one.
 let manualPackageAdmission = false;
-// The software-updates attempt this process's INSTALL_UNIT_STARTED stands for.
-let launchedInstallAttemptId: number | undefined;
+
 let packageHoldAttempt: DownloadInterruption | undefined;
 let updateAdmissionProbe: Promise<boolean> | undefined;
 let osForceActivated = false;
@@ -704,7 +702,6 @@ export function setOrchestratorRuntimeDepsForTest(
 export function resetOrchestratorRuntimeForTest(): void {
 	kernelRuntime.reset();
 	manualPackageAdmission = false;
-	launchedInstallAttemptId = undefined;
 	deps.downloadNotices?.dispose();
 	packageHoldAttempt = undefined;
 	resetDisruptiveActionReservationForTest();
@@ -943,7 +940,7 @@ export async function checkUpdatesNow(): Promise<ManualCheckOutcome> {
 		await maybeMigrateLegacyOsFailure();
 		await maybeConfirmOsStageRecovery();
 	}
-	if (!canStartManualCheck(state.phase))
+	if (!canStartManualCheck(state.phase, state.failureReason))
 		return { started: false, reason: "busy" };
 	await runPackageCheckCycle();
 	// Found packages must not hide a system image either.
@@ -1248,6 +1245,7 @@ async function runPackageCheckCycle(): Promise<void> {
 	if (imageSourceClockWaits()) return;
 	const generation = ++packageCheckGeneration;
 	packageCheckDeferral = null;
+	if (refusedInstallPending()) await deps.quarantine.clearPending();
 	const now = deps.now();
 	dispatch({ type: "PACKAGE_CHECK_STARTED", now });
 	const error =
@@ -1439,7 +1437,6 @@ async function maybeStartPackageInstall(opts: {
 			return result; // stays awaiting-idle; retried next tick
 		}
 		manualPackageAdmission = false;
-		launchedInstallAttemptId = deps.packageInstallAttempt().id;
 		const previousHold = packageHoldAttempt;
 		packageHoldAttempt = packageDownloadAttempt(available);
 		dispatch({
@@ -1465,71 +1462,29 @@ async function maybeStartPackageInstall(opts: {
 	}
 }
 
-/**
- * Image apt source: the attempt this process started ended before its unit
- * launched. One typed outcome, read before the wire: `refused` releases the
- * plan to `idle`, `stream` returns it to the offer, so the image check stays
- * eligible either way. The release holds the install latch while the pending
- * vector is cleared, so a retry cannot save a new one underneath it.
- */
-async function settleUnlaunchedInstall(): Promise<boolean> {
-	if (state.phase !== "downloading" || !imageAptSourceInUse()) return false;
-	const attempt = deps.packageInstallAttempt();
-	if (
-		launchedInstallAttemptId === undefined ||
-		attempt.id !== launchedInstallAttemptId
-	)
-		return false;
-	if (attempt.outcome.kind === "stream") {
-		dispatch({ type: "DOWNLOAD_ABORTED_FOR_STREAM", now: deps.now() });
-		launchedInstallAttemptId = undefined;
-		return true;
-	}
-	if (attempt.outcome.kind !== "refused" || packageInstallStarting)
-		return false;
-	const release = releaseEvent("downloading");
-	packageInstallStarting = true;
-	try {
-		await deps.quarantine.clearPending();
-	} finally {
-		packageInstallStarting = false;
-	}
-	dispatch(release);
-	launchedInstallAttemptId = undefined;
-	notifyUpdate({
-		kind: "refused",
-		// Bounded: the attempt, not the text, names the event, and the
-		// diagnostic is cut to what an event carries.
-		id: `packages:attempt-${attempt.id}`,
-		reason: boundedRefusal(attempt.outcome.reason),
-	});
-	return true;
-}
-
-function boundedRefusal(reason: string): string {
-	return reason.length <= ATTEMPT_REASON_LIMIT
-		? reason
-		: `${reason.slice(0, ATTEMPT_REASON_LIMIT - 1)}…`;
-}
-
-// The release for the phase entry and attempt holding now.
-function releaseEvent(
-	from: "awaiting-idle" | "downloading",
-): Extract<OrchestratorEvent, { type: "PACKAGE_PLAN_RELEASED" }> {
-	return {
-		type: "PACKAGE_PLAN_RELEASED",
-		now: deps.now(),
-		from,
-		enteredAt: state.enteredAt,
-		packageAttempt: state.packageAttempt,
-	};
-}
-
 async function pollPackageInstallProgress(): Promise<void> {
 	if (state.phase !== "downloading" && state.phase !== "committing") return;
-	if (await settleUnlaunchedInstall()) return;
 	const wire = deps.getPackageInstallWireState();
 	const now = deps.now();
+	// Image apt source: an install that ended before its unit launched is one
+	// failure origin. Nothing reached dpkg, so nothing is quarantined, and the
+	// next package or image check leaves it.
+	if (
+		state.phase === "downloading" &&
+		(wire.kind === "failed" || wire.kind === "update_preflight_failed") &&
+		imageAptSourceInUse() &&
+		deps.packageFailedBeforeLaunch()
+	) {
+		dispatch({
+			type: "DOWNLOAD_FAILED",
+			now,
+			reason: PACKAGE_INSTALL_REFUSED,
+			...(wire.kind === "failed" && wire.failure_id !== undefined
+				? { failureId: wire.failure_id }
+				: {}),
+		});
+		return;
+	}
 	if (wire.kind === "downloading") {
 		if (state.phase === "committing") return; // never regress commit->download
 		dispatch({
@@ -2991,42 +2946,7 @@ export async function runOrchestratorTick(): Promise<void> {
 			scheduleNextTick();
 			return;
 		}
-		const settings = await deps.loadSettings();
-		const capabilities = await readCapabilityRegime();
-		if (capabilities === null) {
-			scheduleNextTick();
-			return;
-		}
-		const now = deps.now();
-		const osClock = osScheduleClock();
-		let packageCheckRan = false;
-		if (
-			aptUpdatesEnabled() &&
-			shouldAttemptScheduledCheck({
-				now,
-				phase: state.phase,
-				clock: state.packageCheck,
-				kind: "packages",
-				settings,
-			})
-		) {
-			packageCheckRan =
-				(await runPackageCheckAfterCellularGate(settings)) === "ran";
-		}
-		if (
-			!packageCheckRan &&
-			capabilities.mode === "capable" &&
-			capabilities.features.includes("rauc-verity-streaming") &&
-			shouldAttemptScheduledCheck({
-				now,
-				phase: state.phase,
-				clock: osClock,
-				kind: "os",
-				settings,
-			})
-		) {
-			await runOsCheckAfterCellularGate(settings);
-		}
+		await runScheduledChecks();
 	} else if (state.phase === "available") {
 		const settings = await deps.loadSettings();
 		await maybeCheckOsWhilePackagesWait(settings);
@@ -3039,25 +2959,7 @@ export async function runOrchestratorTick(): Promise<void> {
 			dispatch({ type: "AWAIT_IDLE_FOR_INSTALL", now: deps.now() });
 		}
 	} else if (state.phase === "awaiting-idle") {
-		if (
-			imageAptSourceInUse() &&
-			!manualPackageAdmission &&
-			!packageInstallStarting
-		) {
-			// A plan queued automatically, or persisted across a restart. The
-			// install latch keeps a manual install out until the plan is gone.
-			logger.info(
-				"Queued package install dropped: the image apt source installs only when asked",
-			);
-			const release = releaseEvent("awaiting-idle");
-			packageInstallStarting = true;
-			try {
-				await deps.quarantine.clearPending();
-			} finally {
-				packageInstallStarting = false;
-			}
-			dispatch(release);
-		} else await maybeStartPackageInstall({ bypassIdle: false });
+		await maybeStartPackageInstall({ bypassIdle: false });
 	} else if (state.phase === "downloading" || state.phase === "committing") {
 		await readjudicateDeferredDownload();
 		pendingPackageSuccess.assertEffectsAllowed();
@@ -3088,6 +2990,12 @@ export async function runOrchestratorTick(): Promise<void> {
 		await maybeCheckPackagesWhileOsWaits();
 	} else if (state.phase === "os-staging" && !osStageInProcess) {
 		await settleInterruptedOsStage();
+	} else if (
+		state.phase === "failed" &&
+		state.failureReason === PACKAGE_INSTALL_REFUSED
+	) {
+		// Never stranded: the due package check (immediately) and image check run.
+		await runScheduledChecks();
 	} else if (state.phase === "failed") {
 		if (!(await maybeRecoverFailedUpdate()))
 			await maybeMigrateLegacyOsFailure();
@@ -3109,6 +3017,58 @@ export async function runOrchestratorTick(): Promise<void> {
 	}
 
 	scheduleNextTick();
+}
+
+/**
+ * Leaving an image-source install that never launched: nothing reached dpkg,
+ * so its pending vector goes (quarantine records only a failed commit). Only
+ * then is there an await before the check's own dispatch.
+ */
+function refusedInstallPending(): boolean {
+	return (
+		state.phase === "failed" && state.failureReason === PACKAGE_INSTALL_REFUSED
+	);
+}
+
+/**
+ * The due scheduled package check, then the due image check, as from `idle`.
+ * Also run from an image-source install that never launched (`failed` with
+ * PACKAGE_INSTALL_REFUSED), which a check leaves as it would leave `idle`.
+ */
+async function runScheduledChecks(): Promise<void> {
+	const settings = await deps.loadSettings();
+	const capabilities = await readCapabilityRegime();
+	if (capabilities === null) return;
+	const now = deps.now();
+	const osClock = osScheduleClock();
+	let packageCheckRan = false;
+	if (
+		aptUpdatesEnabled() &&
+		shouldAttemptScheduledCheck({
+			now,
+			phase: "idle",
+			clock: state.packageCheck,
+			kind: "packages",
+			settings,
+		})
+	) {
+		packageCheckRan =
+			(await runPackageCheckAfterCellularGate(settings)) === "ran";
+	}
+	if (
+		!packageCheckRan &&
+		capabilities.mode === "capable" &&
+		capabilities.features.includes("rauc-verity-streaming") &&
+		shouldAttemptScheduledCheck({
+			now,
+			phase: "idle",
+			clock: osClock,
+			kind: "os",
+			settings,
+		})
+	) {
+		await runOsCheckAfterCellularGate(settings);
+	}
 }
 
 async function runPackageCheckAfterCellularGate(
@@ -3192,6 +3152,7 @@ async function runOsCheckAfterCellularGate(
 		candidateId: "",
 	});
 	if (!gate.allowed) return;
+	if (refusedInstallPending()) await deps.quarantine.clearPending();
 	const now = deps.now();
 	const besidePackageOffer = state.phase === "available";
 	dispatch({ type: "OS_CHECK_STARTED", now });
@@ -3389,7 +3350,9 @@ async function startOrchestratorRuntime(
 	} else {
 		adoptState(await resumeOrchestratorState(baseline, resumeDeps()));
 	}
-	adoptState(normalizeStartupDiscovery(state, deps.now()));
+	adoptState(
+		normalizeStartupDiscovery(state, deps.now(), imageAptSourceInUse()),
+	);
 	await kernelRuntime.reconcile();
 	if (
 		baseline.phase === "committing" &&

@@ -8,6 +8,7 @@
 	(at your option) any later version.
 */
 
+import { imageAptSourceInUse } from "./image-apt-source.ts";
 import {
 	buildDetachedAptAllCommand,
 	buildDetachedAptUpgradeCommand,
@@ -270,9 +271,28 @@ export async function runDetachedAptAll(
 	if (existing.kind !== "absent")
 		throw new DetachedAptServiceAlreadyExistsError();
 	await deps.prepareOutput();
-	await deps.start(
-		buildDetachedAptAllCommand(installArgs, verdict, deps.outputPaths),
+	const command = buildDetachedAptAllCommand(
+		installArgs,
+		verdict,
+		deps.outputPaths,
 	);
+	try {
+		await deps.start(command);
+	} catch (error) {
+		// A client error or timeout does not say PID 1 refused the unit. On an
+		// image with its own apt source, look for the fixed unit before calling
+		// it refused: found, or unknowable, the transaction is the unit's.
+		if (!imageAptSourceInUse()) throw error;
+		let state: DetachedAptServiceState;
+		try {
+			state = await deps.inspect();
+		} catch {
+			state = { kind: "running" };
+		}
+		if (state.kind === "absent") throw error;
+		handlers.onLaunched?.();
+		return observeDetachedAptUpgrade(state, handlers, deps);
+	}
 	handlers.onLaunched?.();
 	return observeDetachedAptUpgrade({ kind: "running" }, handlers, deps);
 }

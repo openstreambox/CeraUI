@@ -291,9 +291,6 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	],
 	["Production mode: Serving static files from ./public"],
 	["Proxy error: ", ""],
-	[
-		"Queued package install dropped: the image apt source installs only when asked",
-	],
 	["RPC ", " err"],
 	["RPC ", " ok"],
 	["RTMP stats update error"],
@@ -347,6 +344,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Skipping hotspot policy mutation: conflicting or unknown profile pins"],
 	["Software update archive cleanup failed"],
 	["Software update capability regime unknown"],
+	["Software update check continuation failed"],
 	["Software update check failed: apt-get dist-upgrade exited ", ""],
 	["Software update observer retrying after a local read failure"],
 	["Software update preflight refused"],
