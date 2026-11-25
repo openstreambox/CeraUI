@@ -23,6 +23,11 @@ import {
 	getModemNetMarker,
 	getRouterCellularMarker,
 } from "../../network/router-cellular-scan.ts";
+import {
+	activeImageAptSource,
+	imageAptSourceInUse,
+	imageAptSourcesText,
+} from "../image-apt-source.ts";
 import { updateChannelUrl } from "../update-channel-url.ts";
 import { parseAuthorityJson } from "../update-orchestrator/strict-authority-json.ts";
 import { UPDATE_INVENTORY_NMCLI_FIELDS } from "./candidate-inventory.ts";
@@ -61,6 +66,9 @@ export type UpdateTransportDeps = {
 };
 
 async function readSources(): Promise<string> {
+	// An image with its own apt source: only that file, whatever else is on disk.
+	const only = imageAptSourcesText();
+	if (only !== undefined) return only;
 	const names = (await readdir(SOURCE_DIR))
 		.filter((name) => /\.(?:sources|list)$/.test(name))
 		.sort();
@@ -342,12 +350,17 @@ async function debian(
 	family: Family,
 	deps: UpdateTransportDeps,
 ): Promise<HostProbe> {
-	if (!source.keyring)
-		return { host: source.url, state: "tampered", latencyMs: 0 };
+	// The image source's URL carries its access token: findings name its host only.
+	const image = activeImageAptSource();
+	const host =
+		image !== undefined && new URL(source.url).hostname === image.host
+			? image.host
+			: source.url;
+	if (!source.keyring) return { host, state: "tampered", latencyMs: 0 };
 	const response = await curl(source.url, ifname, family, "GET", deps);
 	if (response.state !== "clear" || response.code !== 200)
 		return {
-			host: source.url,
+			host,
 			state: response.state === "clear" ? "no-route" : response.state,
 			latencyMs: response.latencyMs,
 		};
@@ -362,13 +375,13 @@ async function debian(
 			inRelease,
 		]);
 		return {
-			host: source.url,
+			host,
 			state: verified.exitCode === 0 ? "clear" : "tampered",
 			latencyMs: response.latencyMs,
 		};
 	} catch (error) {
 		return {
-			host: source.url,
+			host,
 			state: failureFromError(error),
 			latencyMs: response.latencyMs,
 		};
@@ -465,8 +478,9 @@ async function probeUpdateTransport(
 			: [];
 	if (profile.profile === "apt" && sources.length === 0)
 		return rankTransports([]);
-	const credentials =
-		profile.profile === "apt" ? await deps.credentials() : undefined;
+	// The first-party archive is probed (with its client certificate) only where it is a source.
+	const firstParty = profile.profile === "apt" && !imageAptSourceInUse();
+	const credentials = firstParty ? await deps.credentials() : undefined;
 	// Live verification against the Todo-12-deployed apt.ceralive.tv is deferred; fixture contracts are the current evidence.
 	const imageBase = profile.profile === "os" ? await updateChannelUrl() : "";
 	const samples: TransportSample[] = await Promise.all(
@@ -477,14 +491,18 @@ async function probeUpdateTransport(
 				hosts:
 					profile.profile === "apt"
 						? [
-								await endpoint(
-									"https://apt.ceralive.tv",
-									candidate.ifname,
-									family,
-									profile,
-									deps,
-									credentials,
-								),
+								...(firstParty
+									? [
+											await endpoint(
+												"https://apt.ceralive.tv",
+												candidate.ifname,
+												family,
+												profile,
+												deps,
+												credentials,
+											),
+										]
+									: []),
 								...(await Promise.all(
 									sources.map((source) =>
 										debian(source, candidate.ifname, family, deps),

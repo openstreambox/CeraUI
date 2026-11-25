@@ -455,6 +455,17 @@ export async function reconcileCeraliveUpdateNotice(
 	publish(sorted);
 }
 
+/**
+ * An image that ships its own apt source has no first-party archive to offer
+ * from: the check stays silent, and a stored offer or a notice still on screen
+ * is retired once. Never throws.
+ */
+export function retireCeraliveUpdateOffer(why: string): void {
+	if (!latest?.offer && notificationExists(NOTICE) === undefined) return;
+	if (!persist(null)) return;
+	withdraw(why);
+}
+
 /** The offer an update taken now is proven against, or null when none stands. */
 export function standingCeraliveOffer(): readonly OfferedPackage[] | null {
 	return latest?.offer ?? null;

@@ -46,11 +46,13 @@ import {
 } from "../disruptive-action-reservation.ts";
 import { withServiceReservation } from "../disruptive-service-reservation.ts";
 import { getIdleStatus } from "../idle-activity.ts";
+import { imageAptSourceInUse } from "../image-apt-source.ts";
 import {
 	aptUpdatesEnabled,
 	getLastInstallUnitVerdict,
 	getUpdateState,
 	type InstallUnitVerdict,
+	imageSourceClockWaits,
 	isAptAllDiscovery,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
@@ -1228,6 +1230,8 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 
 async function runPackageCheckCycle(): Promise<void> {
 	if (osSettlementPersistence.pending || !aptUpdatesEnabled()) return;
+	// Not checked yet, not a failure: the image's own source needs a usable clock.
+	if (imageSourceClockWaits()) return;
 	const generation = ++packageCheckGeneration;
 	packageCheckDeferral = null;
 	const now = deps.now();
@@ -2947,7 +2951,12 @@ export async function runOrchestratorTick(): Promise<void> {
 	} else if (state.phase === "available") {
 		const settings = await deps.loadSettings();
 		await maybeCheckOsWhilePackagesWait(settings);
-		if (getOrchestratorState().phase === "available" && settings.packagesAuto) {
+		// An image with its own apt source installs packages only when asked.
+		if (
+			getOrchestratorState().phase === "available" &&
+			settings.packagesAuto &&
+			!imageAptSourceInUse()
+		) {
 			dispatch({ type: "AWAIT_IDLE_FOR_INSTALL", now: deps.now() });
 		}
 	} else if (state.phase === "awaiting-idle") {
@@ -3024,6 +3033,8 @@ async function runPackageCheckAfterCellularGate(
 		packageCheckDeferral = { reason: "metered_only", at: deps.now() };
 		return "deferred";
 	}
+	// The image check still runs on this tick.
+	if (imageSourceClockWaits()) return "deferred";
 	await runPackageCheckCycle();
 	return "ran";
 }

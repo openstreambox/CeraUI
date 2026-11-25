@@ -23,6 +23,7 @@ import {
 } from "../addons/apt-client-tls.ts";
 import { deviceBindingArgs } from "../network/device-bound-probe.ts";
 import { type AptOrigin, parseAptSourceOrigins } from "./apt-source-origins.ts";
+import { imageAptSourcesText } from "./image-apt-source.ts";
 import { parseAuthorityJson } from "./update-orchestrator/strict-authority-json.ts";
 
 export { type AptOrigin, parseAptSourceOrigins } from "./apt-source-origins.ts";
@@ -224,6 +225,9 @@ export function deriveVerdict(
 export async function readAptSources(
 	dir: string = APT_SOURCE_DIR,
 ): Promise<string> {
+	// An image with its own apt source: only that file, whatever else is on disk.
+	const only = imageAptSourcesText();
+	if (only !== undefined) return only;
 	const names = (await readdir(dir))
 		.filter((name) => name.endsWith(".sources") || name.endsWith(".list"))
 		.sort();

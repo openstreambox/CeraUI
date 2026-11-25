@@ -41,7 +41,11 @@ ORCHESTRATOR. The feature notes, stated at the level a CeraUI change needs:
   waiting package offer (`available`) runs the due OS check in place; a found
   image supersedes the offer. Capable discovery withholds the image's own
   packages (`image-owned-packages.ts`: the image's local-override pin, else a
-  fixed list).
+  fixed list). An image that ships its own signed apt source
+  (`image-apt-source.ts`, `/usr/lib/ceralive/image-apt-source.json`) makes it
+  the only package origin. On it, the token in its URI is shown by host only,
+  checks wait for the clock gate, installs are manual only, and an invalid
+  record fails closed. See DEVICE-UPDATES.
   A first image offer waiting for cellular download approval also permits due
   package checks. The image candidate and pending approval survive package work;
   OS staging still requires approval and discovery re-admits the held offer.

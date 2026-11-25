@@ -1377,6 +1377,36 @@ not parse, falls back to `ceralive-device`, `libmm-glib0` and `modemmanager`.
 Other packages are offered as before. The unit's download stage still fetches
 every upgradable archive, so a withheld package's archive can be downloaded
 without being installed.
+
+An image can instead ship its own signed apt source and record it in
+`/usr/lib/ceralive/image-apt-source.json` (schema 1: the deb822 `sourcesFile`
+under `/etc/apt/sources.list.d/`, its `host`, `origin` and `label`
+`OpenStreamBox`, and the suites `<board>-<YYYY.M.N>` and the same plus
+`-emergency`). `image-apt-source.ts` reads the record and that one file
+strictly. With a valid record:
+
+- CeraUI never writes `ceralive.sources`. Reachability and transport read only
+  that file, and `apt.ceralive.tv` is not probed (no client certificate).
+- Only that URI, host and the two suites released as OpenStreamBox are an
+  installable origin. Image-owned names from it are offered: that source carries
+  only what the image's maker put there. From anywhere else they stay withheld.
+- The CeraLive update notice stays silent, and a stored offer is withdrawn once.
+- The URI's first path segment is an access token. Transport findings, the
+  update state's failure reason and logged apt output show the source by host
+  only.
+- Package checks wait until the image's clock gate wrote
+  `/run/ceralive/clock-gate-open`: apt refuses a Release signed in the box
+  clock's future, which a cold boot without RTC is. Until then the check has not
+  run, which is no failure, and the image check still runs.
+- Installs are manual only, whatever `packagesAuto` says. The refresh an install
+  starts with must have reached both suites without an error. An install is
+  refused (`dpkg_interrupted`) while dpkg's journal (`/var/lib/dpkg/updates`)
+  holds an unfinished run; `dpkg --configure -a` is left to the operator,
+  because maintainer scripts may restart the backend.
+
+A record that is present but does not validate refuses package checks and
+installs (`discovery_failed`), and never falls back to the first-party
+archive. Without the record nothing above applies.
 The dialog states the waiting reason, shows overdue checks as "as soon as
 possible", and hides the next-check line when automation is off. An open row
 wakes at its future deadline to replace the timestamp without waiting

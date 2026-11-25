@@ -105,6 +105,7 @@ import {
 	firstPartyOffer,
 	legacyCeraliveOffer,
 	reconcileCeraliveUpdateNotice,
+	retireCeraliveUpdateOffer,
 	standingCeraliveOffer,
 	unfinishedAptWork,
 	withdrawCeraliveOfferIfInstalled,
@@ -125,6 +126,15 @@ import {
 	isDisruptiveActionPending,
 	resetDisruptiveActionReservationForTest,
 } from "./disruptive-action-reservation.ts";
+import {
+	activeImageAptSource,
+	dpkgJournalPending,
+	imageAptSourceInUse,
+	imageAptSourceMode,
+	imageClockUsable,
+	redactImageAptSecret,
+	refreshedImageSuites,
+} from "./image-apt-source.ts";
 import { readImageOwnedPackages } from "./image-owned-packages.ts";
 import { classifyPackageLayer } from "./package-layer.ts";
 import { getBootReadiness } from "./readiness.ts";
@@ -680,6 +690,7 @@ async function getCapableUpdateSize(
 			},
 			sourcePolicy.stdout,
 			imageOwned.names,
+			activeImageAptSource(),
 		);
 		if (result.withheld.length > 0)
 			logger.info(
@@ -705,7 +716,10 @@ async function getCapableUpdateSize(
 			available_updates: availableUpdates,
 			update_state: getUpdateState(),
 		});
-		if (refresh !== undefined)
+		// The image's own source is not the first-party archive: no CeraLive offer.
+		if (imageAptSourceInUse())
+			retireCeraliveUpdateOffer("the image ships its own apt source");
+		else if (refresh !== undefined)
 			await reconcileCeraliveUpdateNotice(
 				firstPartyOffer(
 					result.packages,
@@ -1066,6 +1080,45 @@ async function getSoftwareUpdateSize(
 	return null;
 }
 
+/**
+ * An image with its own apt source takes package updates only through it: its
+ * record must validate and the image must run the all-packages path. Anything
+ * less refuses the check or install; it never falls back to another source.
+ */
+function imageSourceRefused(capabilities: UpdateCapabilities): boolean {
+	const mode = imageAptSourceMode();
+	if (mode.kind === "absent") return false;
+	if (
+		mode.kind === "active" &&
+		capabilities.mode === "capable" &&
+		capabilities.features.includes("apt-all-packages")
+	)
+		return false;
+	if (mode.kind === "active")
+		logger.warn(
+			"Package updates refused: the image apt source needs the all-packages update path",
+			{ mode: capabilities.mode },
+		);
+	return true;
+}
+
+let clockWaitLogged = false;
+/**
+ * apt refuses a Release signed in the box clock's future: an image with its own
+ * source checks packages only once the image's clock gate opened. Until then
+ * the check has not run yet, which is not a failure.
+ */
+export function imageSourceClockWaits(): boolean {
+	if (!imageAptSourceInUse() || imageClockUsable()) {
+		clockWaitLogged = false;
+		return false;
+	}
+	if (!clockWaitLogged)
+		logger.info("Package check waits for a synchronized clock");
+	clockWaitLogged = true;
+	return true;
+}
+
 async function readPackageCapabilities(): Promise<UpdateCapabilities | null> {
 	try {
 		return await readUpdateCapabilities();
@@ -1161,6 +1214,7 @@ function checkForSoftwareUpdates(
 	) {
 		return false;
 	}
+	if (imageSourceClockWaits()) return false;
 
 	lastCheckFailure = null;
 	lastAptReachability = undefined;
@@ -1171,6 +1225,11 @@ function checkForSoftwareUpdates(
 		async () => {
 			const capabilities = await readPackageCapabilities();
 			if (capabilities === null) {
+				callback("discovery_failed", aptGetUpdateFailures);
+				return;
+			}
+			if (imageSourceRefused(capabilities)) {
+				failCurrentCheck("discovery_failed");
 				callback("discovery_failed", aptGetUpdateFailures);
 				return;
 			}
@@ -1229,8 +1288,8 @@ function checkForSoftwareUpdates(
 			logger.info(
 				`apt-get update: ${errOrStderr === null ? "success" : "error"}`,
 			);
-			if (stdout) logger.info(stdout);
-			if (stderr) logger.error(stderr);
+			if (stdout) logger.info(redactImageAptSecret(stdout));
+			if (stderr) logger.error(redactImageAptSecret(stderr));
 
 			if (callback)
 				callback(
@@ -1346,6 +1405,10 @@ export async function runUpdateDiscoveryAndReport(
 	try {
 		const capabilities = await readPackageCapabilities();
 		if (capabilities === null) return "discovery_failed";
+		if (imageSourceRefused(capabilities)) {
+			failCurrentCheck("discovery_failed");
+			return "discovery_failed";
+		}
 		const network = await openAptNetwork(capabilities);
 		const reachability = network.reachability;
 		pendingPackageSuccess.assertEffectsAllowed();
@@ -1595,7 +1658,8 @@ const defaultSoftwareUpdateRunner: SoftwareUpdateRunner = (
 	onCommitSucceeded,
 ) => {
 	const admission = captureAptTransferAdmission();
-	const checkStarted = softwareUpdateCheckRunner(async (err) => {
+	const checkStarted = softwareUpdateCheckRunner(async (fetchErr, _, lists) => {
+		const err = fetchErr ?? imageRefreshRefusal(lists);
 		if (err === null) {
 			await doSoftwareUpdate(onCommitSucceeded, admission);
 		} else if (softUpdateStatus) {
@@ -1874,7 +1938,9 @@ export function createSoftwareUpdateProcessMonitor(
 				code === 0
 					? null
 					: {
-							reason: aptErr.trim() || `apt-get exited with code ${code}`,
+							reason:
+								redactImageAptSecret(aptErr.trim()) ||
+								`apt-get exited with code ${code}`,
 							failure_id: randomUUID(),
 							...((currentUpdateIdentity ?? availableIdentity)
 								? {
@@ -1941,8 +2007,8 @@ export function createSoftwareUpdateProcessMonitor(
 		const settled = settle(completion, onCommitSucceeded !== undefined);
 		// Keep the deliberate restart detached so a caller's catch cannot swallow it.
 		void settled.then((code) => {
-			if (aptLog) logger.info(aptLog);
-			if (aptErr) logger.error(aptErr);
+			if (aptLog) logger.info(redactImageAptSecret(aptLog));
+			if (aptErr) logger.error(redactImageAptSecret(aptErr));
 
 			if (code === 0) {
 				// Persist the observed commit success before deliberately exiting;
@@ -1986,7 +2052,7 @@ async function prepareSoftwareUpdate(
 	if (!aptUpdatesEnabled() || !isStreamConfirmedIdle()) return;
 
 	const capabilities = await readPackageCapabilities();
-	if (capabilities === null) {
+	if (capabilities === null || imageSourceRefused(capabilities)) {
 		refuseUnknownPackageInstall();
 		return;
 	}
@@ -2004,6 +2070,15 @@ async function prepareSoftwareUpdate(
 	}
 	const capable = freshCapabilities.mode === "capable";
 	pendingPackageSuccess.assertEffectsAllowed();
+	const imageRefusal = imageSourceInstallRefusal();
+	if (imageRefusal !== null) {
+		lastUpdateSucceeded = false;
+		lastUpdateFailure = { reason: imageRefusal };
+		if (softUpdateStatus) softUpdateStatus.result = imageRefusal;
+		softUpdateStatus = null;
+		broadcastMsg("status", { updating: null, update_state: getUpdateState() });
+		return;
+	}
 	if (capable) {
 		const discovery = await network.within(
 			(attempt) => getCapableUpdateSize(attempt),
@@ -2208,6 +2283,39 @@ async function prepareSoftwareUpdate(
 			: runDetachedAptUpgrade(args, monitor.handlers),
 		capable ? onCommitSucceeded : undefined,
 	);
+}
+
+/**
+ * On an image with its own apt source an install never runs over an
+ * interrupted dpkg run, nor before the clock gate opened. (Its lists were
+ * refreshed just before: see {@link imageRefreshRefusal}.) Null when it may go ahead.
+ */
+function imageSourceInstallRefusal(): string | null {
+	if (activeImageAptSource() === undefined) return null;
+	if (!imageClockUsable()) return "check_unavailable";
+	if (dpkgJournalPending()) {
+		logger.warn(
+			"Package install refused: an earlier dpkg run was interrupted; run dpkg --configure -a",
+		);
+		return "dpkg_interrupted";
+	}
+	return null;
+}
+
+/**
+ * The refresh an install starts with must have fetched or hit both image
+ * suites, validly signed and without a failed index: the emergency suite may
+ * have changed since the check, and stale lists are never installed from.
+ */
+function imageRefreshRefusal(refresh: string | undefined): SoftwareUpdateError {
+	const source = activeImageAptSource();
+	if (source === undefined) return null;
+	if (refresh !== undefined && refreshedImageSuites(refresh, source))
+		return null;
+	logger.warn(
+		"Package install refused: the image source's lists did not refresh",
+	);
+	return true;
 }
 
 function refuseUnknownPackageInstall(): void {
