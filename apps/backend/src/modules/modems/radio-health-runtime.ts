@@ -121,7 +121,7 @@ export type RadioRosterChange = {
 	identity: string[];
 	/** True when any ID was added, removed or changed identity. */
 	roster: boolean;
-	/** IDs with the same identity whose committed registration value changed. */
+	/** IDs with the same identity whose shown registration changed. */
 	registration: string[];
 };
 
@@ -135,6 +135,7 @@ export type RadioRosterChange = {
 export function commitRadioRoster(
 	rows: Readonly<Record<string, object>>,
 	live: Pick<typeof defaults, "modem" | "registration"> = defaults,
+	now = Date.now(),
 ): RadioRosterChange {
 	const seen = new Set<string>();
 	const identity: string[] = [];
@@ -153,11 +154,8 @@ export function commitRadioRoster(
 		const internal = live.modem(Number(id));
 		const same = internal !== undefined && sameIdentity(internal, row);
 		const registration = same ? live.registration(internal) : undefined;
-		if (
-			before?.key === key &&
-			before.registration?.value !== registration?.value
-		)
-			registrationMoved.push(id);
+		const shownBefore =
+			before?.key === key ? shownRegistration(id, now) : undefined;
 		committed.set(
 			id,
 			Object.freeze({
@@ -168,6 +166,10 @@ export function commitRadioRoster(
 				homeNetwork: same ? internal.home_network : undefined,
 			}),
 		);
+		// What subscribers see changes with the committed registration: a new
+		// value, or a fresh read where the record showed an expired one.
+		if (before?.key === key && shownRegistration(id, now) !== shownBefore)
+			registrationMoved.push(id);
 	}
 	for (const id of committed.keys())
 		if (!seen.has(id)) {
@@ -311,6 +313,12 @@ function sameObservation(
 	b: RegistrationObservation | undefined,
 ): boolean {
 	return a?.value === b?.value && a?.capturedAt === b?.capturedAt;
+}
+
+/** The registration value the published record of this ID shows at `now`. */
+function shownRegistration(id: string, now: number): unknown {
+	const row = committed.get(id)?.row;
+	return row ? currentRecord(id, row, now)?.registration.value : undefined;
 }
 
 /**

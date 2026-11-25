@@ -375,6 +375,37 @@ describe("committed modem snapshot", () => {
 		}
 	});
 
+	test("a fresh read of a value the sample found expired reaches existing subscribers", async () => {
+		resetRadioHealthForTest();
+		try {
+			const first = radioModem("one", "8900000000000000001");
+			recordRadioRegistration(first, {
+				value: "home",
+				capturedAt: Date.now() - 70_000,
+			});
+			setModem(1, first);
+			broadcastModems();
+			await refreshRadioHealth(
+				Date.now(),
+				sampler((m?: Modem) => getRadioRegistrationObservation(m)) as never,
+			);
+			const stale = getCommittedState()["1"]?.radio_health as Radio;
+			expect(stale.registration.value).toBeNull();
+			// A signal change commits with a fresh read of the same value.
+			const next = {
+				...first,
+				status: { ...first.status, signal: 40 },
+			} as Modem;
+			recordRadioRegistration(next, { value: "home", capturedAt: Date.now() });
+			setModem(1, next);
+			const rows = capture(() => broadcastModems({})).at(-1)?.status?.modems;
+			const radio = rows?.["1"]?.radio_health as Radio | undefined;
+			expect(radio?.registration.value).toBe("home");
+		} finally {
+			resetRadioHealthForTest();
+		}
+	});
+
 	test("a status-only broadcast keeps a roaming advisory in its stable slot", async () => {
 		resetRoamingAdvisoryState();
 		setModemIdPathReader(
