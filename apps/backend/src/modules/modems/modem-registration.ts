@@ -83,25 +83,19 @@ import {
 import { modemStableKeyForId } from "./mutation-identity.ts";
 import { withJournaledModemMutation } from "./mutation-lease.ts";
 import { deriveSimPresence } from "./sim-presence.ts";
+import {
+	getRadioRegistrationObservation,
+	recordRadioRegistration,
+} from "./state/radio-registration.ts";
 
 export type { ModemId } from "./mmcli.ts";
+export { getRadioRegistrationObservation };
 
 /** Keep raw modem transport reads in the registration owner. */
 export async function readModemRegistrationState(
 	id: ModemId,
 ): Promise<string | undefined> {
 	return (await mmGetModem(id))?.["modem.generic.state"];
-}
-
-const registrationObservations = new WeakMap<
-	Modem,
-	{ value: string | undefined; capturedAt: number }
->();
-/** A timestamp belongs to the successful owner read, never to a cache lookup. */
-export function getRadioRegistrationObservation(
-	modem: Modem | undefined,
-): Readonly<{ value: string | undefined; capturedAt: number }> | undefined {
-	return modem ? registrationObservations.get(modem) : undefined;
 }
 
 export type ModemStatus = {
@@ -803,7 +797,7 @@ async function registerModem(id: number) {
 	const simLock = buildSimLock(modemInfo);
 	if (simLock.state === "present") modem.sim_lock = simLock.lock;
 
-	registrationObservations.set(modem, {
+	recordRadioRegistration(modem, {
 		value: modemInfo["modem.3gpp.registration-state"],
 		capturedAt: registrationCapturedAt,
 	});
@@ -848,7 +842,7 @@ export async function refreshModemStatus(id: ModemId): Promise<void> {
 	}
 
 	const updated = mergeRefreshedModem(modem, modemInfo);
-	registrationObservations.set(updated, {
+	recordRadioRegistration(updated, {
 		value: modemInfo["modem.3gpp.registration-state"],
 		capturedAt: registrationCapturedAt,
 	});

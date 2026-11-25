@@ -49,29 +49,149 @@ const defaults: {
 export function resetRadioHealthForTest(): void {
 	records = {};
 	previous.clear();
+	committed.clear();
+	sampledNeighbours.clear();
 	lastAt = 0;
 }
 let records: Record<string, RadioHealth> = {};
+/** The last sample per modem: its committed generation and byte baseline. */
 const previous = new Map<
 	string,
-	{ key: string; bytes: number | null; evidence: RadioEvidence }
+	{ generation: number; bytes: number | null; evidence: RadioEvidence }
 >();
+/** The committed generation of each neighbour a stored record was built with. */
+const sampledNeighbours = new Map<string, Map<string, number>>();
 let lastAt = Date.now();
 let refreshing = false;
 
 type RadioIdentityRow = Partial<
 	Pick<WireModemEntry, "ifname" | "stable_key" | "iccid">
 >;
+type RadioRow = Partial<
+	Pick<
+		WireModemEntry,
+		| "ifname"
+		| "stable_key"
+		| "status"
+		| "cell_info"
+		| "signal_detail"
+		| "registration_rejection"
+		| "packet_service_state"
+		| "model"
+		| "availability_reason"
+		| "iccid"
+	>
+>;
+type RegistrationObservation = Readonly<{
+	value: string | undefined;
+	capturedAt: number;
+}>;
+
+/**
+ * One modem as the last settled commit published it. The sampler reads only
+ * this: the row, its identity, the registration observation committed with its
+ * status and the home network. `generation` changes on every committed identity
+ * change (a different device, interface or SIM, or the row leaving the roster),
+ * and a byte baseline, record or neighbour reading from another generation is
+ * never used or served.
+ */
+type CommittedRadio = Readonly<{
+	key: string;
+	generation: number;
+	row: RadioRow;
+	registration: RegistrationObservation | undefined;
+	homeNetwork: string | undefined;
+}>;
+const committed = new Map<string, CommittedRadio>();
+let generations = 0;
+
+/**
+ * Record the committed roster. Called with every complete modem message the
+ * moment it becomes the committed one, so its registration and home network
+ * are those of the live modem the row was just built from.
+ */
+export function commitRadioRoster(
+	rows: Readonly<Record<string, object>>,
+	live: Pick<typeof defaults, "modem" | "registration"> = defaults,
+): void {
+	const seen = new Set<string>();
+	for (const [id, entry] of Object.entries(rows)) {
+		const row: RadioRow = entry;
+		if (typeof row.ifname !== "string") continue;
+		seen.add(id);
+		const key = radioIdentity(row);
+		const before = committed.get(id);
+		const internal = live.modem(Number(id));
+		const same = internal !== undefined && sameIdentity(internal, row);
+		committed.set(
+			id,
+			Object.freeze({
+				key,
+				generation: before?.key === key ? before.generation : ++generations,
+				row: pickRadioRow(row),
+				registration: same ? live.registration(internal) : undefined,
+				homeNetwork: same ? internal.home_network : undefined,
+			}),
+		);
+	}
+	for (const id of committed.keys()) if (!seen.has(id)) committed.delete(id);
+}
+
+const RADIO_ROW_FIELDS = [
+	"ifname",
+	"stable_key",
+	"status",
+	"cell_info",
+	"signal_detail",
+	"registration_rejection",
+	"packet_service_state",
+	"model",
+	"availability_reason",
+	"iccid",
+] as const satisfies readonly (keyof RadioRow)[];
+
+/** A copy of only the fields the sampler reads, as this commit states them. */
+function pickRadioRow(row: RadioRow): RadioRow {
+	const out: Record<string, unknown> = {};
+	for (const field of RADIO_ROW_FIELDS)
+		if (row[field] !== undefined) out[field] = row[field];
+	return out as RadioRow;
+}
+
+/** True while the live modem is the device and SIM the committed row names. */
+function sameIdentity(
+	live: { ifname?: string | undefined; iccid?: string | undefined },
+	row: RadioIdentityRow,
+): boolean {
+	return (
+		(live.ifname === undefined || live.ifname === row.ifname) &&
+		(live.iccid ?? "") === (row.iccid ?? "")
+	);
+}
+
+/** The committed generation for this row, or none when the row is not it. */
+function committedGeneration(
+	id: string,
+	row: RadioIdentityRow,
+): number | undefined {
+	const entry = committed.get(id);
+	return entry && entry.key === radioIdentity(row)
+		? entry.generation
+		: undefined;
+}
+
 /**
  * True when this committed row is a different modem or SIM than the one the
  * cached record was sampled for, so subscribers must receive the reset.
  */
 export function radioNeedsReset(id: string, row: object): boolean {
 	const before = previous.get(id);
-	return before !== undefined && before.key !== radioIdentity(row);
+	return (
+		before !== undefined && before.generation !== committedGeneration(id, row)
+	);
 }
 
-/** Keep the sampled identity but drop what a later sample would compare with. */
+/** Keep the sampled generation but drop what a later sample would compare with. */
 function forgetBaseline(id: string): void {
 	const before = previous.get(id);
 	if (before)
@@ -86,20 +206,66 @@ function forgetBaseline(id: string): void {
 export function radioIdentity(row: RadioIdentityRow): string {
 	return `${row.stable_key ?? ""}:${row.ifname ?? ""}:${row.iccid ?? ""}`;
 }
+
+/** The stored record if it belongs to this committed row, else undefined. */
+function currentRecord(
+	id: string,
+	row: RadioIdentityRow,
+): RadioHealth | undefined {
+	const record = records[id];
+	const generation = committedGeneration(id, row);
+	if (
+		!record ||
+		generation === undefined ||
+		previous.get(id)?.generation !== generation
+	)
+		return undefined;
+	// A neighbour whose committed identity changed since the sample is no
+	// longer the modem it was read from: its band, transmit reading and any
+	// finding naming it are withheld.
+	const sampled = sampledNeighbours.get(id);
+	const moved = new Set(
+		record.neighbours
+			.map(({ id: other }) => other)
+			.filter(
+				(other) =>
+					sampled?.get(other) === undefined ||
+					sampled.get(other) !== committed.get(other)?.generation,
+			),
+	);
+	if (moved.size === 0) return record;
+	return {
+		...record,
+		neighbours: record.neighbours.map((n) =>
+			moved.has(n.id)
+				? {
+						...n,
+						band: emptyRadio(n.capturedAt).band,
+						transmitting: "unknown" as const,
+					}
+				: n,
+		),
+		finding:
+			record.finding.neighbour !== undefined &&
+			moved.has(record.finding.neighbour)
+				? emptyRadio(record.capturedAt).finding
+				: record.finding,
+	};
+}
+
 /**
  * The full cached record per committed modem, for the readings dialog. A row
  * whose identity no longer matches the sampled one (a SIM or device swap on
  * the same id) answers an explicit unknown, as the broadcast does.
  */
 export function getRadioHealth(
-	committed: Readonly<Record<string, object>>,
+	committedRows: Readonly<Record<string, object>>,
 	now = Date.now(),
 ): Record<string, RadioHealth> {
 	const out: Record<string, RadioHealth> = {};
-	for (const [id, entry] of Object.entries(committed)) {
-		const row: RadioIdentityRow = entry;
-		const record = records[id];
-		if (!record || previous.get(id)?.key !== radioIdentity(row)) continue;
+	for (const [id, entry] of Object.entries(committedRows)) {
+		const record = currentRecord(id, entry);
+		if (!record) continue;
 		out[id] = structuredClone(
 			now < record.capturedAt || now - record.capturedAt > 65000
 				? { ...emptyRadio(now), timeline: record.timeline }
@@ -108,26 +274,13 @@ export function getRadioHealth(
 	}
 	return out;
 }
-/** Called only by the retained modem status poll. No timer, probe or mutation. */
+/**
+ * Called only by the retained modem status poll. No timer, probe or mutation.
+ * Samples the committed roster as {@link commitRadioRoster} last recorded it:
+ * one snapshot per modem, taken when the poll starts, is the source of every
+ * identity, registration and baseline the poll reads or publishes.
+ */
 export async function refreshRadioHealth(
-	modems: Record<
-		string,
-		Partial<
-			Pick<
-				WireModemEntry,
-				| "ifname"
-				| "stable_key"
-				| "status"
-				| "cell_info"
-				| "signal_detail"
-				| "registration_rejection"
-				| "packet_service_state"
-				| "model"
-				| "availability_reason"
-				| "iccid"
-			>
-		>
-	>,
 	now = Date.now(),
 	deps = defaults,
 ): Promise<void> {
@@ -137,11 +290,16 @@ export async function refreshRadioHealth(
 		if (!(await deps.enabled())) {
 			records = {};
 			previous.clear();
+			sampledNeighbours.clear();
 			lastAt = now;
 			return;
 		}
+		const roster = [...committed.entries()];
 		const next: Record<string, RadioHealth> = {};
-		const samples = new Map<string, { key: string; bytes: number | null }>();
+		const samples = new Map<
+			string,
+			{ generation: number; bytes: number | null }
+		>();
 		const evidence: Record<string, RadioEvidence> = {};
 		let kernel:
 			| { MESSAGE?: unknown; __REALTIME_TIMESTAMP?: string }[]
@@ -173,7 +331,10 @@ export async function refreshRadioHealth(
 		} catch {
 			kernel = undefined;
 		}
-		for (const [id, modem] of Object.entries(modems)) {
+		const stillCommitted = (id: string, snapshot: CommittedRadio) =>
+			committed.get(id)?.generation === snapshot.generation;
+		for (const [id, snapshot] of roster) {
+			const modem = snapshot.row;
 			if (!modem.ifname || !/^[a-zA-Z0-9_.-]+$/.test(modem.ifname)) continue;
 			const record = emptyRadio(now);
 			if (modem.availability_reason?.startsWith("mm-")) {
@@ -184,19 +345,25 @@ export async function refreshRadioHealth(
 			const internal = deps.modem(Number(id));
 			// Sample only while the live modem is still the committed one: a
 			// staged SIM or device swap waits for the next committed roster.
-			// The previous key stays: it is what makes the next committed frame
-			// carry the reset to subscribers. Its byte baseline and evidence do
-			// not, so a SIM that comes back starts fresh.
-			if (
-				internal &&
-				((internal.ifname !== undefined && internal.ifname !== modem.ifname) ||
-					(internal.iccid ?? "") !== (modem.iccid ?? ""))
-			) {
+			// The previous generation stays: it is what makes the next committed
+			// frame carry the reset to subscribers. Its byte baseline and evidence
+			// do not, so a SIM that comes back starts fresh.
+			if (internal && !sameIdentity(internal, modem)) {
 				forgetBaseline(id);
 				next[id] = record;
 				continue;
 			}
-			const observed = deps.registration?.(internal);
+			// Registration is the observation committed with this row's status.
+			// A later live read may only renew its time, when it agrees: a
+			// different staged value waits for its commit.
+			const live = internal ? deps.registration(internal) : undefined;
+			const observed =
+				live &&
+				snapshot.registration &&
+				live.value === snapshot.registration.value &&
+				live.capturedAt > snapshot.registration.capturedAt
+					? live
+					: snapshot.registration;
 			const registration =
 				observed &&
 				now >= observed.capturedAt &&
@@ -313,11 +480,9 @@ export async function refreshRadioHealth(
 			} catch {
 				/* A failed read remains explicitly unavailable. */
 			}
-			const key = radioIdentity(modem);
-			samples.set(id, { key, bytes });
 			const before = previous.get(id);
 			const valid =
-				before?.key === key &&
+				before?.generation === snapshot.generation &&
 				now > before.evidence.at &&
 				now - before.evidence.at <= 65000;
 			const transmitting =
@@ -353,25 +518,21 @@ export async function refreshRadioHealth(
 				events: events.slice(-128),
 			};
 			// The reads above awaited; a swap staged meanwhile must not be stored
-			// under the committed identity.
+			// under this snapshot's identity. A committed one is dropped below.
 			const after = deps.modem(Number(id));
-			if (
-				(internal && !after) ||
-				(after &&
-					((after.ifname !== undefined && after.ifname !== modem.ifname) ||
-						(after.iccid ?? "") !== (modem.iccid ?? "")))
-			) {
+			if ((internal && !after) || (after && !sameIdentity(after, modem))) {
 				forgetBaseline(id);
 				next[id] = emptyRadio(now);
 				continue;
 			}
+			samples.set(id, { generation: snapshot.generation, bytes });
 			const health = deps.health(modem.ifname);
 			const numeric = Object.entries(record.metrics);
 			evidence[id] = {
 				at: now,
 				intervalStart: valid ? before.evidence.at : now,
 				registration: registration?.value ?? "unknown",
-				homeNetwork: internal?.home_network,
+				homeNetwork: snapshot.homeNetwork,
 				rejectedNetwork: modem.registration_rejection?.operator_id,
 				refused: !!modem.registration_rejection,
 				rejectionCause: modem.registration_rejection?.error,
@@ -396,16 +557,32 @@ export async function refreshRadioHealth(
 			};
 			next[id] = record;
 		}
+		// Every read awaited: drop each sample whose identity a commit changed
+		// since, before any of them is compared, kept in history or published as
+		// a neighbour.
+		for (const [id, snapshot] of roster) {
+			if (!samples.has(id) || stillCommitted(id, snapshot)) continue;
+			samples.delete(id);
+			delete evidence[id];
+			forgetBaseline(id);
+			next[id] = emptyRadio(now);
+		}
+		const generationOf = new Map(
+			roster.map(([id, snapshot]) => [id, snapshot.generation]),
+		);
+		sampledNeighbours.clear();
 		for (const [id, record] of Object.entries(next)) {
 			const current = evidence[id];
-			if (!current) continue;
+			const sample = samples.get(id);
+			if (!current || !sample) continue;
 			const before = previous.get(id);
+			const sameGeneration = before?.generation === sample.generation;
 			const neighbours = Object.fromEntries(
 				Object.entries(evidence).filter(([other]) => other !== id),
 			);
 			record.finding = diagnoseRadio(
 				current,
-				before?.key === samples.get(id)?.key ? before?.evidence : undefined,
+				sameGeneration ? before?.evidence : undefined,
 				neighbours,
 			);
 			record.neighbours = Object.keys(next)
@@ -417,10 +594,19 @@ export async function refreshRadioHealth(
 					source: "interface tx_bytes delta; zero payload is not radio silence",
 					capturedAt: now,
 				}));
+			sampledNeighbours.set(
+				id,
+				new Map(
+					record.neighbours.flatMap(({ id: other }) => {
+						const generation = generationOf.get(other);
+						return generation === undefined
+							? []
+							: [[other, generation] as const];
+					}),
+				),
+			);
 			record.timeline = [
-				...(before?.key === samples.get(id)?.key
-					? (records[id]?.timeline ?? [])
-					: []),
+				...(sameGeneration ? (records[id]?.timeline ?? []) : []),
 				{
 					at: now,
 					finding: record.finding,
@@ -437,8 +623,7 @@ export async function refreshRadioHealth(
 					},
 				},
 			].slice(-120);
-			const sample = samples.get(id);
-			if (sample) previous.set(id, { ...sample, evidence: current });
+			previous.set(id, { ...sample, evidence: current });
 		}
 		for (const id of previous.keys()) if (!next[id]) previous.delete(id);
 		records = next;
@@ -455,12 +640,8 @@ export function radioForModem(
 		Partial<Pick<WireModemEntry, "iccid">>,
 	now = Date.now(),
 ): RadioHealth {
-	const record = records[id];
-	if (
-		row.availability_reason?.startsWith("mm-") ||
-		previous.get(id)?.key !== radioIdentity(row) ||
-		!record
-	)
+	const record = currentRecord(id, row);
+	if (row.availability_reason?.startsWith("mm-") || !record)
 		return emptyRadio(0);
 	return structuredClone(
 		now < record.capturedAt || now - record.capturedAt > 65000

@@ -24,6 +24,7 @@ import type {
 } from "./mmcli.ts";
 import type { ModemStatus } from "./modem-registration.ts";
 import type { SimPresence } from "./sim-presence.ts";
+import { carryRadioRegistration } from "./state/radio-registration.ts";
 
 export type SimLock = {
 	required: SimLockRequired;
@@ -118,6 +119,7 @@ export function getModem(id: ModemId) {
 }
 
 export function setModem(id: ModemId, modem: Modem) {
+	carryRadioRegistration(modemsState[id], modem);
 	modemsState[id] = modem;
 }
 

@@ -7,7 +7,6 @@ import {
 import {
 	broadcastModems,
 	broadcastRadioHealth,
-	getCommittedModemsWireMessage as getCommittedSnapshot,
 } from "../modules/modems/modem-status.ts";
 import {
 	getModemIds,
@@ -132,8 +131,7 @@ describe("committed modem snapshot", () => {
 		const before = { ...modem("one"), iccid: "8900000000000000001" } as Modem;
 		setModem(1, before);
 		broadcastModems();
-		const committed = getCommittedSnapshot();
-		await refreshRadioHealth(committed, Date.now(), {
+		await refreshRadioHealth(Date.now(), {
 			enabled: async () => true,
 			registration: () => ({ value: "home", capturedAt: Date.now() }),
 			readNas: async () => ({ signal: "", band: "" }),
@@ -165,7 +163,6 @@ describe("committed modem snapshot", () => {
 		const before = { ...modem("one"), iccid: "8900000000000000001" } as Modem;
 		setModem(1, before);
 		broadcastModems();
-		const committed = getCommittedSnapshot();
 		const deps = (live: Modem) => ({
 			enabled: async () => true,
 			registration: () => ({ value: "home", capturedAt: Date.now() }),
@@ -176,11 +173,11 @@ describe("committed modem snapshot", () => {
 			health: () => undefined,
 			modem: () => live as never,
 		});
-		await refreshRadioHealth(committed, Date.now(), deps(before));
+		await refreshRadioHealth(Date.now(), deps(before));
 		const swapped = { ...before, iccid: "8900000000000000002" } as Modem;
 		setModem(1, swapped);
 		// The poll samples before the swap is committed: it skips the row.
-		await refreshRadioHealth(committed, Date.now() + 1, deps(swapped));
+		await refreshRadioHealth(Date.now() + 1, deps(swapped));
 		const frames: string[] = [];
 		const client = {
 			data: { isAuthenticated: true, lastActive: Date.now() },

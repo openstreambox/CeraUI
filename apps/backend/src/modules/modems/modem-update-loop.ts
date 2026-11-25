@@ -15,10 +15,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import {
-	broadcastRadioHealth,
-	getCommittedModemsWireMessage,
-} from "./modem-status.ts";
+import { broadcastRadioHealth } from "./modem-status.ts";
 import { refreshRadioHealth } from "./radio-health-runtime.ts";
 
 /*
@@ -355,7 +352,7 @@ export async function runModemStatusPoll(): Promise<void> {
 	// Diagnostic I/O must not hold the lock needed by hotplug and configuration,
 	// so it samples the committed roster, never mutable state mid-change.
 	try {
-		await refreshRadioHealth(getCommittedModemsWireMessage());
+		await refreshRadioHealth();
 	} catch {
 		logger.warn("Radio diagnostics unavailable for this poll");
 	}

@@ -1,5 +1,9 @@
 import type { RadioHealth } from "@ceraui/rpc/schemas";
-import { radioForModem, radioNeedsReset } from "./radio-health-runtime.ts";
+import {
+	commitRadioRoster,
+	radioForModem,
+	radioNeedsReset,
+} from "./radio-health-runtime.ts";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -208,6 +212,9 @@ export function broadcastModems(
 ) {
 	const complete = buildModemsWireMessage();
 	committedModemsWireMessage = complete;
+	// The radio sampler's only source: identity, registration and baselines
+	// follow this commit, never live state that has not been committed.
+	commitRadioRoster(complete);
 	const modems =
 		modemsFullState === undefined
 			? complete
