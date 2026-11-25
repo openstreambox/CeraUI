@@ -2,6 +2,7 @@
 
 import type { RadioHealth, RadioMetric } from "@ceraui/rpc/schemas";
 import { fireEvent, render } from "@testing-library/svelte";
+import { tick } from "svelte";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import RadioHealthPanel from "./RadioHealthPanel.svelte";
 
@@ -368,4 +369,53 @@ test("details keep neighbour band, source and time, and finding evidence", async
 	expect(part("radio-health-history")?.textContent).toContain(
 		"two-failed-path-probes",
 	);
+});
+
+describe("next reading countdown", () => {
+	const nextFor = (capturedAt: number) => {
+		const view = show(radio({ capturedAt }));
+		const text = view.getByTestId("radio-health-next").textContent?.trim();
+		view.unmount();
+		return text;
+	};
+
+	test("counts down to the next poll, then says it is checking", () => {
+		expect(nextFor(Date.now() - 10_000)).toContain("Next check in about 20 s.");
+		expect(nextFor(Date.now() - 31_000)).toContain("Checking now…");
+		expect(nextFor(0)).toContain("It updates with the next reading.");
+	});
+
+	test("the clock ticks while a countdown is shown", async () => {
+		vi.useFakeTimers({ now: 1_800_000_000_000 });
+		try {
+			const view = show(radio({ capturedAt: Date.now() - 10_000 }));
+			const next = () => view.getByTestId("radio-health-next").textContent;
+			expect(next()).toContain("about 20 s");
+			vi.advanceTimersByTime(5_000);
+			await tick();
+			expect(next()).toContain("about 15 s");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+test("the dialog leads with RSRP per layer, with bars and a word", async () => {
+	const view = show(radio({ ...registered, capturedAt: Date.now() }));
+	const { part } = await openDetails(view);
+	const signal = part("radio-health-signal");
+	expect(signal?.textContent).toContain("-95 dBm");
+	expect(signal?.textContent).toContain("Fair");
+	expect(signal?.textContent).toContain("-112 dBm");
+	expect(signal?.textContent).toContain("Weak");
+	expect(signal?.querySelectorAll("svg").length).toBe(2);
+	expect(part("radio-health-timing")?.textContent).toContain("Last reading");
+});
+
+test("signal level cut-offs are inclusive at -90 and -105 dBm", async () => {
+	const { signalLevel } = await import("./radio-health-view");
+	expect(signalLevel(-90)).toBe("high");
+	expect(signalLevel(-90.5)).toBe("medium");
+	expect(signalLevel(-105)).toBe("medium");
+	expect(signalLevel(-105.5)).toBe("low");
 });

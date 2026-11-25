@@ -94,6 +94,65 @@ export function bandLabel(value: RadioMetric["value"]): string | null {
 		.replace(/\bNR\s+(?=n\d)/g, "");
 }
 
+export type SignalLevel = "high" | "medium" | "low";
+
+/**
+ * A rough guide on RSRP in dBm, the same for LTE and NR. It picks the bars and
+ * the word in the readings dialog; it never produces a finding.
+ */
+export function signalLevel(dbm: number): SignalLevel {
+	if (dbm >= -90) return "high";
+	if (dbm >= -105) return "medium";
+	return "low";
+}
+
+export interface SignalReading {
+	tech: "lte" | "nr" | "other";
+	dbm: number;
+	level: SignalLevel;
+}
+
+/** RSRP per layer, preferring the serving-cell read over ModemManager's. */
+export function signalReadings(radio: RadioHealth): SignalReading[] {
+	const pick = (...keys: string[]): number | undefined => {
+		for (const key of keys) {
+			const metric = radio.metrics[key];
+			if (metric && typeof metric.value === "number" && metric.unit === "dBm")
+				return metric.value;
+		}
+		return undefined;
+	};
+	const out: SignalReading[] = [];
+	const lte = pick("lte.rsrp");
+	const nr = pick("nr.rsrp");
+	if (lte !== undefined)
+		out.push({ tech: "lte", dbm: lte, level: signalLevel(lte) });
+	if (nr !== undefined)
+		out.push({ tech: "nr", dbm: nr, level: signalLevel(nr) });
+	if (out.length === 0) {
+		const any = pick("mm.rsrp", "rsrp");
+		if (any !== undefined)
+			out.push({ tech: "other", dbm: any, level: signalLevel(any) });
+	}
+	return out;
+}
+
+/**
+ * The status poll that refreshes these readings runs about every 30 s, with
+ * up to 10 % jitter (the backend's STATUS_POLL_INTERVAL_MS). The countdown is
+ * an estimate from the last reading; at zero the panel says it is checking.
+ */
+export const RADIO_POLL_MS = 30_000;
+
+/** Whole seconds until the next reading is expected, or null without a reading. */
+export function secondsToNextReading(
+	capturedAt: number,
+	now: number,
+): number | null {
+	if (!(capturedAt > 0) || now < capturedAt) return null;
+	return Math.max(0, Math.ceil((capturedAt + RADIO_POLL_MS - now) / 1000));
+}
+
 /** "lte.rsrp" → "LTE RSRP", "nr.sinr" → "5G SINR", "lteTxPower" → "LTE TX". */
 export function metricLabel(key: string): string {
 	if (key === "lteTxPower") return "LTE TX";

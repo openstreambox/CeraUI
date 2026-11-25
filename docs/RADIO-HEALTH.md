@@ -49,15 +49,18 @@ Findings are informational, never admission or recovery commands:
 The panel leads with a status chip (icon and word), one short line and the next
 step when there is one. A registered modem whose row is connected, with no
 finding, reads **OK**; registered without a data connection reads
-**Registered**; a missing or unknown registration reads **Not checked**; a modem
-without a SIM or still searching says so without blaming the SIM. A missing SIM
-outranks any cached finding. Registration and network type and band follow as
-label/value rows, plus USB events when there are any; the row's own network-type
-line is left out while the card names the network. Signal stays on the row, and
-the measured RSRP and quality are in the dialog, never a finding. The whole card
-opens a dialog with every raw reading and its source and time, the other modems'
-bands and whether they were sending data, and the timeline with the evidence
-behind each finding.
+**Registered**; a missing or unknown registration reads **Not checked** with the
+same countdown; a modem without a SIM or still searching says so without blaming
+the SIM. A missing SIM outranks any cached finding. Registration and network
+type and band follow as label/value rows, plus USB events when there are any;
+the row's own network-type line is left out while the card names the network.
+Signal stays on the row. The whole card opens a dialog that leads with the last
+reading's time, a countdown to the next one (the status poll runs about every 30
+s; at zero it says it is checking) and RSRP per layer with bars and a rough word
+(-90 dBm and above Strong, down to -105 dBm Fair, below that Weak; never a
+finding), followed by every raw reading and its source and time, the other
+modems' bands and whether they were sending data, and the timeline with the
+evidence behind each finding.
 
 The panel uses words and symbols alongside calm suggested actions. It contains
 no modem action controls. Restart is a suggestion with its expected interruption,
