@@ -83,6 +83,15 @@ test("realistic numeric widths", () => {
 test("short password option is redacted", () => {
 	expect(redactArgv(["-p", "private-secret"])).not.toContain("private-secret");
 });
+test("nmcli SSID values are redacted in both argv shapes", () => {
+	expect(redactArgv(["con", "add", "802-11-wireless.ssid", "Home Net"])).toBe(
+		"con add 802-11-wireless.ssid ***",
+	);
+	expect(redactArgv(["con", "modify", "x", "wifi.ssid", "Home Net"])).toBe(
+		"con modify x wifi.ssid ***",
+	);
+	expect(redactArgv(["wifi.ssid=Home Net"])).toBe("wifi.ssid=***");
+});
 test("unknown older boot has negative ordinal", () => {
 	const text = renderSupportJournalWithCounts(
 		JSON.stringify({
