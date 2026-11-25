@@ -1668,6 +1668,7 @@
 	"network.view.configure": "設定",
 	"network.view.connect": "接続",
 	"network.view.connected": "接続済み",
+	"network.view.noStreamData": "このリンクでは配信データが流れていません",
 	"network.view.disableBond": "ボンディングから除外",
 	"network.view.disconnected": "切断済み",
 	"network.view.enableBond": "ボンディングに追加",
