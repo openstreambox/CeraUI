@@ -34,7 +34,7 @@
  * initial-state push — the same treatment `revisions.kernel` gets, for the same
  * reason. There is deliberately no polling loop.
  *
- * NOT `isRealDevice()`-gated, unlike `fan`/`encoder-load`. Those read
+ * NOT image-capability-gated, unlike `fan`/`encoder-load`. Those read
  * board-specific sysfs nodes that a dev host genuinely does not have; every host
  * has CPUs, so gating this one would leave the dev and CI paths rendering the
  * bare load average the fix replaced.
