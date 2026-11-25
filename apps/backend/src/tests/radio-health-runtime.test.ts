@@ -3,6 +3,7 @@ import { radioHealthListSchema } from "@ceraui/rpc/schemas";
 import {
 	getRadioHealth,
 	radioForModem,
+	radioSampleRows,
 	refreshRadioHealth,
 	resetRadioHealthForTest,
 } from "../modules/modems/radio-health-runtime.ts";
@@ -358,4 +359,41 @@ test("a swap or removal during the awaited reads is not stored under the committ
 			undefined,
 		);
 	}
+});
+
+test("the poll samples live ModemManager rows and synthetic rows, not a pending removal", () => {
+	const committed = { "0": "mm-live", "3": "mm-removed", "1000": "router" };
+	expect(
+		Object.keys(radioSampleRows(committed, (id) => id === 0)).sort(),
+	).toEqual(["0", "1000"]);
+});
+
+test("a SIM that returns after a swap starts without the old byte baseline", async () => {
+	let bytes = 100;
+	const live = { ifname: "fixture1", iccid: "8900000000000000001" };
+	const rows = {
+		"1": { ifname: "fixture1", stable_key: "port-1", iccid: live.iccid },
+		"2": { ifname: "fixture2", stable_key: "port-2" },
+	};
+	const deps = {
+		enabled: async () => true,
+		registration: () => undefined,
+		readNas: async () => ({ signal: "", band: "" }),
+		readText: async (path: string) =>
+			path.includes("fixture1") ? String(bytes) : "100",
+		realpath: async () => "/sys/1-1/1-1:1.4",
+		run: async () => "",
+		health: () => undefined,
+		modem: (id: number) => (id === 1 ? (live as never) : undefined),
+	};
+	await refreshRadioHealth(rows, 1000, deps);
+	live.iccid = "8900000000000000002"; // swapped, not yet committed
+	bytes = 500; // sent by the other SIM
+	await refreshRadioHealth(rows, 21000, deps);
+	live.iccid = "8900000000000000001"; // the first SIM is back
+	await refreshRadioHealth(rows, 41000, deps);
+	expect(
+		getRadioHealth(rows, 41000)["2"]?.neighbours.find((n) => n.id === "1")
+			?.transmitting,
+	).toBe("unknown");
 });

@@ -19,7 +19,7 @@ import {
 	broadcastRadioHealth,
 	getCommittedModemsWireMessage,
 } from "./modem-status.ts";
-import { refreshRadioHealth } from "./radio-health-runtime.ts";
+import { radioSampleRows, refreshRadioHealth } from "./radio-health-runtime.ts";
 
 /*
   Modem update loop — event-driven presence + retained status poll (T17).
@@ -355,7 +355,12 @@ export async function runModemStatusPoll(): Promise<void> {
 	// Diagnostic I/O must not hold the lock needed by hotplug and configuration,
 	// so it samples the committed roster, never mutable state mid-change.
 	try {
-		await refreshRadioHealth(getCommittedModemsWireMessage());
+		await refreshRadioHealth(
+			radioSampleRows(
+				getCommittedModemsWireMessage(),
+				(id) => getModem(id) !== undefined,
+			),
+		);
 	} catch {
 		logger.warn("Radio diagnostics unavailable for this poll");
 	}

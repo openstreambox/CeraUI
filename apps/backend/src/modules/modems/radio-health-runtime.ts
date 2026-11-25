@@ -7,7 +7,10 @@ import {
 	getRadioRegistrationObservation,
 	readRadioNas,
 } from "./modem-registration.ts";
-import type { WireModemEntry } from "./modem-wire-projection.ts";
+import {
+	SYNTHETIC_ID_BASE,
+	type WireModemEntry,
+} from "./modem-wire-projection.ts";
 import { getModem } from "./modems-state.ts";
 import {
 	diagnoseRadio,
@@ -69,6 +72,33 @@ type RadioIdentityRow = Partial<
 export function radioNeedsReset(id: string, row: object): boolean {
 	const before = previous.get(id);
 	return before !== undefined && before.key !== radioIdentity(row);
+}
+
+/**
+ * The committed rows the poll may sample. A ModemManager row (its MM id) is
+ * sampled only while ModemManager still has it, so a removal waiting for its
+ * commit is not; other rows carry synthetic ids and no ModemManager entry.
+ */
+export function radioSampleRows<T>(
+	committed: Readonly<Record<string, T>>,
+	isLive: (id: number) => boolean,
+): Record<string, T> {
+	return Object.fromEntries(
+		Object.entries(committed).filter(
+			([id]) => Number(id) >= SYNTHETIC_ID_BASE || isLive(Number(id)),
+		),
+	);
+}
+
+/** Keep the sampled identity but drop what a later sample would compare with. */
+function forgetBaseline(id: string): void {
+	const before = previous.get(id);
+	if (before)
+		previous.set(id, {
+			...before,
+			bytes: null,
+			evidence: { ...before.evidence, at: 0 },
+		});
 }
 
 /** One modem's identity as the committed roster states it. */
@@ -174,12 +204,14 @@ export async function refreshRadioHealth(
 			// Sample only while the live modem is still the committed one: a
 			// staged SIM or device swap waits for the next committed roster.
 			// The previous key stays: it is what makes the next committed frame
-			// carry the reset to subscribers.
+			// carry the reset to subscribers. Its byte baseline and evidence do
+			// not, so a SIM that comes back starts fresh.
 			if (
 				internal &&
 				((internal.ifname !== undefined && internal.ifname !== modem.ifname) ||
 					(internal.iccid ?? "") !== (modem.iccid ?? ""))
 			) {
+				forgetBaseline(id);
 				next[id] = record;
 				continue;
 			}
@@ -348,6 +380,7 @@ export async function refreshRadioHealth(
 					((after.ifname !== undefined && after.ifname !== modem.ifname) ||
 						(after.iccid ?? "") !== (modem.iccid ?? "")))
 			) {
+				forgetBaseline(id);
 				next[id] = emptyRadio(now);
 				continue;
 			}
