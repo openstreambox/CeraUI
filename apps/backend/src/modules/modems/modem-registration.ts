@@ -71,6 +71,7 @@ import {
 	parseModemUnlockInfo,
 	type SimInfo,
 } from "./mmcli.ts";
+import { rememberModemIdentity } from "./mode-choice-identity.ts";
 import { modemHardwareName } from "./modem-identity.ts";
 import {
 	getModem,
@@ -789,6 +790,9 @@ async function registerModem(id: number) {
 	if (simLock.state === "present") modem.sim_lock = simLock.lock;
 
 	setModem(id, modem);
+	// The saved mode choice follows the modem, not its USB port. Only a keyed
+	// tag of the equipment identifier is kept; the identifier itself is not.
+	rememberModemIdentity(id, modemInfo["modem.generic.equipment-identifier"]);
 }
 
 /** Register a modem, swallowing failures so a single bad modem can't break the batch. */
