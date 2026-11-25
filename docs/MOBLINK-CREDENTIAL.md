@@ -59,12 +59,12 @@ credential is restarted when available; a failed or impossible restart marks Box
 Mutations require confirmed idle, including
 carrying evidence. This does not add per-link admission, media telemetry or
 real-phone validation. Empty/unsafe stored files and unexpected child exits mark
-the existing Moblink Box-health line. Clear or replacement retracts that failure;
+the existing Moblink line in Box health. Clear or replacement retracts that failure;
 a successful save is still not authentication evidence.
 
 One credential serves all local discovered Moblin streamers that share it.
 There is no phone identity binding; use a unique password for isolation. The
-box takes Moblin's existing password, preserving the phone's other relays.
+device takes Moblin's existing password, preserving the phone's other relays.
 
 A stream starting during save or clear leaves the credential unchanged. Only a relay that was running before the stop is restarted; a relay that was already stopped does not gain a Box health warning from that refusal. A failed or impossible attempt to resume a previously running relay still reports the fault.
 

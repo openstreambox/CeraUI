@@ -12,11 +12,12 @@ Computer screens offer Wi-Fi and address QR codes. Phone and touch layouts use
 Copy. Passwords have no plain-text QR and should be kept off camera and out of screenshots.
 
 Moblin: copy the password from Moblin Settings › Moblink › Password into the
-box. A local device operator can save, replace or clear it only while the box
-confirms idle. It is never displayed again. Saving does not confirm a connection:
-check Moblin and the stream itself. If Moblin's password changes, replace the
-box's copy too. One password applies to this box; any local Moblin streamer with
-that password may authenticate. Clearing stops this box's owned relay.
+device. A local device operator can save, replace or clear it only while the
+device confirms it is idle. It is never displayed again. Saving does not confirm a
+connection: check Moblin and the stream itself. If Moblin's password changes,
+replace the device's copy too. One password applies to this device; any local
+Moblin streamer with that password may authenticate. Clearing stops the
+relay managed by this device.
 Saving requires an image provisioned for the managed relay. Clear remains
 available while idle even if that relay is unavailable or storage needs repair.
 Clearing an unsaved password does not create storage. The field asks browsers
@@ -44,19 +45,19 @@ comprobando. Esto no confirma lo que ven los espectadores: comprueba la emisión
 La conexión ofrece Moblin, IRL Pro, otra aplicación SRT o solo internet. SRT usa
 la dirección y la contraseña configuradas en la caja. Los códigos QR de Wi-Fi y
 de la dirección solo aparecen en pantallas de ordenador; el teléfono usa Copiar.
-Mantén las contraseñas fuera de cámara. Sin el relé administrado, la caja
+Mantén las contraseñas fuera de cámara. Sin el relé administrado, el dispositivo
 muestra esa limitación y ofrece solo internet.
 
-Moblin: copia la contraseña de Ajustes › Moblink › Contraseña de Moblin en la
-caja. Un operador local autenticado puede guardarla, reemplazarla o borrarla
-cuando la caja confirme que no transporta una transmisión. Nunca se vuelve a
+Moblin: copia la contraseña de Ajustes › Moblink › Contraseña de Moblin en el
+dispositivo. Un operador local autenticado puede guardarla, reemplazarla o borrarla
+cuando el dispositivo confirme que no transporta una transmisión. Nunca se vuelve a
 mostrar. Guardarla no confirma la conexión: comprueba Moblin y la transmisión.
-Si cambia en Moblin, reemplázala también en la caja. La contraseña se aplica a
-esta caja; cualquier emisor Moblin local que la comparta puede autenticarse.
-Borrarla detiene el relé de esta caja. Guardarla requiere una imagen preparada
-para el relé administrado. Borrar sigue disponible cuando la caja está inactiva,
+Si cambia en Moblin, reemplázala también en el dispositivo. La contraseña se aplica a
+este dispositivo; cualquier emisor Moblin local que la comparta puede autenticarse.
+Borrarla detiene el relé de este dispositivo. Guardarla requiere una imagen preparada
+para el relé administrado. Borrar sigue disponible cuando el dispositivo está inactivo,
 aunque el relé no esté disponible o haya que reparar el archivo guardado.
-Si el archivo está vacío o el relé se detiene inesperadamente, Estado de la caja
+Si el archivo está vacío o el relé se detiene inesperadamente, la sección Box health
 muestra un aviso de conexión Moblin. Reemplaza o borra la contraseña para recuperarla.
 Borrar una contraseña no guardada no crea almacenamiento. El campo pide al
 navegador y al gestor de contraseñas que no lo rellenen ni guarden; sus propias
