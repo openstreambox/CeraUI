@@ -50,7 +50,10 @@ import { logger } from "../../helpers/logger.ts";
 import { noteStartLeaseEnded } from "../system/idle-state.ts";
 import { isForwardActive } from "./forward-activity.ts";
 
-import { isRecoveryPending } from "./recovery-barrier.ts";
+import {
+	isHelperRecoveryPending,
+	isRecoveryPending,
+} from "./recovery-barrier.ts";
 
 export const LIFECYCLE_HOLDERS = ["streaming", "modem-transition"] as const;
 export type LifecycleHolder = (typeof LIFECYCLE_HOLDERS)[number];
@@ -120,6 +123,13 @@ let nextToken = 0;
 export function tryAcquireLifecycle(who: LifecycleHolder): LifecycleAdmission {
 	if (isForwardActive())
 		return { admitted: false, heldBy: "streaming", refusal: STREAMING_ACTIVE };
+	if (isHelperRecoveryPending()) {
+		return {
+			admitted: false,
+			heldBy: "modem-transition",
+			refusal: leaseRefusal("modem-transition"),
+		};
+	}
 	// A per-device mutation lease is the SAME exclusion as the legacy
 	// `"modem-transition"` holder, so it has to refuse a requester here too —
 	// otherwise a stream admission could slip past a mutation that took the
@@ -383,7 +393,8 @@ function modemMutationRefusal(
 	stableKey: string,
 	ownToken?: number,
 ): ModemMutationRefusal | undefined {
-	if (isRecoveryPending()) return "recovery_pending";
+	if (isRecoveryPending() || isHelperRecoveryPending())
+		return "recovery_pending";
 	const block = mutationBlocks.get(stableKey);
 	if (block) return block.refusal;
 	const owner = activeMutations.get(stableKey);
@@ -399,6 +410,24 @@ export function tryAcquireModemMutation(
 ): ModemMutationAdmission {
 	const refusal = modemMutationRefusal(stableKey);
 	if (refusal) return { admitted: false, refusal };
+	return { admitted: true, lease: grantKeyLease(stableKey, false) };
+}
+
+/**
+ * Reconstruct the lease for a helper job that systemd already owns.
+ * Fresh actions use tryAcquireModemMutation, which stays closed until
+ * ordinary recovery has finished. This path does not open that admission.
+ */
+export function tryAcquireHelperRecoveryLease(
+	stableKey: string,
+): ModemMutationAdmission {
+	if (activeMutations.has(stableKey)) {
+		return { admitted: false, refusal: "mutation_in_progress" };
+	}
+	if (isForwardActive() || held?.holder === "streaming") {
+		return { admitted: false, refusal: "streaming_active" };
+	}
+	if (held) return { admitted: false, refusal: "mutation_in_progress" };
 	return { admitted: true, lease: grantKeyLease(stableKey, false) };
 }
 

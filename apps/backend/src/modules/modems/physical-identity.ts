@@ -186,6 +186,13 @@ export function mintLinkId(identityKey: string): string {
 	return `${LINK_ID_PREFIX}${digest.slice(0, LINK_ID_DIGEST_CHARS)}`;
 }
 
+/** True for an id of the shape `mintLinkId` produces; other modules check, never spell, the prefix. */
+export function isMintedLinkId(value: string): boolean {
+	if (!value.startsWith(LINK_ID_PREFIX)) return false;
+	const digest = value.slice(LINK_ID_PREFIX.length);
+	return digest.length === LINK_ID_DIGEST_CHARS && /^[0-9a-f]+$/.test(digest);
+}
+
 /** Hash the vendor/serial pair used to remember shared USB descriptors. */
 export function usbSerialDigest(key: string): string {
 	return createHash("sha256").update(key).digest("hex");
