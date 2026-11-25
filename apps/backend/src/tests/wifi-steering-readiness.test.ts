@@ -76,7 +76,12 @@ beforeEach(async () => {
 	await wifiRadioIdentity.discover([]);
 	clearWifiInterfacesForTest();
 	resetUsbNetMarkers();
-	processIfconfigOutput(snapshot);
+	processIfconfigOutput(
+		snapshot,
+		undefined,
+		undefined,
+		(name) => name === "wlan0",
+	);
 	await refreshUsbNetMarkers(["wlan0", "wwu1c2"], constructedTwinDeps());
 	addWifiInterface(mac, {
 		id: 0,
