@@ -37,7 +37,11 @@
 // allow: SIZE_OK — one connection UX state machine; pure transitions and their sole reactive owner stay co-located.
 import type { ConnectionState } from "$lib/rpc/client";
 import { rpcClient } from "$lib/rpc/client";
-import { authStatusStore, setSessionExpired } from "./auth-status.svelte";
+import {
+	authStatusStore,
+	resetAuthSession,
+	setSessionExpired,
+} from "./auth-status.svelte";
 
 export { getSessionExpired } from "./auth-status.svelte";
 
@@ -562,5 +566,6 @@ export function retryConnection(): void {
 export function destroyConnectionUxStore(): void {
 	singleton?.destroy();
 	singleton = null;
+	resetAuthSession();
 	setSessionExpired(false);
 }

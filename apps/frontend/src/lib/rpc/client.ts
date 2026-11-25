@@ -174,12 +174,18 @@ import { getRpcSocketUrl } from "../env";
 import { nextBackoffDelay } from "./backoff";
 import { parseServerPing, shouldForceCloseHalfOpen } from "./half-open";
 import { createHeartbeatTracker, HEARTBEAT_THRESHOLD_MS } from "./heartbeat";
-import { NotSentError, RpcError, type RpcErrorEnvelope } from "./rpc-error";
+import {
+	NotSentError,
+	type NotSentReason,
+	RpcError,
+	type RpcErrorEnvelope,
+} from "./rpc-error";
 import {
 	CallTimeoutError,
 	PROCEDURE_TIMEOUT_MS,
 	RPC_CALL_TIMEOUT_MS,
 } from "./rpc-timeouts";
+import { mayHoldForReauth, SIGN_IN_PROCEDURE } from "./session-gate-policy";
 import { nextSocketEpoch } from "./socket-epoch.svelte";
 
 export class ConnectionResetError extends Error {
@@ -226,6 +232,14 @@ interface PendingRequest {
 type MessageHandler = (type: string, data: unknown, seq?: number) => void;
 type ConnectionHandler = (state: ConnectionState) => void;
 
+/** A call waiting for the session to be signed in again on a new socket. */
+interface HeldCall {
+	/** Monotonic time after which it may never be sent. */
+	deadline: number;
+	release: () => void;
+	fail: (error: NotSentError) => void;
+}
+
 /**
  * RPC Client class
  */
@@ -248,6 +262,17 @@ class RPCClient {
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	/** Tracks last inbound frame time; drives half-open force-close (Task 14). */
 	private heartbeatTracker = createHeartbeatTracker();
+	/**
+	 * Session gate. The device authenticates each socket, not the page: a new
+	 * socket starts signed out even when the page holds a session. While the
+	 * page holds one (`sessionActive`), a new socket is `socketSignedIn = false`
+	 * until the reconnect re-auth confirms or fails it, and calls other than the
+	 * sign-in wait in `heldCalls` instead of reaching the device and coming back
+	 * as "Authentication required".
+	 */
+	private sessionActive = false;
+	private socketSignedIn = true;
+	private heldCalls = new Set<HeldCall>();
 
 	/**
 	 * Get WebSocket URL
@@ -292,6 +317,8 @@ class RPCClient {
 			if (this.socket !== null) {
 				this.stopKeepAlive();
 				this.socket = null;
+				// Held calls belong to the socket they waited on, never its successor.
+				this.failHeldCalls("disconnected");
 				this.rejectPendingRequests();
 			}
 
@@ -301,8 +328,13 @@ class RPCClient {
 			socket.onopen = () => {
 				if (this.socket !== socket) return;
 				nextSocketEpoch();
+				// Armed before any handler hears "connected", so nothing can slip
+				// a call onto the new socket ahead of the re-auth.
+				this.socketSignedIn = !this.sessionActive;
 				this.setConnectionState("connected");
-				this.reconnectAttempts = 0;
+				// A socket that still has to be signed in is not a recovery yet: the
+				// backoff keeps growing until the re-auth confirms it.
+				if (this.socketSignedIn) this.reconnectAttempts = 0;
 				this.heartbeatTracker.recordTraffic(Date.now());
 				this.startKeepAlive();
 			};
@@ -310,6 +342,7 @@ class RPCClient {
 			socket.onclose = () => {
 				if (this.socket !== socket) return;
 				this.socket = null;
+				this.failHeldCalls("disconnected");
 				this.rejectPendingRequests();
 				this.setConnectionState("disconnected");
 				this.stopKeepAlive();
@@ -354,9 +387,89 @@ class RPCClient {
 		this.stopKeepAlive();
 		const socket = this.socket;
 		this.socket = null;
+		this.failHeldCalls("disconnected");
 		this.rejectPendingRequests();
 		socket?.close();
 		this.setConnectionState("disconnected");
+	}
+
+	/**
+	 * The page signed in (`true`) or went back to the login screen (`false`).
+	 * Signing in happens on the current socket, so it counts as signed in; on
+	 * sign-out, held calls fail as `signed-out`.
+	 */
+	setSessionActive(active: boolean): void {
+		this.sessionActive = active;
+		if (active) {
+			this.confirmSocketSignedIn();
+		} else {
+			this.socketSignedIn = true;
+			this.failHeldCalls("signed-out");
+		}
+	}
+
+	/** The reconnect re-auth signed this socket in: send what was held. */
+	confirmSocketSignedIn(): void {
+		this.socketSignedIn = true;
+		this.reconnectAttempts = 0;
+		const held = [...this.heldCalls];
+		this.heldCalls.clear();
+		for (const call of held) call.release();
+	}
+
+	/** The reconnect re-auth did not finish: drop what was held, unsent. */
+	failHeldCalls(reason: NotSentReason): void {
+		const held = [...this.heldCalls];
+		this.heldCalls.clear();
+		for (const call of held) call.fail(new NotSentError(reason));
+	}
+
+	/** Whether calls on the current socket wait for the reconnect re-auth. */
+	isAwaitingSignIn(): boolean {
+		return !this.socketSignedIn;
+	}
+
+	/**
+	 * Close the current socket so the reconnect loop opens a fresh one, and with
+	 * it a fresh re-auth. For a re-auth that could not finish on a socket that
+	 * still looks open.
+	 */
+	recycleSocket(): void {
+		this.socket?.close();
+	}
+
+	/** Monotonic clock for held-call deadlines (a test seam, like `getUrl`). */
+	private now = (): number => performance.now();
+
+	/**
+	 * Wait for the re-auth to sign this socket in. Resolves with the deadline the
+	 * call must still meet. A call whose deadline passes leaves the queue at that
+	 * moment, and one released after its deadline (its timer was late, say in a
+	 * throttled tab) is refused at release: either way it is never sent.
+	 */
+	private holdForSignIn(timeout: number): Promise<number> {
+		return new Promise<number>((resolve, reject) => {
+			const call: HeldCall = {
+				deadline: this.now() + timeout,
+				release: () => {
+					clearTimeout(timer);
+					if (this.now() >= call.deadline) {
+						reject(new NotSentError("reconnected"));
+					} else {
+						resolve(call.deadline);
+					}
+				},
+				fail: (error) => {
+					clearTimeout(timer);
+					reject(error);
+				},
+			};
+			const timer = setTimeout(() => {
+				this.heldCalls.delete(call);
+				reject(new NotSentError("reconnected"));
+			}, timeout);
+			this.heldCalls.add(call);
+		});
 	}
 
 	private rejectPendingRequests(): void {
@@ -544,12 +657,33 @@ class RPCClient {
 
 		const id = this.generateId();
 		const request: RPCRequest = { id, path, input };
+		// Serialized now: callers may scrub or reuse `input` as soon as this
+		// returns (a password field is cleared right after), held or not.
+		const frame = JSON.stringify(request);
+		let budget = timeout;
+
+		const procedure = path.join(".");
+		if (!this.socketSignedIn && procedure !== SIGN_IN_PROCEDURE) {
+			// Only reads may wait for the re-auth (session-gate-policy.ts); any
+			// other call fails now and is never sent, whatever happens next.
+			if (!mayHoldForReauth(procedure)) {
+				throw new NotSentError("reconnected");
+			}
+			const deadline = await this.holdForSignIn(timeout);
+			if (this.socket?.readyState !== WebSocket.OPEN) {
+				throw new NotSentError();
+			}
+			// The wait counts against the caller's budget, not on top of it, and a
+			// call past its deadline is never sent.
+			budget = deadline - this.now();
+			if (budget <= 0) throw new NotSentError("reconnected");
+		}
 
 		return new Promise<T>((resolve, reject) => {
 			const timeoutHandle = setTimeout(() => {
 				this.pendingRequests.delete(id);
 				reject(new CallTimeoutError(`Request timeout: ${path.join(".")}`));
-			}, timeout);
+			}, budget);
 
 			this.pendingRequests.set(id, {
 				resolve: resolve as (value: unknown) => void,
@@ -559,7 +693,7 @@ class RPCClient {
 			});
 
 			try {
-				this.socket?.send(JSON.stringify(request));
+				this.socket?.send(frame);
 			} catch (error) {
 				clearTimeout(timeoutHandle);
 				this.pendingRequests.delete(id);
