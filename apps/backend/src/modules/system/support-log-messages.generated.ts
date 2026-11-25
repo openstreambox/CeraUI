@@ -1279,6 +1279,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	[
 		"update-orchestrator: scheduled package notice withdrawn, dpkg shows its packages installed",
 	],
+	[
+		"update-orchestrator: settled unsafe OS stage no longer holds power actions",
+	],
 	["update-orchestrator: slot-sync cleanup failed"],
 	["update-orchestrator: slot-sync eligibility read deferred"],
 	["update-orchestrator: slot-sync preflight deferred"],
