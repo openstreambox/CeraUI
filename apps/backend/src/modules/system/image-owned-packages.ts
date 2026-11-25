@@ -46,10 +46,14 @@ export type ImageOwnedPackages = {
 };
 
 const FIELD_RE = /^([A-Za-z][A-Za-z-]*):[ \t]*(.*?)[ \t]*$/;
-// The forms the image writes: the installed copy, or its exact version.
-const PIN_FORM_RE = /^(?:release a=now|version [0-9][A-Za-z0-9.+~:-]*)$/;
-// A pin that holds a package must outrank the apt.ceralive.tv origin pin.
+// The forms the image writes: the installed copy, or its exact version
+// ([epoch:]upstream[-revision], each part as dpkg accepts it).
+const PIN_FORM_RE =
+	/^(?:release a=now|version (?:[0-9]+:)?[0-9][A-Za-z0-9.+~]*(?:-[A-Za-z0-9.+~]+)*)$/;
+// A pin that holds a package must outrank the apt.ceralive.tv origin pin, and
+// APT ignores a priority beyond a signed 16-bit value.
 const ORIGIN_PIN_PRIORITY = 990;
+const APT_MAX_PIN_PRIORITY = 32_767;
 
 /**
  * The package names an APT preferences file pins, or null when any stanza is
@@ -77,6 +81,7 @@ export function parseLocalOverridePin(text: string): string[] | null {
 			!PIN_FORM_RE.test(fields.get("pin") ?? "") ||
 			!/^\d+$/.test(fields.get("pin-priority") ?? "") ||
 			Number(fields.get("pin-priority")) <= ORIGIN_PIN_PRIORITY ||
+			Number(fields.get("pin-priority")) > APT_MAX_PIN_PRIORITY ||
 			packages.length === 0 ||
 			packages.some((name) => !APT_PACKAGE_NAME_RE.test(name))
 		)

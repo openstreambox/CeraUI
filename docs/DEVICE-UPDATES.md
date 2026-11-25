@@ -1361,8 +1361,9 @@ package check falls through to the due OS check in the same idle tick; a
 package check that actually ran retains priority for that tick.
 
 A package offer does not hide a system image. While the phase is `available`
-or `awaiting-idle` (an install queued but not launched), each tick (and Check
-now) runs the OS check when it is due, in place. A found
+or `awaiting-idle` (an install queued but not launched), each tick runs the OS
+check when it is due, in place; Check now also runs it from `available`
+(`awaiting-idle` answers Check now with `busy`, as before). A found
 image moves the phase to `os-available`: the A/B image carries its own packages,
 so the Packages section shows "Install the system update first" instead of an
 Update button while any system-image phase holds. No image, or a failed image
@@ -1375,8 +1376,8 @@ and the apt unit also share `/run/lock/ceralive-update.lock`.
 On a capable image, package discovery never offers a package the image ships
 as its own reviewed build. The names come from the image's
 `/etc/apt/preferences.d/ceralive-local-override` (one `Package`/`Pin`/`Pin-Priority`
-stanza per local override, `Pin: release a=now` or `Pin: version <v>` above
-the origin pin's 990). An image without that file, or with one that does not
+stanza per local override, `Pin: release a=now` or `Pin: version <v>` with a
+priority above the origin pin's 990 and within APT's 32767). An image without that file, or with one that does not
 parse, falls back to `ceralive-device`, `libmm-glib0` and `modemmanager`.
 Withheld rows still count for the CeraLive update notice: its verdict stays
 unknown unless every first-party row of the plan is either checked or withheld.

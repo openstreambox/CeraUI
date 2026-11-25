@@ -115,10 +115,14 @@ describe("the image's local-override pin", () => {
 		]);
 	});
 
-	it("also reads the exact-version form", () => {
+	it.each([
+		"1.24.2-2~ceralive.3+osb2",
+		"2026.11.5-20261124T222734.1dbec5e62",
+		"1:2.3",
+	])("also reads the exact-version form (%s)", (version) => {
 		expect(
 			parseLocalOverridePin(
-				"Package: modemmanager\nPin: version 1.24.2-2~ceralive.3+osb2\nPin-Priority: 1001\n",
+				`Package: modemmanager\nPin: version ${version}\nPin-Priority: 32767\n`,
 			),
 		).toEqual(["modemmanager"]);
 	});
@@ -158,6 +162,18 @@ describe("the image's local-override pin", () => {
 		[
 			"a pin that does not outrank the origin pin",
 			"Package: zstd\nPin: release a=now\nPin-Priority: 990\n",
+		],
+		[
+			"a version dpkg would refuse",
+			"Package: zstd\nPin: version 1:\nPin-Priority: 1001\n",
+		],
+		[
+			"a version with a stray colon",
+			"Package: zstd\nPin: version 1.0:2\nPin-Priority: 1001\n",
+		],
+		[
+			"a priority APT ignores",
+			"Package: zstd\nPin: release a=now\nPin-Priority: 32768\n",
 		],
 	])("refuses %s", (_label, text) => {
 		expect(parseLocalOverridePin(text)).toBeNull();

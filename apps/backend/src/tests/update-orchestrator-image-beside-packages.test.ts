@@ -420,6 +420,28 @@ describe("runtime: offered packages no longer hide a system image", () => {
 		expect(h.calls.installs).toBe(1);
 	});
 
+	test("an older image result is dropped once a re-check has superseded it", async () => {
+		// Given a scheduled image check still on the wire beside the offer.
+		const first = Promise.withResolvers<CheckOsManifestResult>();
+		let manifests = 0;
+		const h = setup(() =>
+			++manifests === 1 ? first.promise : Promise.resolve(noImage),
+		);
+		setOrchestratorStateForTest(packagesWaiting());
+		const tick = runOrchestratorTick();
+		while (h.calls.checks === 0) await Bun.sleep(1);
+		// When Check now re-checks the packages (back to `available`) and the image.
+		expect(await checkUpdatesNow()).toEqual({ started: true });
+		expect(getOrchestratorState().phase).toBe("available");
+		// And the older check then reports an image.
+		first.resolve(imageFound);
+		await tick;
+		// Then the newer answer stands.
+		expect(h.calls.checks).toBe(2);
+		expect(getOrchestratorState().phase).toBe("available");
+		expect(getOsUpdateSummary().candidate).toBeNull();
+	});
+
 	test("a failed package check does not hold back the image check", async () => {
 		// Given an idle device whose package check fails.
 		const h = setup(imageFound, {

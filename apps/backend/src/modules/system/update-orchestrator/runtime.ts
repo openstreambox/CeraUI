@@ -532,6 +532,8 @@ let osCandidate: OsChannelManifest | undefined;
 let osBoardNotOffered = false;
 let osChannelUnpublished = false;
 let packageCheckGeneration = 0;
+// Counts image checks, so a late result beside a package offer can tell it was superseded.
+let osCheckGeneration = 0;
 let packageCheckDeferral: {
 	readonly reason: "metered_only";
 	readonly at: number;
@@ -707,6 +709,7 @@ export function resetOrchestratorRuntimeForTest(): void {
 	osBoardNotOffered = false;
 	osChannelUnpublished = false;
 	packageCheckGeneration++;
+	osCheckGeneration++;
 	packageCheckDeferral = null;
 	activeOsStage?.controller.abort();
 	activeOsStage = undefined;
@@ -3068,6 +3071,7 @@ async function maybeCheckOsWhilePackagesWait(
 		capabilities?.mode !== "capable" ||
 		!capabilities.features.includes("rauc-verity-streaming") ||
 		getOrchestratorState().phase !== phase ||
+		packageInstallStarting ||
 		!scheduledCheckDue({
 			now: deps.now(),
 			clock: osScheduleClock(),
@@ -3093,10 +3097,19 @@ async function runOsCheckAfterCellularGate(
 	// Only a resting phase starts one; never beside a planned or running install.
 	if (!OS_CHECK_START_PHASES.includes(startPhase)) return;
 	const besidePackageOffer = PACKAGES_WAITING.includes(startPhase);
+	// This attempt, and the package check whose offer it sits beside: a newer
+	// image check or package re-check (even one that lands back in the same
+	// phase) supersedes it.
+	const attempt = ++osCheckGeneration;
+	const packageGeneration = packageCheckGeneration;
 	// Starting a package install owns the device until its unit is recorded.
 	const packagesMovedOn = () =>
 		besidePackageOffer &&
-		(getOrchestratorState().phase !== startPhase || packageInstallStarting);
+		(getOrchestratorState().phase !== startPhase ||
+			packageInstallStarting ||
+			attempt !== osCheckGeneration ||
+			packageGeneration !== packageCheckGeneration);
+	if (packagesMovedOn()) return;
 	const onlyMetered = await deps.onlyMeteredCandidateExists();
 	if (osSettlementPersistence.pending) return;
 	if (getOrchestratorState().phase !== startPhase || packagesMovedOn()) return;
