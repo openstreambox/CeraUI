@@ -17,6 +17,7 @@
 
 /* SSH control */
 
+import { existsSync, writeFileSync } from "node:fs";
 import { randomBase64 } from "../../helpers/crypto.ts";
 import { execFileP } from "../../helpers/exec.ts";
 import { logger } from "../../helpers/logger.ts";
@@ -454,34 +455,56 @@ export function setSshPersistent(
 
 /**
  * Restore the /data-backed boot choice on this slot, after password sync.
- * An absent choice adopts only an enabled/disabled unit; masks and unknown
- * states are left alone. Boot must continue after any probe, command or save error.
+ * Migration records on only for a persistent link. On the first reconciliation
+ * this boot, an explicit off stops the service, including a queued start.
+ * Boot must continue after any probe, command or save error.
  */
 export function reconcileSshPersistence(
 	passwordSynced: boolean,
-	deps: Partial<Pick<SshStatusDeps, "systemctlIsEnabled">> = {},
+	deps: Partial<Pick<SshStatusDeps, "systemctlIsEnabled">> & {
+		bootMarkerPath?: string;
+	} = {},
 ): Promise<void> {
 	return queueSshPersistence(async () => {
 		if (shouldUseMocks()) return;
+		// systemd preserves this private runtime directory across backend restarts.
+		const bootMarker =
+			deps.bootMarkerPath ?? "/run/ceralive/ssh-persistence-reconciled";
+		const firstRun = !existsSync(bootMarker);
+		const config = getConfig();
 		try {
-			const state = await readSshEnabledState(
-				deps.systemctlIsEnabled ?? defaultSshStatusDeps.systemctlIsEnabled,
-			);
-			if (state !== "enabled" && state !== "disabled") return;
-			const config = getConfig();
-			const enabled = state === "enabled";
-			if (config.ssh_persistent === undefined) {
-				config.ssh_persistent = enabled;
-				saveConfig();
-				return;
-			}
-			if (config.ssh_persistent === enabled) return;
-			if (config.ssh_persistent) {
-				if (config.ssh_pass === undefined || !passwordSynced) return;
-				await sshPersistenceRunner("enable");
-				await sshServiceRunner("start");
-			} else {
-				await sshPersistenceRunner("disable");
+			const isEnabled =
+				deps.systemctlIsEnabled ?? defaultSshStatusDeps.systemctlIsEnabled;
+			const choice = config.ssh_persistent;
+			try {
+				const state = await readSshEnabledState(isEnabled);
+				if (choice === false) {
+					if (state === "enabled") {
+						await sshPersistenceRunner("disable");
+					}
+					return;
+				}
+				if (choice === undefined) {
+					if (!state) return;
+					config.ssh_persistent = parseSystemctlIsEnabled(state);
+					saveConfig();
+					return;
+				}
+				if (
+					state === "disabled" &&
+					config.ssh_pass !== undefined &&
+					passwordSynced
+				) {
+					await sshPersistenceRunner("enable");
+					await sshServiceRunner("start");
+				}
+			} finally {
+				if (firstRun) {
+					// Stop replaces a waiting start job even if removing the link
+					// failed. A failed stop leaves the marker absent for retry.
+					if (choice === false) await sshServiceRunner("stop");
+					writeFileSync(bootMarker, "", { flag: "wx", mode: 0o600 });
+				}
 			}
 		} catch (err) {
 			logger.error("Failed to reconcile SSH boot persistence", { err });
