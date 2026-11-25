@@ -21,7 +21,7 @@
  *
  * WHY NOT `mmcli --command`. Stock ModemManager answers `Modem.Command` only when
  * the daemon runs with `--debug` (or was built with `-Dat_command_via_dbus`).
- * Turning debug on restarts the daemon, which drops every bearer on the box, and
+ * Turning debug on restarts the daemon, which drops every bearer on the device, and
  * it opens arbitrary AT, setters included, to every authorised caller.
  *
  * WHY NOT INHIBIT. Inhibiting takes the modem's data path down for as long as it

@@ -2881,7 +2881,7 @@
 	"network.modem.fiveG.error.mutation_in_progress": "Une autre modification de modem est en cours. Rien n’a changé. Réessayez dans un instant.",
 	"network.radio.title": "État radio",
 	"network.radio.unavailable": "Indisponible",
-	"network.radio.chip.ok": "OK",
+	"network.radio.chip.ok": "Normal",
 	"network.radio.chip.registered": "Enregistré",
 	"network.radio.line.registered": "Enregistré, mais pas encore de connexion de données.",
 	"network.radio.otherModems": "Autres modems",

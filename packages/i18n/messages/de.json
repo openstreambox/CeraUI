@@ -2878,7 +2878,7 @@
 	"network.modem.fiveG.error.mutation_in_progress": "Eine andere Modemänderung läuft noch. Es wurde nichts geändert. Versuche es gleich erneut.",
 	"network.radio.title": "Funkzustand",
 	"network.radio.unavailable": "Nicht verfügbar",
-	"network.radio.chip.ok": "OK",
+	"network.radio.chip.ok": "Normal",
 	"network.radio.chip.registered": "Registriert",
 	"network.radio.line.registered": "Registriert, aber noch keine Datenverbindung.",
 	"network.radio.otherModems": "Andere Modems",
