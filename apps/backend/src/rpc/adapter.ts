@@ -16,6 +16,7 @@ import type { ServerWebSocket, WebSocketHandler } from "bun";
 import { logger, logRedact } from "../helpers/logger.ts";
 import { isRuntimeConfigAvailable } from "../modules/config.ts";
 import { stopFollow } from "../modules/device-logs/follow.ts";
+import { replayAuthenticatedUsbDevices } from "../modules/devices/usb-devices-wire.ts";
 import { SHARING_DIAG_EVENT } from "../modules/network/sharing-diag/status.ts";
 import {
 	getStreamHealth,
@@ -243,7 +244,11 @@ function sendInitialStatusToClient(ws: AppWebSocket): void {
 	if (initialStatus.relays) {
 		sendToClient(ws, "relays", initialStatus.relays);
 	}
-	sendToClient(ws, "status", initialStatus.status);
+	sendToClient(
+		ws,
+		"status",
+		replayAuthenticatedUsbDevices(initialStatus.status),
+	);
 	sendToClient(ws, "netif", initialStatus.netif);
 	sendToClient(ws, "uplinks", initialStatus.uplinks);
 	sendToClient(ws, "uplink-steering", initialStatus.uplinkSteering);

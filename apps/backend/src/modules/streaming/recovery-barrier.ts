@@ -43,6 +43,7 @@
 import { logger } from "../../helpers/logger.ts";
 
 let pending = false;
+let helperPending = false;
 let raisedAgain = false;
 let settled: Promise<void> = Promise.resolve();
 let lower: (() => void) | undefined;
@@ -101,6 +102,19 @@ export function isRecoveryPending(): boolean {
 	return pending;
 }
 
+/** Helper-unit recovery. Streaming and helper RPCs stay shut until it finishes. */
+export function beginHelperRecovery(): void {
+	helperPending = true;
+}
+
+export function isHelperRecoveryPending(): boolean {
+	return helperPending;
+}
+
+export function completeHelperRecovery(): void {
+	helperPending = false;
+}
+
 /** Resolves once replay has finished. Resolves immediately when none is running. */
 export function awaitRecoveryBarrier(): Promise<void> {
 	return settled;
@@ -111,6 +125,7 @@ export function resetRecoveryBarrier(): void {
 	retryOwner?.cancel();
 	retryOwner = undefined;
 	pending = false;
+	helperPending = false;
 	raisedAgain = false;
 	lower?.();
 	lower = undefined;

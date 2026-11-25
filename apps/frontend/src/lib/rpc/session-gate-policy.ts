@@ -94,6 +94,10 @@ export const REFUSED_DURING_REAUTH: ReadonlySet<string> = new Set([
 	"bluetooth.scanStop",
 	"bluetooth.trust",
 	"dev.emit",
+	// The offer mints a confirmation token, so it is not a plain read.
+	"devices.helperOffer",
+	"devices.retryPort",
+	"devices.usb2",
 	"events.boots",
 	"events.clear",
 	"events.list",

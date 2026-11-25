@@ -1,9 +1,11 @@
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
-import type { Modem, NetifEntry, NetifMessage, WifiInterface, WifiStatus } from '@ceraui/rpc/schemas';
-import { Network as NetworkIcon } from '@lucide/svelte';
+import type { Modem, NetifEntry, NetifMessage, UsbHelperWire, WifiInterface, WifiStatus } from '@ceraui/rpc/schemas';
+import { ChevronRight, Network as NetworkIcon, Usb } from '@lucide/svelte';
+import { onMount } from 'svelte';
 import { LazyDialog, lazyDialog } from '$lib/components/dialogs';
 import { Skeleton } from '$lib/components/ui/skeleton';
+import { rpc } from '$lib/rpc/client';
 import { hotspotIsActive } from '$lib/rpc/os-toggle-predicates';
 import {
 	getBluetooth,
@@ -31,6 +33,36 @@ import CaptivePortal from './network/CaptivePortal.svelte';
 import CellularSection from './network/CellularSection.svelte';
 import CollisionBands from './network/CollisionBands.svelte';
 import { activeSimLock, isBlockingSimLock } from './network/cellular-row';
+import DevicesPage from './network/DevicesPage.svelte';
+import { deviceCountSentence } from './network/device-counts';
+import type { HelperActionOffer } from './network/devices-actions';
+import { devicesSummary } from './network/devices-model';
+import { consumeDevicesOpen } from './network/devices-open.svelte';
+
+// Development captures swap the helper fixture without touching a real box.
+// Production builds drop this: import.meta.env.DEV is folded to false.
+const FIXTURE_KEY = 'cera-usb-helper-fixture';
+let fixtureHelper = $state<UsbHelperWire | undefined>();
+
+onMount(() => {
+	if (!import.meta.env.DEV) return;
+	const readFixture = () => {
+		const raw = localStorage.getItem(FIXTURE_KEY);
+		if (!raw) {
+			fixtureHelper = undefined;
+			return;
+		}
+		try {
+			fixtureHelper = JSON.parse(raw) as UsbHelperWire;
+		} catch {
+			fixtureHelper = undefined;
+		}
+	};
+	readFixture();
+	window.addEventListener(FIXTURE_KEY, readFixture);
+	return () => window.removeEventListener(FIXTURE_KEY, readFixture);
+});
+
 import EthernetSection from './network/EthernetSection.svelte';
 import HotspotSection from './network/HotspotSection.svelte';
 import {
@@ -121,6 +153,59 @@ function openHotspotDialog() {
 	hotspotDialogOpen = true;
 }
 let wifiCountryOpen = $state(false);
+let devicesOpen = $state(false);
+let helperOffer = $state<HelperActionOffer | null>(null);
+let offerGeneration = 0;
+
+async function loadHelperOffer(): Promise<void> {
+	const generation = ++offerGeneration;
+	try {
+		const result = await rpc.devices.helperOffer();
+		if (generation !== offerGeneration) return;
+		helperOffer = result.ok
+			? {
+					retryPort: result.retryPort,
+					rearmExhausted: result.rearmExhausted,
+					usb2: result.usb2,
+					tokens: result.tokens,
+				}
+			: null;
+	} catch {
+		if (generation !== offerGeneration) return;
+		helperOffer = null;
+	}
+}
+
+$effect(() => {
+	if (consumeDevicesOpen()) devicesOpen = true;
+});
+
+$effect(() => {
+	if (!devicesOpen) return;
+	void loadHelperOffer();
+});
+
+const deviceCounts = $derived(devicesSummary(getStatus()?.usb_devices, getStatus()?.device_calm));
+
+function entryCounts(): string {
+	const counts = deviceCounts;
+	if (counts === null) return m['network.devices.lede']();
+	return deviceCountSentence(counts);
+}
+
+function entrySub(): string {
+	const counts = deviceCounts;
+	if (counts === null) return m['network.devices.lede']();
+	const parts: string[] = [];
+	if (counts.resting > 0) {
+		parts.push(m['network.devices.entry.resting']({ count: counts.resting }));
+	}
+	if (counts.off > 0) parts.push(m['network.devices.entry.off']({ count: counts.off }));
+	if (counts.unresponsive > 0) {
+		parts.push(m['network.devices.entry.bad']({ count: counts.unresponsive }));
+	}
+	return parts.length > 0 ? parts.join(' · ') : m['network.devices.lede']();
+}
 
 const modemEntries = $derived(Object.entries(modems ?? {}) as [string, Modem][]);
 
@@ -242,6 +327,17 @@ function openModemConfig(id: string) {
 	frames are what separate the cards.
 -->
 <div class="mx-auto w-full max-w-5xl space-y-3 p-4 sm:px-6 sm:py-5">
+	{#if devicesOpen}
+		<DevicesPage
+			wire={getStatus()?.usb_devices}
+			events={getStatus()?.usb_events}
+			calm={getStatus()?.device_calm}
+			helper={import.meta.env.DEV && fixtureHelper ? fixtureHelper : getStatus()?.usb_helper}
+			offer={helperOffer}
+			onSettled={loadHelperOffer}
+			onBack={() => (devicesOpen = false)}
+		/>
+	{:else}
 	<!-- Destination header -->
 	<header class="flex items-center gap-2.5">
 		<NetworkIcon aria-hidden="true" class="text-primary size-5 shrink-0" />
@@ -308,6 +404,28 @@ function openModemConfig(id: string) {
 			onSetup={openHotspotDialog}
 		/>
 		<BluetoothSection status={bluetooth} {audioBackend} />
+		<button
+			type="button"
+			data-testid="open-devices"
+			class="bg-card hover:bg-accent focus-visible:ring-ring flex min-h-11 w-full items-center gap-3 rounded-xl border p-4 text-left focus-visible:ring-2 focus-visible:outline-none"
+			onclick={() => (devicesOpen = true)}
+		>
+			<Usb aria-hidden="true" class="text-primary size-5 shrink-0" />
+			<span class="min-w-0 flex-1">
+				<span class="flex items-baseline justify-between gap-2">
+					<span class="text-sm font-semibold">{m['network.devices.open']()}</span>
+					{#if getStatus()?.usb_devices?.board === 'rock-5b-plus'}
+						<span class="text-muted-foreground text-xs">ROCK 5B+</span>
+					{/if}
+				</span>
+				<span class="text-muted-foreground block text-sm">{entryCounts()}</span>
+				{#if entrySub() !== m['network.devices.lede']()}
+					<span class="text-muted-foreground block text-sm">{entrySub()}</span>
+				{/if}
+			</span>
+			<ChevronRight aria-hidden="true" class="text-muted-foreground size-4 shrink-0" />
+		</button>
+	{/if}
 	{/if}
 </div>
 
