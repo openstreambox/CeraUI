@@ -395,6 +395,10 @@ describe("next reading countdown", () => {
 			vi.advanceTimersByTime(5_000);
 			await tick();
 			expect(next()).toContain("about 15 s");
+			// Ticking digits keep their width.
+			expect(view.getByTestId("radio-health-next").className).toContain(
+				"tabular-nums",
+			);
 		} finally {
 			vi.useRealTimers();
 		}
