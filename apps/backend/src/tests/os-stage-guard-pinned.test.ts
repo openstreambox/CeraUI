@@ -93,6 +93,25 @@ guardTest(
 );
 
 guardTest(
+	"a loaded guard with a queued job after the stop is still refused",
+	record,
+	async (h) => {
+		await h.owner.acquire();
+		h.owner.beginAttempt(baseline, "eth0/6");
+		h.owner.remember(baseline, true, true, false);
+		const error = await h.owner
+			.release(baseline, true)
+			.catch((cause: unknown) => cause);
+		expect(error).toBeInstanceOf(OsStageError);
+		expect((error as OsStageError).diagnostics).toMatchObject({
+			refusal: "guard-not-retired",
+		});
+		expect(existsSync(h.directory)).toBe(true);
+	},
+	{ stopLeavesUnitLoaded: { invocationId: released, jobQueued: true } },
+);
+
+guardTest(
 	"the guard orders itself before the image's shutdown drain",
 	record,
 	async (h) => {

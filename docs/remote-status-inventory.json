@@ -47358,7 +47358,7 @@
     "apps/backend/src/modules/system/software-updates.ts": "068215be54d9733a78986743138341c0b983715ba44e7d80c3d2968ff7811398",
     "apps/backend/src/modules/system/ssh.ts": "ca8aa451fe00cbb5a50758df859b20a2fabf7caad6bb321ea814486c402ae5bf",
     "apps/backend/src/modules/system/tailscale.ts": "b2731b7eed6258db2efef8de0187b03dbf66cdeed37cee035f4c5788dc7f2fdf",
-    "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "4c6adb2e8de07b1fcf55f88cd3656d82901839fc1b1f00d4670d3930b9ef825b",
+    "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "9a1da7f1838ef809f8c28f1dff8051006c250d1584d5f1799d14056fd7ec8fa9",
     "apps/backend/src/modules/ui/notifications.ts": "3622fd02eb3983d6614749e519a17f2e375b110c9b3229381817f4bf7f36fa14",
     "apps/backend/src/modules/ui/status.ts": "6fab81e8d2e9c0ef7b6414b8c52277570c0495410338e492157f8e3e79b93f4f",
     "apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "e2c3ce9b12f5eba0d9a91779327bb0990eb240656dcf5aa8d6b160e974700cac",

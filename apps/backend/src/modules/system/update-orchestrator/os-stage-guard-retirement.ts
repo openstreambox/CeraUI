@@ -79,7 +79,8 @@ export async function retireReleasedOsStageGuard(deps: {
 				final.kind === "terminal" &&
 				final.stopped === true &&
 				final.cleanExit &&
-				final.invocationId === observation.invocationId;
+				final.invocationId === observation.invocationId &&
+				(await read(deps.jobIdle));
 			if (
 				(final.kind !== "absent" && !pinned) ||
 				!(await read(() =>

@@ -80,7 +80,11 @@ export type GuardHarnessOptions = {
 	 * reads inactive with the same invocation instead of absent. A different
 	 * invocation models a guard that is not the one this owner released.
 	 */
-	readonly stopLeavesUnitLoaded?: { readonly invocationId: string };
+	readonly stopLeavesUnitLoaded?: {
+		readonly invocationId: string;
+		/** The stopped unit's job queue still holds a job. */
+		readonly jobQueued?: true;
+	};
 };
 
 export function guardTest(
@@ -181,7 +185,7 @@ async function harness(
 			scope.drains.push(new Response(probe.stderr).text());
 			return (await probe.exited) === (pid === null ? 0 : 75);
 		},
-		jobIdle: async () => true,
+		jobIdle: async () => !(stopped && options.stopLeavesUnitLoaded?.jobQueued),
 		directory,
 		uid: process.getuid?.() ?? -1,
 		now: () => performance.now(),
