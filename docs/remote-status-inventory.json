@@ -14977,6 +14977,1915 @@
       ]
     },
     {
+      "source": "apps/backend/src/modules/devices/usb-devices-wire.ts",
+      "call": "broadcastMsg",
+      "message": "\"status\"",
+      "fields": [
+        {
+          "path": "usb_devices.status",
+          "types": [
+            "\"unavailable\"",
+            "\"ok\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.board",
+          "types": [
+            "\"generic\"",
+            "\"rock-5b-plus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].key",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].parentKey",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].controller",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].portPath",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].socketKey",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].speedClass",
+          "types": [
+            "\"unknown\"",
+            "\"low\"",
+            "\"usb3\"",
+            "\"usb2\"",
+            "\"full\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].portClass",
+          "types": [
+            "null",
+            "\"usb3\"",
+            "\"usb2\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].colour",
+          "types": [
+            "null",
+            "\"blue\"",
+            "\"black\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].scope",
+          "types": [
+            "\"generic\"",
+            "\"socket\"",
+            "\"hub-port\"",
+            "\"built-in\"",
+            "\"root\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].label",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].name",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].kind",
+          "types": [
+            "\"other\"",
+            "\"wifi\"",
+            "\"capture\"",
+            "\"modem\"",
+            "\"hub\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].product",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].vendorId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].productId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].presence",
+          "types": [
+            "\"present\"",
+            "\"nothing-detected\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].superspeedCapable",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].linkId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].speedNote",
+          "types": [
+            "undefined",
+            "\"rm520-held-usb2\"",
+            "\"rm520-pending-usb2\"",
+            "\"capture-needs-usb3\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].exampleDetails",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].displayState",
+          "types": [
+            "undefined",
+            "\"off\"",
+            "\"on\"",
+            "\"resting\"",
+            "\"not-responding\"",
+            "\"unplugged\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].reasonKey",
+          "types": [
+            "undefined",
+            "\"in-bond\"",
+            "\"video-source\"",
+            "\"hub-own-power\"",
+            "\"dropped\"",
+            "\"resting-warm\"",
+            "\"unused-heat\"",
+            "\"unplugged-wifi\"",
+            "\"turned-off\"",
+            "\"bond-hotspot\"",
+            "\"bond-venue\"",
+            "\"not-used\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].linkSlot",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].generation",
+          "types": [
+            "undefined",
+            "\"4g\"",
+            "\"5g\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].sourceName",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].clock",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].minutesAgo",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].retry",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].retryMax",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].hubPorts",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].since",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].drops",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[]",
+          "types": [
+            "never"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.powerRole",
+          "types": [
+            "\"unknown\"",
+            "\"source\"",
+            "\"dual\"",
+            "\"sink\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.dataRole",
+          "types": [
+            "\"unknown\"",
+            "\"device\"",
+            "\"host\"",
+            "\"dual\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.partner",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.vbus",
+          "types": [
+            "\"unknown\"",
+            "\"off\"",
+            "\"on\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe.outcome",
+          "types": [
+            "\"recovered\"",
+            "\"no-partner\"",
+            "\"skipped\"",
+            "\"failed-unbind\"",
+            "\"failed-bind\"",
+            "\"attempted\"",
+            "\"port-missing\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe.rearm",
+          "types": [
+            "null",
+            "2",
+            "1",
+            "3"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].key",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].stored",
+          "types": [
+            "null",
+            "\"20\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].outcome",
+          "types": [
+            "\"failed\"",
+            "\"verified\"",
+            "\"no-modemmanager\"",
+            "\"other-model\"",
+            "\"unit-handled\"",
+            "\"gave-up\"",
+            "\"no-at-port\"",
+            "\"attempting\"",
+            "\"inhibit-failed\"",
+            "\"port-busy\"",
+            "\"port-failed\"",
+            "\"read-failed\"",
+            "\"writing\"",
+            "\"write-failed\"",
+            "\"stored-no-reset\"",
+            "\"reset-sent\"",
+            "\"reset-refused\"",
+            "\"not-reset\"",
+            "\"not-back\"",
+            "\"returned-ambiguous\"",
+            "\"unattributed\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
+      "source": "apps/backend/src/modules/devices/usb-devices-wire.ts",
+      "call": "broadcastMsg",
+      "message": "\"status\"",
+      "fields": [
+        {
+          "path": "usb_devices.status",
+          "types": [
+            "\"unavailable\"",
+            "\"ok\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.board",
+          "types": [
+            "\"generic\"",
+            "\"rock-5b-plus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].key",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].parentKey",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].controller",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].portPath",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].socketKey",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].speedClass",
+          "types": [
+            "\"unknown\"",
+            "\"low\"",
+            "\"usb3\"",
+            "\"usb2\"",
+            "\"full\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].portClass",
+          "types": [
+            "null",
+            "\"usb3\"",
+            "\"usb2\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].colour",
+          "types": [
+            "null",
+            "\"blue\"",
+            "\"black\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].scope",
+          "types": [
+            "\"generic\"",
+            "\"socket\"",
+            "\"hub-port\"",
+            "\"built-in\"",
+            "\"root\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].label",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].name",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].kind",
+          "types": [
+            "\"other\"",
+            "\"wifi\"",
+            "\"capture\"",
+            "\"modem\"",
+            "\"hub\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].product",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].vendorId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].productId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].presence",
+          "types": [
+            "\"present\"",
+            "\"nothing-detected\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].superspeedCapable",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].linkId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].speedNote",
+          "types": [
+            "undefined",
+            "\"rm520-held-usb2\"",
+            "\"rm520-pending-usb2\"",
+            "\"capture-needs-usb3\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].exampleDetails",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].displayState",
+          "types": [
+            "undefined",
+            "\"off\"",
+            "\"on\"",
+            "\"resting\"",
+            "\"not-responding\"",
+            "\"unplugged\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].reasonKey",
+          "types": [
+            "undefined",
+            "\"in-bond\"",
+            "\"video-source\"",
+            "\"hub-own-power\"",
+            "\"dropped\"",
+            "\"resting-warm\"",
+            "\"unused-heat\"",
+            "\"unplugged-wifi\"",
+            "\"turned-off\"",
+            "\"bond-hotspot\"",
+            "\"bond-venue\"",
+            "\"not-used\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].linkSlot",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].generation",
+          "types": [
+            "undefined",
+            "\"4g\"",
+            "\"5g\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].sourceName",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].clock",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].minutesAgo",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].retry",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].retryMax",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].hubPorts",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].since",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].drops",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].seq",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].at",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].reason",
+          "types": [
+            "\"usb2\"",
+            "\"resting\"",
+            "\"dropped\"",
+            "\"turned-off\"",
+            "\"retry\"",
+            "\"appeared\"",
+            "\"left\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].kind",
+          "types": [
+            "\"other\"",
+            "\"wifi\"",
+            "\"capture\"",
+            "\"modem\"",
+            "\"hub\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].socketName",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].clock",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].linkSlot",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].tempC",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].retry",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].generation",
+          "types": [
+            "undefined",
+            "\"4g\"",
+            "\"5g\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "device_calm.resting",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "device_calm.off",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "device_calm.restingKind",
+          "types": [
+            "undefined",
+            "\"wifi\"",
+            "\"modem\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "device_calm.offKind",
+          "types": [
+            "undefined",
+            "\"wifi\"",
+            "\"modem\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "device_calm.offAt",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "device_calm.unresponsive",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.powerRole",
+          "types": [
+            "\"unknown\"",
+            "\"source\"",
+            "\"dual\"",
+            "\"sink\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.dataRole",
+          "types": [
+            "\"unknown\"",
+            "\"device\"",
+            "\"host\"",
+            "\"dual\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.partner",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.vbus",
+          "types": [
+            "\"unknown\"",
+            "\"off\"",
+            "\"on\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe.outcome",
+          "types": [
+            "\"recovered\"",
+            "\"no-partner\"",
+            "\"skipped\"",
+            "\"failed-unbind\"",
+            "\"failed-bind\"",
+            "\"attempted\"",
+            "\"port-missing\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe.rearm",
+          "types": [
+            "null",
+            "2",
+            "1",
+            "3"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].key",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].stored",
+          "types": [
+            "null",
+            "\"20\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].outcome",
+          "types": [
+            "\"failed\"",
+            "\"verified\"",
+            "\"no-modemmanager\"",
+            "\"other-model\"",
+            "\"unit-handled\"",
+            "\"gave-up\"",
+            "\"no-at-port\"",
+            "\"attempting\"",
+            "\"inhibit-failed\"",
+            "\"port-busy\"",
+            "\"port-failed\"",
+            "\"read-failed\"",
+            "\"writing\"",
+            "\"write-failed\"",
+            "\"stored-no-reset\"",
+            "\"reset-sent\"",
+            "\"reset-refused\"",
+            "\"not-reset\"",
+            "\"not-back\"",
+            "\"returned-ambiguous\"",
+            "\"unattributed\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
+      "source": "apps/backend/src/modules/devices/usb-devices-wire.ts",
+      "call": "broadcastMsg",
+      "message": "\"status\"",
+      "fields": [
+        {
+          "path": "usb_devices.status",
+          "types": [
+            "\"unavailable\"",
+            "\"ok\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.board",
+          "types": [
+            "\"generic\"",
+            "\"rock-5b-plus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].key",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].parentKey",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].controller",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].portPath",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].socketKey",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].speedClass",
+          "types": [
+            "\"unknown\"",
+            "\"low\"",
+            "\"usb3\"",
+            "\"usb2\"",
+            "\"full\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].portClass",
+          "types": [
+            "null",
+            "\"usb3\"",
+            "\"usb2\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].colour",
+          "types": [
+            "null",
+            "\"blue\"",
+            "\"black\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].scope",
+          "types": [
+            "\"generic\"",
+            "\"socket\"",
+            "\"hub-port\"",
+            "\"built-in\"",
+            "\"root\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].label",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].name",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].kind",
+          "types": [
+            "\"other\"",
+            "\"wifi\"",
+            "\"capture\"",
+            "\"modem\"",
+            "\"hub\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].product",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].vendorId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].productId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].presence",
+          "types": [
+            "\"present\"",
+            "\"nothing-detected\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].superspeedCapable",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].linkId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].speedNote",
+          "types": [
+            "undefined",
+            "\"rm520-held-usb2\"",
+            "\"rm520-pending-usb2\"",
+            "\"capture-needs-usb3\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].exampleDetails",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].displayState",
+          "types": [
+            "undefined",
+            "\"off\"",
+            "\"on\"",
+            "\"resting\"",
+            "\"not-responding\"",
+            "\"unplugged\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].reasonKey",
+          "types": [
+            "undefined",
+            "\"in-bond\"",
+            "\"video-source\"",
+            "\"hub-own-power\"",
+            "\"dropped\"",
+            "\"resting-warm\"",
+            "\"unused-heat\"",
+            "\"unplugged-wifi\"",
+            "\"turned-off\"",
+            "\"bond-hotspot\"",
+            "\"bond-venue\"",
+            "\"not-used\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].linkSlot",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].generation",
+          "types": [
+            "undefined",
+            "\"4g\"",
+            "\"5g\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].sourceName",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].clock",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].minutesAgo",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].retry",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].retryMax",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].hubPorts",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].since",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].drops",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].seq",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].at",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].reason",
+          "types": [
+            "\"appeared\"",
+            "\"left\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].kind",
+          "types": [
+            "\"other\"",
+            "\"wifi\"",
+            "\"capture\"",
+            "\"modem\"",
+            "\"hub\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].socketName",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.powerRole",
+          "types": [
+            "\"unknown\"",
+            "\"source\"",
+            "\"dual\"",
+            "\"sink\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.dataRole",
+          "types": [
+            "\"unknown\"",
+            "\"device\"",
+            "\"host\"",
+            "\"dual\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.partner",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.vbus",
+          "types": [
+            "\"unknown\"",
+            "\"off\"",
+            "\"on\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe.outcome",
+          "types": [
+            "\"recovered\"",
+            "\"no-partner\"",
+            "\"skipped\"",
+            "\"failed-unbind\"",
+            "\"failed-bind\"",
+            "\"attempted\"",
+            "\"port-missing\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe.rearm",
+          "types": [
+            "null",
+            "2",
+            "1",
+            "3"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].key",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].stored",
+          "types": [
+            "null",
+            "\"20\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].outcome",
+          "types": [
+            "\"failed\"",
+            "\"verified\"",
+            "\"no-modemmanager\"",
+            "\"other-model\"",
+            "\"unit-handled\"",
+            "\"gave-up\"",
+            "\"no-at-port\"",
+            "\"attempting\"",
+            "\"inhibit-failed\"",
+            "\"port-busy\"",
+            "\"port-failed\"",
+            "\"read-failed\"",
+            "\"writing\"",
+            "\"write-failed\"",
+            "\"stored-no-reset\"",
+            "\"reset-sent\"",
+            "\"reset-refused\"",
+            "\"not-reset\"",
+            "\"not-back\"",
+            "\"returned-ambiguous\"",
+            "\"unattributed\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
+      "source": "apps/backend/src/modules/devices/usb-devices-wire.ts",
+      "call": "broadcastMsg",
+      "message": "\"status\"",
+      "fields": [
+        {
+          "path": "usb_devices.status",
+          "types": [
+            "\"unavailable\"",
+            "\"ok\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.board",
+          "types": [
+            "\"generic\"",
+            "\"rock-5b-plus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].key",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].parentKey",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].controller",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].portPath",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].socketKey",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].speedClass",
+          "types": [
+            "\"unknown\"",
+            "\"low\"",
+            "\"usb3\"",
+            "\"usb2\"",
+            "\"full\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].portClass",
+          "types": [
+            "null",
+            "\"usb3\"",
+            "\"usb2\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].colour",
+          "types": [
+            "null",
+            "\"blue\"",
+            "\"black\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].scope",
+          "types": [
+            "\"generic\"",
+            "\"socket\"",
+            "\"hub-port\"",
+            "\"built-in\"",
+            "\"root\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].label",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].name",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].kind",
+          "types": [
+            "\"other\"",
+            "\"wifi\"",
+            "\"capture\"",
+            "\"modem\"",
+            "\"hub\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].product",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].vendorId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].productId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].presence",
+          "types": [
+            "\"present\"",
+            "\"nothing-detected\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].superspeedCapable",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].linkId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].speedNote",
+          "types": [
+            "undefined",
+            "\"rm520-held-usb2\"",
+            "\"rm520-pending-usb2\"",
+            "\"capture-needs-usb3\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].exampleDetails",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].displayState",
+          "types": [
+            "undefined",
+            "\"off\"",
+            "\"on\"",
+            "\"resting\"",
+            "\"not-responding\"",
+            "\"unplugged\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].reasonKey",
+          "types": [
+            "undefined",
+            "\"in-bond\"",
+            "\"video-source\"",
+            "\"hub-own-power\"",
+            "\"dropped\"",
+            "\"resting-warm\"",
+            "\"unused-heat\"",
+            "\"unplugged-wifi\"",
+            "\"turned-off\"",
+            "\"bond-hotspot\"",
+            "\"bond-venue\"",
+            "\"not-used\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].linkSlot",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].generation",
+          "types": [
+            "undefined",
+            "\"4g\"",
+            "\"5g\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].sourceName",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].clock",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].minutesAgo",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].retry",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].retryMax",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].hubPorts",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].since",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].drops",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].seq",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].at",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].reason",
+          "types": [
+            "\"appeared\"",
+            "\"left\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].kind",
+          "types": [
+            "\"other\"",
+            "\"wifi\"",
+            "\"capture\"",
+            "\"modem\"",
+            "\"hub\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_events[].socketName",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.powerRole",
+          "types": [
+            "\"unknown\"",
+            "\"source\"",
+            "\"dual\"",
+            "\"sink\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.dataRole",
+          "types": [
+            "\"unknown\"",
+            "\"device\"",
+            "\"host\"",
+            "\"dual\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.partner",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.vbus",
+          "types": [
+            "\"unknown\"",
+            "\"off\"",
+            "\"on\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe.outcome",
+          "types": [
+            "\"recovered\"",
+            "\"no-partner\"",
+            "\"skipped\"",
+            "\"failed-unbind\"",
+            "\"failed-bind\"",
+            "\"attempted\"",
+            "\"port-missing\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe.rearm",
+          "types": [
+            "null",
+            "2",
+            "1",
+            "3"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].key",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].stored",
+          "types": [
+            "null",
+            "\"20\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].outcome",
+          "types": [
+            "\"failed\"",
+            "\"verified\"",
+            "\"no-modemmanager\"",
+            "\"other-model\"",
+            "\"unit-handled\"",
+            "\"gave-up\"",
+            "\"no-at-port\"",
+            "\"attempting\"",
+            "\"inhibit-failed\"",
+            "\"port-busy\"",
+            "\"port-failed\"",
+            "\"read-failed\"",
+            "\"writing\"",
+            "\"write-failed\"",
+            "\"stored-no-reset\"",
+            "\"reset-sent\"",
+            "\"reset-refused\"",
+            "\"not-reset\"",
+            "\"not-back\"",
+            "\"returned-ambiguous\"",
+            "\"unattributed\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
       "source": "apps/backend/src/modules/system/cpu.ts",
       "call": "broadcastMsg",
       "message": "\"cpu\"",
@@ -15294,6 +17203,123 @@
       "call": "buildMsg",
       "message": "\"status\"",
       "fields": [
+        {
+          "path": "usb_helper.typec",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.powerRole",
+          "types": [
+            "\"unknown\"",
+            "\"source\"",
+            "\"dual\"",
+            "\"sink\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.dataRole",
+          "types": [
+            "\"unknown\"",
+            "\"device\"",
+            "\"host\"",
+            "\"dual\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.partner",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.typec.vbus",
+          "types": [
+            "\"unknown\"",
+            "\"off\"",
+            "\"on\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe.outcome",
+          "types": [
+            "\"recovered\"",
+            "\"no-partner\"",
+            "\"skipped\"",
+            "\"failed-unbind\"",
+            "\"failed-bind\"",
+            "\"attempted\"",
+            "\"port-missing\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.reprobe.rearm",
+          "types": [
+            "null",
+            "2",
+            "1",
+            "3"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].key",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].stored",
+          "types": [
+            "null",
+            "\"20\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_helper.holds[].outcome",
+          "types": [
+            "\"failed\"",
+            "\"verified\"",
+            "\"no-modemmanager\"",
+            "\"other-model\"",
+            "\"unit-handled\"",
+            "\"gave-up\"",
+            "\"no-at-port\"",
+            "\"attempting\"",
+            "\"inhibit-failed\"",
+            "\"port-busy\"",
+            "\"port-failed\"",
+            "\"read-failed\"",
+            "\"writing\"",
+            "\"write-failed\"",
+            "\"stored-no-reset\"",
+            "\"reset-sent\"",
+            "\"reset-refused\"",
+            "\"not-reset\"",
+            "\"not-back\"",
+            "\"returned-ambiguous\"",
+            "\"unattributed\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
         {
           "path": "bond_mapping",
           "types": [
@@ -15951,6 +17977,304 @@
             "\"wifi\"",
             "\"bluetooth\"",
             "\"wireless\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.status",
+          "types": [
+            "\"unavailable\"",
+            "\"ok\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.board",
+          "types": [
+            "\"generic\"",
+            "\"rock-5b-plus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].key",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].parentKey",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].controller",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].portPath",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].socketKey",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].speedClass",
+          "types": [
+            "\"unknown\"",
+            "\"low\"",
+            "\"usb3\"",
+            "\"usb2\"",
+            "\"full\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].portClass",
+          "types": [
+            "null",
+            "\"usb3\"",
+            "\"usb2\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].colour",
+          "types": [
+            "null",
+            "\"blue\"",
+            "\"black\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].scope",
+          "types": [
+            "\"generic\"",
+            "\"socket\"",
+            "\"hub-port\"",
+            "\"built-in\"",
+            "\"root\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].label",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].name",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].kind",
+          "types": [
+            "\"other\"",
+            "\"wifi\"",
+            "\"capture\"",
+            "\"modem\"",
+            "\"hub\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].product",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].vendorId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].productId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].presence",
+          "types": [
+            "\"present\"",
+            "\"nothing-detected\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].superspeedCapable",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].linkId",
+          "types": [
+            "null",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].speedNote",
+          "types": [
+            "undefined",
+            "\"rm520-held-usb2\"",
+            "\"rm520-pending-usb2\"",
+            "\"capture-needs-usb3\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].exampleDetails",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].displayState",
+          "types": [
+            "undefined",
+            "\"off\"",
+            "\"on\"",
+            "\"resting\"",
+            "\"not-responding\"",
+            "\"unplugged\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].reasonKey",
+          "types": [
+            "undefined",
+            "\"in-bond\"",
+            "\"video-source\"",
+            "\"hub-own-power\"",
+            "\"dropped\"",
+            "\"resting-warm\"",
+            "\"unused-heat\"",
+            "\"unplugged-wifi\"",
+            "\"turned-off\"",
+            "\"bond-hotspot\"",
+            "\"bond-venue\"",
+            "\"not-used\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].linkSlot",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].generation",
+          "types": [
+            "undefined",
+            "\"4g\"",
+            "\"5g\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].sourceName",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].clock",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].minutesAgo",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].retry",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].retryMax",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].hubPorts",
+          "types": [
+            "undefined",
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].since",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "usb_devices.nodes[].drops",
+          "types": [
+            "undefined",
+            "number"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -47299,20 +49623,22 @@
   ],
   "dependencies": {
     "apps/backend/src/helpers/config-schemas.ts": "b018bacef01534d9904fe8b3fcf3d1b52d5bbedb6dbc70bec707475a04ca5290",
-    "apps/backend/src/main.ts": "882851d9aee27eca0748a2bd14c838d286f5f9a15232f5414c77b58f860351bf",
+    "apps/backend/src/main.ts": "3ca1d0c11c660b3f659771249c7870515c0fa3affd84bba5ad6f18137753685b",
     "apps/backend/src/mocks/mock-service.ts": "e7547acc0be1355d2310d9aa39457159a94093a48be13fcffad3239bfc36d19b",
     "apps/backend/src/mocks/providers/streaming.ts": "e0bab1079bf5c6209e287c71c5e169d5545effd0d3bac93d6cfc9a584f910b0e",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
     "apps/backend/src/modules/addons/manager.ts": "fe0c62cb0a88f11669334681daa7b231cea84bb0f6eeef79608e66acf8bc39f5",
     "apps/backend/src/modules/bluetooth/bluetooth-runtime.ts": "c9c915cd40564ce173e7959a46b5b81702b25d681dd31c7e7e0ca7918077ab5c",
     "apps/backend/src/modules/device-logs/follow-transport.ts": "ce1daa6b85f600b5c18ee1190b0efb2702ad69a9040c244b2f3e9d14fefdd9dd",
+    "apps/backend/src/modules/devices/usb-devices-wire.ts": "6097472a422e724c3979c507064509c8dd6b56e045c62d822a5b72525e3b54e2",
+    "apps/backend/src/modules/devices/usb-events.ts": "3eed84dd1003d7fe60a9aa9742dd74b75118a6daaaf1197546d25ed7bdd94995",
     "apps/backend/src/modules/modems/modem-network-scan.ts": "b66e5ea40679d5fae6cf922d803f42f306e08bb53bc95ac6ead6d1f5229c00f7",
     "apps/backend/src/modules/modems/modem-status.ts": "00286b5a7818dc3a260d66ae21e6dca0316fc10c3e78f48d44297e2a38c64406",
     "apps/backend/src/modules/modems/modem-wire-projection.ts": "54825c600c6d6adc4f049b09d562fb90aafe85a9195fb4810649b9404ba4e7c7",
     "apps/backend/src/modules/modems/modems-state.ts": "664049da3a73481068a483da604719cbea8abe290995f907a9e07eebc69cc3a5",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
     "apps/backend/src/modules/network/network-ingest.ts": "fcb33cbff26195a53375f9ae12c5f85bbb76cc2bbb7d63d76a90cf2562eb8e77",
-    "apps/backend/src/modules/network/network-interfaces.ts": "50f8920087890bea45ed33a51cdd6b0a234db4c65f6152f31fbd2ce1fb060eee",
+    "apps/backend/src/modules/network/network-interfaces.ts": "15f0febea7a337d9e5b6e7432c5e7c67745c12ad096fc486ba192243ee10e5e0",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "2221782a8312e2ffddc545a6f4434e62cf53d0f82948d49987a5a9263fe60d26",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "59e35c76047fe4bfa5484cbbeaae996507cc0f1f778641eb83dc6248f72b6395",
@@ -47360,7 +49686,7 @@
     "apps/backend/src/modules/system/tailscale.ts": "b2731b7eed6258db2efef8de0187b03dbf66cdeed37cee035f4c5788dc7f2fdf",
     "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "4da9c15595f5c7aad6fb03e0aa95acab0a8e4507d0f580ae48d198c903022697",
     "apps/backend/src/modules/ui/notifications.ts": "3622fd02eb3983d6614749e519a17f2e375b110c9b3229381817f4bf7f36fa14",
-    "apps/backend/src/modules/ui/status.ts": "6fab81e8d2e9c0ef7b6414b8c52277570c0495410338e492157f8e3e79b93f4f",
+    "apps/backend/src/modules/ui/status.ts": "dd743e675faa72197452fe8ac35fcf3b370cd866cfcca9c13f02de44c209cfae",
     "apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "e2c3ce9b12f5eba0d9a91779327bb0990eb240656dcf5aa8d6b160e974700cac",
     "apps/backend/src/modules/wifi/wifi-country.ts": "b9e350f52a819d5cc84fd8a742424ce73c29b35ebb03136b0fd36aea31f4b422",
     "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "9776c777bcd7291788471587127cc52991ebe907b23620c8e1dbc0f476789099",
@@ -47389,10 +49715,12 @@
     "packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",
     "packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
-    "packages/rpc/src/schemas/status.schema.ts": "c62a8acc6eb69bf918939c8747e8ed7217f20ef8d5071833c7731ae6a89ec39e",
+    "packages/rpc/src/schemas/status.schema.ts": "336bbd4e2e2200edbcfb9f66df3fed3ea81d78bb88ab440acb000a93ea54d710",
     "packages/rpc/src/schemas/streaming.schema.ts": "a864393f5a1bad246cbb6a16e0a78cc1155e05c944c06c350c54be7146c48ed6",
     "packages/rpc/src/schemas/system.schema.ts": "be2db8dd7bbfcc4e6cba2812d4ad49f3d74d75d96216eec59532eb136f1ec009",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "ac5e6859c7723d4381f1502246d9778262c663d80d06b5b2eb5aaf1796da5613",
+    "packages/rpc/src/schemas/usb-devices.schema.ts": "0d840933a0d31877d51fd2bf6b91469ec890e96103714c2ee9bf4aaa539cdb7c",
+    "packages/rpc/src/schemas/usb-helper.schema.ts": "08cbf5027f8a0b6ce74de10472ba28efacdd2dfb873846b7eaacf5aaa28713a0",
     "packages/rpc/src/schemas/wifi.schema.ts": "f15a6630ec04482bcd022d89734a0a07214aad8765047b52221bd532bbccb082"
   }
 }

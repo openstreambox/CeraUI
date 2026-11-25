@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { usbDevicesWireSchema } from "@ceraui/rpc/schemas";
 import { buildMsg } from "../../rpc/compat.ts";
+import { mintLinkId } from "../modems/physical-identity.ts";
 import { projectRemoteLegacyFrame } from "../remote/remote-status.ts";
 import {
 	relayStatusToGateway,
@@ -29,11 +29,6 @@ const IMEI = "490154203237518";
 const ICCID = "89014103211118510720";
 const SERIAL = "SECRET-SERIAL-9f3a";
 const WLX = "wlx001122334455";
-
-/** Same derivation as `mintLinkId` in physical-identity.ts. */
-function mintLinkId(identityKey: string): string {
-	return `lnk_${createHash("sha256").update(identityKey).digest("hex").slice(0, 16)}`;
-}
 
 function node(overrides: Partial<UsbTreeNode> = {}): UsbTreeNode {
 	return {

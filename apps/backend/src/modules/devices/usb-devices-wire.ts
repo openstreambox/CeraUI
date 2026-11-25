@@ -33,6 +33,7 @@ import {
 	usbEventsWireSchema,
 } from "@ceraui/rpc/schemas";
 import { logger } from "../../helpers/logger.ts";
+import { isMintedLinkId, mintLinkId } from "../modems/physical-identity.ts";
 import { getUsbEvents, observeUsbDevices } from "./usb-events.ts";
 import { mockUsbHelper, readUsbHelper } from "./usb-helper.ts";
 import { captureHelperSeen } from "./usb-helper-actions.ts";
@@ -46,7 +47,6 @@ import {
 } from "./usb-tree.ts";
 
 const LINK_ID = /^[A-Za-z0-9:._-]{1,80}$/;
-const MINTED_LINK_ID = /^lnk_[0-9a-f]{16}$/;
 const HEX_RUN = /[0-9a-f]{12}/i;
 const LONG_DIGITS = /\d{14,}/;
 
@@ -248,7 +248,7 @@ export function mockUsbDevicesWire(): UsbDevicesWire {
 				product: "RM520N-GL",
 				vendorId: "2c7c",
 				productId: "0801",
-				linkId: "lnk_0123456789abcdef",
+				linkId: mintLinkId("mock:rm520:hub.1"),
 				generation: "5g",
 				linkSlot: 3,
 				reasonKey: "in-bond",
@@ -667,7 +667,7 @@ function chooseLinkId(
 }
 
 function isPublishableLinkId(linkId: string): boolean {
-	if (MINTED_LINK_ID.test(linkId)) return true;
+	if (isMintedLinkId(linkId)) return true;
 	if (!LINK_ID.test(linkId)) return false;
 	if (HEX_RUN.test(linkId) || LONG_DIGITS.test(linkId)) return false;
 	if (/serial/i.test(linkId) && /\d/.test(linkId)) return false;
