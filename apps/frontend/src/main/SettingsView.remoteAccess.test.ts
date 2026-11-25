@@ -44,6 +44,7 @@ vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getConfig: () => ({ autostart: false }),
 	getKiosk: () => undefined,
 	getTailscale: () => feed.tailscale,
+	getDeviceStats: () => undefined,
 }));
 
 beforeAll(() => {
