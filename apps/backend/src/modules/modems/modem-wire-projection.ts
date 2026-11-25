@@ -1,4 +1,3 @@
-import type { RadioHealth } from "@ceraui/rpc/schemas";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -62,6 +61,7 @@ import type {
 	ModemRegistrationRejection,
 	ModemSignalDetail,
 	ModemSimPresenceEvidence,
+	RadioHealth,
 	RouterAdmin,
 	UsbCompositionMode,
 } from "@ceraui/rpc/schemas";
