@@ -5,8 +5,9 @@
  * settle the same way.
  *
  * - The request carries `{device, incarnation}`; a radio the device has not
- *   observed yet gets one retry from a future status frame
- *   (`withWifiEntryRetry`), which moves the op to that token's key.
+ *   observed yet gets one retry on the SAME token (`withWifiEntryRetry`), so
+ *   the op keeps its key. A replaced radio is never written: the first refusal
+ *   stands and the caller learns whether this dispatch still owns its key.
  * - The device's terminal `hotspot.config` frame is owned by this dispatch
  *   through `withWifiConfigReceipt`; a `radio-changed` terminal turns the
  *   accepted reply into a refusal. The op itself is confirmed or failed by the
@@ -50,10 +51,15 @@ export type HotspotConfigWriteOwner = {
 	readonly isCurrent?: () => boolean;
 	/** The keyed op has begun; `attempt` names this dispatch's attempt. */
 	readonly onDispatch?: (key: string, attempt: symbol | undefined) => void;
-	/** The entry retry is about to rebind to `incarnation`. */
-	readonly onRebind?: (incarnation: string) => void;
-	/** The op moved to `key` for the rebound token. */
-	readonly onHandoff?: (key: string) => void;
+	/**
+	 * The radio token the caller shows now (a different one is a replacement).
+	 * Without one, only the next status frame can show a replacement.
+	 */
+	readonly currentToken?: () => string | undefined;
+	/** Whether the caller still holds the exact binding for the one resend. */
+	readonly canRetry?: () => boolean;
+	/** The radio was replaced; `owned` says whether this dispatch kept its key. */
+	readonly onReplacement?: (owned: boolean) => void;
 	/** The device could not bind this request, even after the retry. */
 	readonly onUnsupported?: () => void;
 	readonly onResult?: (result: HotspotConfigOutput) => void;
@@ -98,13 +104,9 @@ export async function writeHotspotConfig(
 				{
 					signal: owner.signal,
 					current: owner.current,
-					rebind: (incarnation) => {
-						owner.onRebind?.(incarnation);
-						const next = wifiHotspotConfigOpKey(device, incarnation);
-						if (!handoff(next)) return false;
-						owner.onHandoff?.(next);
-						return true;
-					},
+					currentToken: owner.currentToken ?? (() => binding.incarnation),
+					canRetry: () => (owner.canRetry ?? owner.current)() && handoff(key),
+					onReplacement: () => owner.onReplacement?.(handoff(key)),
 				},
 			);
 			if (!result && !owner.signal.aborted && owner.current())
