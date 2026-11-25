@@ -541,6 +541,7 @@ gaps for overlap with the independent legacy launcher. Transition table from
 | `downloading` | `DOWNLOAD_FAILED` | `failed` |
 | `downloading` | `DOWNLOAD_ABORTED_FOR_STREAM` | `available` |
 | `downloading` | `DOWNLOAD_RESUME_UNIT_ABSENT` | `idle` with the package check due now (resume only, when a probe proved the install unit gone) |
+| `awaiting-idle` / `downloading` | `PACKAGE_PLAN_RELEASED` | `idle` with the package check due now (image apt source only: a queued plan without a request, or an install refused before apt launched) |
 | `committing` | `COMMIT_PROGRESS` | `committing` |
 | `committing` | `COMMIT_SUCCEEDED` | `restarting-services` |
 | `committing` | `COMMIT_FAILED` | `quarantined` |
@@ -1386,23 +1387,42 @@ under `/etc/apt/sources.list.d/`, its `host`, `origin` and `label`
 strictly. With a valid record:
 
 - CeraUI never writes `ceralive.sources`. Reachability and transport read only
-  that file, and `apt.ceralive.tv` is not probed (no client certificate).
+  that file, and `apt.ceralive.tv` is not probed (no client certificate). A
+  repository HTTP error from that host over verified TLS reads as unreachable,
+  never as a captive portal.
+- Every package-update apt run (refresh, `apt-cache policy`, simulations, the
+  space probe, the download and the detached unit's download and install
+  stages) carries `-o Dir::Etc::SourceList=<sourcesFile> -o
+  Dir::Etc::SourceParts=/dev/null`, whatever the ambient apt configuration
+  says. The unit's launch and adoption checks accept exactly that pair, in that
+  place, and only on such an image.
 - Only that URI, host and the two suites released as OpenStreamBox are an
   installable origin. Image-owned names from it are offered: that source carries
   only what the image's maker put there. From anywhere else they stay withheld.
-- The CeraLive update notice stays silent, and a stored offer is withdrawn once.
+- The CeraLive update notice stays silent. A stored offer is withdrawn at
+  startup and on every check, whether or not discovery can run.
 - The URI's first path segment is an access token. Transport findings, the
-  update state's failure reason and logged apt output show the source by host
-  only.
+  update state, the `updating.result` status frame, refusal diagnostics and
+  logged apt output show the source by host only. The detached unit's output is
+  redacted line by line as the backend reads it; apt itself still writes it to
+  the root-only `/run` output files.
 - Package checks wait until the image's clock gate wrote
   `/run/ceralive/clock-gate-open`: apt refuses a Release signed in the box
   clock's future, which a cold boot without RTC is. Until then the check has not
   run, which is no failure, and the image check still runs.
-- Installs are manual only, whatever `packagesAuto` says. The refresh an install
-  starts with must have reached both suites without an error. An install is
-  refused (`dpkg_interrupted`) while dpkg's journal (`/var/lib/dpkg/updates`)
-  holds an unfinished run; `dpkg --configure -a` is left to the operator,
-  because maintainer scripts may restart the backend.
+- A check needs a refresh that fetched or hit both suites' Release files with no
+  failed index. apt exits 0 when it keeps old lists after a failed fetch; that
+  is `refresh_failed`, and discovery never reads cached lists. A captive portal
+  is still reported as one.
+- While dpkg's journal (`/var/lib/dpkg/updates`) holds an unfinished run, checks
+  and installs are refused (`dpkg_interrupted`). The operator repairs it with
+  `dpkg --configure -a`; CeraUI does not run it, because maintainer scripts may
+  restart the backend. The next check after the repair runs normally.
+- Installs are manual only, whatever `packagesAuto` says. A plan queued without
+  a request in this process (including one persisted across a restart) is
+  dropped back to `idle`. An install refused before apt launched (clock, dpkg,
+  refresh, discovery) also returns to `idle` with the package check due, not to
+  `failed`, so image checks stay eligible.
 
 A record that is present but does not validate refuses package checks and
 installs (`discovery_failed`), and never falls back to the first-party

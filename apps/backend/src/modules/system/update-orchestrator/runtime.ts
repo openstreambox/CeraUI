@@ -51,6 +51,7 @@ import {
 	aptUpdatesEnabled,
 	getLastInstallUnitVerdict,
 	getUpdateState,
+	IMAGE_SOURCE_PRELAUNCH_REFUSALS,
 	type InstallUnitVerdict,
 	imageSourceClockWaits,
 	isAptAllDiscovery,
@@ -545,6 +546,9 @@ let activeOsStage:
 setOsStageLiveProducerProbe(() => activeOsStage?.attemptId ?? null);
 let raucStreamAbortInProcess = false;
 let packageInstallStarting = false;
+// Image apt source: an install launches only for a request made in this
+// process (installUpdatesNow); a queued or persisted plan is not one.
+let manualPackageAdmission = false;
 let packageHoldAttempt: DownloadInterruption | undefined;
 let updateAdmissionProbe: Promise<boolean> | undefined;
 let osForceActivated = false;
@@ -692,6 +696,7 @@ export function setOrchestratorRuntimeDepsForTest(
 
 export function resetOrchestratorRuntimeForTest(): void {
 	kernelRuntime.reset();
+	manualPackageAdmission = false;
 	deps.downloadNotices?.dispose();
 	packageHoldAttempt = undefined;
 	resetDisruptiveActionReservationForTest();
@@ -1062,6 +1067,7 @@ export async function installUpdatesNow(
 	}
 	// Starting-stream window: root AGENTS.md D8 Known gaps (f).
 	if (deps.isStreamLive()) return { started: false, reason: "stream_active" };
+	manualPackageAdmission = true;
 	if (state.phase === "available")
 		dispatch({ type: "AWAIT_IDLE_FOR_INSTALL", now: deps.now() });
 	const launch = await maybeStartPackageInstall({
@@ -1363,6 +1369,8 @@ async function maybeStartPackageInstall(opts: {
 	readonly isCurrent?: () => boolean;
 }): Promise<UpdateStartOutcome | undefined> {
 	if (state.phase !== "awaiting-idle") return;
+	if (imageAptSourceInUse() && !manualPackageAdmission)
+		return { started: false, reason: "check_unavailable" };
 	if (isDisruptiveActionPending())
 		return { started: false, reason: "already_updating" };
 	if (deps.isStreamLive()) return { started: false, reason: "streaming" };
@@ -1422,6 +1430,7 @@ async function maybeStartPackageInstall(opts: {
 			await deps.quarantine.clearPending();
 			return result; // stays awaiting-idle; retried next tick
 		}
+		manualPackageAdmission = false;
 		const previousHold = packageHoldAttempt;
 		packageHoldAttempt = packageDownloadAttempt(available);
 		dispatch({
@@ -1475,6 +1484,23 @@ async function pollPackageInstallProgress(): Promise<void> {
 		if (state.phase === "downloading")
 			dispatch({ type: "COMMIT_PHASE_ENTERED", now });
 		dispatch({ type: "COMMIT_SUCCEEDED", now });
+		return;
+	}
+	if (
+		wire.kind === "failed" &&
+		state.phase === "downloading" &&
+		imageAptSourceInUse() &&
+		IMAGE_SOURCE_PRELAUNCH_REFUSALS.has(wire.reason)
+	) {
+		// Refused before APT launched: a package-only result, not the shared
+		// failed phase, so the image check stays eligible.
+		await deps.quarantine.clearPending();
+		dispatch({ type: "PACKAGE_PLAN_RELEASED", now });
+		notifyUpdate({
+			kind: "refused",
+			id: `packages:${wire.reason}`,
+			reason: wire.reason,
+		});
 		return;
 	}
 	if (wire.kind === "failed") {
@@ -2960,7 +2986,14 @@ export async function runOrchestratorTick(): Promise<void> {
 			dispatch({ type: "AWAIT_IDLE_FOR_INSTALL", now: deps.now() });
 		}
 	} else if (state.phase === "awaiting-idle") {
-		await maybeStartPackageInstall({ bypassIdle: false });
+		if (imageAptSourceInUse() && !manualPackageAdmission) {
+			// A plan queued automatically, or persisted across a restart.
+			logger.info(
+				"Queued package install dropped: the image apt source installs only when asked",
+			);
+			await deps.quarantine.clearPending();
+			dispatch({ type: "PACKAGE_PLAN_RELEASED", now: deps.now() });
+		} else await maybeStartPackageInstall({ bypassIdle: false });
 	} else if (state.phase === "downloading" || state.phase === "committing") {
 		await readjudicateDeferredDownload();
 		pendingPackageSuccess.assertEffectsAllowed();

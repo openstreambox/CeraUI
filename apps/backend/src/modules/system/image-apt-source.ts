@@ -189,10 +189,21 @@ export function parseImageAptSource(
 		const raw = uris[0] ?? "";
 		const match = URI_RE.exec(raw);
 		const segments = match?.[3]?.split("/").filter(Boolean) ?? [];
+		// The same parser the probes use: a URI they would discard is refused here.
+		const url = URL.canParse(raw) ? new URL(raw) : undefined;
 		if (
 			!match ||
 			match[1] !== parsed.host ||
-			segments.some((segment) => segment === "." || segment === "..")
+			segments.some((segment) => segment === "." || segment === "..") ||
+			url === undefined ||
+			url.protocol !== "https:" ||
+			url.hostname !== parsed.host ||
+			url.username !== "" ||
+			url.password !== "" ||
+			url.search !== "" ||
+			url.hash !== "" ||
+			url.port !== (match[2] === "443" ? "" : (match[2] ?? "")) ||
+			url.pathname.replace(/\/+$/, "") !== match[3]
 		)
 			throw new SourceInvalid("URI does not name the recorded host");
 		return {
@@ -273,6 +284,33 @@ export function imageAptSourceInUse(): boolean {
 export function activeImageAptSource(): ImageAptSource | undefined {
 	const mode = imageAptSourceMode();
 	return mode.kind === "active" ? mode.source : undefined;
+}
+
+/**
+ * apt options that make one invocation read only the image's source file,
+ * whatever the ambient configuration says; none on any other image. Every
+ * package-update apt run in that mode carries them.
+ */
+export function imageAptSourceArgs(): string[] {
+	const source = activeImageAptSource();
+	return source === undefined
+		? []
+		: [
+				"-o",
+				`Dir::Etc::SourceList=${source.sourcesFile}`,
+				"-o",
+				"Dir::Etc::SourceParts=/dev/null",
+			];
+}
+
+/** Whether `pair` is exactly {@link imageAptSourceArgs} for an active image source. */
+export function isImageAptSourcePair(pair: readonly string[]): boolean {
+	const expected = imageAptSourceArgs();
+	return (
+		expected.length === 4 &&
+		pair.length === 4 &&
+		expected.every((value, index) => pair[index] === value)
+	);
 }
 
 /**

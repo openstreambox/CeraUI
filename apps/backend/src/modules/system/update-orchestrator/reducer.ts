@@ -348,9 +348,25 @@ function reduceAwaitingIdle(
 				progress: null,
 				packageAttempt: event.packageAttempt,
 			});
+		case "PACKAGE_PLAN_RELEASED":
+			return releasePackagePlan(state, event.now);
 		default:
 			return state;
 	}
+}
+
+// Back to `idle` with the package check due now: discovery, not the old plan,
+// decides what is offered, and the image check stays eligible.
+function releasePackagePlan(
+	state: OrchestratorState,
+	now: number,
+): OrchestratorState {
+	return enter(state, now, {
+		phase: "idle",
+		progress: null,
+		failureReason: null,
+		packageCheck: { ...state.packageCheck, nextAttemptAt: now },
+	});
 }
 
 function reduceDownloading(
@@ -385,6 +401,8 @@ function reduceDownloading(
 				progress: null,
 				packageCheck: { ...state.packageCheck, nextAttemptAt: event.now },
 			});
+		case "PACKAGE_PLAN_RELEASED":
+			return releasePackagePlan(state, event.now);
 		default:
 			return state;
 	}

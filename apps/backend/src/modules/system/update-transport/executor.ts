@@ -352,16 +352,22 @@ async function debian(
 ): Promise<HostProbe> {
 	// The image source's URL carries its access token: findings name its host only.
 	const image = activeImageAptSource();
-	const host =
-		image !== undefined && new URL(source.url).hostname === image.host
-			? image.host
-			: source.url;
+	const imageHost =
+		image !== undefined && new URL(source.url).hostname === image.host;
+	const host = imageHost ? image.host : source.url;
 	if (!source.keyring) return { host, state: "tampered", latencyMs: 0 };
 	const response = await curl(source.url, ifname, family, "GET", deps);
+	// The image's source is https only: any HTTP status came over verified TLS
+	// from the repository itself (403, 404, 5xx), never from a sign-in page,
+	// which cannot present the host's certificate. It is unreachable, not captive.
+	const repositoryAnswered = imageHost && response.state === "captive-http";
 	if (response.state !== "clear" || response.code !== 200)
 		return {
 			host,
-			state: response.state === "clear" ? "no-route" : response.state,
+			state:
+				response.state === "clear" || repositoryAnswered
+					? "no-route"
+					: response.state,
 			latencyMs: response.latencyMs,
 		};
 	const dir = await mkdtemp(join(tmpdir(), "ceraui-update-index-"));

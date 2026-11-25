@@ -202,6 +202,7 @@ import {
 import {
 	periodicCheckForSoftwareUpdates,
 	recoverSoftwareUpdateIfRunning,
+	retireCeraliveOfferOnImageSource,
 } from "./modules/system/software-updates.ts";
 import {
 	ensureSshPasswordProvisioned,
@@ -585,6 +586,8 @@ await guardNonCritical("apt-channel-reconcile", async () => {
 // Loads the stored CeraLive offer before recovery takes an update against it; only this
 // process's own conclusive check announces or withdraws the notice.
 initCeraliveUpdateNotice();
+// An image with its own apt source has no CeraLive offer: retire a stored one now.
+retireCeraliveOfferOnImageSource();
 // Todo 36: the packages+OS+slot-sync orchestrator. Its own resume path (G17)
 // is the ONLY thing that reattaches to a persisted `committing` phase's
 // detached apt unit on this boot — running it BEFORE the general standalone

@@ -148,6 +148,9 @@ export type OrchestratorEvent =
 	// The phase can lag a short commit, so this proves nothing about dpkg; it
 	// drops the interrupted plan and makes the package check due (resume.ts).
 	| { readonly type: "DOWNLOAD_RESUME_UNIT_ABSENT"; readonly now: number }
+	// Image apt source: a queued plan nobody asked for, or an install refused
+	// before APT launched. Package-only: nothing ran, so nothing failed.
+	| { readonly type: "PACKAGE_PLAN_RELEASED"; readonly now: number }
 	| { readonly type: "COMMIT_PHASE_ENTERED"; readonly now: number }
 	| {
 			readonly type: "COMMIT_PROGRESS";

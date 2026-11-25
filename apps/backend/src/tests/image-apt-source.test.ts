@@ -55,6 +55,7 @@ import {
 } from "../modules/system/update-transport/executor.ts";
 import { getLastTransportSelectionForProfile } from "../modules/system/update-transport/last-selection.ts";
 import { notificationRemove } from "../modules/ui/notifications.ts";
+import * as compat from "../rpc/compat.ts";
 import { useSessionOwnerForFile } from "./helpers/bind-session-owner.ts";
 
 useSessionOwnerForFile();
@@ -415,29 +416,50 @@ token was ${TOKEN}
 		});
 		// The settle's archive cleanup runs the host's apt-get, which refuses a non-root user.
 		const warn = spyOn(logger, "warn").mockImplementation(() => logger);
+		// Every status frame sent to local clients, serialized as the socket sends it.
+		const frames: string[] = [];
+		const broadcast = spyOn(compat, "broadcastMsg").mockImplementation(
+			(type, data) => {
+				if (type === "status") frames.push(JSON.stringify(data));
+			},
+		);
 		try {
 			// A start whose check never answers holds the update open for the monitor.
 			setSoftwareUpdateCheckRunner(() => true);
 			expect(startSoftwareUpdate()).toEqual({ started: true });
-			const monitor = createSoftwareUpdateProcessMonitor();
-			monitor.handlers.onStdout(
-				`Get:1 ${URI} ${EMERGENCY}/main arm64 modemmanager arm64 ${MM_FIX} [1234 kB]\n`,
+			const monitor = createSoftwareUpdateProcessMonitor(
+				`Get:1 ${URI} ${EMERGENCY}/main arm64 libmm-glib0 arm64 ${MM_FIX} [312 kB]\n`,
 			);
-			monitor.handlers.onStderr(
-				`E: Failed to fetch ${URI}/pool/main/m/modemmanager.deb  403  Forbidden\n`,
-			);
+			// The unit's lines arrive in reads that split the token.
+			const get = `Get:2 ${URI} ${EMERGENCY}/main arm64 modemmanager arm64 ${MM_FIX} [1234 kB]\n`;
+			const cut = get.indexOf(TOKEN) + 5;
+			monitor.handlers.onStdout(get.slice(0, cut));
+			monitor.handlers.onStdout(get.slice(cut));
+			const err = `E: Failed to fetch ${URI}/pool/main/m/modemmanager.deb  403  Forbidden\nE: token ${TOKEN}`;
+			const errCut = err.indexOf(TOKEN) + 3;
+			monitor.handlers.onStderr(err.slice(0, errCut));
+			monitor.handlers.onStderr(err.slice(errCut));
 			await monitor.finish(Promise.resolve(100));
 			await Bun.sleep(0);
 			const state = getUpdateState();
 			expect(state.kind).toBe("failed");
 			expect(JSON.stringify(state)).not.toContain(TOKEN);
 			expect(JSON.stringify(state)).toContain(HOST);
+			// The failed frame's `updating.result` is the redacted apt text too.
+			const result = frames
+				.map(
+					(frame) => JSON.parse(frame) as { updating?: { result?: unknown } },
+				)
+				.find(({ updating }) => typeof updating?.result === "string");
+			expect(result?.updating?.result).toContain(`https://${HOST}/pool/main`);
+			for (const frame of frames) expect(frame).not.toContain(TOKEN);
 			const logged = lines
 				.filter((line) => typeof line === "string")
 				.join("\n");
 			expect(logged).toContain(`https://${HOST}/pool/main`);
 			expect(logged).not.toContain(TOKEN);
 		} finally {
+			broadcast.mockRestore();
 			info.mockRestore();
 			error.mockRestore();
 			warn.mockRestore();
@@ -764,12 +786,14 @@ async function capableBox(options: {
 				stdout: options.refresh ?? REFRESH,
 				stderr: options.refreshStderr ?? "",
 			};
-		if (argv[0] === "/usr/bin/apt-cache")
+		if (argv[0] === "/usr/bin/apt-cache") {
+			const name = argv[argv.indexOf("policy") + 1];
 			return {
 				exitCode: 0,
-				stdout: argv[2] === undefined ? INVENTORY : (POLICIES[argv[2]] ?? ""),
+				stdout: name === undefined ? INVENTORY : (POLICIES[name] ?? ""),
 				stderr: "",
 			};
+		}
 		if (argv[0] === "/usr/bin/apt-mark")
 			return { exitCode: 0, stdout: "", stderr: "" };
 		if (argv.includes("-s") && argv.includes("install"))
@@ -890,8 +914,12 @@ describe("a package check on such a box", () => {
 });
 
 describe("an install on such a box", () => {
-	async function install(box: Awaited<ReturnType<typeof capableBox>>) {
-		expect(await runUpdateDiscoveryAndReport()).toBe(null);
+	async function install(
+		box: Awaited<ReturnType<typeof capableBox>>,
+		afterDiscovery?: () => Promise<void>,
+	) {
+		expect(await runUpdateDiscoveryAndReport(REFRESH)).toBe(null);
+		await afterDiscovery?.();
 		expect(startSoftwareUpdate()).toEqual({ started: true });
 		for (let i = 0; i < 100 && getUpdateState().kind !== "failed"; i++)
 			await Bun.sleep(5);
@@ -910,14 +938,14 @@ describe("an install on such a box", () => {
 		const error = spyOn(logger, "error").mockImplementation(() => logger);
 		try {
 			const transactions = await install(box);
-			expect(getUpdateState().kind).toBe("failed");
-			// The install's refresh ran; nothing was rechecked or installed after it.
+			// The install's own refresh ran and missed a suite: nothing after it.
+			expect(getUpdateState()).toMatchObject({
+				kind: "failed",
+				reason: "refresh_failed",
+			});
 			expect(box.commands.some((argv) => argv[1] === "update")).toBe(true);
 			expect(transactions.filter((argv) => argv.includes("install"))).toEqual(
 				[],
-			);
-			expect(warn.mock.calls.map(([message]) => message)).toContain(
-				"Package install refused: the image source's lists did not refresh",
 			);
 		} finally {
 			warn.mockRestore();
@@ -930,13 +958,16 @@ describe("an install on such a box", () => {
 	it("refuses over an interrupted dpkg run", async () => {
 		useImageSource();
 		const box = await capableBox({});
-		await mkdir(path.join(box.dir, "updates"));
-		await writeFile(path.join(box.dir, "updates", "0001"), "");
+		// dpkg is interrupted after the offer was found.
+		const afterDiscovery = async () => {
+			await mkdir(path.join(box.dir, "updates"));
+			await writeFile(path.join(box.dir, "updates", "0001"), "");
+		};
 		const warn = spyOn(logger, "warn").mockImplementation(() => logger);
 		const info = spyOn(logger, "info").mockImplementation(() => logger);
 		const error = spyOn(logger, "error").mockImplementation(() => logger);
 		try {
-			const transactions = await install(box);
+			const transactions = await install(box, afterDiscovery);
 			expect(getUpdateState()).toMatchObject({
 				kind: "failed",
 				reason: "dpkg_interrupted",
@@ -974,6 +1005,188 @@ describe("an install on such a box", () => {
 			warn.mockRestore();
 			info.mockRestore();
 			error.mockRestore();
+			box.cleanup();
+		}
+	});
+});
+
+describe("every package apt run reads only the image's source", () => {
+	const PAIR = [
+		"-o",
+		`Dir::Etc::SourceList=${SOURCES_FILE}`,
+		"-o",
+		"Dir::Etc::SourceParts=/dev/null",
+	];
+	const carriesPair = (argv: readonly string[]) =>
+		argv.some((_, i) => PAIR.every((value, j) => argv[i + j] === value));
+
+	it("passes the source overrides to the refresh, the inventory and the simulation", async () => {
+		useImageSource();
+		const box = await capableBox({});
+		const quiet = [
+			spyOn(logger, "info").mockImplementation(() => logger),
+			spyOn(logger, "warn").mockImplementation(() => logger),
+		];
+		try {
+			expect(await runSoftwareUpdateCheck()).toBe(null);
+			const apt = box.commands.filter(
+				([command]) =>
+					command === "/usr/bin/apt-get" || command === "/usr/bin/apt-cache",
+			);
+			expect(apt.map((argv) => argv.slice(0, 2).join(" "))).toContain(
+				"/usr/bin/apt-get update",
+			);
+			expect(apt.length).toBeGreaterThan(3);
+			for (const argv of apt) expect(carriesPair(argv)).toBe(true);
+		} finally {
+			for (const spy of quiet) spy.mockRestore();
+			box.cleanup();
+		}
+	});
+
+	it("passes none on an image without the record", async () => {
+		useImageFiles({});
+		const box = await capableBox({});
+		const quiet = [
+			spyOn(logger, "info").mockImplementation(() => logger),
+			spyOn(logger, "warn").mockImplementation(() => logger),
+		];
+		try {
+			await runSoftwareUpdateCheck();
+			expect(box.commands.length).toBeGreaterThan(0);
+			for (const argv of box.commands)
+				expect(argv.some((arg) => arg.startsWith("Dir::Etc::"))).toBe(false);
+		} finally {
+			for (const spy of quiet) spy.mockRestore();
+			box.cleanup();
+		}
+	});
+});
+
+describe("a package check refuses what it cannot vouch for", () => {
+	// LC_ALL=C apt-get update on trixie when one suite's InRelease times out: exit 0,
+	// the old lists kept.
+	const PARTIAL = {
+		stdout: `Hit:1 ${URI} ${SUITE} InRelease
+Err:2 ${URI} ${EMERGENCY} InRelease
+  Could not connect to ${HOST}:443 (192.0.2.10), connection timed out
+Reading package lists...
+`,
+		stderr: `W: Failed to fetch ${URI}/dists/${EMERGENCY}/InRelease  Could not connect to ${HOST}:443 (192.0.2.10), connection timed out
+W: Some index files failed to download. They have been ignored, or old ones used instead.
+`,
+	};
+	const quietly = async <T>(work: () => Promise<T>): Promise<T> => {
+		const spies = [
+			spyOn(logger, "info").mockImplementation(() => logger),
+			spyOn(logger, "warn").mockImplementation(() => logger),
+			spyOn(logger, "error").mockImplementation(() => logger),
+		];
+		try {
+			return await work();
+		} finally {
+			for (const spy of spies) spy.mockRestore();
+		}
+	};
+
+	it("fails a refresh that exited 0 without one suite, before discovery", async () => {
+		useImageSource();
+		const box = await capableBox({
+			refresh: PARTIAL.stdout,
+			refreshStderr: PARTIAL.stderr,
+		});
+		try {
+			expect(await quietly(() => runSoftwareUpdateCheck())).toBe(
+				"refresh_failed",
+			);
+			expect(getUpdateState()).toMatchObject({
+				kind: "check_failed",
+				reason: "refresh_failed",
+			});
+			expect(box.commands.some((argv) => argv.includes("-s"))).toBe(false);
+		} finally {
+			box.cleanup();
+		}
+	});
+
+	it("still reports a sign-in page as a captive portal", async () => {
+		useImageSource();
+		const box = await capableBox({
+			refresh: PARTIAL.stdout,
+			refreshStderr:
+				"E: Failed to fetch https://updates.example.org/  does the network require authentication?\n",
+		});
+		try {
+			expect(await quietly(() => runSoftwareUpdateCheck())).toBe(
+				"captive_portal",
+			);
+			expect(getUpdateState()).toMatchObject({
+				kind: "check_failed",
+				reason: "captive_portal",
+			});
+		} finally {
+			box.cleanup();
+		}
+	});
+
+	it("never discovers from cached lists", async () => {
+		useImageSource();
+		const box = await capableBox({});
+		try {
+			expect(await quietly(() => runUpdateDiscoveryAndReport())).toBe(
+				"refresh_failed",
+			);
+			expect(box.commands).toEqual([]);
+		} finally {
+			box.cleanup();
+		}
+	});
+
+	it("refuses over an interrupted dpkg run until it is repaired", async () => {
+		useImageSource();
+		const box = await capableBox({});
+		await mkdir(path.join(box.dir, "updates"));
+		await writeFile(path.join(box.dir, "updates", "0001"), "");
+		const warn = spyOn(logger, "warn").mockImplementation(() => logger);
+		try {
+			expect(await runSoftwareUpdateCheck()).toBe("dpkg_interrupted");
+			expect(await runUpdateDiscoveryAndReport(REFRESH)).toBe(
+				"dpkg_interrupted",
+			);
+			expect(box.commands).toEqual([]);
+			expect(getUpdateState()).toMatchObject({ kind: "check_failed" });
+			expect(warn.mock.calls.map(([message]) => message)).toContain(
+				"Package updates refused: an earlier dpkg run was interrupted; run dpkg --configure -a",
+			);
+			// `dpkg --configure -a` empties the journal: the next check runs.
+			await rm(path.join(box.dir, "updates", "0001"));
+			expect(await quietly(() => runSoftwareUpdateCheck())).toBe(null);
+		} finally {
+			warn.mockRestore();
+			box.cleanup();
+		}
+	});
+
+	it("retires a stored CeraLive offer even while the clock waits", async () => {
+		useImageSource();
+		const box = await capableBox({ clock: false });
+		const record = path.join(box.dir, "offer.json");
+		await writeFile(
+			record,
+			JSON.stringify({
+				version: 8,
+				offer: [
+					{ name: "ceralive-device", arch: "arm64", version: "2026.11.5-1" },
+				],
+			}),
+		);
+		initCeraliveUpdateNotice({ path: record, write: () => {} });
+		try {
+			expect(standingCeraliveOffer()).not.toBeNull();
+			expect(await quietly(() => runSoftwareUpdateCheck())).toBe("busy");
+			expect(standingCeraliveOffer()).toBeNull();
+			expect(box.commands).toEqual([]);
+		} finally {
 			box.cleanup();
 		}
 	});

@@ -111,7 +111,8 @@ import {
 	withdrawCeraliveOfferIfInstalled,
 } from "./ceralive-update-notice.ts";
 import {
-	logParseError,
+	logParseError as logCliParseError,
+	type ParseError,
 	type ParseResult,
 	parseFail,
 	parseOk,
@@ -129,6 +130,7 @@ import {
 import {
 	activeImageAptSource,
 	dpkgJournalPending,
+	imageAptSourceArgs,
 	imageAptSourceInUse,
 	imageAptSourceMode,
 	imageClockUsable,
@@ -665,7 +667,7 @@ async function getCapableUpdateSize(
 	const imageOwned = await readImageOwnedPackages();
 	try {
 		const sourcePolicy = await runAptCommand(
-			["/usr/bin/apt-cache", "policy"],
+			["/usr/bin/apt-cache", ...imageAptSourceArgs(), "policy"],
 			APT_DISCOVERY_TIMEOUT_MS,
 		);
 		if (sourcePolicy.exitCode !== 0)
@@ -678,7 +680,7 @@ async function getCapableUpdateSize(
 			holds.stdout,
 			async (name) => {
 				const policy = await runAptCommand(
-					["/usr/bin/apt-cache", "policy", name],
+					["/usr/bin/apt-cache", ...imageAptSourceArgs(), "policy", name],
 					APT_DISCOVERY_TIMEOUT_MS,
 				);
 				if (policy.exitCode !== 0)
@@ -775,6 +777,7 @@ export function buildAptRefreshArgs(
 		"-o",
 		"Acquire::Retries=1",
 		...aptFamilyArgs(verdict),
+		...imageAptSourceArgs(),
 	];
 }
 
@@ -1102,6 +1105,19 @@ function imageSourceRefused(capabilities: UpdateCapabilities): boolean {
 	return true;
 }
 
+/**
+ * Install refusals that settle before APT launches on an image with its own
+ * apt source (the clock, dpkg's journal, the refresh, discovery): nothing ran.
+ */
+export const IMAGE_SOURCE_PRELAUNCH_REFUSALS: ReadonlySet<string> = new Set([
+	"check_unavailable",
+	"dpkg_interrupted",
+	"refresh_failed",
+	"discovery_failed",
+	"removals_required",
+	"first_party_held_back",
+]);
+
 let clockWaitLogged = false;
 /**
  * apt refuses a Release signed in the box clock's future: an image with its own
@@ -1117,6 +1133,56 @@ export function imageSourceClockWaits(): boolean {
 		logger.info("Package check waits for a synchronized clock");
 	clockWaitLogged = true;
 	return true;
+}
+
+/**
+ * An image with its own apt source offers nothing from the first-party
+ * archive: a stored CeraLive offer is retired as soon as the mode is seen
+ * (startup, every check), whether or not discovery can run. Never throws.
+ */
+export function retireCeraliveOfferOnImageSource(): void {
+	if (!imageAptSourceInUse()) return;
+	try {
+		retireCeraliveUpdateOffer("the image ships its own apt source");
+	} catch (error) {
+		logger.warn("CeraLive update notice not retired", {
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+}
+
+let dpkgInterruptedLogged = false;
+/**
+ * dpkg's journal holds an unfinished run: a check or install on an image with
+ * its own source is refused until `dpkg --configure -a` repairs it, since apt
+ * would refuse the transaction and the installed state is not settled.
+ */
+function imageSourceDpkgInterrupted(): boolean {
+	if (activeImageAptSource() === undefined || !dpkgJournalPending()) {
+		dpkgInterruptedLogged = false;
+		return false;
+	}
+	if (!dpkgInterruptedLogged)
+		logger.warn(
+			"Package updates refused: an earlier dpkg run was interrupted; run dpkg --configure -a",
+		);
+	dpkgInterruptedLogged = true;
+	return true;
+}
+
+// Any other image: every refresh counts as before.
+function imageRefreshConclusive(result: SpawnWithTimeoutResult): boolean {
+	const source = activeImageAptSource();
+	return (
+		source === undefined ||
+		(isConclusiveAptRefresh(result) &&
+			refreshedImageSuites(result.stdout, source))
+	);
+}
+
+// apt output can name the image source's URI: the logged slice is redacted.
+function logParseError(error: ParseError): ParseError {
+	return logCliParseError({ ...error, raw: redactImageAptSecret(error.raw) });
 }
 
 async function readPackageCapabilities(): Promise<UpdateCapabilities | null> {
@@ -1153,6 +1219,10 @@ export type SoftwareUpdateError =
 	| "repos_unreachable"
 	| "discovery_failed"
 	| "captive_portal"
+	// An image with its own apt source: the refresh did not reach both suites,
+	// or dpkg's journal holds an unfinished run.
+	| "refresh_failed"
+	| "dpkg_interrupted"
 	| true
 	| null;
 
@@ -1214,6 +1284,7 @@ function checkForSoftwareUpdates(
 	) {
 		return false;
 	}
+	retireCeraliveOfferOnImageSource();
 	if (imageSourceClockWaits()) return false;
 
 	lastCheckFailure = null;
@@ -1231,6 +1302,11 @@ function checkForSoftwareUpdates(
 			if (imageSourceRefused(capabilities)) {
 				failCurrentCheck("discovery_failed");
 				callback("discovery_failed", aptGetUpdateFailures);
+				return;
+			}
+			if (imageSourceDpkgInterrupted()) {
+				failCurrentCheck("discovery_failed");
+				callback("dpkg_interrupted", aptGetUpdateFailures);
 				return;
 			}
 			await reconcileAptChannel(capabilities.mode);
@@ -1272,11 +1348,21 @@ function checkForSoftwareUpdates(
 			// The operator-visible generic refresh verdict keys on the exit code because
 			// apt writes benign warnings to stderr. Only the two captive-portal signatures
 			// are specific enough for stderr to override that rule.
-			const errOrStderr = classifyAptUpdateResult(res.exitCode, stderr);
+			let errOrStderr: SoftwareUpdateError = classifyAptUpdateResult(
+				res.exitCode,
+				stderr,
+			);
 			if (errOrStderr === "captive_portal") {
 				failCurrentCheck("captive_portal");
 			} else if (res.exitCode !== 0) {
 				failCurrentCheck("refresh_failed");
+			}
+			// apt keeps the old lists after a failed fetch and may still exit 0:
+			// on an image with its own source, discovery reads only lists this
+			// refresh fetched or confirmed for both suites.
+			if (errOrStderr !== "captive_portal" && !imageRefreshConclusive(res)) {
+				failCurrentCheck("refresh_failed");
+				errOrStderr = "refresh_failed";
 			}
 
 			if (stderr.length) {
@@ -1408,6 +1494,19 @@ export async function runUpdateDiscoveryAndReport(
 		if (imageSourceRefused(capabilities)) {
 			failCurrentCheck("discovery_failed");
 			return "discovery_failed";
+		}
+		if (imageSourceDpkgInterrupted()) {
+			failCurrentCheck("discovery_failed");
+			return "dpkg_interrupted";
+		}
+		// Never discovery over cached lists on an image with its own source.
+		const image = activeImageAptSource();
+		if (
+			image !== undefined &&
+			(refresh === undefined || !refreshedImageSuites(refresh, image))
+		) {
+			failCurrentCheck("refresh_failed");
+			return "refresh_failed";
 		}
 		const network = await openAptNetwork(capabilities);
 		const reachability = network.reachability;
@@ -1658,15 +1757,18 @@ const defaultSoftwareUpdateRunner: SoftwareUpdateRunner = (
 	onCommitSucceeded,
 ) => {
 	const admission = captureAptTransferAdmission();
-	const checkStarted = softwareUpdateCheckRunner(async (fetchErr, _, lists) => {
-		const err = fetchErr ?? imageRefreshRefusal(lists);
+	const checkStarted = softwareUpdateCheckRunner(async (err) => {
 		if (err === null) {
 			await doSoftwareUpdate(onCommitSucceeded, admission);
 		} else if (softUpdateStatus) {
 			const reason =
 				err === "discovery_failed"
 					? "discovery_failed"
-					: "Failed to fetch the updated package list; aborting the update.";
+					: err === "refresh_failed"
+						? "refresh_failed"
+						: err === "dpkg_interrupted"
+							? "dpkg_interrupted"
+							: "Failed to fetch the updated package list; aborting the update.";
 			lastUpdateSucceeded = false;
 			lastUpdateFailure = {
 				reason,
@@ -1849,7 +1951,26 @@ export function createSoftwareUpdateProcessMonitor(
 	const offer = standingCeraliveOffer();
 	let rebootAfterUpgrade = false;
 	let summaryParseLogged = false;
-	let aptLog = prefetched;
+	// On an image with its own apt source its lines carry the source's token:
+	// only whole lines are kept, redacted, before anything parses, publishes
+	// or logs them. Every other image keeps the bytes as they arrive.
+	const redacting = activeImageAptSource() !== undefined;
+	const pending = { stdout: "", stderr: "" };
+	const take = (stream: "stdout" | "stderr", data: string): string => {
+		if (!redacting) return data;
+		const text = pending[stream] + data;
+		const cut = text.lastIndexOf("\n") + 1;
+		pending[stream] = text.slice(cut);
+		return redactImageAptSecret(text.slice(0, cut));
+	};
+	const flush = () => {
+		aptLog += redactImageAptSecret(pending.stdout);
+		aptErr += redactImageAptSecret(pending.stderr);
+		pending.stdout = "";
+		pending.stderr = "";
+	};
+	const prefetchedLog = redactImageAptSecret(prefetched);
+	let aptLog = prefetchedLog;
 	let aptErr = "";
 
 	const observeRebootPackages = () => {
@@ -1869,7 +1990,7 @@ export function createSoftwareUpdateProcessMonitor(
 			packageList.value !== undefined &&
 			packageListIncludes(packageList.value, rebootPackageList);
 	};
-	if (prefetched) observeRebootPackages();
+	if (prefetchedLog) observeRebootPackages();
 
 	// Only the unit's own lines (not the pinned transfer's) are its progress.
 	// A failed read leaves the phase without a number until new lines prove one.
@@ -1880,7 +2001,7 @@ export function createSoftwareUpdateProcessMonitor(
 		const next = holdUpdateProgress(previous, {
 			...(unreadable
 				? withoutNumber(previous)
-				: deriveUpdateProgress(aptLog.slice(prefetched.length))),
+				: deriveUpdateProgress(aptLog.slice(prefetchedLog.length))),
 			...launched,
 		});
 		if (next === previous) return;
@@ -1890,11 +2011,11 @@ export function createSoftwareUpdateProcessMonitor(
 
 	const handlers: SoftwareUpdateOutputHandlers = {
 		onStdout: (data) => {
-			aptLog += data;
+			aptLog += take("stdout", data);
 			publishProgress(false);
 		},
 		onStderr: (data) => {
-			aptErr += data;
+			aptErr += take("stderr", data);
 		},
 		onObserverError: (error, suppressedRetries = 0) => {
 			logger.warn(
@@ -1915,8 +2036,12 @@ export function createSoftwareUpdateProcessMonitor(
 		let code: number;
 		try {
 			code = await completion;
+			flush();
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
+			flush();
+			const message = redactImageAptSecret(
+				err instanceof Error ? err.message : String(err),
+			);
 			aptErr += aptErr.length > 0 ? `\n${message}` : message;
 			code =
 				err instanceof DetachedAptServiceCleanupError &&
@@ -1938,9 +2063,7 @@ export function createSoftwareUpdateProcessMonitor(
 				code === 0
 					? null
 					: {
-							reason:
-								redactImageAptSecret(aptErr.trim()) ||
-								`apt-get exited with code ${code}`,
+							reason: aptErr.trim() || `apt-get exited with code ${code}`,
 							failure_id: randomUUID(),
 							...((currentUpdateIdentity ?? availableIdentity)
 								? {
@@ -2007,8 +2130,8 @@ export function createSoftwareUpdateProcessMonitor(
 		const settled = settle(completion, onCommitSucceeded !== undefined);
 		// Keep the deliberate restart detached so a caller's catch cannot swallow it.
 		void settled.then((code) => {
-			if (aptLog) logger.info(redactImageAptSecret(aptLog));
-			if (aptErr) logger.error(redactImageAptSecret(aptErr));
+			if (aptLog) logger.info(aptLog);
+			if (aptErr) logger.error(aptErr);
 
 			if (code === 0) {
 				// Persist the observed commit success before deliberately exiting;
@@ -2287,35 +2410,14 @@ async function prepareSoftwareUpdate(
 
 /**
  * On an image with its own apt source an install never runs over an
- * interrupted dpkg run, nor before the clock gate opened. (Its lists were
- * refreshed just before: see {@link imageRefreshRefusal}.) Null when it may go ahead.
+ * interrupted dpkg run, nor before the clock gate opened. (The check it starts
+ * with refused already unless both suites refreshed.) Null when it may go ahead.
  */
 function imageSourceInstallRefusal(): string | null {
 	if (activeImageAptSource() === undefined) return null;
 	if (!imageClockUsable()) return "check_unavailable";
-	if (dpkgJournalPending()) {
-		logger.warn(
-			"Package install refused: an earlier dpkg run was interrupted; run dpkg --configure -a",
-		);
-		return "dpkg_interrupted";
-	}
+	if (imageSourceDpkgInterrupted()) return "dpkg_interrupted";
 	return null;
-}
-
-/**
- * The refresh an install starts with must have fetched or hit both image
- * suites, validly signed and without a failed index: the emergency suite may
- * have changed since the check, and stale lists are never installed from.
- */
-function imageRefreshRefusal(refresh: string | undefined): SoftwareUpdateError {
-	const source = activeImageAptSource();
-	if (source === undefined) return null;
-	if (refresh !== undefined && refreshedImageSuites(refresh, source))
-		return null;
-	logger.warn(
-		"Package install refused: the image source's lists did not refresh",
-	);
-	return true;
 }
 
 function refuseUnknownPackageInstall(): void {

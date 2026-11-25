@@ -13,7 +13,7 @@ import {
 	parseAptSimulationRow,
 	APT_SIMULATION_VERSION_RE as VERSION_RE,
 } from "./apt-simulation-row.ts";
-import type { ImageAptSource } from "./image-apt-source.ts";
+import { type ImageAptSource, imageAptSourceArgs } from "./image-apt-source.ts";
 import { isImageOwned } from "./image-owned-packages.ts";
 
 export type PinnedAptPackage = {
@@ -215,6 +215,7 @@ export function buildAptAllDiscoveryArgs(family: readonly string[]): string[] {
 		"upgrade",
 		"--with-new-pkgs",
 		...family,
+		...imageAptSourceArgs(),
 	];
 }
 
@@ -227,6 +228,7 @@ export function buildAptAllDownloadArgs(family: readonly string[]): string[] {
 		"upgrade",
 		"--with-new-pkgs",
 		...family,
+		...imageAptSourceArgs(),
 	];
 }
 
@@ -257,6 +259,7 @@ export function buildAptAllInstallArgs(
 		"-o",
 		"Dpkg::Options::=--force-confold",
 		...family,
+		...imageAptSourceArgs(),
 		"install",
 		...pairs.map(({ name, version }) => `${name}=${version}`),
 	];
