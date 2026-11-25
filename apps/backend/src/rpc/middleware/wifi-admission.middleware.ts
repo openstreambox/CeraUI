@@ -1,4 +1,5 @@
 import type {
+	HotspotStartInput,
 	HotspotToggleInput,
 	SetWifiAdapterModeInput,
 } from "@ceraui/rpc/schemas";
@@ -31,7 +32,8 @@ import type { RPCContext } from "../types.ts";
 
 type Action = "prepare" | "start" | "configure" | "mode";
 type Input = HotspotToggleInput &
-	Partial<Pick<SetWifiAdapterModeInput, "mode">>;
+	Partial<Pick<SetWifiAdapterModeInput, "mode">> &
+	Pick<HotspotStartInput, "attempt">;
 
 async function probe(
 	input: Input,
@@ -98,7 +100,13 @@ export const wifiRequestAdmissionMiddleware = os
 								JSON.stringify({
 									wifi: {
 										hotspot: {
-											start: { device: Number(input.device), ...error },
+											start: {
+												device: Number(input.device),
+												...error,
+												...(input.attempt === undefined
+													? {}
+													: { attempt: input.attempt }),
+											},
 										},
 									},
 								}),

@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import type { RadioHealth } from "@ceraui/rpc/schemas";
 import { run } from "../../helpers/run.ts";
+import { shouldMockModems } from "../../mocks/providers/modems.ts";
 import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
 import { type FreeAtResult, freeAtPorts } from "./free-at-port.ts";
 import {
@@ -178,13 +179,13 @@ export async function refreshRadioHealth(
 					cell.provenance.observed_at,
 				);
 			}
-			const nas: Awaited<ReturnType<typeof readRadioNas>> =
-				modem.model === "RM520N-GL"
-					? await deps.readNas(Number(id))
-					: { signal: "", band: "" };
+			const isRm520 = modem.model === "RM520N-GL";
+			const nas: Awaited<ReturnType<typeof readRadioNas>> = isRm520
+				? await deps.readNas(Number(id))
+				: { signal: "", band: "" };
 			Object.assign(record.metrics, parseQmiSignal(nas.signal, now));
 			let servingRaw = "";
-			if (nas.listed && deps.readServing) {
+			if (isRm520 && deps.readServing && !shouldMockModems()) {
 				const result = await deps.readServing(Number(id));
 				if (result.ok) servingRaw = result.raw;
 				// Never a silent unknown: the fixed reason is part of the field.

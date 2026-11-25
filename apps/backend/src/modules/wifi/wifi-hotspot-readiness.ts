@@ -137,7 +137,7 @@ export function captureHotspotSteeringFence(
 	const virtualIfname =
 		binding?.activeConn === uuid ? binding.ifname : undefined;
 	const apIfname = virtualIfname ?? parent;
-	const incarnation = getNetworkInterfaceIncarnation(apIfname);
+	let incarnation = getNetworkInterfaceIncarnation(apIfname);
 	const ticket = start.ticket ?? currentHotspotOperation(row);
 	const registry = getWifiInterfacesByMacAddress();
 	const registryKey = Object.keys(registry).find(
@@ -148,7 +148,7 @@ export function captureHotspotSteeringFence(
 			[ifname, wifiRadioIdentity.state.rows.get(ifname)?.lifetime] as const,
 	);
 	const since = steeringVerificationMark();
-	const owned = (): boolean =>
+	const ownsActivation = (): boolean =>
 		hotspotOperationCurrent(ticket) &&
 		registryKey !== undefined &&
 		getWifiInterfacesByMacAddress()[registryKey] === row &&
@@ -161,7 +161,6 @@ export function captureHotspotSteeringFence(
 				row.conn === uuid || row.activeConn === uuid
 			: row.concurrentHotspot?.ifname === virtualIfname &&
 				row.concurrentHotspot.activeConn === uuid) &&
-		getNetworkInterfaceIncarnation(apIfname) === incarnation &&
 		lifetimes.every(
 			([ifname, lifetime]) =>
 				lifetime === undefined ||
@@ -170,10 +169,20 @@ export function captureHotspotSteeringFence(
 					wifiRadioIdentity.state.rows.get(ifname)?.lifetime,
 				),
 		);
+	const owned = (): boolean => {
+		if (!ownsActivation()) return false;
+		const observed = getNetworkInterfaceIncarnation(apIfname);
+		// NM can confirm before the first netif snapshot of the AP. Bind the
+		// first observed incarnation, then require it to stay the same.
+		incarnation ??= observed;
+		return observed === incarnation;
+	};
 	return {
 		apIfname,
 		uuid,
-		incarnation,
+		get incarnation() {
+			return incarnation;
+		},
 		since,
 		...(start.witness ? { witness: start.witness } : {}),
 		owned,

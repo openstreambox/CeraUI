@@ -32,3 +32,22 @@ test.each(["omitted", "supplied"] as const)(
 		}
 	},
 );
+
+test("a Start refused at RPC admission echoes its attempt to the requester", async () => {
+	const f = await wifiFrameFixture();
+	const attempt = crypto.randomUUID();
+	try {
+		expect(
+			await call(
+				hotspotStartProcedure,
+				{ device: "7", attempt },
+				{ context: f.context },
+			),
+		).toEqual({ success: false, error: "no-device" });
+		expect(f.frames.map((raw) => JSON.parse(raw))).toContainEqual({
+			wifi: { hotspot: { start: { device: 7, error: "no-device", attempt } } },
+		});
+	} finally {
+		await f.restore();
+	}
+});
