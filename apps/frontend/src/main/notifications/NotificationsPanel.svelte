@@ -26,8 +26,8 @@ import { notificationLogKey } from '$lib/device-logs/log-pointer-keys';
 import { getDisplayProfile, prefersEinkTheme } from '$lib/stores/display-profile.svelte';
 import { getPersistent } from '$lib/stores/notifications.svelte';
 import { cn } from '$lib/utils';
-
 import KeepWords from '../system-logs/KeepWords.svelte';
+import ModemRecoveryAction from './ModemRecoveryAction.svelte';
 import {
 	dismissPersistentNotification,
 	NOTIFICATION_ICONS,
@@ -103,7 +103,9 @@ const TONES: Record<NotificationType, string> = {
 						<p class="text-foreground text-sm leading-relaxed break-words text-pretty [word-break:auto-phrase] [&:lang(ko)]:break-keep [&:lang(zh)]:break-keep [&:lang(zh)]:text-balance">
 							<KeepWords text={persistentNotificationText(item)} />
 						</p>
-						{#if item.action}
+						{#if item.action?.kind === 'confirm-modem-record'}
+							{#key item.action.token}<ModemRecoveryAction token={item.action.token} />{/key}
+						{:else if item.action}
 							{const action = item.action}
 							<Button
 								class="mt-2 me-2 h-7 px-2 text-xs"

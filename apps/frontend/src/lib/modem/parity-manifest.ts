@@ -431,6 +431,11 @@ export const BACKEND_RPC_PARITY: ParityRecord = {
 		reason:
 			"Reports which physical modems a failed rollback still blocks; no operator surface renders the list.",
 	},
+	"modems.clearUnreadableRecord": {
+		disposition: "wired",
+		reason:
+			"The recovery warning asks the operator to confirm archiving one unreadable rollback record.",
+	},
 	"modems.acknowledgeMutation": {
 		disposition: "unwired",
 		reason:
