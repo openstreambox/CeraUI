@@ -263,6 +263,10 @@ describe("committed modem snapshot", () => {
 				broadcastRadioHealth();
 				const before = getCommittedState()["2"]?.radio_health as Radio;
 				expect(neighbourBand(before, "1")).toBe("LTE band 3");
+				const sampledAt = getRadioHealth(getCommittedState())[
+					"2"
+				]?.timeline.map((entry) => entry.at);
+				expect(sampledAt?.length ?? 0).toBeGreaterThan(0);
 
 				if (change === "swap")
 					setModem(1, radioModem("one", "8900000000000000009"));
@@ -284,12 +288,16 @@ describe("committed modem snapshot", () => {
 					expect(neighbourBand(all["2"]?.radio_health, "1")).toBeNull();
 				}
 				// Nor does the dialog's retained history keep it under that ID.
+				// The entry itself stays, with its time; only the reading of 1 goes.
 				const history = getRadioHealth(getCommittedState())["2"];
-				for (const entry of history?.timeline ?? [])
-					expect(
-						entry.observation?.neighbours.find((n) => n.id === "1")?.band
-							.value ?? null,
-					).toBeNull();
+				expect(history?.timeline.map((entry) => entry.at)).toEqual(
+					sampledAt ?? [],
+				);
+				for (const entry of history?.timeline ?? []) {
+					const kept = entry.observation?.neighbours.find((n) => n.id === "1");
+					expect(kept).toBeDefined();
+					expect(kept?.band.value ?? null).toBeNull();
+				}
 			}
 		} finally {
 			resetRadioHealthForTest();
@@ -330,6 +338,38 @@ describe("committed modem snapshot", () => {
 			expect(row?.status?.connection).toBe("searching");
 			expect(row?.radio_health?.registration.value).toBe("searching");
 			expect(row?.radio_health?.finding.kind).toBe("unknown");
+		} finally {
+			resetRadioHealthForTest();
+		}
+	});
+
+	test("a registration commit reaches existing subscribers with its radio record", async () => {
+		resetRadioHealthForTest();
+		try {
+			const first = radioModem("one", "8900000000000000001");
+			recordRadioRegistration(first, { value: "home", capturedAt: Date.now() });
+			setModem(1, first);
+			setModem(2, radioModem("two", "8900000000000000002"));
+			broadcastModems();
+			await refreshRadioHealth(
+				Date.now(),
+				sampler((m?: Modem) => getRadioRegistrationObservation(m)) as never,
+			);
+			const next = {
+				...first,
+				status: { ...first.status, connection: "searching" },
+			} as Modem;
+			recordRadioRegistration(next, {
+				value: "searching",
+				capturedAt: Date.now(),
+			});
+			setModem(1, next);
+			const rows = capture(() => broadcastModems({})).at(-1)?.status?.modems;
+			const radio = rows?.["1"]?.radio_health as Radio | undefined;
+			expect(radio?.registration.value).toBe("searching");
+			expect(radio?.finding.kind).toBe("unknown");
+			// The other modem's row stays status-only.
+			expect(rows?.["2"] && "radio_health" in rows["2"]).toBe(false);
 		} finally {
 			resetRadioHealthForTest();
 		}

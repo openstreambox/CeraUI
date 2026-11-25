@@ -247,14 +247,16 @@ export function broadcastModems(
 		fullState === undefined ? complete : buildModemsWireMessage(fullState);
 	// A partial (status-only) frame still carries the radio reset when the
 	// committed modem or SIM is no longer the one the cached record belongs to,
-	// and every row's radio record when a commit changed the roster, since each
-	// record names the other modems.
+	// a modem's record when its committed registration changed, and every row's
+	// record when a commit changed the roster, since each names the others.
 	for (const [id, row] of Object.entries(modems)) {
 		const committed = complete[id];
 		if (
 			committed &&
 			!("radio_health" in row) &&
-			(change.roster || radioNeedsReset(id, committed))
+			(change.roster ||
+				change.registration.includes(id) ||
+				radioNeedsReset(id, committed))
 		)
 			(row as { radio_health?: RadioHealth }).radio_health = radioForModem(
 				id,

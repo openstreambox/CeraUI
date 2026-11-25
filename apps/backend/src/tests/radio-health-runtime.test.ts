@@ -548,3 +548,27 @@ test("a neighbour whose identity a commit changes is never published with its ol
 		expect(record?.finding.neighbour).toBeUndefined();
 	}
 });
+
+test("a fresh committed read replaces one the sample found expired", async () => {
+	const live = { ifname: "fixture1" };
+	let observed = { value: "home" as string | undefined, capturedAt: 1000 };
+	const deps = {
+		...quiet,
+		registration: () => observed,
+		modem: () => live as never,
+	};
+	const rows = { "1": { ifname: "fixture1", stable_key: "port-1" } };
+	// Sampled at 70 s: the committed read from 1 s has expired.
+	await sample(rows, 70000, deps);
+	expect(radioForModem("1", rows["1"], 70000).registration.value).toBeNull();
+	// A later commit brings a fresh read of the same value.
+	observed = { value: "home", capturedAt: 71000 };
+	commitRadioRoster(rows, deps);
+	for (const record of [
+		radioForModem("1", rows["1"], 72000),
+		getRadioHealth(rows, 72000)["1"],
+	]) {
+		expect(record?.registration.value).toBe("home");
+		expect(record?.registration.capturedAt).toBe(71000);
+	}
+});

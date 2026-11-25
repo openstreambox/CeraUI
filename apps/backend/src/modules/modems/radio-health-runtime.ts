@@ -54,16 +54,21 @@ export function resetRadioHealthForTest(): void {
 }
 let records: Record<string, RadioHealth> = {};
 /**
- * The last sample per modem: its committed generation, byte baseline, evidence
- * and the committed registration value its record was built from.
+ * What a sample's registration was based on: the committed observation it
+ * started from and the value it actually used (none once that had expired).
  */
+type RegistrationBasis = {
+	observation: RegistrationObservation | undefined;
+	used: string | undefined;
+};
+/** The last sample per modem: generation, byte baseline, evidence, registration basis. */
 const previous = new Map<
 	string,
 	{
 		generation: number;
 		bytes: number | null;
 		evidence: RadioEvidence;
-		registration: string | undefined;
+		registration: RegistrationBasis;
 	}
 >();
 let lastAt = Date.now();
@@ -116,6 +121,8 @@ export type RadioRosterChange = {
 	identity: string[];
 	/** True when any ID was added, removed or changed identity. */
 	roster: boolean;
+	/** IDs with the same identity whose committed registration value changed. */
+	registration: string[];
 };
 
 /**
@@ -131,6 +138,7 @@ export function commitRadioRoster(
 ): RadioRosterChange {
 	const seen = new Set<string>();
 	const identity: string[] = [];
+	const registrationMoved: string[] = [];
 	const moved = new Set<string>();
 	for (const [id, entry] of Object.entries(rows)) {
 		const row: RadioRow = entry;
@@ -144,13 +152,19 @@ export function commitRadioRoster(
 		}
 		const internal = live.modem(Number(id));
 		const same = internal !== undefined && sameIdentity(internal, row);
+		const registration = same ? live.registration(internal) : undefined;
+		if (
+			before?.key === key &&
+			before.registration?.value !== registration?.value
+		)
+			registrationMoved.push(id);
 		committed.set(
 			id,
 			Object.freeze({
 				key,
 				generation: before?.key === key ? before.generation : ++generations,
 				row: pickRadioRow(row),
-				registration: same ? live.registration(internal) : undefined,
+				registration,
 				homeNetwork: same ? internal.home_network : undefined,
 			}),
 		);
@@ -161,7 +175,11 @@ export function commitRadioRoster(
 			moved.add(id);
 		}
 	if (moved.size > 0) forgetNeighbours(moved);
-	return { identity, roster: moved.size > 0 };
+	return {
+		identity,
+		roster: moved.size > 0,
+		registration: registrationMoved,
+	};
 }
 
 /** Drop every stored reading of these IDs from the other modems' records. */
@@ -287,11 +305,20 @@ function freshRegistration(
 		: undefined;
 }
 
+/** The same owner read: equal value and read time. */
+function sameObservation(
+	a: RegistrationObservation | undefined,
+	b: RegistrationObservation | undefined,
+): boolean {
+	return a?.value === b?.value && a?.capturedAt === b?.capturedAt;
+}
+
 /**
  * The stored record if it belongs to this committed row, else undefined. When
- * a later commit of the same modem changed its registration, the record shows
- * that committed registration and no finding, so it never contradicts the
- * status it is published beside.
+ * a later commit of the same modem brought a registration read whose fresh
+ * value differs from what the sample used, the record shows that committed
+ * registration and no finding, so it never contradicts the status it is
+ * published beside.
  */
 function currentRecord(
 	id: string,
@@ -304,8 +331,9 @@ function currentRecord(
 	if (!record || generation === undefined || sampled?.generation !== generation)
 		return undefined;
 	const latest = committed.get(id)?.registration;
-	if (latest?.value === sampled.registration) return record;
+	if (sameObservation(latest, sampled.registration.observation)) return record;
 	const registration = freshRegistration(latest, now);
+	if (registration?.value === sampled.registration.used) return record;
 	return {
 		...record,
 		registration: metric(
@@ -366,7 +394,7 @@ export async function refreshRadioHealth(
 			{
 				generation: number;
 				bytes: number | null;
-				registration: string | undefined;
+				registration: RegistrationBasis;
 			}
 		>();
 		const evidence: Record<string, RadioEvidence> = {};
@@ -592,7 +620,10 @@ export async function refreshRadioHealth(
 			samples.set(id, {
 				generation: snapshot.generation,
 				bytes,
-				registration: snapshot.registration?.value,
+				registration: {
+					observation: snapshot.registration,
+					used: registration?.value,
+				},
 			});
 			const health = deps.health(modem.ifname);
 			const numeric = Object.entries(record.metrics);
