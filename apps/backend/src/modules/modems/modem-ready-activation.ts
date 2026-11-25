@@ -463,11 +463,12 @@ const TAKEOVER_SETTLE_STEP_MS = 2_000;
  */
 async function settleTakeover(
 	device: string,
+	deadline: number,
 	registered: () => boolean,
 ): Promise<"settled" | "stale" | "unsettled"> {
-	// One state read per step on the device resolved before the dial, and the
-	// deadline checked before each, so the wait ends within one read of it.
-	const deadline = deps.now() + TAKEOVER_SETTLE_MS;
+	// One state read per step on the device the dial was bound to. The deadline
+	// is checked after each read and no sleep runs past it, so the wait ends at
+	// most one state read after the deadline.
 	for (;;) {
 		if (!registered()) return "stale";
 		const code = singleDeviceValue(
@@ -475,8 +476,9 @@ async function settleTakeover(
 		)?.match(/^(\d+)(?: \([^()\r\n]+\))?$/)?.[1];
 		if (!registered()) return "stale";
 		if (code !== undefined && SETTLED_STATES.has(code)) return "settled";
-		if (deps.now() >= deadline) return "unsettled";
-		await deps.sleep(TAKEOVER_SETTLE_STEP_MS);
+		const left = deadline - deps.now();
+		if (left <= 0) return "unsettled";
+		await deps.sleep(Math.min(TAKEOVER_SETTLE_STEP_MS, left));
 	}
 }
 
@@ -488,7 +490,12 @@ async function settleTakeover(
  * every readiness read under it. The lease is held until NetworkManager has
  * settled (settleTakeover), so a Stream Start is never admitted while the
  * bearer is still changing; an activation that does not end within
- * TAKEOVER_SETTLE_MS journals `failed` and stays visible until acknowledged.
+ * TAKEOVER_SETTLE_MS, counted from the device resolve before the dial,
+ * journals `failed` and stays visible until acknowledged. The dial is bound
+ * to that device (`ifname`), so the wait reads the device NetworkManager
+ * activates. A command already running when the deadline passes is not cut
+ * short: the lease ends at most one state read after it, or after the resolve
+ * and the 45 s dial when those alone run past it.
  *
  * The journaled pre-state is the modem's descriptor capture with no `format`,
  * so replay on any build, including one without this change, takes the
@@ -497,8 +504,12 @@ async function settleTakeover(
  * refuses to activate a profile whose SIM id differs. A failed dial is a
  * failed first activation: NetworkManager's own autoconnect (armed profile)
  * or the automatic redial below (prepared profile) brings the link back.
- * A modem that is not a USB device we can capture cannot be journaled: the
- * intent is consumed as before this change and the connection left alone.
+ * After a backend crash mid-switch that same replay clears the entry on
+ * descriptor equality, so a Stream Start can be admitted while NetworkManager
+ * is still bringing the new bearer up (accepted limit, see the mutation safety
+ * contract). A modem positively off USB cannot be journaled: the intent is
+ * consumed as before this change and the connection left alone. A USB modem
+ * whose descriptor cannot be captured yet stays pending for a later poll.
  */
 async function takeOver(
 	id: ModemId,
@@ -533,6 +544,8 @@ async function takeOver(
 		if (!current()) return { confirmed: true, value: undefined };
 		if ((await readReadiness(id, intent, uuid)) !== "takeover" || !current())
 			return { confirmed: true, value: undefined };
+		// The settle deadline covers the resolve and the dial too.
+		const deadline = deps.now() + TAKEOVER_SETTLE_MS;
 		const device = await deps.resolveDevice(uuid);
 		if (device === undefined || !current())
 			return { confirmed: true, value: undefined };
@@ -541,12 +554,15 @@ async function takeOver(
 		// No await between consumption and dispatch; failure never rearms it.
 		intent.state = "consumed";
 		lastDispatch.set(key, deps.now());
-		const result = await deps.connect(uuid, 45).catch(() => false);
+		const result = await deps
+			.connect(uuid, 45, undefined, undefined, device)
+			.catch(() => false);
 		const settled =
 			result === true
 				? "settled"
 				: await settleTakeover(
 						device,
+						deadline,
 						() => intents.get(id) === intent && deps.stableKey(id) === key,
 					);
 		const currentModem = getModem(id);

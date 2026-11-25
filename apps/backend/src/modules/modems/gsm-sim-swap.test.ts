@@ -525,6 +525,27 @@ describe("an incomplete settle", () => {
 		}
 	});
 
+	test("the complete audit refuses an inventory record cut short before its state", async () => {
+		let inventory = `${uuid(1)}:gsm:\n`;
+		const run = spyOn(runner, "run").mockImplementation(
+			async (_binary, args) => {
+				if (args.includes("uuid,type,state")) return inventory;
+				return `${RM520}\n${DARK}\nyes\n300\n`;
+			},
+		);
+		try {
+			expect((await auditGsmProfilesComplete())?.map((a) => a.uuid)).toEqual([
+				uuid(1),
+			]);
+			inventory = `${uuid(1)}:gsm\n`;
+			expect(await auditGsmProfilesComplete()).toBeUndefined();
+			// The cleanup's own audit reads it as before.
+			expect((await auditGsmProfiles()).map((a) => a.uuid)).toEqual([uuid(1)]);
+		} finally {
+			run.mockRestore();
+		}
+	});
+
 	test("nothing to do is complete", async () => {
 		const profiles = swappedBox();
 		const { deps } = harness(profiles);

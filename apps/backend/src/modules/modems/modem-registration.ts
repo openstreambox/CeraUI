@@ -30,8 +30,8 @@
   loop publishes snapshots and broadcasts — none of that lives here.
 */
 
-import { readdir, readFile, realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile, readlink, realpath, stat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import {
 	deriveModemStableKey,
 	type ModemRadioPower,
@@ -455,9 +455,13 @@ export async function readSysfsUsbDevices(
 
 /**
  * Is this modem a USB device? true or false only on positive evidence: its
- * ModemManager physdev resolves to a sysfs device that has (or has no) USB
- * ids. Undefined when the modem or its path cannot be read: a USB modem udev
- * has not finished with must not be mistaken for one that is not on USB.
+ * ModemManager physdev resolves to a sysfs path that is, or sits below, a USB
+ * device (USB ids, or the `usb` subsystem, which USB interfaces such as
+ * `1-1:1.0` carry without ids of their own). false only when every level up
+ * to the root was read, none is USB and the path is still there afterwards.
+ * Undefined when the modem or a path cannot be read, or the device went away
+ * during the walk: a USB modem udev has not finished with, or one being
+ * unplugged, must not be mistaken for one that is not on USB.
  */
 export async function isUsbModem(id: ModemId): Promise<boolean | undefined> {
 	const modemInfo = await mmGetModem(id);
@@ -467,13 +471,28 @@ export async function isUsbModem(id: ModemId): Promise<boolean | undefined> {
 	if (!device) return undefined;
 	const path = await presentSimDeps.resolvePath(device);
 	if (path === undefined) return undefined;
+	const missing = (error: unknown) =>
+		(error as NodeJS.ErrnoException).code === "ENOENT";
+	for (let dir = path; ; dir = dirname(dir)) {
+		try {
+			await readFile(join(dir, "idVendor"), "utf8");
+			return true;
+		} catch (error) {
+			if (!missing(error)) return undefined;
+		}
+		try {
+			if (basename(await readlink(join(dir, "subsystem"))) === "usb")
+				return true;
+		} catch (error) {
+			if (!missing(error)) return undefined;
+		}
+		if (dirname(dir) === dir) break;
+	}
 	try {
-		await readFile(join(path, "idVendor"), "utf8");
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "ENOENT"
-			? false
-			: undefined;
+		await stat(path);
+		return false;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -686,7 +705,8 @@ export async function resolveLateModemConfig(
  * descriptor, SIM or profile we could not read, a store fault or a failed
  * write) leaves the work for a later poll of the same registration. It never
  * throws and always confirms its entry; like any journaled mutation, only a
- * journal write that fails blocks the modem.
+ * journal operation that fails (an entry write, or the directory sync when
+ * the entry is retired) raises the recovery barrier or blocks the modem.
  */
 export async function settleModemSimSwap(
 	id: ModemId,

@@ -79,7 +79,11 @@ async function readGsmProfiles(
 	for (const row of rows) {
 		// nmcli ends the inventory with LF, which leaves one blank row.
 		if (row.trim() === "") continue;
-		const [uuid, type, state] = nmcliParseSep(row) as [string, string, string];
+		const values = nmcliParseSep(row);
+		const [uuid, type, state] = values as [string, string, string];
+		// A complete read is one uuid:type:state record per profile; a record
+		// with fewer fields (`uuid:gsm`) was cut short, not a profile with no state.
+		if (complete && values.length !== 3) return undefined;
 		if (!uuid) {
 			if (complete) return undefined;
 			continue;

@@ -52,14 +52,23 @@ an unchanged device reports `restored`, an absent one is quarantined like any
 journaled mutation. If the dial does not report success, the lease is held
 until NM reports a state that ends the activation (10, 20, 30, 100 or 120;
 0 and unreadable reads do not count) or the registration ends. Nothing is
-taken down, because `nmcli conn down` would block the profile's autoconnect;
-the device is resolved once before the dial and its state read once per
-2 s step, so the wait ends within one state read of 180 s; an activation
-that has not ended by then journals `failed` and stays visible until
-acknowledged. A Stream Start is therefore never admitted while
-the takeover is still changing the bearer. A modem whose MM physdev is
-positively not a USB device is not taken over: its intent is consumed as
-before. A USB modem whose descriptor cannot be captured yet keeps its intent
+taken down, because `nmcli conn down` would block the profile's autoconnect.
+The 180 s deadline starts before the device is resolved; the dial is bound to
+that device (`nmcli conn up uuid <uuid> ifname <device>`), and the wait reads
+that device's state once per 2 s step and never sleeps past the deadline. A
+command already running when the deadline passes is not cut short, so the
+lease ends at most one state read (30 s run timeout) after the deadline, or
+right after the resolve and the 45 s dial when those alone run past it. An
+activation that has not ended by then journals `failed` and stays visible
+until acknowledged. While this backend runs, a Stream Start is therefore never
+admitted while the takeover is still changing the bearer. After a backend
+crash mid-takeover that is not so: boot replay clears the entry on descriptor
+equality, so a Start can be admitted while NM is still bringing the new
+bearer up (accepted limit, see the rollback table below). A modem whose MM
+physdev is positively not a USB device (the path is there and no level up to
+the sysfs root has USB ids or the `usb` subsystem) is not taken over: its
+intent is consumed as before. A physdev that cannot be read or vanishes during
+the read counts as unknown, not as off USB. A USB modem whose descriptor cannot be captured yet keeps its intent
 pending for a later poll. The status poll handles modems one after another, so a takeover that
 waits delays the next modem's poll work by that wait. An unreadable active profile or SIM id
 keeps the intent pending for the next poll; another active profile without a
@@ -109,7 +118,9 @@ no present modem with that device id holds, writing the park record first.
   from `/sys/bus/usb/devices` (no subprocess, no wait for udev properties) and
   matched by `modem.generic.physdev`, since `modem.generic.device` is the udev
   UID, which a rule may set to a label. The NM inventory is read whole (its
-  trailing LF ends the last record; a truncated record counts as unread). A
+  trailing LF ends the last record; a truncated record, in the inventory, such
+as `uuid:gsm` without its state field, or in a profile's settings, counts as
+unread). A
   modem whose MM physdev is positively not a USB device is not parked at all:
   its settle ends without a write. A USB modem whose descriptor cannot be
   captured yet is retried.
@@ -123,8 +134,9 @@ no present modem with that device id holds, writing the park record first.
   failed write leaves it incomplete, and the poll tries again 30, 60, 120,
   240, then every 300 s, also after the intent was consumed, until it
   finishes or the registration ends. It never throws and always confirms its
-  journal entry; like any journaled mutation, only a journal write that fails
-  can leave the modem blocked. Each attempt that reaches the lease writes and
+  journal entry; like any journaled mutation, only a journal operation that
+  fails (an entry write, or the directory sync when the entry is retired) can
+  raise the recovery barrier or leave the modem blocked. Each attempt that reaches the lease writes and
   retires one entry.
 - Replay of an interrupted settle finds nothing to undo: the park records
   describe themselves (a crash between record and write is converged by the
@@ -146,7 +158,7 @@ artifact:
 
 | Artifact | Older build |
 |---|---|
-| Takeover or settle journal entry, `armed` or `executing` | Generic descriptor replay: `restored` and removed when the modem is unchanged; quarantined if it is absent, as any journaled mutation. Replay looks at the descriptor, not the bearer: after a backend crash mid-takeover NM may still be activating, exactly as after any boot. |
+| Takeover or settle journal entry, `armed` or `executing` | Generic descriptor replay: `restored` and removed when the modem is unchanged; quarantined if it is absent, as any journaled mutation. Replay looks at the descriptor, not the bearer, on this build too: after a backend crash mid-takeover the entry is cleared while NM may still be bringing the new bearer up, so a Stream Start can be admitted during that activation, exactly as after any boot. This is an accepted limit. |
 | Takeover or settle journal entry, `completed` | Pruned. |
 | Takeover journal entry, `failed` (an activation that did not end within 180 s) | Blocks that modem until acknowledged, as in this build. |
 | Park store directory | Never read. |
