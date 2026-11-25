@@ -39,7 +39,7 @@ import {
 } from "../../modules/network/router-cellular-scan.ts";
 import { setMutationBlocks } from "../../modules/streaming/lifecycle-admission.ts";
 import { genSrtlaBondEntries } from "../../modules/streaming/srtla.ts";
-import * as wifiRadio from "../../modules/wifi/wifi-radio-identity.ts";
+import { wifiInterfaceReaders } from "../../modules/wifi/wifi-interface-creation.ts";
 
 export interface BoxLink {
 	readonly ifname: string;
@@ -131,9 +131,14 @@ export async function realisticBox(): Promise<RealisticBox> {
 	let present: readonly BoxLink[] = [ETHERNET, ...MODEMS];
 	resetNetifSnapshotForTest();
 	resetUsbNetMarkers();
-	const wireless = spyOn(wifiRadio, "isWirelessInterface").mockImplementation(
-		(name) =>
-			present.some((link) => link.ifname === name && link.kind === "wifi"),
+	// Only the fixture's own radios carry the kernel's cfg80211 link.
+	const wireless = spyOn(wifiInterfaceReaders, "pathExists").mockImplementation(
+		(path) =>
+			present.some(
+				(link) =>
+					link.kind === "wifi" &&
+					path === `/sys/class/net/${link.ifname}/phy80211`,
+			),
 	);
 	const box: RealisticBox = {
 		async scan(links = present, options = {}) {
@@ -156,7 +161,6 @@ export async function realisticBox(): Promise<RealisticBox> {
 					output,
 					undefined,
 					undefined,
-					wifiRadio.isWirelessInterface,
 					new Map(
 						links.map((link) => [
 							link.ifname,
