@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import {
 	applyConcurrentApBondGate,
 	getNetworkInterfaces,
@@ -21,6 +21,7 @@ import type {
 	HotspotActivationDeps,
 	WifiInterfaceWithHotspot,
 } from "../modules/wifi/wifi-hotspot-types.ts";
+import { mockActiveObservation } from "./helpers/wifi-active-observation.ts";
 
 const MAC = "02:00:00:00:00:93";
 
@@ -126,6 +127,8 @@ test("fake NM confirmation publishes AP zone without a second connection edge an
 		expect(f.outcomes).toEqual([["start", 93, { success: true }]]);
 		f.iface.activeMode = "ap";
 		f.iface.activeConn = "ap93";
+		// Upstream's Stop brings down the exact activation NM reports.
+		mockActiveObservation((name) => (name === "wlan93" ? "ap93" : undefined));
 		await stopHotspotForInterface(MAC, f.iface, {
 			nmConnSetFields: async () => true,
 			nmDisconnect: async () => true,
@@ -137,6 +140,7 @@ test("fake NM confirmation publishes AP zone without a second connection edge an
 		expect((f.netif.wlan93?.error ?? 0) & NETIF_ERR_HOTSPOT).toBe(0);
 		expect(edges).toBe(2);
 	} finally {
+		mock.restore();
 		off();
 		f.restore();
 	}
