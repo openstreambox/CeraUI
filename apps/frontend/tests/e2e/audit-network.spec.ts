@@ -89,6 +89,7 @@ test.describe("Audit A2 — Network destination (multi-modem-wifi)", { tag: "@au
 	test.skip(({ browserName }) => browserName !== "chromium", "single-browser audit walk");
 	let authoritativeNetif: Record<string, unknown> | undefined;
 	let holdScan: ((release: () => void) => void) | undefined;
+	let auditSocket: { send: (message: string) => void } | undefined;
 
 	test.beforeEach(async ({ page }, testInfo) => {
 		test.skip(
@@ -97,7 +98,9 @@ test.describe("Audit A2 — Network destination (multi-modem-wifi)", { tag: "@au
 		);
 		authoritativeNetif = undefined;
 		holdScan = undefined;
+		auditSocket = undefined;
 		await page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
+			auditSocket = socket;
 			const server = socket.connectToServer();
 			socket.onMessage((message) => {
 				if (holdScan && typeof message === "string") {
@@ -116,6 +119,9 @@ test.describe("Audit A2 — Network destination (multi-modem-wifi)", { tag: "@au
 				}
 				const frame = JSON.parse(message);
 				if (frame.netif && authoritativeNetif) frame.netif = authoritativeNetif;
+				// The mock's own linkTelemetry is always null; dropping it lets an
+				// injected frame stand (the link-telemetry spec does the same).
+				if (frame.status && "linkTelemetry" in frame.status) delete frame.status.linkTelemetry;
 				socket.send(JSON.stringify(frame));
 			});
 		});
@@ -144,6 +150,30 @@ test.describe("Audit A2 — Network destination (multi-modem-wifi)", { tag: "@au
 	}) => {
 		// Bonded links render for every enabled interface in multi-modem-wifi.
 		await expect(page.getByTestId("bonded-link-card").first()).toBeVisible({ timeout: 15_000 });
+
+		// RTT/NAK/weight exist only while a stream runs, and the mock never
+		// streams. Inject one telemetry row per card (seq-less status frame) so
+		// the ownership check below runs against rendered cells, never vacuously.
+		const ids = await page
+			.getByTestId("bonded-link-card")
+			.evaluateAll((els) => els.map((el) => el.getAttribute("data-link-id") ?? ""));
+		auditSocket?.send(
+			JSON.stringify({
+				status: {
+					linkTelemetry: {
+						links: ids.map((iface, i) => ({
+							conn_id: String(i),
+							iface,
+							rtt_ms: 30,
+							nak_count: 0,
+							weight_percent: 100,
+							stale: false,
+						})),
+					},
+				},
+			}),
+		);
+		await expect(page.getByTestId("link-rtt").first()).toHaveText("30 ms");
 
 		const telemetry = page.getByTestId("link-telemetry");
 		const total = await telemetry.count();

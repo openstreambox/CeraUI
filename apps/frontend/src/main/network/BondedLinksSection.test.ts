@@ -150,8 +150,9 @@ describe("BondedLinksSection — mock link-telemetry join (T5)", () => {
 	it("renders Skeletons in-place (not '--') while the telemetry feed has not arrived", () => {
 		const links = [linkFor("eth0", 0)];
 		const { container } = render(BondedLinksSection, {
-			// linkTelemetry omitted → undefined → telemetryLoading = true.
-			props: { links, modemEntries: [] },
+			// linkTelemetry omitted → undefined → telemetryLoading = true. Streaming,
+			// because the cells only exist while there is a stream to measure.
+			props: { links, modemEntries: [], streaming: true },
 		});
 
 		const card = cardFor(container, "eth0");
@@ -187,6 +188,65 @@ describe("BondedLinksSection — mock link-telemetry join (T5)", () => {
 		expect(within(card).getByTestId("link-rtt").textContent?.trim()).toBe(
 			PLACEHOLDER,
 		);
+	});
+});
+
+describe("BondedLinksSection — no RTT / NAK / weight while idle", () => {
+	// Before anything streams there is no srtla_send to measure, so every card
+	// carried three empty cells (skeleton bars under the mock, "--" on a device).
+	// The cells appear once a stream runs, or as soon as telemetry rows exist.
+	it.each([
+		["the feed has not arrived", undefined],
+		["the device reports no sender", null],
+	])("hides the cells on every card while idle and %s", (_, linkTelemetry) => {
+		const links = [linkFor("eth0", 0), linkFor("usb0", 1)];
+		const { container } = render(BondedLinksSection, {
+			props: { links, modemEntries: [], linkTelemetry, streaming: false },
+		});
+
+		expect(
+			container.querySelectorAll('[data-testid="bonded-link-card"]'),
+		).toHaveLength(2);
+		expect(
+			container.querySelector('[data-testid="link-telemetry"]'),
+		).toBeNull();
+		expect(
+			container.querySelector('[data-testid="link-telemetry-skeleton"]'),
+		).toBeNull();
+	});
+
+	it("keeps the '--' placeholders while streaming, so a sender restart does not move the cards", () => {
+		const { container } = render(BondedLinksSection, {
+			props: {
+				links: [linkFor("eth0", 0)],
+				modemEntries: [],
+				linkTelemetry: null,
+				streaming: true,
+			},
+		});
+
+		expect(
+			within(cardFor(container, "eth0"))
+				.getByTestId("link-rtt")
+				.textContent?.trim(),
+		).toBe(PLACEHOLDER);
+	});
+
+	it("shows telemetry rows whenever they exist, even before the stream flag arrives", () => {
+		const { container } = render(BondedLinksSection, {
+			props: {
+				links: [linkFor("eth0", 0)],
+				modemEntries: [],
+				linkTelemetry: streamingActiveTelemetry(),
+				streaming: false,
+			},
+		});
+
+		expect(
+			within(cardFor(container, "eth0"))
+				.getByTestId("link-rtt")
+				.textContent?.trim(),
+		).toBe("25 ms");
 	});
 });
 
