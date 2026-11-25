@@ -68,10 +68,14 @@ CeraUI has no software modem restart. The recent timeline is for inspection afte
 
 Host tests cover subscriber refusals, synthetic path failures, USB resets during payload activity, independent radio contrasts, journal decoding and parser units. The replay fixture is entirely synthetic, with both matching events and negative controls.
 
-Sampling reads the committed modem roster and checks each modem's interface
-and ICCID before and after its reads, so a swap never mixes two identities. A
-modem removed during a 30 s poll can show one last reading, and one neighbour
-entry, until the next poll.
+Sampling reads one committed snapshot per modem: its identity, the
+registration read committed with its status and its home network. A SIM,
+device or registration change commits even when no status field moved. A
+committed identity change starts a new generation, so no byte baseline,
+history or neighbour reading carries over, and a modem changed or removed
+during or after a poll has its readings and neighbour entries withheld until
+it is sampled again. While a SIM swap is read but not yet committed, that
+modem shows no readings, at most until the next 30 s poll.
 
 Hardware qualification is not included.
 
