@@ -14,15 +14,7 @@ import {
 	onWifiChange,
 	setWifiState,
 } from "../modules/wifi/state/wifi-state.ts";
-import {
-	ensureConcurrentApInterface,
-	resetConcurrentInterfaceDepsForTest,
-	setConcurrentInterfaceDepsForTest,
-} from "../modules/wifi/wifi-concurrent-interface.ts";
-import {
-	startHotspotForInterface as activatePreparedHotspot,
-	prepareHotspotForInterface,
-} from "../modules/wifi/wifi-hotspot-activation.ts";
+import { startHotspotForInterface } from "../modules/wifi/wifi-hotspot-activation.ts";
 import { stopHotspotForInterface } from "../modules/wifi/wifi-hotspot-config.ts";
 import { handleWifiMonitorEvent } from "../modules/wifi/wifi-hotspot-monitor.ts";
 import {
@@ -82,7 +74,7 @@ describe("wifiHotspotStart — AP+STA concurrent mode", () => {
 			setDupIpSuppression: (ifname, value) => dupCalls.push([ifname, value]),
 		});
 
-		expect(await prepareAndStartHotspot(mac, iface, deps)).toEqual({
+		expect(await startHotspotForInterface(mac, iface, deps)).toEqual({
 			success: true,
 		});
 		expect(hotspotDevices).toEqual(["clap-wlan0"]);
@@ -154,10 +146,7 @@ describe("wifiHotspotStart — AP+STA concurrent mode", () => {
 describe("wifiHotspotStart — rollback on failure", () => {
 	test("failed nmApConnAdd rolls back: returns failure and cache stays station", async () => {
 		const mac = "dc:a6:32:00:00:01";
-		const iface = makeHotspotIface({
-			ifname: "wlan0",
-			hotspotConn: "hotspot-uuid",
-		});
+		const iface = makeHotspotIface({ ifname: "wlan0" });
 
 		// Seed the cache with the prior station entry.
 		setWifiState({ [mac]: { ...iface, mode: "station" } });
@@ -168,7 +157,7 @@ describe("wifiHotspotStart — rollback on failure", () => {
 			setDupIpSuppression: (ifname, on) => dupCalls.push([ifname, on]),
 		});
 
-		const result = await prepareAndStartHotspot(mac, iface, deps);
+		const result = await startHotspotForInterface(mac, iface, deps);
 
 		expect(result.success).toBe(false);
 		if (!result.success) {
@@ -207,7 +196,7 @@ describe("wifiHotspotStart — NM-confirmed mode flip", () => {
 			},
 		});
 
-		const result = await prepareAndStartHotspot(mac, iface, deps);
+		const result = await startHotspotForInterface(mac, iface, deps);
 		expect(result.success).toBe(true);
 
 		// During activation: transition broadcast, but mode NOT yet hotspot.
@@ -261,7 +250,7 @@ describe("wifiHotspotStart — NM-confirmed mode flip", () => {
 				pollHotspotActive: async () => false,
 			});
 
-			const result = await prepareAndStartHotspot(mac, iface, deps);
+			const result = await startHotspotForInterface(mac, iface, deps);
 			expect(result.success).toBe(true);
 
 			// Let the (now-instant) backstop retry chain settle.
@@ -291,10 +280,10 @@ describe("wifiHotspotStart — device lock", () => {
 		const firstDeps = makeDeps({
 			nmApConnAdd: () => gate.promise,
 		});
-		const first = prepareAndStartHotspot(mac, iface, firstDeps);
+		const first = startHotspotForInterface(mac, iface, firstDeps);
 
 		// Second op on the SAME device while the first is in-flight.
-		const second = await prepareAndStartHotspot(mac, iface, makeDeps({}));
+		const second = await startHotspotForInterface(mac, iface, makeDeps({}));
 		expect(second.success).toBe(false);
 		if (!second.success) {
 			expect(second.error).toBe("DEVICE_BUSY");
@@ -306,7 +295,7 @@ describe("wifiHotspotStart — device lock", () => {
 		expect(firstResult.success).toBe(false);
 
 		// Lock released: a later op on the same device acquires freely.
-		const third = await prepareAndStartHotspot(
+		const third = await startHotspotForInterface(
 			mac,
 			makeHotspotIface({
 				ifname: "wlan3",
@@ -318,142 +307,3 @@ describe("wifiHotspotStart — device lock", () => {
 		expect(third.success).toBe(true);
 	});
 });
-
-/** Exercise explicit setup followed by activation; Start itself cannot create profiles. */
-async function prepareAndStartHotspot(
-	mac: string,
-	iface: WifiInterfaceWithHotspot,
-	deps: HotspotActivationDeps,
-) {
-	if (!iface.hotspot.conn) {
-		const prepareDeps = {
-			...deps,
-			configureProfile: async (
-				_mac: string,
-				settings: Record<string, string>,
-			) => {
-				const uuid = await deps.nmHotspot(
-					iface.ifname,
-					settings["802-11-wireless.ssid"] ?? "",
-					settings["802-11-wireless-security.psk"] ?? "",
-				);
-				if (!uuid) throw new Error("setup failed");
-				return uuid;
-			},
-		};
-		const suggestion = await prepareHotspotForInterface(
-			mac,
-			iface,
-			{},
-			prepareDeps,
-		);
-		if (!suggestion.success) return suggestion;
-		if (iface.hotspot.conn) return activatePreparedHotspot(mac, iface, deps);
-		const configured = await prepareHotspotForInterface(
-			mac,
-			iface,
-			{ name: suggestion.name, password: suggestion.password },
-			prepareDeps,
-		);
-		if (!configured.success) return configured;
-	}
-	return activatePreparedHotspot(mac, iface, deps);
-}
-
-test("Start without configuration performs no setup, credential write or activation", async () => {
-	const iface = makeHotspotIface({ ifname: "wlan0" });
-	const effects: string[] = [];
-	const result = await activatePreparedHotspot(
-		"02:00:00:00:00:01",
-		iface,
-		makeDeps({
-			nmHotspot: async () => {
-				effects.push("create");
-				return "uuid";
-			},
-			nmConnect: async () => {
-				effects.push("activate");
-				return true;
-			},
-			credentials: {
-				get: () => undefined,
-				remember: () => effects.push("persist"),
-			},
-		}),
-	);
-	expect(result).toEqual({ success: false, error: "activation-failed" });
-	expect(effects).toEqual([]);
-});
-
-test("Start refuses a foreign discovery result even if a stale identity names it", async () => {
-	const iface = makeHotspotIface({ ifname: "wlan0" });
-	const effects: string[] = [];
-	const result = await activatePreparedHotspot(
-		"02:00:00:00:00:01",
-		iface,
-		makeDeps({
-			ownedProfile: async () => "owned-uuid",
-			findHotspotConn: async () => ({
-				uuid: "foreign-uuid",
-				ssid: "Example",
-				password: "example-password",
-				channel: "auto",
-			}),
-			nmConnect: async () => {
-				effects.push("activate");
-				return true;
-			},
-		}),
-	);
-	expect(result.success).toBe(false);
-	expect(effects).toEqual([]);
-});
-
-test.each([false, true])(
-	"fake NM prepares a missing AP but preserves a foreign managed sibling (exists=%s)",
-	async (exists) => {
-		let ap = false;
-		const order: string[] = [];
-		setConcurrentInterfaceDepsForTest(async (_cmd, args) => {
-			if (args.at(-1) === "info") {
-				if (exists) return "type managed";
-				throw new Error("absent");
-			}
-			if (args.includes("__ap")) {
-				ap = true;
-				order.push("ap");
-			}
-			if (args.includes("GENERAL.STATE"))
-				return ap ? "30 (disconnected)" : "20 (unavailable)";
-			return "";
-		}, null);
-		try {
-			const iface = makeHotspotIface({
-				ifname: "wlan0",
-				conn: "station-uuid",
-				hotspotConn: "owned-uuid",
-				supportsApStaConcurrency: true,
-			});
-			const result = await activatePreparedHotspot(
-				"02:00:00:00:00:01",
-				iface,
-				makeDeps({
-					ensureConcurrentInterface: ensureConcurrentApInterface,
-					nmConnect: async (uuid) => {
-						order.push(`up:${uuid}`);
-						return ap;
-					},
-				}),
-			);
-			expect(result).toEqual(
-				exists
-					? { success: false, error: "activation-failed" }
-					: { success: true },
-			);
-			expect(order).toEqual(exists ? [] : ["ap", "up:owned-uuid"]);
-			expect(iface.conn).toBe("station-uuid");
-		} finally {
-			resetConcurrentInterfaceDepsForTest();
-		}
-	},
-);
