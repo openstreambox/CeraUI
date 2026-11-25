@@ -47,7 +47,7 @@ describe("physical RAUC compatible selects only its known product channel", () =
 	] as const)("refuses %s before channel selection", async (compatible) => {
 		await expect(identityFromConfig(compatible)).rejects.toMatchObject({
 			name: "OsAgentError",
-			reason: "rauc_compatible_unknown",
+			reason: "board_updates_not_offered",
 		} satisfies Partial<OsAgentError>);
 	});
 });
@@ -140,3 +140,51 @@ test.each([
 		expect(await verifyOrangePointer(pointer)).toEqual({ ok: false, reason });
 	},
 );
+
+test("configured image channel admits only its own signed release addresses", async () => {
+	const { setUpdateSettingsFilePathForTest, saveUpdateSettings } = await import(
+		"../modules/system/update-settings.ts"
+	);
+	const { updateSettingsSchema } = await import("@ceraui/rpc/schemas");
+	const directory = await mkdtemp(join(tmpdir(), "image-channel-"));
+	const settings = join(directory, "update-settings.json");
+	setUpdateSettingsFilePathForTest(settings);
+	try {
+		saveUpdateSettings(
+			{
+				...updateSettingsSchema.parse({}),
+				channelUrl: "https://updates.example.invalid/bench",
+			},
+			settings,
+		);
+		const manifest = {
+			...orangeManifest,
+			bundle: {
+				...orangeManifest.bundle,
+				url: orangeManifest.bundle.url.replace(
+					"https://images.ceralive.tv",
+					"https://updates.example.invalid/bench",
+				),
+			},
+			flash: {
+				...orangeManifest.flash,
+				url: orangeManifest.flash.url.replace(
+					"https://images.ceralive.tv",
+					"https://updates.example.invalid/bench",
+				),
+			},
+			lock_url: orangeManifest.lock_url.replace(
+				"https://images.ceralive.tv",
+				"https://updates.example.invalid/bench",
+			),
+		};
+		expect(await verifyOrangePointer(manifest)).toEqual({ ok: true, manifest });
+		expect(await verifyOrangePointer(orangeManifest)).toEqual({
+			ok: false,
+			reason: "schema_invalid",
+		});
+	} finally {
+		setUpdateSettingsFilePathForTest(null);
+		await rm(directory, { recursive: true, force: true });
+	}
+});

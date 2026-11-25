@@ -6,7 +6,9 @@ import { z } from "zod";
 import { writeFileAtomicSync } from "../../../helpers/config-loader.ts";
 import { logger } from "../../../helpers/logger.ts";
 import { spawnWithTimeout } from "../../../helpers/spawn-policy.ts";
+import { assertBoardUpdateAdmission } from "../board-update-admission.ts";
 import { readUpdateCapabilityFile } from "../update-capabilities.ts";
+import { updateChannelUrl } from "../update-channel-url.ts";
 import { loadUpdateSettings } from "../update-settings.ts";
 import { selectUpdateTransport } from "../update-transport/executor.ts";
 import { updatePinController } from "../update-transport/pin.ts";
@@ -142,6 +144,7 @@ export async function saveStagedManifest(
 	now: number,
 	dir = OS_UPDATE_STATE_DIR,
 ): Promise<OsStageReceipt> {
+	assertBoardUpdateAdmission();
 	const receipt = receiptSchema.parse({
 		schema: 1,
 		version: manifest.version,
@@ -423,9 +426,9 @@ async function readSignedOsChannel(
 	settingsChannel: "stable" | "beta",
 	quarantine: UpdateQuarantine,
 ): Promise<SignedOsChannel | null | undefined> {
+	const { board, compatible } = await readBoardIdentity();
 	const bootedVersion = await readBootedOsReleaseVersion();
 	if (!bootedVersion) throw new OsAgentError("booted_version_unknown");
-	const { board, compatible } = await readBoardIdentity();
 	const channel = await resolveOsChannel(settingsChannel, {
 		...defaultOsChannelDeps,
 		warn: (reason) =>
@@ -438,7 +441,7 @@ async function readSignedOsChannel(
 		board,
 		channel,
 	});
-	const base = `https://images.ceralive.tv/channels/${channel}/${board}.json`;
+	const base = `${await updateChannelUrl()}/channels/${channel}/${board}.json`;
 	return updatePinController.run("os", selection, async () => {
 		const file = await readUpdateCapabilityFile();
 		if (
@@ -526,6 +529,7 @@ export async function stageOsBundle(
 		signal: new AbortController().signal,
 	},
 ): Promise<OsStageReceipt> {
+	assertBoardUpdateAdmission();
 	try {
 		const verified = osChannelManifestSchema.parse(manifest);
 		assertOsStageToken(control);
@@ -630,7 +634,7 @@ async function revalidatePinnedStage(
 		await chown(dir, file.ota_uid, 0);
 		const json = join(dir, "manifest.json");
 		const sig = join(dir, "manifest.sig");
-		const base = `https://images.ceralive.tv/channels/${manifest.channel}/${manifest.board}.json`;
+		const base = `${await updateChannelUrl()}/channels/${manifest.channel}/${manifest.board}.json`;
 		if (
 			!(await fetchAsOta(base, json, file.ota_uid)) ||
 			!(await fetchAsOta(`${base}.sig`, sig, file.ota_uid))
@@ -679,6 +683,7 @@ export async function armOsActivation(
 	now: boolean,
 	control: OsStageControlLease,
 ): Promise<void> {
+	assertBoardUpdateAdmission();
 	if (!control.held()) throw new OsStageError("rauc_recovery_unproven");
 	const result = await spawnWithTimeout(
 		["systemctl", "start", `ceralive-rauc-arm@${now ? "now" : "arm"}.service`],
