@@ -9,6 +9,7 @@ import {
 import { basename, join } from "node:path";
 import { modemClearUnreadableRecordInputSchema } from "@ceraui/rpc/schemas";
 import { call } from "@orpc/server";
+import { currentMutationBlocks } from "../modules/modems/mutation-blocks.ts";
 import {
 	defaultMutationJournalFs,
 	mutationSlotName,
@@ -446,8 +447,11 @@ for (const fault of ["block publication", "file identity"] as const) {
 					return names;
 				},
 				readText: async (file) => {
-					if (basename(file) === "vanished.json")
+					// A real read fault moves the journal revision, as the default fs does.
+					if (basename(file) === "vanished.json") {
+						noteMutationJournalReadFault();
 						throw new Error("slot unavailable");
+					}
 					return defaultMutationJournalFs.readText(file);
 				},
 			},
@@ -465,6 +469,10 @@ for (const fault of ["block publication", "file identity"] as const) {
 		await clock.at(6);
 		expect(warning()?.action).toMatchObject({ token });
 		expect(isRecoveryPending()).toBe(true);
+		if (fault === "file identity")
+			expect(currentMutationBlocks().map((block) => block.stableKey)).toEqual([
+				"usb:a",
+			]);
 		fail = false;
 		clock.advance();
 		await awaitRecoveryBarrier();
@@ -476,6 +484,77 @@ for (const fault of ["block publication", "file identity"] as const) {
 		});
 	});
 }
+
+test("runtime keeps its offer when only the publication census meets the damage", async () => {
+	const clock = new JournalRetryClock();
+	await seedFailedMutation("usb:a");
+	const valid = readFileSync(path("usb:a"), "utf8");
+	await initMutationRecovery({ sleep: clock.sleep });
+	let split = false;
+	let reads = 0;
+	setMutationJournalDeps({
+		dir: journal.root(),
+		fs: {
+			...defaultMutationJournalFs,
+			// The first census of a pass reads the slot, the publication census faults.
+			readText: async (file) => {
+				if (!split || file !== path("usb:a"))
+					return defaultMutationJournalFs.readText(file);
+				if (++reads % 2 === 1) return valid;
+				noteMutationJournalReadFault();
+				throw new Error("slot unavailable");
+			},
+		},
+	});
+	writeFileSync(path("usb:a"), "{bad");
+	beginRecoveryBarrier();
+	await clock.at(1);
+	clock.advance();
+	const token = await exhaust(clock, 2);
+	await clock.at(5);
+	split = true;
+	clock.advance();
+	await clock.at(6);
+	expect(warning()?.action).toMatchObject({ token });
+	expect(isRecoveryPending()).toBe(true);
+});
+
+test("runtime keeps its offer when a peer write makes the publication census read again", async () => {
+	const clock = new JournalRetryClock();
+	await seedFailedMutation("usb:a");
+	const valid = readFileSync(path("usb:a"), "utf8");
+	await initMutationRecovery({ sleep: clock.sleep });
+	let split = false;
+	let reads = 0;
+	setMutationJournalDeps({
+		dir: journal.root(),
+		fs: {
+			...defaultMutationJournalFs,
+			// The first census reads the slot, the publication census faults while a
+			// peer commits, and its fresh census reads the slot again.
+			readText: async (file) => {
+				if (!split || file !== path("usb:a"))
+					return defaultMutationJournalFs.readText(file);
+				if (++reads % 3 !== 2) return valid;
+				noteMutationJournalReadFault();
+				await seedFailedMutation("usb:c");
+				throw new Error("slot unavailable");
+			},
+		},
+	});
+	writeFileSync(path("usb:a"), "{bad");
+	beginRecoveryBarrier();
+	await clock.at(1);
+	clock.advance();
+	const token = await exhaust(clock, 2);
+	await clock.at(5);
+	split = true;
+	clock.advance();
+	await clock.at(6);
+	expect(reads).toBe(3);
+	expect(warning()?.action).toMatchObject({ token });
+	expect(isRecoveryPending()).toBe(true);
+});
 
 test("a missed census neither advances nor erases a file's retry history", async () => {
 	const clock = new JournalRetryClock();

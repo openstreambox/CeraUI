@@ -239,9 +239,11 @@ export async function runMutationReplay(
 			}
 		}
 		// Readable rows are published beside the damaged slots, which keep their
-		// last published rows; the pass still counts as incomplete.
-		if ((await reconcileMutationBlocks()).unreadable.length > 0)
-			incompletePublication = 1;
+		// last published rows; the pass still counts as incomplete. A slot only
+		// the publication census met damaged is damaged for the monitor too.
+		const published = await reconcileMutationBlocks();
+		for (const name of published.unreadable) damaged.add(name);
+		if (published.unreadable.length > 0) incompletePublication = 1;
 	} catch (err) {
 		otherFailures++;
 		logger.error("modem mutation replay did not complete", {
@@ -268,10 +270,12 @@ async function journalReadsCompletely(
 ): Promise<boolean> {
 	await inventoryCellularAuthority("verify");
 	await settlePendingMutationRemovals();
-	const damaged = await listUnreadableSlots();
+	const listed = await listUnreadableSlots();
 	const published = await reconcileMutationBlocks();
+	// The monitor sees every slot either census met damaged.
+	const damaged = [...new Set([...listed, ...published.unreadable])];
 	observe(damaged);
-	return damaged.length === 0 && published.unreadable.length === 0;
+	return damaged.length === 0;
 }
 
 export interface MutationRecoveryOptions {
