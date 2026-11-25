@@ -139,6 +139,15 @@ service running) and takes it out as soon as it doesn't. The modem's own bond
 switch also covers its translated link. CeraUI does not run or configure the
 translator itself.
 
+### Modem carrier configuration (read-only)
+
+Separate from the APN profile above, a Qualcomm-based modem keeps its own
+carrier configuration in firmware (PDC or MBN, for example `GCF`, `ATT` or a
+`ROW_Commercial` default). ModemManager publishes the active one as
+`CarrierConfiguration` and `CarrierConfigurationRevision`, and the modem details
+show both when the modem reports them. CeraUI does not change it; automatic
+profiles never touch it.
+
 ## Español (Latinoamérica)
 
 Un perfil automático existente puede recibir un APN cuando la suscripción se
@@ -268,6 +277,15 @@ servicio indica que funciona (una instantánea reciente, el traductor y la
 interfaz del módem presentes, el servicio en ejecución) y la retira en cuanto
 deja de hacerlo. El interruptor de bonding del módem también se aplica a su
 enlace traducido. CeraUI no ejecuta ni configura el traductor.
+
+### Configuración del operador en el módem (solo lectura)
+
+Aparte del perfil APN, un módem con chip Qualcomm guarda en su firmware su propia
+configuración de operador (PDC o MBN, por ejemplo `GCF`, `ATT` o una
+predeterminada `ROW_Commercial`). ModemManager publica la activa como
+`CarrierConfiguration` y `CarrierConfigurationRevision`, y los detalles del módem
+muestran ambas cuando el módem las informa. CeraUI no la cambia; los perfiles
+automáticos nunca la tocan.
 
 ## Recovery isolation
 
