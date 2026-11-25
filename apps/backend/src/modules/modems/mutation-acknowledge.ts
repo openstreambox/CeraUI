@@ -159,7 +159,11 @@ async function acknowledgeHeld(
 
 	let current: Readonly<Record<string, unknown>> | undefined;
 	try {
-		current = await captureModemState(stableKey);
+		current = await captureModemState(
+			stableKey,
+			undefined,
+			mode === "verified-rollback" ? entry.unitLinkId : undefined,
+		);
 	} catch {
 		return fail("read_failed");
 	}
