@@ -32,7 +32,6 @@ import { setImageOwnedPackagesReaderForTest } from "../modules/system/image-owne
 import {
 	createSoftwareUpdateProcessMonitor,
 	getUpdateState,
-	packageFailedBeforeLaunch,
 	periodicCheckForSoftwareUpdates,
 	resetAptReachabilityProbeForTest,
 	resetSoftwareUpdateCheckRunner,
@@ -1331,37 +1330,4 @@ describe("the refresh's own verdict stands", () => {
 			}
 		},
 	);
-});
-
-describe("an install that ends before apt's unit launches", () => {
-	it("says so in one typed answer, whatever the reason text", async () => {
-		useImageSource();
-		const box = await capableBox({});
-		setAptReachabilityProbeForTest(async () => ({
-			ipv4: "no_route",
-			ipv6: "no_route",
-			used: "none",
-			verdict: "unreachable",
-			detail: [],
-		}));
-		const spies = [
-			spyOn(logger, "info").mockImplementation(() => logger),
-			spyOn(logger, "warn").mockImplementation(() => logger),
-		];
-		try {
-			expect(startSoftwareUpdate()).toEqual({ started: true });
-			for (let i = 0; i < 200 && getUpdateState().kind !== "failed"; i++)
-				await Bun.sleep(5);
-			expect(getUpdateState()).toMatchObject({
-				kind: "failed",
-				reason:
-					"Failed to fetch the updated package list; aborting the update.",
-			});
-			expect(packageFailedBeforeLaunch()).toBe(true);
-		} finally {
-			for (const spy of spies) spy.mockRestore();
-			box.cleanup();
-		}
-		expect(packageFailedBeforeLaunch()).toBe(false);
-	});
 });

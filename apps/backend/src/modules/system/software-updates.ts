@@ -406,7 +406,7 @@ export function resetSoftwareUpdateState(): void {
 	resetAptAllRefusalLogForTest();
 	aptAllMode = false;
 	discoveredPackages = [];
-	installUnitLaunched = false;
+	installAttempt = { id: 0, outcome: { kind: "pending" } };
 }
 
 export type SoftwareUpdateRecoveryDeps = {
@@ -1106,20 +1106,96 @@ function imageSourceRefused(capabilities: UpdateCapabilities): boolean {
 	return true;
 }
 
-// Whether this install attempt launched (or reattached to) the detached unit.
-let installUnitLaunched = false;
+/**
+ * One install attempt (a `startSoftwareUpdate` that was accepted) and how it
+ * ended. `launched` only once systemd accepted the detached unit (or a unit
+ * was reattached); from then on the unit's own result decides. Every way an
+ * attempt can end before that is `refused` (nothing installed) or `stream`
+ * (a stream needs the uplink; the offer stays). The orchestrator reads this
+ * typed record for the attempt it started, whatever the wire's reason says.
+ */
+export type PackageInstallAttempt = {
+	readonly id: number;
+	readonly outcome:
+		| { readonly kind: "pending" }
+		| { readonly kind: "launching" }
+		| { readonly kind: "launched" }
+		| { readonly kind: "refused"; readonly reason: string }
+		| { readonly kind: "stream" };
+};
+let installAttempt: PackageInstallAttempt = {
+	id: 0,
+	outcome: { kind: "pending" },
+};
+let installAttemptCount = 0;
+let resumingDelayedStart = false;
+
+export function currentPackageInstallAttempt(): PackageInstallAttempt {
+	return installAttempt;
+}
+
+function beginInstallAttempt(): void {
+	installAttempt = { id: ++installAttemptCount, outcome: { kind: "pending" } };
+}
+
+function setAttemptOutcome(
+	id: number,
+	outcome: PackageInstallAttempt["outcome"],
+): void {
+	if (installAttempt.id === id) installAttempt = { id, outcome };
+}
 
 /**
- * The current install attempt ended before apt's install unit launched: a
- * refusal (clock, dpkg, refresh, reachability, captive portal, discovery,
- * space preflight) or a failed download, with nothing installed. One typed
- * answer for the orchestrator, whatever the reason text says.
+ * The attempt ended before its unit launched. On an image with its own apt
+ * source the wire leaves the offer too: a path that recorded only a check
+ * failure (the install-time simulation or hold query) or nothing at all now
+ * records the failure, so wire and orchestrator release together.
  */
-export function packageFailedBeforeLaunch(): boolean {
-	return (
-		!installUnitLaunched &&
-		(lastUpdateFailure !== null || lastPreflightFailure !== null)
-	);
+function endAttemptBeforeLaunch(id: number): void {
+	const pending = installAttempt.outcome.kind;
+	if (
+		installAttempt.id !== id ||
+		(pending !== "pending" && pending !== "launching")
+	)
+		return;
+	const ended =
+		lastUpdateFailure?.reason ??
+		(lastPreflightFailure === null
+			? (lastCheckFailure ?? "not_started")
+			: `preflight_${lastPreflightFailure}`);
+	if (activeImageAptSource() !== undefined) {
+		if (lastUpdateFailure === null && lastPreflightFailure === null) {
+			lastUpdateSucceeded = false;
+			lastUpdateFailure = { reason: ended };
+		}
+		if (softUpdateStatus) {
+			softUpdateStatus = null;
+			broadcastMsg("status", {
+				updating: null,
+				update_state: getUpdateState(),
+			});
+		}
+	}
+	setAttemptOutcome(id, { kind: "refused", reason: boundedReason(ended) });
+}
+
+/** A stream needs the uplink: the attempt ends, and its offer stays. */
+function endAttemptForStream(id: number): void {
+	if (installAttempt.id !== id || installAttempt.outcome.kind !== "pending")
+		return;
+	if (activeImageAptSource() !== undefined && softUpdateStatus) {
+		softUpdateStatus = null;
+		broadcastMsg("status", { updating: null, update_state: getUpdateState() });
+	}
+	setAttemptOutcome(id, { kind: "stream" });
+}
+
+// Events and diagnostics carry at most this much of a refusal's text.
+export const ATTEMPT_REASON_LIMIT = 256;
+function boundedReason(reason: string): string {
+	return reason.length <= ATTEMPT_REASON_LIMIT
+		? reason
+		: `${reason.slice(0, ATTEMPT_REASON_LIMIT - 1)}…`;
 }
 
 let clockWaitLogged = false;
@@ -1762,10 +1838,19 @@ const defaultSoftwareUpdateRunner: SoftwareUpdateRunner = (
 	onCommitSucceeded,
 ) => {
 	const admission = captureAptTransferAdmission();
+	const attemptId = installAttempt.id;
 	const checkStarted = softwareUpdateCheckRunner(async (err) => {
 		if (err === null) {
-			await doSoftwareUpdate(onCommitSucceeded, admission);
-		} else if (softUpdateStatus) {
+			try {
+				await doSoftwareUpdate(onCommitSucceeded, admission, attemptId);
+			} finally {
+				// Whatever returned or threw before the unit launched ends here.
+				if (installAttempt.outcome.kind === "pending")
+					endAttemptBeforeLaunch(attemptId);
+			}
+			return;
+		}
+		if (softUpdateStatus) {
 			const reason =
 				err === "discovery_failed"
 					? "discovery_failed"
@@ -1811,6 +1896,7 @@ const defaultSoftwareUpdateRunner: SoftwareUpdateRunner = (
 			softUpdateStatus = null;
 			broadcastUpdateState();
 		}
+		endAttemptBeforeLaunch(attemptId);
 	});
 
 	// Latching a declined check would wedge isUpdating(). For later latch gaps,
@@ -1894,8 +1980,9 @@ export function startSoftwareUpdate(
 		return refuseUpdateStart("check_unavailable");
 	}
 
+	if (!resumingDelayedStart) beginInstallAttempt();
+	const attemptId = installAttempt.id;
 	currentUpdateIdentity = availableIdentity;
-	installUnitLaunched = false;
 	lastUpdateFailure = null;
 	lastUpdateSucceeded = false;
 	lastPreflightFailure = null;
@@ -1906,7 +1993,14 @@ export function startSoftwareUpdate(
 			delayedSoftwareUpdateStart = setTimeout(() => {
 				delayedSoftwareUpdateStart = undefined;
 				if (pendingPackageSuccess.pending) return;
-				const outcome = startSoftwareUpdate(onCommitSucceeded);
+				// The same attempt the caller was told started.
+				resumingDelayedStart = true;
+				let outcome: UpdateStartOutcome;
+				try {
+					outcome = startSoftwareUpdate(onCommitSucceeded);
+				} finally {
+					resumingDelayedStart = false;
+				}
 				if (!outcome.started) {
 					lastUpdateSucceeded = false;
 					lastUpdateFailure = {
@@ -1919,6 +2013,7 @@ export function startSoftwareUpdate(
 							: {}),
 					};
 					broadcastUpdateState();
+					endAttemptBeforeLaunch(attemptId);
 				}
 			}, 3 * 1000);
 			delayedSoftwareUpdateStart.unref?.();
@@ -1927,6 +2022,7 @@ export function startSoftwareUpdate(
 	}
 
 	if (shouldUseMocks()) {
+		setAttemptOutcome(attemptId, { kind: "launched" });
 		mockSoftwareUpdatePromise = simulateMockSoftwareUpdate();
 		void mockSoftwareUpdatePromise;
 		return { started: true };
@@ -2160,9 +2256,10 @@ export function createSoftwareUpdateProcessMonitor(
 async function doSoftwareUpdate(
 	onCommitSucceeded?: () => void,
 	admission?: AptTransferAdmission,
+	attemptId: number = installAttempt.id,
 ): Promise<void> {
 	return runLegacyPackageEffects(
-		() => prepareSoftwareUpdate(onCommitSucceeded, admission),
+		() => prepareSoftwareUpdate(onCommitSucceeded, admission, attemptId),
 		() => {
 			softUpdateStatus = null;
 			broadcastMsg("status", {
@@ -2176,9 +2273,14 @@ async function doSoftwareUpdate(
 async function prepareSoftwareUpdate(
 	onCommitSucceeded?: () => void,
 	admission?: AptTransferAdmission,
+	attemptId: number = installAttempt.id,
 ): Promise<void> {
 	pendingPackageSuccess.assertEffectsAllowed();
-	if (!aptUpdatesEnabled() || !isStreamConfirmedIdle()) return;
+	if (!aptUpdatesEnabled()) return;
+	if (!isStreamConfirmedIdle()) {
+		endAttemptForStream(attemptId);
+		return;
+	}
 
 	const capabilities = await readPackageCapabilities();
 	if (capabilities === null || imageSourceRefused(capabilities)) {
@@ -2387,6 +2489,7 @@ async function prepareSoftwareUpdate(
 		refuseUpdateStart("streaming");
 		softUpdateStatus = null;
 		broadcastUpdateState();
+		endAttemptForStream(attemptId);
 		return;
 	}
 	pendingPackageSuccess.assertEffectsAllowed();
@@ -2406,11 +2509,34 @@ async function prepareSoftwareUpdate(
 	// running it in this unit's cgroup then lets that restart kill the package
 	// transaction itself. PID 1 owns this service, and the next backend process
 	// reattaches to its durable output instead of relaunching apt.
-	installUnitLaunched = true;
+	// `launched` only once systemd accepted the unit: a refused spool, command
+	// or start before that is still an attempt that ended before launch.
+	setAttemptOutcome(attemptId, { kind: "launching" });
+	const handlers: SoftwareUpdateOutputHandlers = {
+		...monitor.handlers,
+		onLaunched: () => setAttemptOutcome(attemptId, { kind: "launched" }),
+	};
+	const completion = capable
+		? runDetachedAptAll(detachedArgs, finalFamily, handlers)
+		: runDetachedAptUpgrade(args, handlers);
 	void monitor.finish(
-		capable
-			? runDetachedAptAll(detachedArgs, finalFamily, monitor.handlers)
-			: runDetachedAptUpgrade(args, monitor.handlers),
+		completion.catch((error: unknown) => {
+			// Rejected before systemd accepted the unit. The monitor settles the
+			// wire's failure; this records only how the attempt ended.
+			if (
+				installAttempt.id === attemptId &&
+				installAttempt.outcome.kind === "launching"
+			)
+				setAttemptOutcome(attemptId, {
+					kind: "refused",
+					reason: boundedReason(
+						redactImageAptSecret(
+							error instanceof Error ? error.message : String(error),
+						),
+					),
+				});
+			throw error;
+		}),
 		capable ? onCommitSucceeded : undefined,
 	);
 }
@@ -2526,11 +2652,13 @@ async function recoverSoftwareUpdate(
 		// That window is exactly what let the update-orchestrator's own resume
 		// (resume.ts resumeCommitting()) observe neither a live nor a settled
 		// state and misclassify a successful recovery as unresolved.
-		installUnitLaunched = true;
+		beginInstallAttempt();
+		setAttemptOutcome(installAttempt.id, { kind: "launched" });
 		await monitor.finish(recovered.completion, getRecoveredUpdateExitHook());
 	} else {
 		// Still running: this can take minutes. Never block boot on it.
-		installUnitLaunched = true;
+		beginInstallAttempt();
+		setAttemptOutcome(installAttempt.id, { kind: "launched" });
 		void monitor.finish(recovered.completion, getRecoveredUpdateExitHook());
 	}
 	return true;

@@ -48,13 +48,15 @@ import { withServiceReservation } from "../disruptive-service-reservation.ts";
 import { getIdleStatus } from "../idle-activity.ts";
 import { imageAptSourceInUse } from "../image-apt-source.ts";
 import {
+	ATTEMPT_REASON_LIMIT,
 	aptUpdatesEnabled,
+	currentPackageInstallAttempt,
 	getLastInstallUnitVerdict,
 	getUpdateState,
 	type InstallUnitVerdict,
 	imageSourceClockWaits,
 	isAptAllDiscovery,
-	packageFailedBeforeLaunch,
+	type PackageInstallAttempt,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
 	type SoftwareUpdateError,
@@ -288,8 +290,8 @@ export interface OrchestratorRuntimeDeps {
 	readonly runPackageCheck: () => Promise<SoftwareUpdateError>;
 	readonly startPackageInstall: () => UpdateStartOutcome;
 	readonly getPackageInstallWireState: () => UpdateState;
-	/** The current install attempt ended before its apt unit launched. */
-	readonly packageFailedBeforeLaunch: () => boolean;
+	/** The current install attempt and how it ended (software-updates.ts). */
+	readonly packageInstallAttempt: () => PackageInstallAttempt;
 	readonly stopPackageInstallUnit: () => Promise<void>;
 	readonly killAndRestartRaucForStream: () => Promise<void>;
 	readonly isCommitStageRunning: () => Promise<boolean>;
@@ -425,7 +427,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	runPackageCheck: runSoftwareUpdateCheck,
 	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
 	getPackageInstallWireState: getUpdateState,
-	packageFailedBeforeLaunch,
+	packageInstallAttempt: currentPackageInstallAttempt,
 	stopPackageInstallUnit: stopPackageInstallUnitForStream,
 	killAndRestartRaucForStream,
 	isCommitStageRunning: async () =>
@@ -552,6 +554,8 @@ let packageInstallStarting = false;
 // Image apt source: an install launches only for a request made in this
 // process (installUpdatesNow); a queued or persisted plan is not one.
 let manualPackageAdmission = false;
+// The software-updates attempt this process's INSTALL_UNIT_STARTED stands for.
+let launchedInstallAttemptId: number | undefined;
 let packageHoldAttempt: DownloadInterruption | undefined;
 let updateAdmissionProbe: Promise<boolean> | undefined;
 let osForceActivated = false;
@@ -700,6 +704,7 @@ export function setOrchestratorRuntimeDepsForTest(
 export function resetOrchestratorRuntimeForTest(): void {
 	kernelRuntime.reset();
 	manualPackageAdmission = false;
+	launchedInstallAttemptId = undefined;
 	deps.downloadNotices?.dispose();
 	packageHoldAttempt = undefined;
 	resetDisruptiveActionReservationForTest();
@@ -1434,6 +1439,7 @@ async function maybeStartPackageInstall(opts: {
 			return result; // stays awaiting-idle; retried next tick
 		}
 		manualPackageAdmission = false;
+		launchedInstallAttemptId = deps.packageInstallAttempt().id;
 		const previousHold = packageHoldAttempt;
 		packageHoldAttempt = packageDownloadAttempt(available);
 		dispatch({
@@ -1459,6 +1465,53 @@ async function maybeStartPackageInstall(opts: {
 	}
 }
 
+/**
+ * Image apt source: the attempt this process started ended before its unit
+ * launched. One typed outcome, read before the wire: `refused` releases the
+ * plan to `idle`, `stream` returns it to the offer, so the image check stays
+ * eligible either way. The release holds the install latch while the pending
+ * vector is cleared, so a retry cannot save a new one underneath it.
+ */
+async function settleUnlaunchedInstall(): Promise<boolean> {
+	if (state.phase !== "downloading" || !imageAptSourceInUse()) return false;
+	const attempt = deps.packageInstallAttempt();
+	if (
+		launchedInstallAttemptId === undefined ||
+		attempt.id !== launchedInstallAttemptId
+	)
+		return false;
+	if (attempt.outcome.kind === "stream") {
+		dispatch({ type: "DOWNLOAD_ABORTED_FOR_STREAM", now: deps.now() });
+		launchedInstallAttemptId = undefined;
+		return true;
+	}
+	if (attempt.outcome.kind !== "refused" || packageInstallStarting)
+		return false;
+	const release = releaseEvent("downloading");
+	packageInstallStarting = true;
+	try {
+		await deps.quarantine.clearPending();
+	} finally {
+		packageInstallStarting = false;
+	}
+	dispatch(release);
+	launchedInstallAttemptId = undefined;
+	notifyUpdate({
+		kind: "refused",
+		// Bounded: the attempt, not the text, names the event, and the
+		// diagnostic is cut to what an event carries.
+		id: `packages:attempt-${attempt.id}`,
+		reason: boundedRefusal(attempt.outcome.reason),
+	});
+	return true;
+}
+
+function boundedRefusal(reason: string): string {
+	return reason.length <= ATTEMPT_REASON_LIMIT
+		? reason
+		: `${reason.slice(0, ATTEMPT_REASON_LIMIT - 1)}…`;
+}
+
 // The release for the phase entry and attempt holding now.
 function releaseEvent(
 	from: "awaiting-idle" | "downloading",
@@ -1474,6 +1527,7 @@ function releaseEvent(
 
 async function pollPackageInstallProgress(): Promise<void> {
 	if (state.phase !== "downloading" && state.phase !== "committing") return;
+	if (await settleUnlaunchedInstall()) return;
 	const wire = deps.getPackageInstallWireState();
 	const now = deps.now();
 	if (wire.kind === "downloading") {
@@ -1500,26 +1554,6 @@ async function pollPackageInstallProgress(): Promise<void> {
 		if (state.phase === "downloading")
 			dispatch({ type: "COMMIT_PHASE_ENTERED", now });
 		dispatch({ type: "COMMIT_SUCCEEDED", now });
-		return;
-	}
-	if (
-		(wire.kind === "failed" || wire.kind === "update_preflight_failed") &&
-		state.phase === "downloading" &&
-		imageAptSourceInUse() &&
-		deps.packageFailedBeforeLaunch()
-	) {
-		// Ended before apt's unit launched (any refusal or a failed download):
-		// a package-only result, not the shared failed phase, so the image
-		// check stays eligible.
-		const release = releaseEvent("downloading");
-		await deps.quarantine.clearPending();
-		dispatch(release);
-		const reason = wire.kind === "failed" ? wire.reason : wire.preflight_reason;
-		notifyUpdate({
-			kind: "refused",
-			id: `packages:${reason}`,
-			reason,
-		});
 		return;
 	}
 	if (wire.kind === "failed") {

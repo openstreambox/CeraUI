@@ -28,6 +28,8 @@ export type SoftwareUpdateOutputHandlers = {
 	readonly onStdout: (chunk: string) => void;
 	readonly onStderr: (chunk: string) => void;
 	readonly onAttached?: () => void;
+	/** systemd accepted the unit: from here the transaction is the unit's. */
+	readonly onLaunched?: () => void;
 	readonly onObserverError?: (
 		error: unknown,
 		suppressedRetries?: number,
@@ -254,6 +256,7 @@ export async function runDetachedAptUpgrade(
 	}
 	await deps.prepareOutput();
 	await deps.start(buildDetachedAptUpgradeCommand(aptArgs, deps.outputPaths));
+	handlers.onLaunched?.();
 	return observeDetachedAptUpgrade({ kind: "running" }, handlers, deps);
 }
 
@@ -270,6 +273,7 @@ export async function runDetachedAptAll(
 	await deps.start(
 		buildDetachedAptAllCommand(installArgs, verdict, deps.outputPaths),
 	);
+	handlers.onLaunched?.();
 	return observeDetachedAptUpgrade({ kind: "running" }, handlers, deps);
 }
 

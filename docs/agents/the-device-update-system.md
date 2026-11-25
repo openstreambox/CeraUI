@@ -46,8 +46,8 @@ ORCHESTRATOR. The feature notes, stated at the level a CeraUI change needs:
   the only package origin, passed to every package apt run. On it, the token in
   its URI is shown by host only, checks wait for the clock gate and need a
   refresh of both suites, installs are manual only (queued plans are dropped,
-  refusals before launch return to `idle`), and an invalid record fails closed.
-  See DEVICE-UPDATES.
+  refusals before launch return to `idle`, see the table below), and an
+  invalid record fails closed. See DEVICE-UPDATES.
   A first image offer waiting for cellular download approval also permits due
   package checks. The image candidate and pending approval survive package work;
   OS staging still requires approval and discovery re-admits the held offer.
@@ -425,3 +425,52 @@ Known gaps, recorded rather than smoothed over:
   slot mirroring and UID-pinned transport are still not qualified by that run.
 
 Planned power and traffic protection: [shutdown contract](../SHUTDOWN-PROTECTION.md).
+
+### Image apt source: every way an install attempt ends before launch
+
+On an image with its own apt source, an accepted `startSoftwareUpdate` is one
+attempt (`currentPackageInstallAttempt()` in `software-updates.ts`). It is
+`launched` only once systemd accepted the detached unit (`onLaunched` after
+`systemd-run` returned) or a unit was reattached; from then on the unit's own
+result moves the wire and the orchestrator as on every other image. Every other
+end is one typed outcome for that attempt, read by the orchestrator only for the
+attempt it started (`launchedInstallAttemptId`):
+
+- `refused`: the wire shows the failure (a path that had recorded only a check
+  failure now records it as the install's), and `PACKAGE_PLAN_RELEASED` moves
+  the orchestrator to `idle` with the package check due. The pending vector is
+  cleared under the install latch, and the history event is
+  `packages:attempt-<n>` with at most 256 characters of reason.
+- `stream`: the offer stays on the wire (`updating` cleared), and
+  `DOWNLOAD_ABORTED_FOR_STREAM` returns the orchestrator to `available`.
+
+Either way the image check stays eligible. "Before" is the state at the first
+version of this mode; "now" is the outcome.
+
+| Path (where it ends) | Wire before | Orchestrator before | Outcome now | Test (`image-apt-source-paths.test.ts` unless named) |
+|---|---|---|---|---|
+| Start refused synchronously (disruptive action, success fence, updates off, stream, busy, recovery unsettled, check not started) | unchanged | stays `awaiting-idle` | no attempt; manual install answers busy or stream | existing start-refusal tests |
+| Install's own check: refresh, reachability, captive portal, `dpkg_interrupted` | `failed` | released | `refused` | install's own refresh refused |
+| Record or capabilities refused at install (check or preparation) | `failed` (`discovery_failed`) | released | `refused` | record stops validating |
+| Clock gate or dpkg journal at preparation | `failed` | released | `refused` | clock gate closes |
+| Install-time discovery simulation fails (also when update routing refuses it) | `available` (prior offer; check failure only) | `downloading` (stuck) | `refused`, wire `failed` | discovery simulation fails |
+| Install-time hold query fails | `available` (prior offer; check failure only) | `downloading` (stuck) | `refused`, wire `failed` | hold query fails |
+| Install-time source or package policy fails | `failed` | released | `refused` | package policy read fails |
+| Install network unreachable, captive, probe or certificate refused | `failed` | released | `refused` | install's network unreachable |
+| Nothing actionable any more | `failed` | released | `refused` | nothing is installable |
+| Pinned recheck fails, or a standing refusal | `failed` | released | `refused` | pinned recheck refuses |
+| Space preflight: archive cleanup, `apt-config`, probe, `stat`, `statfs`, space | `update_preflight_failed` | released | `refused` | space preflight refuses |
+| Download under the pin fails | `failed` | released | `refused` | download under the pin fails |
+| Stream before preparation | `updating` kept | `downloading` until stream admission | `stream` | stream starts before preparation |
+| Transfer aborted or stream after the download | offer | `available` via stream admission, else `downloading` | `stream` | same `endAttemptForStream` as the row above |
+| Stream admission while `downloading` (orchestrator) | offer | `DOWNLOAD_ABORTED_FOR_STREAM` → `available`, pending vector kept | unchanged; the release cleanup holds the install latch | `image-apt-source-transactions.test.ts`: stream start during the release's cleanup |
+| Updates turned off, or a throw, inside preparation | `updating` kept, or as left | `downloading` | `refused` | the runner's `finally`, shared by every row (no own test) |
+| Delayed start after discovery fails | `failed` | released | `refused` | `endAttemptBeforeLaunch` in the delayed start (no own test) |
+| Launch rejected before systemd accepted (unit exists, spool, command or source pair, `systemd-run`) | `failed` | `failed` (shared) | `refused` | systemd refuses the unit |
+| Launched: systemd accepted the unit | unit's result | follows the wire (`DOWNLOAD_FAILED`, `COMMIT_*`) | unchanged | once the unit launched |
+
+Package checks (not install attempts) end through `runSoftwareUpdateCheck`'s
+result: `CHECK_FAILED` or `CHECK_SUCCEEDED_*`, both leave the image check
+eligible; a closed clock gate dispatches nothing. Tests:
+`apps/backend/src/tests/image-apt-source-paths.test.ts` drives each install path
+through the real package code and orchestrator.

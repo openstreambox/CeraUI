@@ -1427,9 +1427,11 @@ strictly. With a valid record:
   waits for it, and the release only applies to the phase entry and attempt it
   was issued for. Every install that ends before apt's unit launched (clock,
   dpkg, refresh, unreachable or captive repository, discovery, space preflight,
-  failed download) is reported as one typed outcome
-  (`packageFailedBeforeLaunch`) and returns to `idle` with the package check
-  due, not to `failed`, so image checks stay eligible. In this mode the unit
+  failed download, a start systemd refused) is recorded once per attempt
+  (`currentPackageInstallAttempt`: `refused` or `stream`, `launched` only after
+  systemd accepted the unit) and returns to `idle` with the package check due,
+  or to the offer for a stream, not to `failed`, so image checks stay eligible.
+  The path table is in [the update-system contract](agents/the-device-update-system.md#image-apt-source-every-way-an-install-attempt-ends-before-launch). In this mode the unit
   is never launched without the source pair; the legacy roster upgrade is
   refused.
 

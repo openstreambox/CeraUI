@@ -4,8 +4,10 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EVENT_REGISTRY } from "@ceraui/rpc/events";
 import type { UpdateState } from "@ceraui/rpc/schemas";
 import { logger } from "../helpers/logger.ts";
+import * as emitModule from "../modules/events/emit.ts";
 import {
 	buildAptAllDiscoveryArgs,
 	buildAptAllDownloadArgs,
@@ -28,10 +30,11 @@ import {
 	isExpectedAptAllInstallArgv,
 	validateDetachedAptServiceIdentity,
 } from "../modules/system/software-update-service-contract.ts";
+import type { PackageInstallAttempt } from "../modules/system/software-updates.ts";
 import { buildAptRefreshArgs } from "../modules/system/software-updates.ts";
 import { reduceOrchestrator } from "../modules/system/update-orchestrator/reducer.ts";
 import {
-	checkUpdatesNow,
+	admitAndPrepareStreamStart,
 	getOrchestratorState,
 	installUpdatesNow,
 	resetOrchestratorRuntimeForTest,
@@ -270,14 +273,20 @@ describe("the record's URI goes through the URL parser too", () => {
 // The orchestrator with an offer of one emergency fix.
 function orchestrator(
 	wire: () => UpdateState,
-	beforeLaunch = false,
+	attempt: () => PackageInstallAttempt = () => ({
+		id: 7,
+		outcome: { kind: "pending" },
+	}),
 	quarantine = testQuarantine(),
+	extra: Partial<Parameters<typeof fakeDeps>[0]> = {},
 ) {
 	const counts = { installs: 0, osChecks: 0 };
 	setOrchestratorRuntimeDepsForTest(
 		fakeDeps({
 			quarantine,
-			packageFailedBeforeLaunch: () => beforeLaunch,
+			packageInstallAttempt: attempt,
+			stopPackageInstallUnit: async () => {},
+			...extra,
 			loadCapabilities: async () => ({
 				mode: "capable",
 				features: ["apt-all-packages", "rauc-verity-streaming"],
@@ -316,81 +325,160 @@ const openClock = () => {
 	setImageClockGateFlagForTest(flag);
 };
 
-describe("an install that ended before apt's unit launched", () => {
-	it.each<[string, UpdateState]>([
-		["dpkg_interrupted", { kind: "failed", reason: "dpkg_interrupted" }],
-		["refresh_failed", { kind: "failed", reason: "refresh_failed" }],
-		["check_unavailable", { kind: "failed", reason: "check_unavailable" }],
-		[
-			"an unreachable repository",
-			{ kind: "failed", reason: "The software repositories are unreachable." },
-		],
-		[
-			"a captive portal",
-			{
-				kind: "failed",
-				reason: "A captive portal prevented the software update.",
-			},
-		],
-		[
-			"a failed refresh",
-			{
-				kind: "failed",
-				reason:
-					"Failed to fetch the updated package list; aborting the update.",
-			},
-		],
-		[
-			"the space preflight",
-			{
-				kind: "update_preflight_failed",
-				preflight_reason: "insufficient_space",
-			},
-		],
-	])(
-		"%s settles as a package result and keeps the image check eligible",
-		async (_label, wire) => {
-			withImageSource();
-			openClock();
-			const counts = orchestrator(() => wire, true);
-			setOrchestratorStateForTest({
-				...initialOrchestratorState(0),
-				phase: "downloading",
-			});
-			await runOrchestratorTick();
-			expect(getOrchestratorState().phase).toBe("idle");
-			expect(getOrchestratorState().failureReason).toBeNull();
-			const before = counts.osChecks;
-			expect(await checkUpdatesNow()).toEqual({ started: true });
-			expect(counts.osChecks).toBe(before + 1);
-		},
+// An install this process started; the attempt record says how it ended.
+async function startedInstall(
+	outcome: { current: PackageInstallAttempt["outcome"] },
+	quarantine = testQuarantine(),
+	id = 7,
+) {
+	const counts = orchestrator(
+		() => offer,
+		() => ({ id, outcome: outcome.current }),
+		quarantine,
 	);
+	setOrchestratorStateForTest({
+		...initialOrchestratorState(0),
+		phase: "available",
+	});
+	expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+		started: true,
+	});
+	expect(getOrchestratorState().phase).toBe("downloading");
+	return counts;
+}
 
-	it("an apt failure after launch still fails the update", async () => {
+describe("the attempt record, not the wire, settles an unlaunched install", () => {
+	it("only the attempt this process started is released", async () => {
 		withImageSource();
 		openClock();
-		orchestrator(
-			() => ({
-				kind: "failed",
-				reason: "discovery_failed",
+		const outcome: { current: PackageInstallAttempt["outcome"] } = {
+			current: { kind: "pending" },
+		};
+		const counts = orchestrator(
+			() => offer,
+			() => ({ id: 8, outcome: outcome.current }),
+		);
+		// Started as attempt 8, then the record moves on to another attempt.
+		setOrchestratorStateForTest({
+			...initialOrchestratorState(0),
+			phase: "available",
+		});
+		await installUpdatesNow({ scope: "packages" });
+		setOrchestratorRuntimeDepsForTest(
+			fakeDeps({
+				quarantine: testQuarantine(),
+				getPackageInstallWireState: () => offer,
+				packageInstallAttempt: () => ({
+					id: 9,
+					outcome: { kind: "refused", reason: "discovery_failed" },
+				}),
 			}),
-			false,
+		);
+		await runOrchestratorTick();
+		expect(getOrchestratorState().phase).toBe("downloading");
+		expect(counts.installs).toBe(1);
+	});
+
+	it("a long download diagnostic still reaches the history, bounded", async () => {
+		withImageSource();
+		openClock();
+		const diagnostic = `E: Failed to fetch https://${HOST}/pool/${"x".repeat(1_010)}`;
+		expect(diagnostic.length).toBeGreaterThan(1_015);
+		const outcome: { current: PackageInstallAttempt["outcome"] } = {
+			current: { kind: "pending" },
+		};
+		// What the history is handed, checked against its own schema.
+		const events: { code: string; params: unknown }[] = [];
+		const emit = spyOn(emitModule, "emitEvent").mockImplementation(
+			(code, params) => {
+				events.push({ code, params });
+			},
+		);
+		try {
+			await startedInstall(outcome);
+			outcome.current = { kind: "refused", reason: diagnostic };
+			await runOrchestratorTick();
+			expect(getOrchestratorState().phase).toBe("idle");
+			const refused = events.find(({ code }) => code === "update_refused");
+			expect(refused?.params).toMatchObject({ id: "packages:attempt-7" });
+			expect(
+				EVENT_REGISTRY.update_refused.params.safeParse(refused?.params).success,
+			).toBe(true);
+			const reason =
+				(refused?.params as { reason?: string } | undefined)?.reason ?? "";
+			expect(reason.length).toBeLessThanOrEqual(256);
+			expect(reason.startsWith("E: Failed to fetch")).toBe(true);
+		} finally {
+			emit.mockRestore();
+		}
+	});
+
+	it("a stream start during the release's cleanup cannot lose a retry's pending vector", async () => {
+		withImageSource();
+		openClock();
+		const gate = Promise.withResolvers<void>();
+		const reached = Promise.withResolvers<void>();
+		const quarantine = testQuarantine();
+		const clear = quarantine.clearPending.bind(quarantine);
+		let held = false;
+		quarantine.clearPending = async () => {
+			if (held) {
+				held = false;
+				reached.resolve();
+				await gate.promise;
+			}
+			return clear();
+		};
+		const outcome: { current: PackageInstallAttempt["outcome"] } = {
+			current: { kind: "pending" },
+		};
+		await startedInstall(outcome, quarantine);
+		held = true;
+		outcome.current = {
+			kind: "refused",
+			reason: "preflight_pre_clean_failed",
+		};
+		// The release clears the plan's pending vector, slowly.
+		const tick = runOrchestratorTick();
+		await reached.promise;
+		// A stream starts: the download goes back to the offer meanwhile.
+		await admitAndPrepareStreamStart();
+		expect(getOrchestratorState().phase).toBe("available");
+		// A retry now waits for the cleanup instead of saving underneath it.
+		const retry = await installUpdatesNow({ scope: "packages" });
+		expect(retry).toEqual({ started: false, reason: "busy" });
+		gate.resolve();
+		await tick;
+		// Once it is done, a retry's vector is the one left for quarantine.
+		outcome.current = { kind: "pending" };
+		expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+			started: true,
+		});
+		expect(await quarantine.readPending()).toEqual([{ name: "modemmanager" }]);
+	});
+
+	it("without the record, an unlaunched refusal fails the update as before", async () => {
+		withoutImageSource();
+		const outcome: { current: PackageInstallAttempt["outcome"] } = {
+			current: { kind: "pending" },
+		};
+		setOrchestratorRuntimeDepsForTest(
+			fakeDeps({
+				quarantine: testQuarantine(),
+				getPackageInstallWireState: () =>
+					outcome.current.kind === "refused"
+						? { kind: "failed", reason: "discovery_failed" }
+						: offer,
+				packageInstallAttempt: () => ({ id: 7, outcome: outcome.current }),
+				startPackageInstall: () => ({ started: true }),
+			}),
 		);
 		setOrchestratorStateForTest({
 			...initialOrchestratorState(0),
-			phase: "downloading",
+			phase: "available",
 		});
-		await runOrchestratorTick();
-		expect(getOrchestratorState().phase).toBe("failed");
-	});
-
-	it("without the record, the same refusal fails the update as before", async () => {
-		withoutImageSource();
-		orchestrator(() => ({ kind: "failed", reason: "discovery_failed" }), true);
-		setOrchestratorStateForTest({
-			...initialOrchestratorState(0),
-			phase: "downloading",
-		});
+		await installUpdatesNow({ scope: "packages" });
+		outcome.current = { kind: "refused", reason: "discovery_failed" };
 		await runOrchestratorTick();
 		expect(getOrchestratorState().phase).toBe("failed");
 	});
@@ -447,7 +535,7 @@ describe("a release only ever releases the plan it was issued for", () => {
 			}
 			return clear();
 		};
-		const counts = orchestrator(() => offer, false, quarantine);
+		const counts = orchestrator(() => offer, undefined, quarantine);
 		const info = spyOn(logger, "info").mockImplementation(() => logger);
 		try {
 			setOrchestratorStateForTest({
