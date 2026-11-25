@@ -12,6 +12,7 @@ import {
 import { firstPartyOffer } from "../modules/system/ceralive-update-notice.ts";
 import {
 	FALLBACK_IMAGE_OWNED_PACKAGES,
+	isDebianVersion,
 	parseLocalOverridePin,
 	readImageOwnedPackages,
 	setImageOwnedPackagesReaderForTest,
@@ -177,6 +178,41 @@ describe("the image's local-override pin", () => {
 		],
 	])("refuses %s", (_label, text) => {
 		expect(parseLocalOverridePin(text)).toBeNull();
+	});
+});
+
+// `dpkg --validate-version` on the workstation (dpkg 1.23.7), 25 Nov 2026.
+const dpkgVerdicts: ReadonlyArray<readonly [string, boolean]> = [
+	["1:2.3:4-1", true],
+	["2.3--1", true],
+	["2147483648:1", false],
+	["2147483647:1", true],
+	["1:", false],
+	["1.0:2", false],
+	["2.3-", false],
+	["a1.0", false],
+	["1.24.2-2~ceralive.3+osb2", true],
+	["2026.11.5-20261124T222734.1dbec5e62", true],
+	["1:2.3", true],
+	[":1", false],
+	["1.0-r_1", false],
+	["1.0 2", false],
+	["0:1", true],
+	["1-2-3", true],
+	["1:1:1", true],
+	["1.0-", false],
+	["-1", false],
+	["1.0-1:2", false],
+];
+
+describe("pin versions follow dpkg", () => {
+	it.each(dpkgVerdicts)("%s: dpkg accepts = %p", (version, accepted) => {
+		expect(isDebianVersion(version)).toBe(accepted);
+		expect(
+			parseLocalOverridePin(
+				`Package: modemmanager\nPin: version ${version}\nPin-Priority: 1001\n`,
+			),
+		).toEqual(accepted ? ["modemmanager"] : null);
 	});
 });
 

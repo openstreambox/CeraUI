@@ -442,6 +442,71 @@ describe("runtime: offered packages no longer hide a system image", () => {
 		expect(getOsUpdateSummary().candidate).toBeNull();
 	});
 
+	test("a scheduled step that stalled before its image check yields to Check now", async () => {
+		// Given a tick that read the stable channel and then stalls on capabilities.
+		let channel: "stable" | "beta" = "stable";
+		const stall = Promise.withResolvers<void>();
+		const fresh = Promise.withResolvers<CheckOsManifestResult>();
+		let capabilityReads = 0;
+		const channels: string[] = [];
+		setup(async () => noImage, {
+			loadSettings: async () => ({ ...(await settings(false)()), channel }),
+			loadCapabilities: async () => {
+				if (++capabilityReads === 1) await stall.promise;
+				return {
+					mode: "capable",
+					features: ["apt-all-packages", "rauc-verity-streaming"],
+				};
+			},
+			checkOsManifest: async (requested) => {
+				channels.push(requested ?? "");
+				return requested === "beta" ? fresh.promise : imageFound;
+			},
+		});
+		setOrchestratorStateForTest(packagesWaiting());
+		const tick = runOrchestratorTick();
+		while (capabilityReads === 0) await Bun.sleep(1);
+		// When the channel changes and Check now's image check is still on the
+		// wire (the OS clock still due) as the stalled tick resumes.
+		channel = "beta";
+		const check = checkUpdatesNow();
+		while (channels.length === 0) await Bun.sleep(1);
+		stall.resolve();
+		await tick;
+		fresh.resolve(noImage);
+		expect(await check).toEqual({ started: true });
+		// Then only the fresh check ran, on the new channel, and its answer stands.
+		expect(channels).toEqual(["beta"]);
+		expect(getOrchestratorState().phase).toBe("available");
+		expect(getOsUpdateSummary().candidate).toBeNull();
+	});
+
+	test("a superseded scheduled check does not queue the packages", async () => {
+		// Given automatic packages and a scheduled image check on the wire.
+		const scheduled = Promise.withResolvers<CheckOsManifestResult>();
+		const manual = Promise.withResolvers<CheckOsManifestResult>();
+		let manifests = 0;
+		const h = setup(
+			() => (++manifests === 1 ? scheduled.promise : manual.promise),
+			{ loadSettings: settings(true) },
+		);
+		setOrchestratorStateForTest(packagesWaiting());
+		const tick = runOrchestratorTick();
+		while (h.calls.checks === 0) await Bun.sleep(1);
+		// When Check now starts its own image check, and the older one answers first.
+		const check = checkUpdatesNow();
+		while (h.calls.checks < 2) await Bun.sleep(1);
+		scheduled.resolve(noImage);
+		await tick;
+		// Then the offer was not queued behind the fresh check's back.
+		expect(getOrchestratorState().phase).toBe("available");
+		// And the fresh answer decides.
+		manual.resolve(imageFound);
+		expect(await check).toEqual({ started: true });
+		expect(getOrchestratorState().phase).toBe("os-available");
+		expect(h.calls.installs).toBe(0);
+	});
+
 	test("a failed package check does not hold back the image check", async () => {
 		// Given an idle device whose package check fails.
 		const h = setup(imageFound, {

@@ -46,10 +46,40 @@ export type ImageOwnedPackages = {
 };
 
 const FIELD_RE = /^([A-Za-z][A-Za-z-]*):[ \t]*(.*?)[ \t]*$/;
-// The forms the image writes: the installed copy, or its exact version
-// ([epoch:]upstream[-revision], each part as dpkg accepts it).
-const PIN_FORM_RE =
-	/^(?:release a=now|version (?:[0-9]+:)?[0-9][A-Za-z0-9.+~]*(?:-[A-Za-z0-9.+~]+)*)$/;
+// The forms the image writes: the installed copy, or its exact version.
+const PIN_RELEASE_NOW = "release a=now";
+const PIN_VERSION_PREFIX = "version ";
+const DPKG_MAX_EPOCH = 2_147_483_647;
+
+/**
+ * A version as dpkg parses it: an optional numeric epoch up to the first
+ * colon, the revision after the last hyphen (if any), and an upstream part
+ * that starts with a digit.
+ */
+export function isDebianVersion(version: string): boolean {
+	const colon = version.indexOf(":");
+	let rest = version;
+	if (colon !== -1) {
+		const epoch = version.slice(0, colon);
+		if (!/^[0-9]+$/.test(epoch) || Number(epoch) > DPKG_MAX_EPOCH) return false;
+		rest = version.slice(colon + 1);
+	}
+	const hyphen = rest.lastIndexOf("-");
+	if (hyphen !== -1 && !/^[A-Za-z0-9.+~]+$/.test(rest.slice(hyphen + 1)))
+		return false;
+	return /^[0-9][A-Za-z0-9.+~:-]*$/.test(
+		hyphen === -1 ? rest : rest.slice(0, hyphen),
+	);
+}
+
+function isImagePinForm(pin: string): boolean {
+	return (
+		pin === PIN_RELEASE_NOW ||
+		(pin.startsWith(PIN_VERSION_PREFIX) &&
+			isDebianVersion(pin.slice(PIN_VERSION_PREFIX.length)))
+	);
+}
+
 // A pin that holds a package must outrank the apt.ceralive.tv origin pin, and
 // APT ignores a priority beyond a signed 16-bit value.
 const ORIGIN_PIN_PRIORITY = 990;
@@ -78,7 +108,7 @@ export function parseLocalOverridePin(text: string): string[] | null {
 		const packages = fields.get("package")?.split(/\s+/) ?? [];
 		if (
 			fields.size !== 3 ||
-			!PIN_FORM_RE.test(fields.get("pin") ?? "") ||
+			!isImagePinForm(fields.get("pin") ?? "") ||
 			!/^\d+$/.test(fields.get("pin-priority") ?? "") ||
 			Number(fields.get("pin-priority")) <= ORIGIN_PIN_PRIORITY ||
 			Number(fields.get("pin-priority")) > APT_MAX_PIN_PRIORITY ||
