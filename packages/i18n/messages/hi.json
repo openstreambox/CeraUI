@@ -2922,7 +2922,7 @@
 	"network.radio.usbNone": "कोई नहीं",
 	"network.radio.neighbour": "मॉडेम {id}",
 	"network.radio.anotherModem": "दूसरा मॉडेम",
-	"network.radio.sources": "स्रोत और इतिहास",
+	"network.radio.sources": "विवरण",
 	"network.radio.readings": "सभी रीडिंग",
 	"network.radio.history": "इतिहास",
 	"network.radio.historyEmpty": "अभी कोई इतिहास नहीं।",

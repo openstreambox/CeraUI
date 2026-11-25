@@ -2925,7 +2925,7 @@
 	"network.radio.usbNone": "Nenhum",
 	"network.radio.neighbour": "Modem {id}",
 	"network.radio.anotherModem": "outro modem",
-	"network.radio.sources": "Fontes e histórico",
+	"network.radio.sources": "Detalhes",
 	"network.radio.readings": "Todas as leituras",
 	"network.radio.history": "Histórico",
 	"network.radio.historyEmpty": "Ainda sem histórico.",

@@ -2877,7 +2877,7 @@
 	"network.radio.usbNone": "없음",
 	"network.radio.neighbour": "모뎀 {id}",
 	"network.radio.anotherModem": "다른 모뎀",
-	"network.radio.sources": "소스 및 기록",
+	"network.radio.sources": "세부 정보",
 	"network.radio.readings": "모든 측정값",
 	"network.radio.history": "기록",
 	"network.radio.historyEmpty": "아직 기록이 없습니다.",

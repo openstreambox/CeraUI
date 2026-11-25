@@ -2877,7 +2877,7 @@
 	"network.radio.usbNone": "なし",
 	"network.radio.neighbour": "モデム {id}",
 	"network.radio.anotherModem": "別のモデム",
-	"network.radio.sources": "ソースと履歴",
+	"network.radio.sources": "詳細",
 	"network.radio.readings": "すべての測定値",
 	"network.radio.history": "履歴",
 	"network.radio.historyEmpty": "履歴はまだありません。",

@@ -2922,7 +2922,7 @@
 	"network.radio.usbNone": "Keine",
 	"network.radio.neighbour": "Modem {id}",
 	"network.radio.anotherModem": "ein anderes Modem",
-	"network.radio.sources": "Quellen und Verlauf",
+	"network.radio.sources": "Details",
 	"network.radio.readings": "Alle Messwerte",
 	"network.radio.history": "Verlauf",
 	"network.radio.historyEmpty": "Noch kein Verlauf.",
