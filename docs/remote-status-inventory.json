@@ -4896,6 +4896,240 @@
       ]
     },
     {
+      "source": "apps/backend/src/modules/streaming/link-telemetry.ts",
+      "call": "broadcastMsg",
+      "message": "\"status\"",
+      "fields": [
+        {
+          "path": "bond_mapping",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bond_mapping.state",
+          "types": [
+            "\"active\"",
+            "\"absent\"",
+            "\"degraded\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bond_mapping.disposition",
+          "types": [
+            "\"mapped\"",
+            "\"retained_last_valid\"",
+            "\"legacy_unique_only\"",
+            "\"startup_collision_excluded\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bond_mapping.source",
+          "types": [
+            "\"sender\"",
+            "\"writer\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bond_mapping.reason",
+          "types": [
+            "undefined",
+            "\"unsupported\"",
+            "\"malformed\"",
+            "\"hash_mismatch\"",
+            "\"unknown_iface\"",
+            "\"retry_exhausted\"",
+            "\"missing_file\"",
+            "\"unreadable\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bond_mapping.collisions",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bond_mapping.collisions[].ip",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bond_mapping.collisions[].effective_index",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bond_mapping.collisions[].excluded_indices[]",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "linkTelemetry",
+          "types": [
+            "null"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "linkTelemetry.links[].conn_id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "linkTelemetry.links[].link_id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "linkTelemetry.links[].identity_state",
+          "types": [
+            "\"resolved\"",
+            "\"unmappable\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "linkTelemetry.links[].iface",
+          "types": [
+            "string"
+          ],
+          "decision": "link distinction needed; original identity not needed: substitute session labels"
+        },
+        {
+          "path": "linkTelemetry.links[].port_label",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "linkTelemetry.links[].serial",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "linkTelemetry.links[].rtt_ms",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed diagnostic"
+        },
+        {
+          "path": "linkTelemetry.links[].nak_count",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed diagnostic"
+        },
+        {
+          "path": "linkTelemetry.links[].weight_percent",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed diagnostic"
+        },
+        {
+          "path": "linkTelemetry.links[].bitrate_bps",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed diagnostic"
+        },
+        {
+          "path": "linkTelemetry.links[].bytes_sent_total",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed diagnostic"
+        },
+        {
+          "path": "linkTelemetry.links[].carrying",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "linkTelemetry.links[].stale",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "needed: typed diagnostic"
+        },
+        {
+          "path": "linkTelemetry.stale",
+          "types": [
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "linkTelemetry.active_links",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "linkTelemetry.measured_bps",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed scalar or closed enum"
+        },
+        {
+          "path": "linkTelemetry.bytes_sent_total",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed scalar or closed enum"
+        },
+        {
+          "path": "linkTelemetry.not_carrying_ifaces[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "linkTelemetry.lastReadMs",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed scalar or closed enum"
+        },
+        {
+          "path": "link_telemetry_waiting",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
       "source": "apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts",
       "call": "broadcastMsg",
       "message": "\"wifi\"",
@@ -6410,225 +6644,6 @@
           "types": [
             "null",
             "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        }
-      ]
-    },
-    {
-      "source": "apps/backend/src/modules/streaming/link-telemetry.ts",
-      "call": "broadcastMsg",
-      "message": "\"status\"",
-      "fields": [
-        {
-          "path": "bond_mapping",
-          "types": [
-            "null"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "bond_mapping.state",
-          "types": [
-            "\"active\"",
-            "\"absent\"",
-            "\"degraded\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "bond_mapping.disposition",
-          "types": [
-            "\"mapped\"",
-            "\"retained_last_valid\"",
-            "\"legacy_unique_only\"",
-            "\"startup_collision_excluded\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "bond_mapping.source",
-          "types": [
-            "\"sender\"",
-            "\"writer\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "bond_mapping.reason",
-          "types": [
-            "undefined",
-            "\"unsupported\"",
-            "\"malformed\"",
-            "\"hash_mismatch\"",
-            "\"unknown_iface\"",
-            "\"retry_exhausted\"",
-            "\"missing_file\"",
-            "\"unreadable\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "bond_mapping.collisions",
-          "types": [
-            "undefined"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "bond_mapping.collisions[].ip",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "bond_mapping.collisions[].effective_index",
-          "types": [
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "bond_mapping.collisions[].excluded_indices[]",
-          "types": [
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "linkTelemetry",
-          "types": [
-            "null"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "linkTelemetry.links[].conn_id",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "linkTelemetry.links[].link_id",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "linkTelemetry.links[].identity_state",
-          "types": [
-            "\"resolved\"",
-            "\"unmappable\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "linkTelemetry.links[].iface",
-          "types": [
-            "string"
-          ],
-          "decision": "link distinction needed; original identity not needed: substitute session labels"
-        },
-        {
-          "path": "linkTelemetry.links[].port_label",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "linkTelemetry.links[].serial",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "linkTelemetry.links[].rtt_ms",
-          "types": [
-            "number"
-          ],
-          "decision": "needed: typed diagnostic"
-        },
-        {
-          "path": "linkTelemetry.links[].nak_count",
-          "types": [
-            "number"
-          ],
-          "decision": "needed: typed diagnostic"
-        },
-        {
-          "path": "linkTelemetry.links[].weight_percent",
-          "types": [
-            "number"
-          ],
-          "decision": "needed: typed diagnostic"
-        },
-        {
-          "path": "linkTelemetry.links[].bitrate_bps",
-          "types": [
-            "number"
-          ],
-          "decision": "needed: typed diagnostic"
-        },
-        {
-          "path": "linkTelemetry.links[].bytes_sent_total",
-          "types": [
-            "number"
-          ],
-          "decision": "needed: typed diagnostic"
-        },
-        {
-          "path": "linkTelemetry.links[].stale",
-          "types": [
-            "false",
-            "true"
-          ],
-          "decision": "needed: typed diagnostic"
-        },
-        {
-          "path": "linkTelemetry.stale",
-          "types": [
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "linkTelemetry.active_links",
-          "types": [
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "linkTelemetry.measured_bps",
-          "types": [
-            "number"
-          ],
-          "decision": "needed: typed scalar or closed enum"
-        },
-        {
-          "path": "linkTelemetry.bytes_sent_total",
-          "types": [
-            "number"
-          ],
-          "decision": "needed: typed scalar or closed enum"
-        },
-        {
-          "path": "linkTelemetry.lastReadMs",
-          "types": [
-            "number"
-          ],
-          "decision": "needed: typed scalar or closed enum"
-        },
-        {
-          "path": "link_telemetry_waiting",
-          "types": [
-            "false",
-            "true"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
@@ -16266,6 +16281,81 @@
       ]
     },
     {
+      "source": "apps/backend/src/modules/system/sensors.ts",
+      "call": "broadcastMsg",
+      "message": "\"sensors\"",
+      "fields": [
+        {
+          "path": ".*",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
+      "source": "apps/backend/src/modules/system/tailscale.ts",
+      "call": "broadcastMsg",
+      "message": "\"status\"",
+      "fields": [
+        {
+          "path": "tailscale.state",
+          "types": [
+            "\"unknown\"",
+            "\"off\"",
+            "\"unavailable\"",
+            "\"connected\"",
+            "\"needs_key\"",
+            "\"needs_approval\"",
+            "\"joining\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.hostname",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.address",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.tailnet",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.keyExpiry",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.notice",
+          "types": [
+            "undefined",
+            "\"ssh_off_by_tailnet\"",
+            "\"updates_not_pinned\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
       "source": "apps/backend/src/modules/ui/status.ts",
       "call": "buildMsg",
       "message": "\"status\"",
@@ -17016,6 +17106,14 @@
           "decision": "needed: typed diagnostic"
         },
         {
+          "path": "linkTelemetry.links[].carrying",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "linkTelemetry.links[].stale",
           "types": [
             "false",
@@ -17050,6 +17148,13 @@
             "number"
           ],
           "decision": "needed: typed scalar or closed enum"
+        },
+        {
+          "path": "linkTelemetry.not_carrying_ifaces[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
           "path": "linkTelemetry.lastReadMs",
@@ -17631,6 +17736,67 @@
           "types": [
             "false",
             "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.state",
+          "types": [
+            "\"unknown\"",
+            "\"off\"",
+            "\"unavailable\"",
+            "\"connected\"",
+            "\"needs_key\"",
+            "\"needs_approval\"",
+            "\"joining\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.hostname",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.address",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.tailnet",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.keyExpiry",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.notice",
+          "types": [
+            "undefined",
+            "\"ssh_off_by_tailnet\"",
+            "\"updates_not_pinned\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -47091,7 +47257,7 @@
   ],
   "dependencies": {
     "apps/backend/src/helpers/config-schemas.ts": "0b000a65929292aec789294fa84024c2c9e92db0c8ae842acaeef603cc906c0e",
-    "apps/backend/src/main.ts": "8378c1e1498e981921891988fd637e0582fc6673334d69e2c2d10ca0eeb43b31",
+    "apps/backend/src/main.ts": "882851d9aee27eca0748a2bd14c838d286f5f9a15232f5414c77b58f860351bf",
     "apps/backend/src/mocks/mock-service.ts": "e7547acc0be1355d2310d9aa39457159a94093a48be13fcffad3239bfc36d19b",
     "apps/backend/src/mocks/providers/streaming.ts": "e0bab1079bf5c6209e287c71c5e169d5545effd0d3bac93d6cfc9a584f910b0e",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -47103,8 +47269,8 @@
     "apps/backend/src/modules/modems/modem-wire-projection.ts": "54825c600c6d6adc4f049b09d562fb90aafe85a9195fb4810649b9404ba4e7c7",
     "apps/backend/src/modules/modems/modems-state.ts": "664049da3a73481068a483da604719cbea8abe290995f907a9e07eebc69cc3a5",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
-    "apps/backend/src/modules/network/network-ingest.ts": "29234fe5c8db5cce9344d24253b1938857f5dcf3bb2643dbe5fd468f66abc128",
-    "apps/backend/src/modules/network/network-interfaces.ts": "99e980f84f320d567cef372218005f6f58b4ac28edb3556ed340e3282c53100a",
+    "apps/backend/src/modules/network/network-ingest.ts": "fcb33cbff26195a53375f9ae12c5f85bbb76cc2bbb7d63d76a90cf2562eb8e77",
+    "apps/backend/src/modules/network/network-interfaces.ts": "c5d0167ee7a535b18d0763e3ec3760817baa346ea921dc7703e13879cac9668e",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "2221782a8312e2ffddc545a6f4434e62cf53d0f82948d49987a5a9263fe60d26",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "59e35c76047fe4bfa5484cbbeaae996507cc0f1f778641eb83dc6248f72b6395",
@@ -47113,28 +47279,28 @@
     "apps/backend/src/modules/network/uplink-steering/runtime.ts": "fd1051a665a1972798e2377ba70f64b131c67b574add48b41f1e05d13ff17753",
     "apps/backend/src/modules/network/uplink-steering/status.ts": "9c305c576faa8d32bfab922275f0bd7e69a327575185c82abd9138139eab9f65",
     "apps/backend/src/modules/remote-control/set-profile-wiring.ts": "f3d4ef2c672e440b940062dc2ad9fefbbf19f8b66c9d4f39e0bf25866ba39b72",
-    "apps/backend/src/modules/remote/remote-relays.ts": "eb9e79c0404cb498065c5c2d041de52f80e1161626fa566fc70fc74d4e4b0789",
-    "apps/backend/src/modules/remote/remote.ts": "496724cf3ebf225fe3f966829e6b9f4cdce888367b465dec19b214c9e2472356",
+    "apps/backend/src/modules/remote/remote-relays.ts": "94e7b17680888b8cd31911f09066d3a97e11567417a96de4aa28ab3e910189ee",
+    "apps/backend/src/modules/remote/remote.ts": "e11e68bc3fe26c1ae3b1405ec0c233d3d726cce7fd62523061a5f0192e981287",
     "apps/backend/src/modules/streaming/audio-meter-bridge.ts": "d416b84d6d8ee44273da7292aa96ee6f9d605b2fe16ef55e85db9de9bd38e621",
     "apps/backend/src/modules/streaming/audio.ts": "2f90bc24e33e7840017c79ef909dad257e0d180c7d9e6401daf70f7bbd024d43",
     "apps/backend/src/modules/streaming/auto-audio.ts": "dc196f13ae03b4d6b19ebf483b245caf46e7de01fef3051d50086c75622bb4ad",
-    "apps/backend/src/modules/streaming/capabilities.ts": "8a2617336bee51475bad735e899f67d6247eb2bc7629d5ef61727d5379866d81",
-    "apps/backend/src/modules/streaming/cerastream-backend.ts": "23be7743de0eaa64f0804513d0128dd6f10ec6cbe3f21b5ef84d27cfee66e287",
-    "apps/backend/src/modules/streaming/config-change-bridge.ts": "6e102a747e481b4eca010c75ad295787afd6649289603febd6eef47b276fcaf5",
+    "apps/backend/src/modules/streaming/capabilities.ts": "4ef50d3ab986628b127be8bb2a548438e3f60dc6b76a580ef586d8b8455adc3e",
+    "apps/backend/src/modules/streaming/cerastream-backend.ts": "a4dd1d721fae181c1a87c1eeb9c0028aee5438c98f7f6460239239d292bbd4e1",
+    "apps/backend/src/modules/streaming/config-change-bridge.ts": "c69aa207a8a9f7c642a19e65a91f1422f9b4e078c6f3384a9de31bc8ad1b7468",
     "apps/backend/src/modules/streaming/connection-restarting.ts": "61efbdeb6bfa9a171a1225473cd0b0eaa43679033ffee7496fe8c47f4ca82c25",
     "apps/backend/src/modules/streaming/devices.ts": "d8daf1992a9cbb6a2663a62d4be1a181462f86bba952c2eb693975508f9d9646",
     "apps/backend/src/modules/streaming/engine-reconnect.ts": "8e7d9c8ab923af922f5caa0d474b0941ce860f96fe9acf8f72b7291039185fc2",
-    "apps/backend/src/modules/streaming/link-telemetry-rows.ts": "c5bed2c7e327a7b29116a156caf4519bce5ea0a73823434c67144bc182cd664d",
-    "apps/backend/src/modules/streaming/link-telemetry.ts": "5c951313eecd37e5e22b7e5f95d290d1315e4442f5d72f629cfe0b2f089bb620",
+    "apps/backend/src/modules/streaming/link-telemetry-rows.ts": "b310b30d70ac97aacc33674af41aefd25afd5ba9b8f3eca6f2957c440bc890a6",
+    "apps/backend/src/modules/streaming/link-telemetry.ts": "a818bb77f6bf80a5d1cc6820437b008bd33975d4c0f2c63dc89107608b35a55f",
     "apps/backend/src/modules/streaming/pipeline-sources.ts": "505bc662c4f18ee63770d0e6e327f69018590056bb06ebdcd19fae838535b1e2",
     "apps/backend/src/modules/streaming/pipelines.ts": "a4e0269423cc377a2ba3d199e08d0423fdf2b39a8e5fac6650c0840964943a79",
     "apps/backend/src/modules/streaming/sources.ts": "32b2b97ac916782599909fd93ee79a939fd8176ac67747ef41cb2112bb7092dd",
     "apps/backend/src/modules/streaming/stream-lifecycle-status.ts": "33aa1a07d69097df21fb3288ef4af93078d71a44e85a7f22d1b79d928357aa80",
-    "apps/backend/src/modules/streaming/streaming.ts": "40641b725cc09d17f76725f9de03b8e5a9f9e82fb49dcf738a79f4ebcc3e383c",
+    "apps/backend/src/modules/streaming/streaming.ts": "83a8a4edfc179e43cd71912cdbb331ca0b5308589ca1bc498b288d2dbbcf7730",
     "apps/backend/src/modules/streaming/streamloop/autostart.ts": "03d8a15d80b4dd164b75c124e815803be9dd56a6b584e3b93a100c7f21eebd49",
     "apps/backend/src/modules/system/apt-progress.ts": "d7813bc7d07cef5c4e0c0c8199272a5e3ebe0d7c8f6a8c197c30a50b30dc7a8a",
-    "apps/backend/src/modules/system/carrying-runtime.ts": "3838afd09f85ab992772ae14c46b0de3b54262467153b70f53f62ad37e4a0090",
-    "apps/backend/src/modules/system/carrying.ts": "9d67bcedfe40111e4012dab997c0ae007a94d594d19154b43c68af4c3fc3e3fa",
+    "apps/backend/src/modules/system/carrying-runtime.ts": "3e885cf7736e3ec69a6f1aea2fc7310288567417209cae2f00747975e8a5c1a1",
+    "apps/backend/src/modules/system/carrying.ts": "2ebddf550a97b1d7a2978afe98cca50423daf8e779b30dc1112c99e05adb539c",
     "apps/backend/src/modules/system/collectors/cpufreq.ts": "9d47ec1f943ad148334baa4629d58f5ab140337071e5eba1c584f738e0d5f5a8",
     "apps/backend/src/modules/system/collectors/ddr.ts": "04b912ca2207f7921fb597005a83de98cdc78c724b542b97d5f28ca2b8d09a15",
     "apps/backend/src/modules/system/collectors/gpu.ts": "376b311b6431f74018414c9733bbb6924acd328a7ff1b7be556fc95c915f3b21",
@@ -47142,16 +47308,17 @@
     "apps/backend/src/modules/system/cpu.ts": "0ff71159eeabb9d0b05ba6b5078d3ea2a7416810ae583d1e4b82768c2265a5c9",
     "apps/backend/src/modules/system/device-stats.ts": "50549f8192a08c1cfb2cd1344744fb6a9a2cba8366fc09073bcc3df945e92c0e",
     "apps/backend/src/modules/system/encoder-load.ts": "edc310e16747a331b232b09d0b7d3ee7fc811621241840268a85ebda2b9729db",
-    "apps/backend/src/modules/system/fan.ts": "e73086dbfd02c219c8c6d644687f1e10fcee62e4bb21d2e9a527a4d5a64180f3",
+    "apps/backend/src/modules/system/fan.ts": "cfdd9d1bc579dc0f8e11fcf7bfa184f1f7b557392f720c3326ee561f532d5c51",
     "apps/backend/src/modules/system/kiosk.ts": "921df84e43d6960e9a1ab0bfd8768a7a85a7fe682fccc185bd8585f88823e96a",
     "apps/backend/src/modules/system/logs.ts": "8005a72398610c33562bd5b1d681c5656a14479b0c0e71ad3fe8f74433048109",
     "apps/backend/src/modules/system/readiness.ts": "6c2725aae677f8a4a22d0dcce028b4e0d42a83916d3b4f7ba6b94e67cfe03e22",
-    "apps/backend/src/modules/system/sensors.ts": "e6fdcc8d57f4decc10b3247fdcd2cbc11e9fb23a489bbe546e3ee3e7a3f1adc7",
+    "apps/backend/src/modules/system/sensors.ts": "a8b7c1792525f429bd06018831c18832fa56f588fdf8f8345b265768375f4e4c",
     "apps/backend/src/modules/system/software-updates.ts": "f03de94da07813adb2bb0f63a50b28098a7691ebcd0af2e7a0543a60b35ec88d",
     "apps/backend/src/modules/system/ssh.ts": "8b0dd71409c810739ad8d6b4a8d02f89642b8140844ac1d71fee4f9c7d174115",
+    "apps/backend/src/modules/system/tailscale.ts": "b2731b7eed6258db2efef8de0187b03dbf66cdeed37cee035f4c5788dc7f2fdf",
     "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "d79795b11cce052eb4daedf30c54297865c9e9c5d5f18ae66885329e0a130e42",
     "apps/backend/src/modules/ui/notifications.ts": "db707000c3b16d087d80d99e939b98c61392480b190e2f32a8eb193ed3c3bdb5",
-    "apps/backend/src/modules/ui/status.ts": "42cc1264a1e4c5ae9d1a6d569a871273cc7d74313e82c8700d53ef98c425dfb1",
+    "apps/backend/src/modules/ui/status.ts": "6fab81e8d2e9c0ef7b6414b8c52277570c0495410338e492157f8e3e79b93f4f",
     "apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "e2c3ce9b12f5eba0d9a91779327bb0990eb240656dcf5aa8d6b160e974700cac",
     "apps/backend/src/modules/wifi/wifi-country.ts": "b9e350f52a819d5cc84fd8a742424ce73c29b35ebb03136b0fd36aea31f4b422",
     "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "9776c777bcd7291788471587127cc52991ebe907b23620c8e1dbc0f476789099",
@@ -47162,9 +47329,9 @@
     "apps/backend/src/rpc/compat.ts": "6902642f8e2bae6039ac29880faa4bd7e92ffbea9a77be7c3a428da467d115ec",
     "apps/backend/src/rpc/procedures/audio-mix.procedure.ts": "77fb8974d0078221af7388c1bd211d485af80e5bf0a3b9d433308116f46f0535",
     "apps/backend/src/rpc/procedures/captive-portal.procedure.ts": "79c1fabf54a4b83f35b35519716e920d18bdb57113cb28f7ded6e6fa406d8656",
-    "apps/backend/src/rpc/procedures/network.procedure.ts": "64c7b15f4efe979e31f7fc7d2c4e4ed05e72580cf431f6dacc27ebbf48777bf3",
-    "apps/backend/src/rpc/procedures/streaming.procedure.ts": "7f2bcee314c274fa99b64f8efca65cde63fec4afba3280375dc3d4e1eb3a9c28",
-    "bun.lock": "e4b62215f7177c79acfb7891bf25c98b43ea58d8979dbbabf15118c5eb8c7600",
+    "apps/backend/src/rpc/procedures/network.procedure.ts": "a44dfdcbe37ac32f9c65392671072332b072e50b841344e13dc467954d207640",
+    "apps/backend/src/rpc/procedures/streaming.procedure.ts": "3b5266b91a59b0570ae6cb1ce4b9cb8bbdb0ccbaa8a9aea39dee69e5a7f5a3e4",
+    "bun.lock": "311175002287ebf799cc23dabe3e294949bc3e12c86b409a1436c747f87a7fd2",
     "packages/rpc/src/schemas/addons.schema.ts": "4d03862d5f9a8a2353a37ece742a96213d926e0e7ddc735b98329959dbb22ae6",
     "packages/rpc/src/schemas/audio-level.schema.ts": "eb4bd01a1d605776e8f11eab8c8acb5f8333c6868e0bbab5802a4118f507a225",
     "packages/rpc/src/schemas/bluetooth.schema.ts": "92d0d2837dd66aeed312188efff6bc8ff31d0a9f88559d422c3d7aaaef21215d",
@@ -47174,15 +47341,15 @@
     "packages/rpc/src/schemas/logs.schema.ts": "d56584362e084a92eeb4c5d91d753a317b9f29140b4909ebc3f714e05a723038",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
     "packages/rpc/src/schemas/modems.schema.ts": "b5d994ece2800b8058fd5a2e88137c42da07c79af91dcff25b5d77e3b5106c4a",
-    "packages/rpc/src/schemas/network.schema.ts": "3038e31d908d42c65b1dfb4d936040edfe08f72e1ba8ddbe5862aef44622fb38",
+    "packages/rpc/src/schemas/network.schema.ts": "fd3ccb0b89bd33488e52125e541f4a68ad9a6d9eaa2119769972d58bf961220e",
     "packages/rpc/src/schemas/notifications.schema.ts": "6c13851bf6dbb6cdece71effbd24c48e4e5ee12fe45125eedb9aad8b135126fd",
     "packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",
     "packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",
     "packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
-    "packages/rpc/src/schemas/status.schema.ts": "b8a5b16601f8a63b4eaac0a3427a48d9c19a918878ebfc6c9adb3d9aad2532c5",
+    "packages/rpc/src/schemas/status.schema.ts": "c62a8acc6eb69bf918939c8747e8ed7217f20ef8d5071833c7731ae6a89ec39e",
     "packages/rpc/src/schemas/streaming.schema.ts": "a864393f5a1bad246cbb6a16e0a78cc1155e05c944c06c350c54be7146c48ed6",
-    "packages/rpc/src/schemas/system.schema.ts": "3620e50eeed3ca1314a74e743dcfc4516380f664c31d07db0579c1019da7e939",
+    "packages/rpc/src/schemas/system.schema.ts": "be2db8dd7bbfcc4e6cba2812d4ad49f3d74d75d96216eec59532eb136f1ec009",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "ac5e6859c7723d4381f1502246d9778262c663d80d06b5b2eb5aaf1796da5613",
     "packages/rpc/src/schemas/wifi.schema.ts": "f15a6630ec04482bcd022d89734a0a07214aad8765047b52221bd532bbccb082"
   }
