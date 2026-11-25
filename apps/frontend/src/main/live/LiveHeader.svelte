@@ -10,9 +10,15 @@ interface Props {
 	 * role=status statement of what the device knows.
 	 */
 	unconfirmed?: boolean;
+	/**
+	 * A supervised connection restart is between its Stop and its Start. The
+	 * operator stopped nothing, so the chip says the connection is restarting
+	 * instead of "Not streaming".
+	 */
+	restarting?: boolean;
 }
 
-const { isStreaming, unconfirmed = false }: Props = $props();
+const { isStreaming, unconfirmed = false, restarting = false }: Props = $props();
 </script>
 
 <!-- Header: stream status + title only (T12 demotion). The server destination now
@@ -29,6 +35,15 @@ const { isStreaming, unconfirmed = false }: Props = $props();
 				style="background-color: var(--status-live);"
 			></span>
 			{m["live.streamingActive"]()}
+		</span>
+	{:else if restarting}
+		<span
+			class="text-muted-foreground flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold tracking-wide uppercase"
+			role="status"
+			data-testid="live-header-restarting"
+		>
+			<span class="bg-status-warning h-2 w-2 rounded-full motion-safe:animate-pulse"></span>
+			{m["live.restartingConnection"]()}
 		</span>
 	{:else if !unconfirmed}
 		<span
