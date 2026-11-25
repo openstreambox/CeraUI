@@ -17,7 +17,7 @@
 
 import {
 	broadcastRadioHealth,
-	buildModemsWireMessage,
+	getCommittedModemsWireMessage,
 } from "./modem-status.ts";
 import { refreshRadioHealth } from "./radio-health-runtime.ts";
 
@@ -352,9 +352,10 @@ export async function runModemStatusPoll(): Promise<void> {
 		for (const id of configured) triggerGsmConnectionsReset(id);
 		broadcastModems(Object.fromEntries(configured.map((id) => [id, true])));
 	}
-	// Diagnostic I/O must not hold the lock needed by hotplug and configuration.
+	// Diagnostic I/O must not hold the lock needed by hotplug and configuration,
+	// so it samples the committed roster, never mutable state mid-change.
 	try {
-		await refreshRadioHealth(buildModemsWireMessage());
+		await refreshRadioHealth(getCommittedModemsWireMessage());
 	} catch {
 		logger.warn("Radio diagnostics unavailable for this poll");
 	}

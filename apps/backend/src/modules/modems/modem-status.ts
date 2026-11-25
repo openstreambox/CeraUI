@@ -1,5 +1,4 @@
 import type { RadioHealth } from "@ceraui/rpc/schemas";
-import { emptyRadio } from "./radio-health.ts";
 import { radioForModem } from "./radio-health-runtime.ts";
 /*
     CeraUI - web UI for the CeraLive project
@@ -228,29 +227,20 @@ export function broadcastModems(
 	}
 }
 
-/** Publish diagnostic enrichment with legacy status, without replaying control fields. */
+/**
+ * Publish radio enrichment for the committed roster only. Diagnostic sampling
+ * runs outside the modem update lock, so live state may hold a staged change or
+ * removal; this never reads it. Each committed row gets its cached radio record
+ * and nothing else, so no control or status field can be replayed.
+ */
 export function broadcastRadioHealth(): void {
-	const complete = buildModemsWireMessage();
-
-	const modems = Object.fromEntries(
-		Object.entries(complete)
-			.filter(([id]) => committedModemsWireMessage[id] !== undefined)
-			.map(([id, row]) => [
-				id,
-				{
-					status: row.status,
-					radio_health: row.radio_health ?? emptyRadio(0),
-				},
-			]),
-	);
-	for (const [id, partial] of Object.entries(modems)) {
-		const committed = committedModemsWireMessage[id];
-		if (committed)
-			committedModemsWireMessage[id] = {
-				...committed,
-				radio_health: partial.radio_health,
-				...(partial.status === undefined ? {} : { status: partial.status }),
-			};
+	const modems: Record<string, { radio_health: RadioHealth }> = {};
+	for (const [id, committed] of Object.entries(committedModemsWireMessage)) {
+		if (!("ifname" in committed) || typeof committed.ifname !== "string")
+			continue;
+		const radio_health = radioForModem(id, committed);
+		committedModemsWireMessage[id] = { ...committed, radio_health };
+		modems[id] = { radio_health };
 	}
 	broadcastMsg("status", { modems });
 }

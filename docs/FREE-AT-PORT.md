@@ -12,9 +12,11 @@ So the backend reads these two queries on a port ModemManager has released.
 
 ## The released port
 
-`ceralive-modem-support` sets `ID_MM_PORT_IGNORE=1` (an ENV property, nothing
-else) on the tty of USB interface 3 of `2c7c:0801`, ModemManager's secondary AT
-port. This PID is shared by RM520N-GL and RM530N-GL; `not-rm520`
+Releasing the port is optional and happens outside CeraUI: a modem support
+package (for example `ceralive-modem-support`) sets `ID_MM_PORT_IGNORE=1` (an
+ENV property, nothing else) on the tty of USB interface 3 of `2c7c:0801`,
+ModemManager's secondary AT port. Without that release every read reports
+`not-released` and the radio health panel uses its other readings. This PID is shared by RM520N-GL and RM530N-GL; `not-rm520`
 is a compatibility reason code for a failed PID check, not a model probe.
 ModemManager then lists the port as `(ignored)`, or omits it, and never
 opens it. It keeps the primary AT port on interface 2, the control port and the
