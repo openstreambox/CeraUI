@@ -171,6 +171,13 @@ export const MODEM_ASYNC_SURFACES = {
 		terminal: ["loaded", "applied", "refused", "failed", "timed-out"],
 		staleAfterMs: undefined,
 	},
+	restart: {
+		what: "restarting one qualified modem, verdict from the modem coming back on its port",
+		bound: "reply-bounded",
+		boundMs: 170_000,
+		terminal: ["applied", "refused", "failed", "timed-out"],
+		staleAfterMs: undefined,
+	},
 	getCapabilities: {
 		what: "the device-wide capability gates, read on every open",
 		bound: "read-bound",

@@ -10,7 +10,7 @@ SINR is raw; QMI SNR is dB. They remain different measurements.
 An administrator can suspend only this sampler by creating
 `/run/ceralive/radio-health-disabled`, and resume it by removing the file. The
 next retained poll clears/restarts the cache without changing modem or stream
-state. This is a measurement seam, with no modem action exposed in the UI.
+state. This is a measurement seam; the sampler itself never acts on a modem.
 
 The retained modem status poll owns sampling. Ready activations run before diagnostics,
 and diagnostic I/O holds no modem update lock. A refresh already in flight makes
@@ -62,9 +62,13 @@ finding), followed by every raw reading and its source and time, the other
 modems' bands and whether they were sending data, and the timeline with the
 evidence behind each finding.
 
-The panel uses words and symbols alongside calm suggested actions. It contains
-no modem action controls. Replugging is a suggestion with its expected interruption;
-CeraUI has no software modem restart. The recent timeline is for inspection after streaming.
+The panel uses words and symbols alongside calm suggested actions. For a
+**Data path** finding on a model with a bench-qualified software restart
+(DW5821e, RM520N-GL), the next step reads "Restart this modem" with its expected
+downtime, and the row's **Restart modem** button sits under it; see
+[MODEM-RESTART.md](MODEM-RESTART.md). Every other model keeps the replug
+suggestion with its expected interruption. The panel has no other control, and
+the readout never triggers a restart. The recent timeline is for inspection after streaming.
 
 Host tests cover subscriber refusals, synthetic path failures, USB resets during payload activity, independent radio contrasts, journal decoding and parser units. The replay fixture is entirely synthetic, with both matching events and negative controls.
 
@@ -94,8 +98,13 @@ y los eventos USB cuando los hay; la señal queda en la fila del módem. Toda la
 tarjeta abre un diálogo con todas las mediciones, su fuente y hora, los otros
 módems y el historial con la evidencia de cada hallazgo.
 
-Las acciones son sugerencias, sin botones que actúen sobre el módem. Las pruebas
-en el equipo real aún **NO SE HAN EJECUTADO**.
+Las acciones son sugerencias. La única excepción es un hallazgo de **ruta de
+datos** en un modelo con reinicio por software calificado en banco (DW5821e,
+RM520N-GL): el siguiente paso dice "Reinicia este módem" con el tiempo sin
+conexión esperado y muestra el botón **Reiniciar módem** de la fila (ver
+[MODEM-RESTART.md](MODEM-RESTART.md)). Los demás modelos mantienen la sugerencia
+de desconectar y volver a conectar. La lectura nunca reinicia nada por sí misma.
+Las pruebas de la lectura en el equipo real aún **NO SE HAN EJECUTADO**.
 
 ## Loading another replay
 

@@ -14,6 +14,8 @@ export const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
 	"system.getLog": 45_000,
 	"system.getSyslog": 45_000,
 	"modems.esimOperation": 245_000,
+	// The backend waits up to 150 s for a restarted modem; the reply follows.
+	"modems.restart": 175_000,
 };
 
 export function rpcCallTimeoutMs(path: string): number {

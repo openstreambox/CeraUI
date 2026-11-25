@@ -95,7 +95,9 @@ import Badge from '$lib/components/custom/Badge.svelte';
 import BondToggle from '$lib/components/custom/BondToggle.svelte';
 import NoSimBadge from '$lib/components/custom/NoSimBadge.svelte';
 import { Button } from '$lib/components/ui/button';
+import { ModemRestartFlow, restartTargetFor } from '$lib/modem/modem-restart.svelte';
 import { DiagnosticsBlock } from '$lib/modem/sections';
+import { rpc } from '$lib/rpc/client';
 import { cn } from '$lib/utils';
 import {
 	detailFields,
@@ -129,7 +131,10 @@ import {
 	stateLabelKey,
 	stateTone,
 } from './cellular-row';
+import ModemRestartButton from './ModemRestartButton.svelte';
+import ModemRestartControl from './ModemRestartControl.svelte';
 import RadioHealthPanel from './RadioHealthPanel.svelte';
+import { radioStatus } from './radio-health-view';
 import { openRouterAdminUi, routerAdminOpenReasonKey } from './router-admin-open';
 import type { RouterSignalReadout } from './router-signal';
 import {
@@ -172,6 +177,10 @@ const {
 }: Props = $props();
 
 const t = resolveMessageKey;
+
+// One Restart modem flow for the section, keyed by stable key: the restarted
+// modem's row unmounts and remounts under a new index, the flow does not.
+const restartFlow = new ModemRestartFlow((input) => rpc.modems.restart(input));
 
 // Every state carries its own WORD and its own GLYPH; colour only reinforces
 // them (the `EthernetSection` dongle-row rule). All static — no animation — so
@@ -443,6 +452,7 @@ async function openAdminUi(rowId: string): Promise<void> {
 			</div>
 		</div>
 	{/if}
+	<ModemRestartControl flow={restartFlow} />
 	<div class="divide-y">
 		{#if modemEntries.length === 0}
 			{#if !cellularInitializing}
@@ -512,6 +522,14 @@ async function openAdminUi(rowId: string): Promise<void> {
 				{const adminDetails = $derived(detailFields(admin))}
 				{const adminDiagnostics = $derived(diagnosticFields(admin))}
 				{const adminTraffic = $derived(trafficFields(admin))}
+				{const restartTarget = $derived(restartTargetFor(id, modem, primary))}
+				{const radioNoData = $derived(
+					modem.radio_health !== undefined &&
+						radioStatus(modem.radio_health, {
+							noSim: state === 'no-sim' || simless,
+							connected: state === 'connected',
+						}) === 'data-path',
+				)}
 				{const detailsOpen = $derived(openDetails[id] === true)}
 				{const detailsId = $derived(`modem-details-${id}`)}
 				<div
@@ -903,7 +921,25 @@ async function openAdminUi(rowId: string): Promise<void> {
 									noSim={state === 'no-sim' || simless}
 									connected={state === 'connected'}
 									modemName={radioModemName}
+									restartSeconds={restartTarget?.expectedSeconds}
+									restartAction={restartTarget ? restartInPanel : undefined}
 								/>
+							{/if}
+							{#snippet restartInPanel()}
+								{#if restartTarget}
+									<ModemRestartButton flow={restartFlow} target={restartTarget} />
+								{/if}
+							{/snippet}
+							<!-- Restart modem, for bench-qualified models only. When Radio
+							     health shows "no data", the panel's next step carries the
+							     same button, so it is not repeated here. -->
+							{#if restartTarget && !radioNoData}
+								<div class="space-y-1" data-testid="modem-restart-row">
+									<ModemRestartButton flow={restartFlow} target={restartTarget} />
+									<p class="text-muted-foreground text-xs">
+										{m["network.restart.hint"]({ seconds: String(restartTarget.expectedSeconds) })}
+									</p>
+								</div>
 							{/if}
 							<!-- ── ORDERED BY §2, NOT BY THE ORDER THE TODOS LANDED ─────────
 							     Signal (tier 2) → the row's one ACTION (tier 3) → identity and

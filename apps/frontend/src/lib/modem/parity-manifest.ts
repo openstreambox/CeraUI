@@ -286,6 +286,11 @@ export const BACKEND_RPC_PARITY: ParityRecord = {
 		reason:
 			"ModemEsimSection provides acknowledged inspection and confirmed profile management through the journaled helper.",
 	},
+	"modems.restart": {
+		disposition: "wired",
+		reason:
+			"The cellular row's Details and Radio health's no-data next step offer Restart modem for bench-qualified models, with the cost confirmed first.",
+	},
 	"modems.getAll": {
 		disposition: "wired",
 		reason:

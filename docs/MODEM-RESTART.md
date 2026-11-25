@@ -1,0 +1,114 @@
+# Restart modem
+
+**Restart modem** restarts one cellular modem from software, so a modem that is
+registered but carries no data can be brought back without unplugging it. It is
+offered only for models whose restart was qualified on a bench board. Every
+other model keeps the "unplug it and plug it back in" advice.
+
+## Where it appears
+
+- In a cellular row's **Details**, under Radio health, with the expected downtime.
+- In Radio health's **Data path** finding, as the next step ("Restart this
+  modem. It's offline for about N s."). The row then doesn't repeat the button.
+
+Pressing it asks first. The confirmation says how long the modem drops off. While
+a stream runs, it adds that the stream keeps going on the other connections.
+Progress ("Restarting… N s") and the result appear above the modem rows,
+because the restarted modem's row goes away and comes back under a new
+ModemManager index.
+
+## Qualified models
+
+| Model | Method | Measured downtime | Wait bound |
+| --- | --- | --- | --- |
+| DW5821e | `mmcli -m N --reset` | 32.5 to 32.8 s, 3 runs | 120 s |
+| RM520N-GL | `mmcli -m N --reset` | 51.5 to 53.6 s, 3 runs | 150 s |
+
+Measured on a ROCK 5B+ (kernel 7.2, ModemManager 1.24.2): the DW5821e in the M.2
+slot, the RM520N-GL on the USB-C data port.
+
+- **What came back the same:** the USB port, the network interface name, the SIM,
+  the carrier configuration and the NetworkManager profile.
+- **What changed:** the ModemManager index, every time.
+- **Other links:** a second modem kept passing traffic, and a running bonded
+  stream neither stopped nor restarted.
+- **USB unbind/bind:** brought both models back as well (13 s and 24 s), but it
+  doesn't reboot the module. So it is only the fallback for when ModemManager
+  refuses the reset.
+
+The FM350-GL is not qualified. ModemManager answers `Unsupported` to its reset,
+and its recorded USB behaviour includes crash and reset loops. The table lives
+in `packages/rpc/src/schemas/modem-restart.schema.ts` (`MODEM_RESTART_MODELS`),
+and nothing outside it is offered or accepted.
+
+## Guards
+
+- **Qualified models only:** the RPC refuses any other model (`not_qualified`).
+- **One at a time:** while any modem restarts, another restart is refused
+  (`restart_in_progress`).
+- **Cooldown:** 3 minutes per modem after an attempt ends, whatever the result
+  (`cooldown`, with the seconds left).
+- **Only connection carrying a live stream:** refused (`only_link_live`) unless
+  the operator confirms that cost. The UI then asks a second time, saying the
+  stream has no connection until the modem is back. With no link telemetry while
+  streaming, the restart counts as being on the only connection.
+- **Same-modem exclusion:** a restart takes the modem's own lease, so a settings
+  change or band lock on that modem can't overlap it (`mutation_in_progress`).
+  It never refuses a Stream Start. It doesn't begin during journal replay, on a
+  blocked modem, or while a stream is being launched or forwarded.
+- **No retry loops:** one attempt per press. The only fallback is a single USB
+  unbind/bind when ModemManager refuses the reset. A modem that accepted the
+  reset and didn't come back gets no second action.
+
+## Finding the modem again
+
+The backend waits for a modem with the same `stable_key` (the ID_PATH-derived key
+of its USB port) that is listed under a different index, or that was gone and is
+back, and connected. Possible outcomes:
+
+- `back_connected`
+- `back_not_connected`, with its connection state
+- `not_back`, which means unplug it and plug it back in
+- `unchanged`: the reset was accepted but the modem never left
+- `failed`: neither method ran
+
+The client waits up to 170 s for the reply.
+
+## Logs
+
+The backend logs one line when a restart starts and one with its outcome. The
+outcome line carries the stable key, model, method, old and new index and elapsed
+seconds. Each refusal gets a warning line. All of them are in the support log
+vocabulary, so they appear in a support download. No IMEI, ICCID or SIM data is
+logged. Nothing is persisted: a restart changes no setting, so there is nothing
+to roll back.
+
+## Mock mode
+
+Under `MOCK_SCENARIO` the real flow runs with the device half replaced. A "reset"
+hides the modem for 3 s and then lists it again, connected.
+
+## Español
+
+**Reiniciar módem** reinicia un módem celular por software, para recuperar un
+módem registrado que no pasa datos sin desconectarlo. Solo aparece en modelos
+cuyo reinicio se calificó en banco (DW5821e, RM520N-GL). Los demás modelos
+mantienen la indicación de desconectarlo y volver a conectarlo.
+
+- **Dónde aparece:** en los **Detalles** de la fila del módem y como siguiente
+  paso del hallazgo **ruta de datos** de Estado de radio.
+- **Confirmación:** antes de empezar, dice cuánto tiempo queda sin conexión el
+  módem (unos 35 s el DW5821e y unos 55 s el RM520N-GL). Si hay una transmisión,
+  aclara que sigue por las otras conexiones. El progreso y el resultado se ven
+  encima de la lista de módems.
+- **Única conexión de la transmisión:** si el módem es la única conexión que
+  lleva una transmisión en curso, se pide una segunda confirmación. Esa
+  confirmación explica que la transmisión queda sin conexión hasta que el módem
+  vuelve.
+- **Límites:** un reinicio a la vez y una espera de 3 minutos por módem. Hay un
+  único intento por pulsación, sin reintentos automáticos. Solo si ModemManager
+  rechaza el reinicio se desvincula y vuelve a vincular el USB una vez.
+- **Identificación:** el módem vuelve con otro índice de ModemManager, así que se
+  reconoce por el puerto USB (`stable_key`).
+- **Registro:** cada reinicio deja una línea al empezar y otra con el resultado,
+  incluidas en la descarga de soporte.

@@ -66,6 +66,8 @@ import type {
 	ReloadAudioDelayInput,
 	ReloadAudioDelayOutput,
 	RemoteConfigInput,
+	RestartModemInput,
+	RestartModemOutput,
 	Revisions,
 	RevokeTokenInput,
 	RevokeTokenOutput,
@@ -685,6 +687,11 @@ export interface TypedRPC {
 			Record<string, import("@ceraui/rpc/schemas").RadioHealth>
 		>;
 		configure: (input: ModemConfigInput) => Promise<ModemConfigOutput>;
+		/**
+		 * Restart one bench-qualified modem. Answers once the modem is back on its
+		 * port or the model's wait ends, so it has its own client timeout.
+		 */
+		restart: (input: RestartModemInput) => Promise<RestartModemOutput>;
 		scan: (input: ModemScanInput) => Promise<ModemScanOutput>;
 		unlockSim: (input: SimUnlockInput) => Promise<SimUnlockOutput>;
 		unlockSimPin2: (input: SimPin2UnlockInput) => Promise<SimPin2UnlockOutput>;
