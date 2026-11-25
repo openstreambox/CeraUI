@@ -2497,6 +2497,7 @@
 	"settings.deviceHealth.nowStrip.load": "Load average",
 	"settings.deviceHealth.nowStrip.temperature": "SoC temperature",
 	"settings.deviceHealth.peak": "peak {value}",
+	"settings.deviceHealth.power.inputTitle": "Input voltage",
 	"settings.deviceHealth.power.noReading": "No reading",
 	"settings.deviceHealth.power.notInstrumented": "This board does not report voltage or current to CeraUI.",
 	"settings.deviceHealth.power.title": "Power rails",

@@ -2292,6 +2292,7 @@
 	"settings.deviceHealth.nowStrip.load": "平均负载",
 	"settings.deviceHealth.nowStrip.temperature": "SoC 温度",
 	"settings.deviceHealth.peak": "峰值 {value}",
+	"settings.deviceHealth.power.inputTitle": "输入电压",
 	"settings.deviceHealth.power.noReading": "无读数",
 	"settings.deviceHealth.power.notInstrumented": "此主板不会向 CeraUI 报告电压或电流。",
 	"settings.deviceHealth.power.title": "供电轨",

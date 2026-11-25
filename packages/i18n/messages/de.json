@@ -2497,6 +2497,7 @@
 	"settings.deviceHealth.nowStrip.load": "Lastdurchschnitt",
 	"settings.deviceHealth.nowStrip.temperature": "SoC-Temperatur",
 	"settings.deviceHealth.peak": "Spitze {value}",
+	"settings.deviceHealth.power.inputTitle": "Eingangsspannung",
 	"settings.deviceHealth.power.noReading": "Keine Messung",
 	"settings.deviceHealth.power.notInstrumented": "Diese Platine meldet CeraUI weder Spannung noch Strom.",
 	"settings.deviceHealth.power.title": "Spannungsschienen",
