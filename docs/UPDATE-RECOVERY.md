@@ -1921,6 +1921,18 @@ be a stage nobody recorded. Any unreadable input is "not proven".
   confirmed. Rejection retains the unresolved notice; only an accepted transition
   clears it. A retained staged receipt prevents confirmation even with writer proof.
 
+**A settled unsafe record stops holding power actions once RAUC is proven quiet.**
+`unsafe` keeps its meaning for updates: no automatic round, and the record stays
+until one of the two ways above clears it. It no longer holds reboots, power-offs
+and service restarts indefinitely. Each tick, for a record with no active attempt
+and no stage of this process running, the runtime asks the same physical proof
+stage admission uses (`isOsStageReady`: RAUC idle with no other process or
+resource, no stage job record, the booted slot healthy and primary, the target
+neither primary nor armed). While that holds, a reboot boots the running slot,
+so `update-recovery` is not reported for the record. The proof belongs to the
+exact record object, expires after two idle ticks, and any unproven read closes
+the gate again. Before the first proof after a start the record still holds.
+
 **A stopped guard that systemd keeps loaded is released.** A loaded unit that
 orders itself against `ceralive-os-stage-guard.service` (an image's shutdown
 drain with the guard in `After=`) keeps systemd from unloading the stopped
