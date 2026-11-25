@@ -765,7 +765,12 @@ export function createLiveWifiNetworkDiversity(): WifiNetworkDiversity {
 			}),
 		scan: (ifname) => nmScanDevice(ifname),
 		activate: async (uuid, ifname) => {
-			const ok = await nmConnect(uuid, WIFI_DIVERSITY.activateTimeoutS, ifname);
+			const ok = await nmConnect(
+				uuid,
+				WIFI_DIVERSITY.activateTimeoutS,
+				undefined,
+				ifname,
+			);
 			wifiScheduleScanRefresh();
 			return ok;
 		},
