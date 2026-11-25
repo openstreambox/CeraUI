@@ -27,7 +27,11 @@ describe("LiveHeader — demoted to title + live-state chip (T12)", () => {
 	});
 
 	it("never lets the state chip wrap or shrink", () => {
-		for (const props of [{ isStreaming: false }, { isStreaming: true }]) {
+		for (const props of [
+			{ isStreaming: false },
+			{ isStreaming: true },
+			{ isStreaming: false, restarting: true },
+		]) {
 			const { container, unmount } = render(LiveHeader, { props });
 			const chip = container.querySelector("header > span");
 			expect(chip?.classList.contains("whitespace-nowrap")).toBe(true);
