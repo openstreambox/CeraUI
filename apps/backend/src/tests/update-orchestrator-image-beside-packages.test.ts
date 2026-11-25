@@ -507,6 +507,57 @@ describe("runtime: offered packages no longer hide a system image", () => {
 		expect(h.calls.installs).toBe(0);
 	});
 
+	test("a stalled idle tick cannot take the image check from Check now", async () => {
+		// Given an idle device with the image check due, and a tick that read the
+		// stable channel and then stalls on the capability read after it.
+		let channel: "stable" | "beta" = "stable";
+		const tickStall = Promise.withResolvers<void>();
+		const settingsHold = Promise.withResolvers<void>();
+		let capabilityReads = 0;
+		let holdSettings = false;
+		let settingsHeld = false;
+		const channels: string[] = [];
+		setup(async () => noImage, {
+			getPackageInstallWireState: () => ({ kind: "idle" }) as UpdateState,
+			loadSettings: async () => {
+				if (holdSettings) {
+					holdSettings = false;
+					settingsHeld = true;
+					await settingsHold.promise;
+				}
+				return { ...(await settings(false)()), channel };
+			},
+			loadCapabilities: async () => {
+				// The tick reads capabilities, then settings, then capabilities again.
+				if (++capabilityReads === 2) await tickStall.promise;
+				return {
+					mode: "capable",
+					features: ["apt-all-packages", "rauc-verity-streaming"],
+				};
+			},
+			checkOsManifest: async (requested) => {
+				channels.push(requested ?? "");
+				return requested === "beta" ? noImage : imageFound;
+			},
+		});
+		setOrchestratorStateForTest(initialOrchestratorState(0));
+		const tick = runOrchestratorTick();
+		while (capabilityReads < 2) await Bun.sleep(1);
+		// When the channel changes, and Check now (no package offers) is reading
+		// its settings as the stalled tick resumes.
+		channel = "beta";
+		holdSettings = true;
+		const check = checkUpdatesNow();
+		while (!settingsHeld) await Bun.sleep(1);
+		tickStall.resolve();
+		await tick;
+		settingsHold.resolve();
+		expect(await check).toEqual({ started: true });
+		// Then the image check ran once, on the new channel.
+		expect(channels).toEqual(["beta"]);
+		expect(getOsUpdateSummary().candidate).toBeNull();
+	});
+
 	test("a failed package check does not hold back the image check", async () => {
 		// Given an idle device whose package check fails.
 		const h = setup(imageFound, {

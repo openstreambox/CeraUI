@@ -2912,6 +2912,9 @@ export async function runOrchestratorTick(): Promise<void> {
 			scheduleNextTick();
 			return;
 		}
+		// Taken before the reads below: a check started meanwhile (Check now)
+		// makes this tick's settings stale, so it must not start an image check.
+		const ticket = besideOfferTicket();
 		const settings = await deps.loadSettings();
 		const capabilities = await readCapabilityRegime();
 		if (capabilities === null) {
@@ -2946,7 +2949,7 @@ export async function runOrchestratorTick(): Promise<void> {
 				settings,
 			})
 		) {
-			await runOsCheckAfterCellularGate(settings);
+			await runOsCheckAfterCellularGate(settings, ticket);
 		}
 	} else if (state.phase === "available") {
 		// Taken before any read, so a check started meanwhile (Check now) wins.
@@ -3065,7 +3068,7 @@ function osScheduleClock(): OrchestratorState["osCheck"] {
 		: state.osCheck;
 }
 
-// What a step beside a package offer was admitted on: any image check or
+// What a scheduled step or Check now was admitted on: any image check or
 // package check started since then makes that step stale.
 type BesideOfferTicket = { readonly os: number; readonly packages: number };
 

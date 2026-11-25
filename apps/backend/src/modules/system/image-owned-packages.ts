@@ -52,16 +52,19 @@ const PIN_VERSION_PREFIX = "version ";
 const DPKG_MAX_EPOCH = 2_147_483_647;
 
 /**
- * A version as dpkg parses it: an optional numeric epoch up to the first
- * colon, the revision after the last hyphen (if any), and an upstream part
- * that starts with a digit.
+ * A version as `dpkg --validate-version` takes it: surrounding blanks dropped,
+ * an optional epoch up to the first colon (digits with an optional leading
+ * `+`, at most 2147483647), the revision after the last hyphen (if any), and
+ * an upstream part that starts with a digit.
  */
-export function isDebianVersion(version: string): boolean {
+export function isDebianVersion(raw: string): boolean {
+	const version = raw.trim();
 	const colon = version.indexOf(":");
 	let rest = version;
 	if (colon !== -1) {
 		const epoch = version.slice(0, colon);
-		if (!/^[0-9]+$/.test(epoch) || Number(epoch) > DPKG_MAX_EPOCH) return false;
+		if (!/^\+?[0-9]+$/.test(epoch) || Number(epoch) > DPKG_MAX_EPOCH)
+			return false;
 		rest = version.slice(colon + 1);
 	}
 	const hyphen = rest.lastIndexOf("-");
