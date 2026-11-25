@@ -42,7 +42,7 @@ import { cn } from '$lib/utils';
 
 import SharingPolicyControl from './SharingPolicyControl.svelte';
 
-import { deriveSharingSection } from './sharing-section-view';
+import { deriveSharingSection, ipv6OnlyWanNames } from './sharing-section-view';
 
 interface Props {
 	uplinks: UplinksMessage | undefined;
@@ -113,6 +113,14 @@ const SUMMARY =
 		<Share2 aria-hidden="true" class="text-muted-foreground size-4 shrink-0" />
 		<h2 class="text-sm font-semibold tracking-tight">{m['network.sharing.title']()}</h2>
 	</div>
+
+	{#if view.zones.hotspots > 0}
+		{#each ipv6OnlyWanNames(netif) as name (name)}
+			<p class="text-muted-foreground mb-3 text-sm" data-testid="sharing-ipv6-only">
+				<span class="font-medium">{name}:</span> {m['network.sharing.ipv6Only']()}
+			</p>
+		{/each}
+	{/if}
 
 	<SharingPolicyControl interfaces={uplinks?.map(link => link.iface) ?? []} />
 
