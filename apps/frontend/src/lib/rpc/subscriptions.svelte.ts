@@ -62,8 +62,8 @@ import { ingestBuffering } from "$lib/stores/buffering.svelte";
 import { markSessionExpired } from "$lib/stores/connection-ux.svelte";
 import {
 	dismiss as dismissNotification,
-	getPersistent as getPersistentNotifications,
 	getActive as getActiveNotifications,
+	getPersistent as getPersistentNotifications,
 	push as pushNotification,
 	pushReplayed as pushReplayedNotification,
 } from "$lib/stores/notifications.svelte";
@@ -880,6 +880,7 @@ function handleMessage(
 				const live: Partial<NetifEntry> = {
 					tp: entry.tp,
 					...(entry.ip !== undefined ? { ip: entry.ip } : {}),
+					...(entry.ipv6 !== undefined ? { ipv6: entry.ipv6 } : {}),
 					...(entry.error !== undefined ? { error: entry.error } : {}),
 					...(entry.mac !== undefined ? { mac: entry.mac } : {}),
 					...(entry.same_subnet_group !== undefined
@@ -918,6 +919,15 @@ function handleMessage(
 					...live,
 					enabled: nextEnabled,
 				};
+				if (entry.addresses !== undefined) {
+					next.addresses = [...entry.addresses];
+					delete next.ip;
+					delete next.ipv6;
+					const ipv4 = entry.addresses.find((ip) => !ip.includes(":"));
+					const ipv6 = entry.addresses.find((ip) => ip.includes(":"));
+					if (ipv4 !== undefined) next.ip = ipv4;
+					if (ipv6 !== undefined) next.ipv6 = ipv6;
+				}
 				if (retractRouterCellular) delete next.router_cellular;
 				if (retractModemNet) delete next.usb_modem_net;
 				const previous = previousLinkNetif?.[ifname];

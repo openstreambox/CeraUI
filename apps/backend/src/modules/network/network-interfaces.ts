@@ -19,11 +19,10 @@
 import { EventEmitter } from "node:events";
 import { isSimlessForBond } from "@ceraui/rpc";
 import type {
-	EthernetRole,
 	NetifConfigError,
 	NetifConfigInput,
+	NetifMessage,
 	NotificationType,
-	RouterCellularMarker,
 } from "@ceraui/rpc/schemas";
 import { NETIF_DUPLICATE_IPV4_ERROR } from "@ceraui/rpc/schemas";
 import type WebSocket from "ws";
@@ -76,7 +75,6 @@ import {
 	setPersistentBondOptOut,
 } from "./bond-preference.ts";
 import {
-	type DongleMarker,
 	getDongleMarker,
 	getDongleRecords,
 	refreshDongleMetadata,
@@ -137,6 +135,7 @@ export type NetworkInterface = {
 	busReadWarned?: boolean;
 	identitySettled?: boolean;
 	ip?: string;
+	ipv6?: string;
 	netmask?: string;
 	tp: number;
 	txb: number;
@@ -180,8 +179,8 @@ export type NetworkInterfaceMessage = {
 	};
 };
 
-/** A chosen interface IPv4; `netmask` is a dotted quad, not a prefix length. */
-export type IpAddrSelection = { ip: string; netmask: string };
+/** Chosen IPv4 and IPv6 sources; `netmask` is a dotted quad, not a prefix length. */
+export type IpAddrSelection = { ip?: string; netmask?: string; ipv6?: string };
 
 type ScopedAddress = { ip: string; prefix: number; scope: string };
 
@@ -403,13 +402,13 @@ function admitsBondLink(
 	},
 ): boolean {
 	if (isWifiApInterface(name)) return false;
-	if (!int.ip) return false;
+	if (!int.ip && !int.ipv6) return false;
 	if (bondIdentityPending(name, int, view.deadlineElapsed)) return false;
 	if (isConcurrentApIfname(name)) return false;
 	if (isSharedLanPort(name)) return false;
 	if ((int.error & ~NETIF_ERR_DUPIPV4) !== 0) return false;
 	if (view.optedOut(name)) return false;
-	if (isDupIpOnly(int)) return view.mappable(name, int.ip);
+	if (isDupIpOnly(int)) return view.mappable(name, int.ip ?? int.ipv6 ?? "");
 	return int.enabled;
 }
 
@@ -750,6 +749,7 @@ function syncNetifState(): void {
 		if (!i) continue;
 		next[name] = {
 			...(i.ip !== undefined ? { ip: i.ip } : {}),
+			...(i.ipv6 !== undefined ? { ipv6: i.ipv6 } : {}),
 			up: i.enabled,
 			tp: i.tp,
 			txb: i.txb,
@@ -764,6 +764,7 @@ export function triggerNetworkInterfacesChange() {
 	// marking) — broadcast fires only when the diff is non-empty.
 	syncNetifState();
 	networkInterfacesEventEmitter.emit("change");
+	networkInterfacesEventEmitter.emit("sourcesChange");
 }
 
 // `updateGwQueue` (gateways.ts) is ONE-SHOT: it is cleared after a successful
@@ -866,6 +867,14 @@ export function handleNetifMonitorEvent(event: MonitorEvent): void {
 	}
 	triggerNetworkInterfacesChange();
 	notifyTopologyChange();
+}
+
+/** Source changes refresh a running bond without declaring a topology edge. */
+export function onNetworkInterfaceSourcesChange(callback: () => void) {
+	networkInterfacesEventEmitter.on("sourcesChange", callback);
+	return () => {
+		networkInterfacesEventEmitter.off("sourcesChange", callback);
+	};
 }
 
 export function onNetworkInterfacesChange(callback: () => void) {
@@ -1031,7 +1040,7 @@ export function updateNetif() {
 
 // ifconfig (net-tools) reports only ONE IPv4 per interface, so on a link that
 // carries both an RFC-3927 link-local (169.254/16) and a real DHCP lease it can
-// surface the link-local as THE address. `ip -4 addr show` lists every address
+// surface the link-local as THE address. `ip addr show` lists every address
 // with a `scope`, letting us prefer the routable global-scope lease. ifconfig
 // still drives throughput, RUNNING flags, and the WiFi device list; a missing or
 // failing `ip` degrades to ifconfig-only (the prior single-address behavior).
@@ -1039,10 +1048,10 @@ async function resolveIpAddrOverrides(
 	ifindices: Map<string, number>,
 ): Promise<Map<string, IpAddrSelection> | undefined> {
 	try {
-		return parseIpAddrShow(await run("ip", ["-4", "addr", "show"]), ifindices);
+		return parseIpAddrShow(await run("ip", ["addr", "show"]), ifindices);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
-		logger.debug(`ip -4 addr show unavailable, using ifconfig IPs: ${message}`);
+		logger.debug(`ip addr show unavailable, using ifconfig IPs: ${message}`);
 		return undefined;
 	}
 }
@@ -1288,6 +1297,7 @@ function publishIfconfigEntries(
 	const firstSnapshot = !netifSnapshotReady;
 	let intsChanged = false;
 	let wifiIncarnationChanged = false;
+	let sourcesChanged = false;
 	const newInterfaces: Record<string, NetworkInterface> = {};
 
 	wifiDeviceListStartUpdate();
@@ -1297,13 +1307,14 @@ function publishIfconfigEntries(
 			if (name === "lo" || name.match("^docker") || name.match("^l4tbr"))
 				continue;
 
-			// Prefer the scope-annotated `ip -4 addr` address (a routable global
+			// Prefer the scope-annotated `ip addr` address (a routable global
 			// lease over a link-local) when present; fall back to ifconfig's single
 			// inet line otherwise.
 			const ipOverride = ipOverrides?.get(name);
 
 			const inetAddrMatch = int.match(/inet (\d+\.\d+\.\d+\.\d+)/);
 			const inetAddr = ipOverride?.ip ?? inetAddrMatch?.[1];
+			const ipv6 = ipOverride?.ipv6;
 
 			const netmaskMatch = int.match(/netmask (\d+\.\d+\.\d+\.\d+)/);
 			const netmask = ipOverride?.netmask ?? netmaskMatch?.[1];
@@ -1375,6 +1386,7 @@ function publishIfconfigEntries(
 						((!hadRow || replaced) && netdevLifetime(name) !== undefined));
 			newInterfaces[name] = {
 				...(inetAddr !== undefined ? { ip: inetAddr } : {}),
+				...(ipv6 !== undefined ? { ipv6 } : {}),
 				...(netmask !== undefined ? { netmask } : {}),
 				txb: txBytes,
 				rxb: rxBytes,
@@ -1407,8 +1419,14 @@ function publishIfconfigEntries(
 				entry.busReadWarned = true;
 			}
 
+			if (netif[name]?.ipv6 !== ipv6) sourcesChanged = true;
+
 			// Detect interfaces that are new or with a different address
-			if (!netif[name] || netif[name].ip !== inetAddr) {
+			if (
+				!netif[name] ||
+				netif[name].ip !== inetAddr ||
+				(!inetAddr && netif[name].ipv6 !== ipv6)
+			) {
 				intsChanged = true;
 			}
 		} catch (err) {
@@ -1483,6 +1501,8 @@ function publishIfconfigEntries(
 		triggerNetworkInterfacesChange();
 		if (intsChanged || firstSnapshot) notifyTopologyChange();
 		if (released) broadcastNetif();
+	} else if (sourcesChanged) {
+		networkInterfacesEventEmitter.emit("sourcesChange");
 	}
 
 	// Reconcile + broadcast (covers throughput-only deltas too); no-op when the
@@ -1528,7 +1548,7 @@ function prefixToNetmask(prefix: number): string {
 }
 
 /**
- * Parse `ip -4 addr show` into iface → chosen {ip, netmask}. `ip` lists EVERY
+ * Parse `ip addr show` into iface → chosen {ip, netmask}. `ip` lists EVERY
  * IPv4 per interface with its `scope`, so unlike single-address ifconfig we can
  * prefer the routable global lease over an RFC-3927 link-local when a link has
  * both — the fix for a board that would otherwise advertise its link-local.
@@ -1538,6 +1558,8 @@ export function parseIpAddrShow(
 	ifindices?: Map<string, number>,
 ): Map<string, IpAddrSelection> {
 	const byIface = new Map<string, ScopedAddress[]>();
+	const v6 = new Map<string, { ip: string; temporary: boolean }[]>();
+	let lastV6: string | undefined;
 	let current: string | undefined;
 
 	for (const line of stdout.split("\n")) {
@@ -1545,9 +1567,26 @@ export function parseIpAddrShow(
 		if (header?.[1] && header[2]) {
 			current = header[2];
 			ifindices?.set(current, Number.parseInt(header[1], 10));
+			lastV6 = undefined;
 			continue;
 		}
 		if (current === undefined) continue;
+		if (lastV6 && /\b(?:valid_lft|preferred_lft) 0sec\b/.test(line)) {
+			v6.set(
+				current,
+				(v6.get(current) ?? []).filter((entry) => entry.ip !== lastV6),
+			);
+		}
+		if (/^\s*inet/.test(line)) lastV6 = undefined;
+		const addr6 = line.match(
+			/^\s*inet6\s+([0-9a-f:]+)\/\d+\s+.*\bscope global\b/i,
+		);
+		if (addr6?.[1] && !/\b(tentative|dadfailed|deprecated)\b/.test(line)) {
+			const list = v6.get(current) ?? [];
+			list.push({ ip: addr6[1], temporary: /\btemporary\b/.test(line) });
+			v6.set(current, list);
+			lastV6 = addr6[1];
+		}
 
 		const addr = line.match(/^\s*inet\s+(\d+\.\d+\.\d+\.\d+)\/(\d+)\b/);
 		if (!addr?.[1] || !addr[2]) continue;
@@ -1567,6 +1606,14 @@ export function parseIpAddrShow(
 				netmask: prefixToNetmask(chosen.prefix),
 			});
 		}
+	}
+	for (const [name, addresses] of v6) {
+		addresses.sort(
+			(a, b) =>
+				Number(a.temporary) - Number(b.temporary) || a.ip.localeCompare(b.ip),
+		);
+		const ipv6 = addresses[0]?.ip;
+		if (ipv6) selected.set(name, { ...selected.get(name), ipv6 });
 	}
 	return selected;
 }
@@ -1722,19 +1769,7 @@ export function getNetifErrorMsg(i: NetworkInterface) {
 	return undefined;
 }
 
-type NetworkInterfaceResponseMessage = {
-	[key: string]: Pick<NetworkInterface, "ip" | "tp" | "enabled"> & {
-		error?: string;
-		same_subnet_group?: string;
-		tx_bps?: number;
-		rx_bps?: number;
-		dongle?: DongleMarker | null;
-		router_cellular?: RouterCellularMarker | null;
-		usb_modem_net?: UsbModemNetMarker | null;
-		ethRole?: EthernetRole;
-		ethRoleOp?: boolean;
-	};
-};
+type NetworkInterfaceResponseMessage = NetifMessage;
 
 // Interfaces that carried a dongle marker on the PREVIOUS projection. A name
 // that drops out of this set gets exactly one `dongle: null` frame, which is
@@ -1759,6 +1794,9 @@ export function netIfBuildMsg() {
 
 		const entry: NetworkInterfaceResponseMessage[string] = {
 			...(networkInterface.ip !== undefined ? { ip: networkInterface.ip } : {}),
+			...(networkInterface.ipv6 !== undefined
+				? { ipv6: networkInterface.ipv6 }
+				: {}),
 			tp: networkInterface.tp,
 			enabled: isBondCandidate(i, networkInterface),
 			...(networkInterface.tx_bps !== undefined
@@ -1776,6 +1814,9 @@ export function netIfBuildMsg() {
 			if (mockConfig.ip !== undefined) entry.ip = mockConfig.ip;
 		}
 
+		entry.addresses = [entry.ip, entry.ipv6].filter(
+			(ip): ip is string => ip !== undefined,
+		);
 		const error = getNetifErrorMsg(networkInterface);
 		if (error) {
 			entry.error = error;
