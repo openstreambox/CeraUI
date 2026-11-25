@@ -84,6 +84,8 @@ import type {
 	OpenRouterAdminInput,
 	OpenRouterAdminOutput,
 	PowerResponse,
+	PortalWindowInput,
+	PortalWindowStatus,
 	PreviewTokenOutput,
 	RelayValidateInput,
 	RelayValidateOutput,
@@ -901,6 +903,7 @@ export interface TypedRPC {
 		ussdCancel: (input: UssdCancelInput) => Promise<ModemUssdOutput>;
 	};
 	wifi: {
+		portal: (input: PortalWindowInput) => Promise<PortalWindowStatus>;
 		getStatus: () => Promise<unknown>;
 		connect: (input: WifiConnectInput) => Promise<WifiOperationOutput>;
 		disconnect: (input: WifiDisconnectInput) => Promise<WifiOperationOutput>;
