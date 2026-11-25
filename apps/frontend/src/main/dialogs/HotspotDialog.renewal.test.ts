@@ -14,6 +14,7 @@
 import type { WifiInterface } from "@ceraui/rpc/schemas";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { tick } from "svelte";
+import { toast } from "svelte-sonner";
 import {
 	afterEach,
 	beforeAll,
@@ -65,7 +66,11 @@ vi.mock("$lib/rpc/client", () => ({
 }));
 vi.mock("qrcode", () => ({ default: { toDataURL: vi.fn(async () => "") } }));
 vi.mock("svelte-sonner", () => ({
-	toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }),
+	toast: Object.assign(vi.fn(), {
+		error: vi.fn(),
+		success: vi.fn(),
+		warning: vi.fn(),
+	}),
 }));
 const generated = vi.hoisted(() => ({ next: "renewed-pass-1" }));
 vi.mock("$main/network/hotspot-password", async (original) => ({
@@ -397,7 +402,7 @@ describe("a renewal never writes into a form it no longer owns", () => {
 		expect(passwordField().value).toBe("typed-password");
 	});
 
-	it("rebound to another radio while the ack is pending: that radio's Save is not overwritten", async () => {
+	it("a token change while the ack is pending closes the dialog and writes nothing", async () => {
 		const ack = deferred<ConfigureResult>();
 		configure.mockReturnValueOnce(ack.promise);
 		const view = open("radio-A");
@@ -407,21 +412,11 @@ describe("a renewal never writes into a form it no longer owns", () => {
 		await flush();
 		ack.resolve({ success: true });
 		await flush();
-		expect(passwordField().value).toBe("revoked-password");
-
-		await fireEvent.input(passwordField(), {
-			target: { value: "typed-for-b" },
-		});
-		await save();
-		expect(configure).toHaveBeenLastCalledWith(
-			expect.objectContaining({
-				incarnation: "radio-B",
-				password: "typed-for-b",
-			}),
+		await vi.waitFor(() =>
+			expect(document.querySelector("#hotspot-password")).toBeNull(),
 		);
-		confirmFrame("radio-B");
-		await flush();
-		expect(passwordField().value).toBe("typed-for-b");
+		expect(toast.warning).toHaveBeenCalled();
+		expect(configure).toHaveBeenCalledTimes(1);
 	});
 });
 

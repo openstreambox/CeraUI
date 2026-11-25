@@ -97,18 +97,26 @@ $effect(() => {
 });
 const hotspotTarget = $derived(chooseHotspotRadio(wifiEntries, hotspotRadioChoice));
 
-// The dialog keeps the radio it was opened for: a later pick or an expired one
-// never retargets it. It follows that row's live state by id, where the
-// dialog's own binding rules handle a changed incarnation.
-let hotspotDialogDevice = $state<string>();
-const hotspotDialogIface = $derived(
-	hotspotDialogDevice === undefined ? undefined : wifi?.[hotspotDialogDevice],
-);
+// The dialog is bound to the `[id, incarnation]` it was opened for: a later or
+// expired pick never retargets it, and it is handed that row only while the
+// row still carries the same incarnation. Otherwise it gets no row, and the
+// dialog closes itself with a notice instead of following the replacement.
+let hotspotDialogTarget = $state.raw<readonly [string, string]>();
+const hotspotDialogIface = $derived.by(() => {
+	if (!hotspotDialogTarget) return undefined;
+	const [id, incarnation] = hotspotDialogTarget;
+	const row = wifi?.[id];
+	return row?.incarnation === incarnation ? row : undefined;
+});
 let hotspotDialogOpen = $state(false);
 
 function openHotspotDialog() {
-	if (!hotspotTarget) return;
-	hotspotDialogDevice = hotspotTarget[0];
+	const incarnation = hotspotTarget?.[1].incarnation;
+	if (!hotspotTarget || !incarnation) return;
+	// Opening confirms the target, so a preselected single radio expires the
+	// same way an explicit pick does.
+	hotspotRadioChoice = { selected: [hotspotTarget[0], incarnation] };
+	hotspotDialogTarget = [hotspotTarget[0], incarnation];
 	hotspotDialogOpen = true;
 }
 let wifiCountryOpen = $state(false);
@@ -293,7 +301,7 @@ function openModemConfig(id: string) {
 			{hotspotInterfaces}
 			{hotspotTarget}
 			radios={wifiEntries}
-			selectionLost={hotspotRadioChoice.lost !== undefined}
+			selectionLost={hotspotRadioChoice.lost === true}
 			onSelect={(id) => { hotspotRadioChoice = pickHotspotRadio(wifiEntries, id); }}
 			onSetup={openHotspotDialog}
 		/>
@@ -319,11 +327,11 @@ function openModemConfig(id: string) {
 	/>
 {/if}
 
-{#if hotspotDialogDevice !== undefined}
+{#if hotspotDialogTarget}
 	<LazyDialog
 		dialog={HotspotDialog}
 		bind:open={hotspotDialogOpen}
-		deviceId={hotspotDialogDevice}
+		deviceId={hotspotDialogTarget[0]}
 		iface={hotspotDialogIface}
 	/>
 {/if}
