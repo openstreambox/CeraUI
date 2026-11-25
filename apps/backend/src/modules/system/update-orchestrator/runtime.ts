@@ -2945,12 +2945,15 @@ export async function runOrchestratorTick(): Promise<void> {
 			await runOsCheckAfterCellularGate(settings);
 		}
 	} else if (state.phase === "available") {
-		const settings = await deps.loadSettings();
-		await maybeCheckOsWhilePackagesWait(settings);
-		if (getOrchestratorState().phase === "available" && settings.packagesAuto) {
-			dispatch({ type: "AWAIT_IDLE_FOR_INSTALL", now: deps.now() });
+		await maybeCheckOsWhilePackagesWait(await deps.loadSettings());
+		// The image check can take a while; queue only on the current switch.
+		if (getOrchestratorState().phase === "available") {
+			const { packagesAuto } = await deps.loadSettings();
+			if (packagesAuto && getOrchestratorState().phase === "available")
+				dispatch({ type: "AWAIT_IDLE_FOR_INSTALL", now: deps.now() });
 		}
 	} else if (state.phase === "awaiting-idle") {
+		await maybeCheckOsWhilePackagesWait(await deps.loadSettings());
 		await maybeStartPackageInstall({ bypassIdle: false });
 	} else if (state.phase === "downloading" || state.phase === "committing") {
 		await readjudicateDeferredDownload();
@@ -3047,17 +3050,24 @@ function osScheduleClock(): OrchestratorState["osCheck"] {
 		: state.osCheck;
 }
 
+// A package offer that has not launched an install yet.
+const PACKAGES_WAITING: readonly OrchestratorPhase[] = [
+	"available",
+	"awaiting-idle",
+];
+
 // Offered packages must not hide a system image: the A/B image carries its own
 // packages, so a found image replaces the package offer (reducer, `available`).
 async function maybeCheckOsWhilePackagesWait(
 	settings: UpdateSettings,
 ): Promise<void> {
-	if (state.phase !== "available" || packageInstallStarting) return;
+	const phase = state.phase;
+	if (!PACKAGES_WAITING.includes(phase) || packageInstallStarting) return;
 	const capabilities = await readCapabilityRegime();
 	if (
 		capabilities?.mode !== "capable" ||
 		!capabilities.features.includes("rauc-verity-streaming") ||
-		getOrchestratorState().phase !== "available" ||
+		getOrchestratorState().phase !== phase ||
 		!scheduledCheckDue({
 			now: deps.now(),
 			clock: osScheduleClock(),
@@ -3069,11 +3079,27 @@ async function maybeCheckOsWhilePackagesWait(
 	await runOsCheckAfterCellularGate(settings);
 }
 
+const OS_CHECK_START_PHASES: readonly OrchestratorPhase[] = [
+	"idle",
+	"os-available",
+	...PACKAGES_WAITING,
+];
+
 async function runOsCheckAfterCellularGate(
 	settings: UpdateSettings,
 ): Promise<void> {
+	// The phase this check was admitted from; the uplink read below can outlive it.
+	const startPhase = state.phase;
+	// Only a resting phase starts one; never beside a planned or running install.
+	if (!OS_CHECK_START_PHASES.includes(startPhase)) return;
+	const besidePackageOffer = PACKAGES_WAITING.includes(startPhase);
+	// Starting a package install owns the device until its unit is recorded.
+	const packagesMovedOn = () =>
+		besidePackageOffer &&
+		(getOrchestratorState().phase !== startPhase || packageInstallStarting);
 	const onlyMetered = await deps.onlyMeteredCandidateExists();
 	if (osSettlementPersistence.pending) return;
+	if (getOrchestratorState().phase !== startPhase || packagesMovedOn()) return;
 	const gate = decideCellularGate({
 		onlyMeteredCandidateExists: onlyMetered,
 		kind: "os",
@@ -3085,13 +3111,11 @@ async function runOsCheckAfterCellularGate(
 	});
 	if (!gate.allowed) return;
 	const now = deps.now();
-	const besidePackageOffer = state.phase === "available";
 	dispatch({ type: "OS_CHECK_STARTED", now });
 	const result = await deps.checkOsManifest(settings.channel);
 	// A package install that started meanwhile owns the device: drop this
 	// result, so the image is checked again once the install has settled.
-	if (besidePackageOffer && getOrchestratorState().phase !== "available")
-		return;
+	if (packagesMovedOn()) return;
 	osBoardNotOffered = result.boardNotOffered === true;
 	osChannelUnpublished = result.channelUnpublished === true;
 	const outcomeNow = deps.now();

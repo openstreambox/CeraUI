@@ -46,11 +46,16 @@ export type ImageOwnedPackages = {
 };
 
 const FIELD_RE = /^([A-Za-z][A-Za-z-]*):[ \t]*(.*?)[ \t]*$/;
+// The forms the image writes: the installed copy, or its exact version.
+const PIN_FORM_RE = /^(?:release a=now|version [0-9][A-Za-z0-9.+~:-]*)$/;
+// A pin that holds a package must outrank the apt.ceralive.tv origin pin.
+const ORIGIN_PIN_PRIORITY = 990;
 
 /**
  * The package names an APT preferences file pins, or null when any stanza is
- * not a complete `Package`/`Pin`/`Pin-Priority` record. A file with only
- * comments pins nothing.
+ * not a complete `Package`/`Pin`/`Pin-Priority` record in a form the image
+ * writes (`release a=now` or `version <v>`, above the origin pin's 990). A file
+ * with only comments pins nothing.
  */
 export function parseLocalOverridePin(text: string): string[] | null {
 	const names: string[] = [];
@@ -69,8 +74,9 @@ export function parseLocalOverridePin(text: string): string[] | null {
 		const packages = fields.get("package")?.split(/\s+/) ?? [];
 		if (
 			fields.size !== 3 ||
-			!fields.get("pin") ||
-			!/^-?\d+$/.test(fields.get("pin-priority") ?? "") ||
+			!PIN_FORM_RE.test(fields.get("pin") ?? "") ||
+			!/^\d+$/.test(fields.get("pin-priority") ?? "") ||
+			Number(fields.get("pin-priority")) <= ORIGIN_PIN_PRIORITY ||
 			packages.length === 0 ||
 			packages.some((name) => !APT_PACKAGE_NAME_RE.test(name))
 		)

@@ -203,18 +203,30 @@ describe("reducer: the image check beside a package offer", () => {
 			expect(reduceOrchestrator(waiting, event)).toBe(waiting);
 	});
 
-	test("once a package install is planned, image results are ignored", () => {
-		const planned = packagesWaiting({ phase: "awaiting-idle" });
+	test("a queued package offer gets the same in-place check; a found image replaces the queue", () => {
+		const queued = packagesWaiting({ phase: "awaiting-idle" });
+		const started = reduceOrchestrator(queued, {
+			type: "OS_CHECK_STARTED",
+			now: 6,
+		});
+		expect(started.phase).toBe("awaiting-idle");
+		expect(started.osCheck.lastAttemptAt).toBe(6);
 		expect(
-			reduceOrchestrator(planned, {
+			reduceOrchestrator(started, {
 				type: "CHECK_SUCCEEDED_OS",
-				now: 6,
+				now: 7,
 				nextAttemptAt: 99,
-			}),
-		).toBe(planned);
-		expect(
-			reduceOrchestrator(planned, { type: "OS_CHECK_STARTED", now: 6 }),
-		).toBe(planned);
+			}).phase,
+		).toBe("os-available");
+	});
+
+	test("once a package install is launched, image events are ignored", () => {
+		const launched = packagesWaiting({ phase: "downloading" });
+		for (const event of [
+			{ type: "OS_CHECK_STARTED", now: 6 },
+			{ type: "CHECK_SUCCEEDED_OS", now: 6, nextAttemptAt: 99 },
+		] as const)
+			expect(reduceOrchestrator(launched, event)).toBe(launched);
 	});
 });
 
@@ -316,6 +328,95 @@ describe("runtime: offered packages no longer hide a system image", () => {
 		expect(getOrchestratorState().phase).toBe(installing);
 		expect(getOsUpdateSummary().candidate).toBeNull();
 		expect(getOrchestratorState().osCheck.lastSuccessAt).toBeNull();
+		expect(h.calls.installs).toBe(1);
+	});
+
+	test("a package install that starts during the uplink read stops the image check before it runs", async () => {
+		// Given the image check waiting on the metered-uplink read.
+		const uplink = Promise.withResolvers<boolean>();
+		let uplinkReads = 0;
+		const h = setup(imageFound, {
+			onlyMeteredCandidateExists: () =>
+				++uplinkReads === 1 ? uplink.promise : Promise.resolve(false),
+		});
+		setOrchestratorStateForTest(packagesWaiting());
+		const tick = runOrchestratorTick();
+		while (uplinkReads === 0) await Bun.sleep(1);
+		// When the operator starts the package install meanwhile.
+		expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+			started: true,
+		});
+		uplink.resolve(false);
+		await tick;
+		// Then no image check ran and no image is offered beside the install.
+		expect(h.calls.checks).toBe(0);
+		expect(getOsUpdateSummary().candidate).toBeNull();
+		expect(["awaiting-idle", "downloading"]).toContain(
+			getOrchestratorState().phase,
+		);
+	});
+
+	test("a package offer queued for idle no longer hides a due image", async () => {
+		// Given packages queued for an idle window that never comes.
+		const h = setup(imageFound, {
+			loadSettings: settings(true),
+			isIdle: async () => false,
+		});
+		setOrchestratorStateForTest(packagesWaiting({ phase: "awaiting-idle" }));
+		// When the orchestrator ticks.
+		await runOrchestratorTick();
+		// Then the image is checked and offered; no package install started.
+		expect(h.calls.checks).toBe(1);
+		expect(getOrchestratorState().phase).toBe("os-available");
+		expect(h.calls.installs).toBe(0);
+	});
+
+	test("turning automatic packages off during the image check keeps the offer unqueued", async () => {
+		// Given automatic packages on when the tick starts.
+		let packagesAuto = true;
+		setup(
+			async () => {
+				packagesAuto = false;
+				return noImage;
+			},
+			{
+				loadSettings: async () => ({
+					...(await settings(packagesAuto)()),
+				}),
+			},
+		);
+		setOrchestratorStateForTest(packagesWaiting());
+		// When the switch goes off while the image check runs.
+		await runOrchestratorTick();
+		// Then the offer stays offered, not queued for install.
+		expect(getOrchestratorState().phase).toBe("available");
+	});
+
+	test("an image result that lands while a package install is starting is dropped", async () => {
+		// Given a queued offer whose image check is on the wire.
+		const reply = Promise.withResolvers<CheckOsManifestResult>();
+		const installUplink = Promise.withResolvers<boolean>();
+		let uplinkReads = 0;
+		const h = setup(() => reply.promise, {
+			isIdle: async () => false,
+			onlyMeteredCandidateExists: () =>
+				++uplinkReads === 2 ? installUplink.promise : Promise.resolve(false),
+		});
+		setOrchestratorStateForTest(packagesWaiting({ phase: "awaiting-idle" }));
+		const tick = runOrchestratorTick();
+		while (h.calls.checks === 0) await Bun.sleep(1);
+		// When the operator's install is past its own phase check (its uplink read pending).
+		const install = installUpdatesNow({ scope: "packages" });
+		while (uplinkReads < 2) await Bun.sleep(1);
+		// And the image check then finds an image.
+		reply.resolve(imageFound);
+		await tick;
+		expect(getOrchestratorState().phase).toBe("awaiting-idle");
+		installUplink.resolve(false);
+		// Then the install launches and no image is offered beside it.
+		expect(await install).toEqual({ started: true });
+		expect(getOrchestratorState().phase).toBe("downloading");
+		expect(getOsUpdateSummary().candidate).toBeNull();
 		expect(h.calls.installs).toBe(1);
 	});
 
