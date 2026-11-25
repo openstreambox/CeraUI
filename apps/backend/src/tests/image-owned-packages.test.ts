@@ -128,6 +128,37 @@ describe("the image's local-override pin", () => {
 		).toEqual(["modemmanager"]);
 	});
 
+	it("takes spaces and tabs between names as APT does", () => {
+		expect(
+			parseLocalOverridePin(
+				"Package: modemmanager \tlibmm-glib0\nPin: release a=now\nPin-Priority: 1001\n",
+			),
+		).toEqual(["modemmanager", "libmm-glib0"]);
+	});
+
+	it.each([
+		["a line separator", "\u2028"],
+		["a paragraph separator", "\u2029"],
+		["a no-break space", "\u00a0"],
+	])(
+		"refuses names joined by %s, which APT would not pin",
+		(_label, separator) => {
+			expect(
+				parseLocalOverridePin(
+					`Package: modemmanager${separator}zstd\nPin: release a=now\nPin-Priority: 1001\n`,
+				),
+			).toBeNull();
+		},
+	);
+
+	it("does not take a line of Unicode separators as a blank line", () => {
+		expect(
+			parseLocalOverridePin(
+				"Package: modemmanager\nPin: release a=now\n\u2028\nPin-Priority: 1001\n",
+			),
+		).toBeNull();
+	});
+
 	it("reads a header-only file as pinning nothing", () => {
 		expect(parseLocalOverridePin("# header\n# only\n")).toEqual([]);
 		expect(parseLocalOverridePin("")).toEqual([]);

@@ -104,7 +104,9 @@ export function parseLocalOverridePin(text: string): string[] | null {
 	for (const stanza of text.split(/\n[ \t]*\n/)) {
 		const fields = new Map<string, string>();
 		for (const line of stanza.split("\n")) {
-			if (line.trim() === "" || line.startsWith("#")) continue;
+			// Blank means spaces and tabs only, as APT reads it; a Unicode
+			// separator is not whitespace to APT.
+			if (/^[ \t]*$/.test(line) || line.startsWith("#")) continue;
 			const match = FIELD_RE.exec(line);
 			if (!match) return null;
 			const key = (match[1] ?? "").toLowerCase();
@@ -113,7 +115,9 @@ export function parseLocalOverridePin(text: string): string[] | null {
 		}
 		fields.delete("explanation");
 		if (fields.size === 0) continue;
-		const packages = fields.get("package")?.split(/\s+/) ?? [];
+		// APT separates names with spaces and tabs only, so a name with a
+		// Unicode separator inside stays one (invalid) name.
+		const packages = fields.get("package")?.split(/[ \t]+/) ?? [];
 		if (
 			fields.size !== 3 ||
 			!isImagePinForm(fields.get("pin") ?? "") ||
