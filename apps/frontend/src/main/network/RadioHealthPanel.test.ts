@@ -1,9 +1,36 @@
 // @vitest-environment jsdom
 
 import type { RadioHealth, RadioMetric } from "@ceraui/rpc/schemas";
-import { render } from "@testing-library/svelte";
-import { describe, expect, test } from "vitest";
+import { fireEvent, render } from "@testing-library/svelte";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import RadioHealthPanel from "./RadioHealthPanel.svelte";
+
+// AppDialog picks Dialog vs Sheet through window.matchMedia, absent in jsdom.
+beforeAll(() => {
+	if (!window.matchMedia)
+		window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+			matches: true,
+			media: query,
+			onchange: null,
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn(),
+			addListener: vi.fn(),
+			removeListener: vi.fn(),
+			dispatchEvent: vi.fn(),
+		}));
+});
+
+/** Opens the readings dialog and returns its body (portalled to document.body). */
+async function openDetails(view: { getByTestId: (id: string) => HTMLElement }) {
+	await fireEvent.click(view.getByTestId("radio-health-open"));
+	const details = document.body.querySelector<HTMLElement>(
+		'[data-testid="radio-health-details"]',
+	);
+	if (!details) throw new Error("readings dialog did not open");
+	const part = (id: string) =>
+		details.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+	return { details, part };
+}
 
 const at = 1_700_000_000_000;
 const absent: RadioMetric = {
@@ -70,7 +97,11 @@ test("unavailable readings and words remain visible without modem action control
 	expect(chip).toBe("Not checked");
 	expect(summary).toBe("Couldn’t check this time.");
 	expect(panel.textContent).toContain("Unavailable");
-	expect(container.querySelectorAll("button,input,select").length).toBe(0);
+	// The one button opens the readings; nothing acts on the modem.
+	expect(container.querySelectorAll("input,select").length).toBe(0);
+	const buttons = container.querySelectorAll("button");
+	expect(buttons.length).toBe(1);
+	expect(buttons[0]?.dataset.testid).toBe("radio-health-open");
 	expect(container.textContent).not.toContain("Weak signal");
 });
 
@@ -184,36 +215,27 @@ describe("compact readings", () => {
 		);
 	});
 
-	test("others sending lists only modems seen sending", () => {
-		const { getByTestId } = show(
+	test("USB events show only when there are some", () => {
+		const none = show(radio(registered));
+		expect(none.queryByTestId("radio-health-usb")).toBeNull();
+		none.unmount();
+		const some = show(
 			radio({
 				...registered,
-				neighbours: [
-					{
-						id: "2",
-						band: absent,
-						transmitting: "yes",
-						source: "tx_bytes",
-						capturedAt: at,
-					},
-					{
-						id: "3",
-						band: absent,
-						transmitting: "unknown",
-						source: "tx_bytes",
-						capturedAt: at,
-					},
-				],
+				usb: { available: true, events: [{ at, kind: "reset" }] },
 			}),
 		);
-		const readings = getByTestId("radio-health-readings").textContent ?? "";
-		expect(readings).toContain("Modem 2");
-		expect(readings).not.toContain("Modem 3");
+		expect(some.getByTestId("radio-health-usb").textContent?.trim()).toBe("1");
+	});
+
+	test("the compact view repeats no signal bars", () => {
+		const { getByTestId } = show(radio(registered));
+		expect(getByTestId("radio-health-signal").querySelector("svg")).toBeNull();
 	});
 });
 
-test("the details disclosure starts collapsed and keep every raw reading", () => {
-	const { getByTestId } = show(
+test("the card opens every raw reading and the history in a dialog", async () => {
+	const view = show(
 		radio({
 			...registered,
 			usb: { available: true, events: [{ at, kind: "reset" }] },
@@ -225,36 +247,38 @@ test("the details disclosure starts collapsed and keep every raw reading", () =>
 			],
 		}),
 	);
-	const details = getByTestId("radio-health-sources") as HTMLDetailsElement;
-	expect(details.open).toBe(false);
-	expect(getByTestId("radio-health-raw").textContent).toContain(
-		"QENG servingcell",
-	);
-	expect(getByTestId("radio-health-raw").textContent).toContain("LTE RSRP");
-	expect(getByTestId("radio-health-history").textContent).toContain(
-		"USB reset",
-	);
+	expect(
+		document.body.querySelector('[data-testid="radio-health-details"]'),
+	).toBeNull();
+	const { part } = await openDetails(view);
+	expect(part("radio-health-raw")?.textContent).toContain("QENG servingcell");
+	expect(part("radio-health-raw")?.textContent).toContain("LTE RSRP");
+	expect(part("radio-health-history")?.textContent).toContain("USB reset");
 });
 
-test("an empty generic slot is dropped once a layer reports that metric", () => {
-	const { getByTestId } = show(
+test("an empty generic slot is dropped once a layer reports that metric", async () => {
+	const view = show(
 		radio({
 			...registered,
 			metrics: { rsrp: absent, ...registered.metrics },
 		}),
 	);
+	const { part } = await openDetails(view);
 	const names = Array.from(
-		getByTestId("radio-health-raw").querySelectorAll("dt"),
+		part("radio-health-raw")?.querySelectorAll("dt") ?? [],
 		(dt) => dt.textContent?.trim(),
 	);
 	expect(names).toContain("LTE RSRP");
 	expect(names).not.toContain("RSRP");
 });
 
-test("the raw readings disclosure is labelled Details, not sources", () => {
-	const { getByTestId } = show(radio(registered));
-	const summary = getByTestId("radio-health-sources").querySelector("summary");
-	expect(summary?.textContent?.trim()).toBe("Details");
+test("the card's button says what it opens", () => {
+	const { getByRole } = show(radio(registered));
+	expect(
+		getByRole("button", { name: "Show readings and history" }).getAttribute(
+			"aria-haspopup",
+		),
+	).toBe("dialog");
 });
 
 test("the panel is a named region with a screen-reader heading, chip first", () => {
@@ -335,8 +359,8 @@ test("an unavailable network value keeps the page direction", () => {
 	).toBeNull();
 });
 
-test("details keep neighbour band, source and time, and finding evidence", () => {
-	const { getByTestId } = show(
+test("details keep neighbour band, source and time, and finding evidence", async () => {
+	const view = show(
 		radio({
 			...registered,
 			neighbours: [
@@ -360,12 +384,13 @@ test("details keep neighbour band, source and time, and finding evidence", () =>
 			],
 		}),
 	);
-	const neighbours = getByTestId("radio-health-neighbours").textContent ?? "";
+	const { part } = await openDetails(view);
+	const neighbours = part("radio-health-neighbours")?.textContent ?? "";
 	expect(neighbours).toContain("Modem 2");
 	expect(neighbours).toContain("Sending");
 	expect(neighbours).toContain("B7");
 	expect(neighbours).toContain("tx_bytes");
-	expect(getByTestId("radio-health-history").textContent).toContain(
+	expect(part("radio-health-history")?.textContent).toContain(
 		"two-failed-path-probes",
 	);
 });

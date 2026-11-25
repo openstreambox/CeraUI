@@ -52,11 +52,13 @@ finding, reads **OK**; registered without a data connection reads
 **Registered**; a missing or unknown registration reads **Not checked**; a
 modem without a SIM or still searching says so without blaming the SIM. A
 missing SIM outranks any cached finding. Registration, network type and band,
-signal (RSRP in dBm with bars and a word), other modems sending and USB events
-follow as label/value rows. The signal word is a rough guide (-90 dBm and above
-Strong, down to -105 dBm Fair, below that Weak) and never a finding. Every raw
-reading with its source and time, and the timeline, sit behind a collapsed
-**Details**.
+and signal (RSRP in dBm with a word; the signal bars stay on the row, which
+reads ModemManager's percentage) follow as label/value rows, plus USB events
+when there are any. The signal word is a rough guide (-90 dBm and above Strong,
+down to -105 dBm Fair, below that Weak) and never a finding. The whole card
+opens a dialog with every raw reading and its source and time, the other
+modems' bands and whether they were sending data, and the timeline with the
+evidence behind each finding.
 
 The panel uses words and symbols alongside calm suggested actions. It contains
 no modem action controls. Restart is a suggestion with its expected interruption,
@@ -85,10 +87,10 @@ de datos concedido, pueden indicar un problema de la ruta de datos. La actividad
 El panel empieza con una etiqueta de estado (icono y palabra), una frase corta y
 el siguiente paso cuando lo hay. Un módem registrado y conectado sin hallazgos
 dice **OK**; registrado sin conexión de datos dice **Registrado**; sin registro
-dice **Sin comprobar**. Después vienen el registro, el tipo de red y
-la banda, la señal (RSRP en dBm con barras y una palabra), los otros módems que
-transmiten y los eventos USB. Todas las mediciones con su fuente y hora, y el
-historial, quedan plegadas en **Detalles**.
+dice **Sin comprobar**. Después vienen el registro, el tipo de red y la banda,
+la señal (RSRP en dBm con una palabra) y los eventos USB cuando los hay. Toda la
+tarjeta abre un diálogo con todas las mediciones, su fuente y hora, los otros
+módems y el historial con la evidencia de cada hallazgo.
 
 Las acciones son sugerencias, sin botones que actúen sobre el módem. Las pruebas
 en el equipo real aún **NO SE HAN EJECUTADO**.
