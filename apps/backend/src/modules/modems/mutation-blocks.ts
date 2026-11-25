@@ -43,6 +43,7 @@ import {
 	setMutationBlocks,
 } from "../streaming/lifecycle-admission.ts";
 
+import { syncHeldOutModemNotices } from "./held-out-modem-notice.ts";
 import { listMutationEntries, mutationSlotName } from "./mutation-journal.ts";
 import {
 	assertMutationJournalRevision,
@@ -197,5 +198,6 @@ export async function reconcileMutationBlocks(
 	);
 	lastBlocks = blocks;
 	lastRevision = revision;
+	syncHeldOutModemNotices(lastBlocks);
 	return { blocks, unreadable };
 }
