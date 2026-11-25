@@ -12,13 +12,19 @@ import {
 } from "../modules/wifi/wifi-connections.ts";
 import { stopHotspotForInterface } from "../modules/wifi/wifi-hotspot-config.ts";
 import {
+	beginHotspotTransition,
 	registerPendingConfirmation,
 	settlePending,
 } from "../modules/wifi/wifi-hotspot-monitor.ts";
-import type { WifiInterfaceWithHotspot } from "../modules/wifi/wifi-hotspot-types.ts";
+import type { HotspotSteeringDeps } from "../modules/wifi/wifi-hotspot-readiness.ts";
+import type {
+	HotspotActivationDeps,
+	WifiInterfaceWithHotspot,
+} from "../modules/wifi/wifi-hotspot-types.ts";
 
-test("fake NM confirmation publishes AP zone without a second connection edge and fences completion", async () => {
-	const mac = "02:00:00:00:00:93";
+const MAC = "02:00:00:00:00:93";
+
+function fixture() {
 	const iface: WifiInterfaceWithHotspot = {
 		id: 93,
 		ifname: "wlan93",
@@ -44,48 +50,83 @@ test("fake NM confirmation publishes AP zone without a second connection edge an
 		txb: 0,
 		rxb: 0,
 	};
-	addWifiInterface(mac, iface);
+	addWifiInterface(MAC, iface);
+	let verified = false;
+	let reconciles = 0;
+	const steering: HotspotSteeringDeps = {
+		reconcile: async () => {
+			reconciles++;
+		},
+		verified: () => verified,
+	};
+	const outcomes: unknown[] = [];
+	const deps = {
+		nmConnect: async () => true,
+		nmConnSetFields: async () => true,
+		wifiUpdateSavedConns: async () => {},
+		broadcastState: refreshWifiApClientZones,
+		setDupIpSuppression: () => {},
+		credentials: { get: () => undefined, remember: () => {} },
+		findHotspotConn: async () => undefined,
+		steering,
+		publishOutcome: (...args: unknown[]) => {
+			outcomes.push(args);
+		},
+	} as unknown as HotspotActivationDeps;
+	const confirm = () => {
+		iface.hotspot.transition = "activating";
+		registerPendingConfirmation(
+			{ macAddress: MAC, uuid: "ap93", ifname: "wlan93" },
+			iface,
+			deps,
+		);
+		settlePending("wlan93", true);
+	};
+	return {
+		iface,
+		netif,
+		deps,
+		outcomes,
+		confirm,
+		verify: () => {
+			verified = true;
+		},
+		reconciles: () => reconciles,
+		restore: () => {
+			removeWifiInterface(MAC);
+			delete netif.wlan93;
+		},
+	};
+}
+
+test("fake NM confirmation publishes AP zone without a second connection edge and fences completion", async () => {
+	const f = fixture();
 	let edges = 0;
 	const off = onNetworkInterfacesChange(() => edges++);
-	let release!: (ready: boolean) => void;
-	const ready = new Promise<boolean>((resolve) => {
-		release = resolve;
-	});
-	const outcomes: unknown[] = [];
-	let checks = 0;
 	try {
-		registerPendingConfirmation(mac, iface, {
-			nmConnect: async () => true,
-			nmConnSetFields: async () => true,
-			nmHotspot: async () => null,
-			wifiUpdateSavedConns: async () => {},
-			broadcastState: refreshWifiApClientZones,
-			setDupIpSuppression: () => {},
-			credentials: { get: () => undefined, remember: () => {} },
-			findHotspotConn: async () => undefined,
-			confirmSteering: async () => {
-				if (++checks === 1) return false;
-				return ready;
-			},
-			publishOutcome: (...args) => {
-				outcomes.push(args);
-			},
-		});
-		settlePending(iface.ifname, true);
-		expect(netif.wlan93.error & NETIF_ERR_HOTSPOT).toBe(NETIF_ERR_HOTSPOT);
+		f.confirm();
+		expect((f.netif.wlan93?.error ?? 0) & NETIF_ERR_HOTSPOT).toBe(
+			NETIF_ERR_HOTSPOT,
+		);
 		expect(edges).toBe(1);
-		expect(outcomes).toEqual([]);
+		expect(f.outcomes).toEqual([]);
 		// A later IP snapshot must carry the zone even without a Wi-Fi status change.
-		const late = { wlan93: { ...netif.wlan93, error: 0, enabled: true } };
+		const late = {
+			wlan93: { ...(f.netif.wlan93 ?? { tp: 0 }), error: 0, enabled: true },
+		} as Parameters<typeof applyConcurrentApBondGate>[0];
 		applyConcurrentApBondGate(late);
-		expect(late.wlan93.error & NETIF_ERR_HOTSPOT).toBe(NETIF_ERR_HOTSPOT);
-		release(true);
+		expect((late.wlan93?.error ?? 0) & NETIF_ERR_HOTSPOT).toBe(
+			NETIF_ERR_HOTSPOT,
+		);
+		await Bun.sleep(20);
+		expect(f.outcomes).toEqual([]);
+		f.verify();
 		await Bun.sleep(550);
-		expect(checks).toBe(2);
-		expect(outcomes).toEqual([["start", 93, { success: true }]]);
-		iface.activeMode = "ap";
-		iface.activeConn = "ap93";
-		await stopHotspotForInterface(mac, iface, {
+		expect(f.reconciles()).toBeGreaterThan(0);
+		expect(f.outcomes).toEqual([["start", 93, { success: true }]]);
+		f.iface.activeMode = "ap";
+		f.iface.activeConn = "ap93";
+		await stopHotspotForInterface(MAC, f.iface, {
 			nmConnSetFields: async () => true,
 			nmDisconnect: async () => true,
 			releaseConcurrentInterface: async () => true,
@@ -93,11 +134,57 @@ test("fake NM confirmation publishes AP zone without a second connection edge an
 			setDupIpSuppression: () => {},
 			rescan: async () => {},
 		});
-		expect(netif.wlan93.error & NETIF_ERR_HOTSPOT).toBe(0);
+		expect((f.netif.wlan93?.error ?? 0) & NETIF_ERR_HOTSPOT).toBe(0);
 		expect(edges).toBe(2);
 	} finally {
 		off();
-		removeWifiInterface(mac);
-		delete netif.wlan93;
+		f.restore();
+	}
+});
+
+test("a Stop during the steering wait cancels the old Start without a success frame", async () => {
+	const f = fixture();
+	try {
+		f.confirm();
+		await Bun.sleep(20);
+		beginHotspotTransition(f.iface, "deactivating");
+		f.verify();
+		await Bun.sleep(600);
+		expect(f.outcomes).toEqual([]);
+	} finally {
+		f.restore();
+	}
+});
+
+test("an operation that finishes during the wait still cancels the old Start", async () => {
+	const f = fixture();
+	try {
+		f.confirm();
+		await Bun.sleep(20);
+		// A reconfigure restarts the same profile and clears its transition again.
+		beginHotspotTransition(f.iface, "activating");
+		delete f.iface.hotspot.transition;
+		f.verify();
+		await Bun.sleep(600);
+		expect(f.outcomes).toEqual([]);
+	} finally {
+		f.restore();
+	}
+});
+
+test("a replaced row or profile during the wait never certifies the replacement", async () => {
+	for (const replace of ["profile", "row"] as const) {
+		const f = fixture();
+		try {
+			f.confirm();
+			await Bun.sleep(20);
+			if (replace === "profile") f.iface.hotspot.conn = "ap94";
+			else f.iface.hotspot = { ...f.iface.hotspot };
+			f.verify();
+			await Bun.sleep(600);
+			expect(f.outcomes).toEqual([]);
+		} finally {
+			f.restore();
+		}
 	}
 });
