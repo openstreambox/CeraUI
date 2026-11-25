@@ -2,10 +2,10 @@
 /**
  * LiveView: while the device reports that it cannot confirm whether an earlier
  * stream ended (`stream_lifecycle` reconciling or stop_failed, not streaming),
- * the unconfirmed-state band offers the Stop and the Start bar says "Stop the
- * stream above first" instead of "Ready to go live". Start stays enabled (it
- * can supply the reconcile that settles the state). Both follow the live
- * status: once the device settles, the bar reads ready again without a reload.
+ * the unconfirmed-state band offers the Stop, and the Start bar says "Stream
+ * state not confirmed" instead of "Ready to go live", with Start disabled: the
+ * band's Stop is the next step. Both follow the live status: once the device
+ * settles, the bar reads ready again without a reload.
  *
  * Mounts the real IdleCockpit, StreamSetupChain and UnconfirmedStreamBand,
  * with the same peripheral stubs as LiveView.idle-order.test.ts.
@@ -35,7 +35,8 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => ({
 	getActiveInput: () => undefined,
 	getConnectionState: () => "connected",
 	getIsConnected: () => true,
-	getCapabilities: () => undefined,
+	// Current capabilities: the engine gate needs them before Start reads ready.
+	getCapabilities: () => ({ encoder: {} }),
 	getConfigChange: () => undefined,
 	getNetif: () => ({ eth0: { enabled: true, ip: "10.0.0.2" } }),
 	getRelays: () => undefined,
@@ -155,50 +156,49 @@ function startButton(container: HTMLElement) {
 	}) as HTMLButtonElement;
 }
 
-describe("LiveView: the bar points to the band's Stop only while the device reports the unconfirmed state", () => {
+describe("LiveView: the bar defers to the band's Stop only while the device reports the unconfirmed state", () => {
 	for (const lifecycle of ["reconciling", "stop_failed"] as const) {
-		it(`${lifecycle}: band with Stop, the bar points to it, and both follow the status live`, () => {
+		it(`${lifecycle}: band with Stop, the bar defers to it with Start disabled, and both follow the status live`, () => {
 			setLiveStatus({ stream_lifecycle: lifecycle, is_streaming: false });
 			const { container } = render(LiveView);
 			expect(container.textContent).toContain("Stream state not confirmed");
 			expect(
 				within(container).getByRole("button", { name: /stop stream/i }),
 			).toBeTruthy();
-			expect(container.textContent).toContain("Stop the stream above first");
 			expect(container.textContent).not.toContain("Ready to go live");
-			// Both actions stay available: Stop in the band, and Start.
-			expect(startButton(container).disabled).toBe(false);
+			// The band's Stop is the next step; Start waits for the device.
+			expect(
+				within(container).getByRole("button", { name: /stop stream/i }),
+			).toHaveProperty("disabled", false);
+			expect(startButton(container).disabled).toBe(true);
 
 			// The device settles (the operator's Stop was acknowledged).
 			setLiveStatus({ stream_lifecycle: "idle", is_streaming: false });
 			flushSync();
 			expect(container.textContent).not.toContain("Stream state not confirmed");
-			expect(container.textContent).not.toContain(
-				"Stop the stream above first",
-			);
 			expect(container.textContent).toContain("Ready to go live");
 			expect(startButton(container).disabled).toBe(false);
 		});
 	}
 
-	it("idle, or no lifecycle reported yet: no band and the bar reads ready", () => {
-		for (const status of [
-			{},
-			{ stream_lifecycle: "idle", is_streaming: false },
-		]) {
-			setLiveStatus(status);
-			const { container, unmount } = render(LiveView);
-			expect(container.textContent).not.toContain("Stream state not confirmed");
-			expect(container.textContent).not.toContain(
-				"Stop the stream above first",
-			);
-			expect(container.textContent).toContain("Ready to go live");
-			expect(startButton(container).disabled).toBe(false);
-			unmount();
-		}
+	it("idle: no band and the bar reads ready", () => {
+		setLiveStatus({ stream_lifecycle: "idle", is_streaming: false });
+		const { container } = render(LiveView);
+		expect(container.textContent).not.toContain("Stream state not confirmed");
+		expect(container.textContent).toContain("Ready to go live");
+		expect(startButton(container).disabled).toBe(false);
 	});
 
-	it("through the stopping that follows the band's Stop, the bar keeps pointing to it", async () => {
+	it("no lifecycle reported yet: no band, and the bar checks instead of claiming ready", () => {
+		setLiveStatus({});
+		const { container } = render(LiveView);
+		expect(container.textContent).not.toContain("Stream state not confirmed");
+		expect(container.textContent).not.toContain("Ready to go live");
+		expect(container.textContent).toContain("Checking readiness…");
+		expect(startButton(container).disabled).toBe(true);
+	});
+
+	it("through the stopping that follows the band's Stop, the bar never reads ready", async () => {
 		setLiveStatus({ stream_lifecycle: "stop_failed", is_streaming: false });
 		const { container } = render(LiveView);
 		await fireEvent.click(
@@ -208,8 +208,8 @@ describe("LiveView: the bar points to the band's Stop only while the device repo
 		setLiveStatus({ stream_lifecycle: "stopping", is_streaming: false });
 		flushSync();
 		expect(container.textContent).toContain("Stream state not confirmed");
-		expect(container.textContent).toContain("Stop the stream above first");
 		expect(container.textContent).not.toContain("Ready to go live");
+		expect(startButton(container).disabled).toBe(true);
 	});
 
 	it("a Start refused while the band is up says what to press", () => {
