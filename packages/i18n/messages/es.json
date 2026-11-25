@@ -2141,6 +2141,8 @@
 	"notifications.streamHealthRecovered": "Estado del stream recuperado",
 	"notifications.streamRecovered": "La transmisión se restauró automáticamente tras reiniciarse el motor de streaming.",
 	"notifications.streamRecoveryFailed": "No se pudo restaurar la transmisión tras reiniciarse el motor de streaming. Abre Configuración → Registros del sistema para ver los detalles.",
+	"notifications.streamRecoveredAfterRestart": "La transmisión se restauró automáticamente tras reiniciarse un servicio.",
+	"notifications.streamRecoveryFailedAfterRestart": "No se pudo restaurar la transmisión tras reiniciarse un servicio. Abre Configuración → Registros del sistema para ver los detalles.",
 	"notifications.staleLinkAddress": "{link} no está aportando porque sigue usando una dirección antigua. ¿Reiniciar la conexión? Tus espectadores verán tu pantalla BRB unos segundos.",
 	"notifications.staleLinkAddressUnnamed": "Un enlace no está aportando porque sigue usando una dirección antigua. ¿Reiniciar la conexión? Tus espectadores verán tu pantalla BRB unos segundos.",
 	"notifications.staleLinkAddressSeveral": "Algunos enlaces no están aportando porque siguen usando direcciones antiguas. ¿Reiniciar la conexión? Tus espectadores verán tu pantalla BRB unos segundos.",

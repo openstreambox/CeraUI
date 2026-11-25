@@ -53,6 +53,7 @@ import {
 
 import { logger } from "../../helpers/logger.ts";
 import { isModemMutationHeld } from "../streaming/lifecycle-admission.ts";
+import { isStreamSessionUnconfirmed } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import { resolveModemNmDeviceForConnection } from "./modem-nm-device.ts";
 import {
@@ -99,8 +100,13 @@ export function findAtPort(ports: ReadonlyArray<string>): string | undefined {
  */
 export function createInterlockBridge(
 	stableKey: string,
-	deps: { isStreaming(): boolean; holdsLease(key: string): boolean } = {
+	deps: {
+		isStreaming(): boolean;
+		isUnconfirmed?(): boolean;
+		holdsLease(key: string): boolean;
+	} = {
 		isStreaming: getIsStreaming,
+		isUnconfirmed: isStreamSessionUnconfirmed,
 		holdsLease: isModemMutationHeld,
 	},
 ): TransitionInterlock {
@@ -110,6 +116,12 @@ export function createInterlockBridge(
 				return Promise.resolve({
 					allow: false as const,
 					reason: "a stream is live",
+				});
+			}
+			if (deps.isUnconfirmed?.() === true) {
+				return Promise.resolve({
+					allow: false as const,
+					reason: "the stream session is unconfirmed",
 				});
 			}
 			if (!deps.holdsLease(stableKey)) {
