@@ -6,7 +6,7 @@
  * verdict on its own: only a registered modem whose row is connected reads OK,
  * a registered one without a data connection reads as registered, and a
  * missing or unknown registration says the check could not run. A missing SIM
- * outranks any cached finding. Signal level is a reading, never a diagnosis.
+ * outranks any cached finding. Signal is never a diagnosis here.
  */
 import type { RadioHealth, RadioMetric } from "@ceraui/rpc/schemas";
 
@@ -92,49 +92,6 @@ export function bandLabel(value: RadioMetric["value"]): string | null {
 	return String(value)
 		.replace(/\bLTE\s+(?=B\d)/g, "")
 		.replace(/\bNR\s+(?=n\d)/g, "");
-}
-
-export type SignalLevel = "high" | "medium" | "low";
-
-/**
- * A rough guide on RSRP in dBm, the same for LTE and NR. It colours a reading
- * and picks its bars; it never produces a finding.
- */
-export function signalLevel(dbm: number): SignalLevel {
-	if (dbm >= -90) return "high";
-	if (dbm >= -105) return "medium";
-	return "low";
-}
-
-export interface SignalReading {
-	tech: "lte" | "nr" | "other";
-	dbm: number;
-	level: SignalLevel;
-}
-
-/** RSRP per layer, preferring the serving-cell read over ModemManager's. */
-export function signalReadings(radio: RadioHealth): SignalReading[] {
-	const pick = (...keys: string[]): number | undefined => {
-		for (const key of keys) {
-			const metric = radio.metrics[key];
-			if (metric && typeof metric.value === "number" && metric.unit === "dBm")
-				return metric.value;
-		}
-		return undefined;
-	};
-	const out: SignalReading[] = [];
-	const lte = pick("lte.rsrp");
-	const nr = pick("nr.rsrp");
-	if (lte !== undefined)
-		out.push({ tech: "lte", dbm: lte, level: signalLevel(lte) });
-	if (nr !== undefined)
-		out.push({ tech: "nr", dbm: nr, level: signalLevel(nr) });
-	if (out.length === 0) {
-		const any = pick("mm.rsrp", "rsrp");
-		if (any !== undefined)
-			out.push({ tech: "other", dbm: any, level: signalLevel(any) });
-	}
-	return out;
 }
 
 /** "lte.rsrp" → "LTE RSRP", "nr.sinr" → "5G SINR", "lteTxPower" → "LTE TX". */

@@ -49,16 +49,15 @@ Findings are informational, never admission or recovery commands:
 The panel leads with a status chip (icon and word), one short line and the next
 step when there is one. A registered modem whose row is connected, with no
 finding, reads **OK**; registered without a data connection reads
-**Registered**; a missing or unknown registration reads **Not checked**; a
-modem without a SIM or still searching says so without blaming the SIM. A
-missing SIM outranks any cached finding. Registration, network type and band,
-and signal (RSRP in dBm with a word; the signal bars stay on the row, which
-reads ModemManager's percentage) follow as label/value rows, plus USB events
-when there are any. The signal word is a rough guide (-90 dBm and above Strong,
-down to -105 dBm Fair, below that Weak) and never a finding. The whole card
-opens a dialog with every raw reading and its source and time, the other
-modems' bands and whether they were sending data, and the timeline with the
-evidence behind each finding.
+**Registered**; a missing or unknown registration reads **Not checked**; a modem
+without a SIM or still searching says so without blaming the SIM. A missing SIM
+outranks any cached finding. Registration and network type and band follow as
+label/value rows, plus USB events when there are any; the row's own network-type
+line is left out while the card names the network. Signal stays on the row, and
+the measured RSRP and quality are in the dialog, never a finding. The whole card
+opens a dialog with every raw reading and its source and time, the other modems'
+bands and whether they were sending data, and the timeline with the evidence
+behind each finding.
 
 The panel uses words and symbols alongside calm suggested actions. It contains
 no modem action controls. Restart is a suggestion with its expected interruption,
@@ -88,7 +87,7 @@ El panel empieza con una etiqueta de estado (icono y palabra), una frase corta y
 el siguiente paso cuando lo hay. Un módem registrado y conectado sin hallazgos
 dice **OK**; registrado sin conexión de datos dice **Registrado**; sin registro
 dice **Sin comprobar**. Después vienen el registro, el tipo de red y la banda,
-la señal (RSRP en dBm con una palabra) y los eventos USB cuando los hay. Toda la
+y los eventos USB cuando los hay; la señal queda en la fila del módem. Toda la
 tarjeta abre un diálogo con todas las mediciones, su fuente y hora, los otros
 módems y el historial con la evidencia de cada hallazgo.
 

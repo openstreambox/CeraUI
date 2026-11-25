@@ -1,7 +1,8 @@
 <!--
   RadioHealthPanel.svelte: read-only radio readout inside a cellular row's
   Details. Status first (a chip with its own icon and word, one short line, the
-  next step if there is one), then a few compact readings. The whole card opens
+  next step if there is one), then registration and network. Signal stays on the
+  row; the measured values are in the dialog. The whole card opens
   every raw reading, the other modems and the recent history in a dialog. No
   modem action controls.
 -->
@@ -34,8 +35,6 @@ import {
 	type RadioTone,
 	radioStatus,
 	registrationWord,
-	type SignalLevel,
-	signalReadings,
 } from './radio-health-view';
 
 let {
@@ -165,13 +164,6 @@ const networkText = $derived(
 		.join(' · ') || null,
 );
 
-const signals = $derived(signalReadings(radio));
-const levelWord = (level: SignalLevel) =>
-	({
-		high: m['network.radio.level.high'](),
-		medium: m['network.radio.level.medium'](),
-		low: m['network.radio.level.low'](),
-	})[level];
 
 
 const time = (at: number) =>
@@ -286,22 +278,6 @@ const history = $derived<HistoryRow[]>(
 			<dt class="text-muted-foreground">{m['network.radio.network']()}</dt>
 			<dd class={cn('min-w-0', networkText === null && 'text-muted-foreground')}>
 				{#if networkText === null}{unavailable}{:else}<span dir="ltr">{networkText}</span>{/if}
-			</dd>
-
-			<!-- Measured RSRP as text. The bars stay on the row: they come from a
-			     different reading (ModemManager's percentage). -->
-			<dt class="text-muted-foreground">{m['network.radio.signal']()}</dt>
-			<dd class="min-w-0" data-testid="radio-health-signal">
-				{#if signals.length === 0}
-					<span class="text-muted-foreground">{unavailable}</span>
-				{:else}
-					{#each signals as reading, index (reading.tech)}
-						<span class="whitespace-nowrap" data-signal-level={reading.level}
-							><span class="font-mono tabular-nums" dir="ltr">{reading.dbm} dBm</span>
-							{levelWord(reading.level)}{#if signals.length > 1}{' · '}{reading.tech === 'nr' ? '5G' : 'LTE'}{/if}</span
-						>{#if index < signals.length - 1}<br />{/if}
-					{/each}
-				{/if}
 			</dd>
 
 			{#if radio.usb.available && radio.usb.events.length > 0}
