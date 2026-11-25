@@ -243,8 +243,8 @@ describe("phone-only power admission", () => {
 			expect(
 				screen.getByText(
 					stateValue === "unknown"
-						? "You can restart or power off once the box knows whether your phone uses it."
-						: "You can restart once your phone's stream has stopped.",
+						? "You can restart or power off once the box knows whether a device is sending through it."
+						: "Restart is paused while the box protects recent client activity.",
 				),
 			).toBeTruthy();
 			expect(rebootRpc).not.toHaveBeenCalled();
