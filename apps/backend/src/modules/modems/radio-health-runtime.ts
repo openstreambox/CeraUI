@@ -58,17 +58,35 @@ const previous = new Map<
 >();
 let lastAt = Date.now();
 let refreshing = false;
-export function getRadioHealth(now = Date.now()): Record<string, RadioHealth> {
-	return Object.fromEntries(
-		Object.entries(records).map(([id, record]) => [
-			id,
-			structuredClone(
-				now < record.capturedAt || now - record.capturedAt > 65000
-					? { ...emptyRadio(now), timeline: record.timeline }
-					: record,
-			),
-		]),
-	);
+
+type RadioIdentityRow = Partial<
+	Pick<WireModemEntry, "ifname" | "stable_key" | "iccid">
+>;
+/** One modem's identity as the committed roster states it. */
+export function radioIdentity(row: RadioIdentityRow): string {
+	return `${row.stable_key ?? ""}:${row.ifname ?? ""}:${row.iccid ?? ""}`;
+}
+/**
+ * The full cached record per committed modem, for the readings dialog. A row
+ * whose identity no longer matches the sampled one (a SIM or device swap on
+ * the same id) answers an explicit unknown, as the broadcast does.
+ */
+export function getRadioHealth(
+	committed: Readonly<Record<string, object>>,
+	now = Date.now(),
+): Record<string, RadioHealth> {
+	const out: Record<string, RadioHealth> = {};
+	for (const [id, entry] of Object.entries(committed)) {
+		const row: RadioIdentityRow = entry;
+		const record = records[id];
+		if (!record || previous.get(id)?.key !== radioIdentity(row)) continue;
+		out[id] = structuredClone(
+			now < record.capturedAt || now - record.capturedAt > 65000
+				? { ...emptyRadio(now), timeline: record.timeline }
+				: record,
+		);
+	}
+	return out;
 }
 /** Called only by the retained modem status poll. No timer, probe or mutation. */
 export async function refreshRadioHealth(
@@ -86,6 +104,7 @@ export async function refreshRadioHealth(
 				| "packet_service_state"
 				| "model"
 				| "availability_reason"
+				| "iccid"
 			>
 		>
 	>,
@@ -143,6 +162,17 @@ export async function refreshRadioHealth(
 				continue;
 			}
 			const internal = deps.modem(Number(id));
+			// Sample only while the live modem is still the committed one: a
+			// staged SIM or device swap waits for the next committed roster.
+			if (
+				internal &&
+				((internal.ifname !== undefined && internal.ifname !== modem.ifname) ||
+					(internal.iccid ?? "") !== (modem.iccid ?? ""))
+			) {
+				next[id] = record;
+				previous.delete(id);
+				continue;
+			}
 			const observed = deps.registration?.(internal);
 			const registration =
 				observed &&
@@ -260,7 +290,7 @@ export async function refreshRadioHealth(
 			} catch {
 				/* A failed read remains explicitly unavailable. */
 			}
-			const key = `${modem.stable_key ?? ""}:${modem.ifname}:${internal?.iccid ?? ""}`;
+			const key = radioIdentity(modem);
 			samples.set(id, { key, bytes });
 			const before = previous.get(id);
 			const valid =
@@ -385,15 +415,14 @@ export async function refreshRadioHealth(
 /** Explicit unknown replaces cached data on a new device or unavailable owner. */
 export function radioForModem(
 	id: string,
-	row: Pick<WireModemEntry, "ifname" | "stable_key" | "availability_reason">,
+	row: Pick<WireModemEntry, "ifname" | "stable_key" | "availability_reason"> &
+		Partial<Pick<WireModemEntry, "iccid">>,
 	now = Date.now(),
 ): RadioHealth {
-	const internal = getModem(Number(id));
-	const key = `${row.stable_key ?? ""}:${row.ifname}:${internal?.iccid ?? ""}`;
 	const record = records[id];
 	if (
 		row.availability_reason?.startsWith("mm-") ||
-		previous.get(id)?.key !== key ||
+		previous.get(id)?.key !== radioIdentity(row) ||
 		!record
 	)
 		return emptyRadio(0);

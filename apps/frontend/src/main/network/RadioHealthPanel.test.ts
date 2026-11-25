@@ -507,3 +507,40 @@ test("a serving-cell read the lease refused names its reason in words", async ()
 	);
 	expect(raw).toContain("QENG servingcell · not-released");
 });
+
+test("every lease and read reason reads as words, never a bare token", async () => {
+	const tokens = [
+		"owned-by-modemmanager",
+		"native-unavailable",
+		"repeated-timeouts",
+		"device-changed",
+		"timeout",
+		"modem-unreadable",
+	];
+	for (const token of tokens) {
+		const view = show(
+			radio({
+				...registered,
+				metrics: {
+					servingCell: {
+						value: null,
+						source: `QENG servingcell · no reading: ${token}`,
+						unit: "",
+						technology: "unknown",
+						capturedAt: at,
+					},
+				},
+			}),
+		);
+		const { part } = await openDetails(view);
+		const row = Array.from(
+			part("radio-health-raw")?.querySelectorAll("dt") ?? [],
+		).find((dt) => dt.textContent?.trim() === "Serving cell")?.parentElement;
+		const shown = row?.querySelector("dd > span")?.textContent;
+		expect(shown).toMatch(/^Unavailable: [a-zA-Z]/);
+		expect(shown).not.toContain(token);
+		expect(shown).not.toContain("the read failed");
+		view.unmount();
+		document.body.innerHTML = "";
+	}
+});
