@@ -34,20 +34,20 @@ test("the real sampler publishes explicit unavailable fields and a neighbour del
 	await refreshRadioHealth(rows, 1000, deps);
 	bytes = 200;
 	await refreshRadioHealth(rows, 31000, deps);
-	const result = radioHealthListSchema.parse(getRadioHealth(31000));
+	const result = radioHealthListSchema.parse(getRadioHealth(rows, 31000));
 	expect(result["1"]?.metrics.lteTxPower?.value).toBeNull();
 	expect(result["1"]?.neighbours[0]?.transmitting).toBe("yes");
 	expect(result["1"]?.usb.events).toEqual([{ at: 30000, kind: "reset" }]);
 	expect(result["1"]?.finding.kind).toBe("unknown");
 	expect(result["1"]?.timeline.length).toBe(2);
 	expect(radioForModem("1", rows["1"], 31000).timeline).toHaveLength(1);
-	expect(getRadioHealth(100000)["1"]?.finding.kind).toBe("unknown");
-	expect(getRadioHealth(100000)["1"]?.metrics.rsrp?.reason).toBe(
+	expect(getRadioHealth(rows, 100000)["1"]?.finding.kind).toBe("unknown");
+	expect(getRadioHealth(rows, 100000)["1"]?.metrics.rsrp?.reason).toBe(
 		"not-observed",
 	);
 	bytes = 0;
 	await refreshRadioHealth(rows, 61000, deps);
-	expect(getRadioHealth(61000)["1"]?.neighbours[0]?.transmitting).toBe(
+	expect(getRadioHealth(rows, 61000)["1"]?.neighbours[0]?.transmitting).toBe(
 		"unknown",
 	);
 	await refreshRadioHealth(rows, 90000, {
@@ -57,9 +57,9 @@ test("the real sampler publishes explicit unavailable fields and a neighbour del
 			throw new Error("disabled sampler issued modem query");
 		},
 	});
-	expect(getRadioHealth(90000)).toEqual({});
+	expect(getRadioHealth(rows, 90000)).toEqual({});
 	await refreshRadioHealth({}, 91000, deps);
-	expect(getRadioHealth(91000)).toEqual({});
+	expect(getRadioHealth({}, 91000)).toEqual({});
 });
 
 test("vendor-neutral devices never enter the vendor reader, and replacement drops history", async () => {
@@ -81,21 +81,24 @@ test("vendor-neutral devices never enter the vendor reader, and replacement drop
 	};
 	await refreshRadioHealth(rows, 1000, deps);
 	await refreshRadioHealth(rows, 31000, deps);
-	expect(getRadioHealth(31000)["1"]?.timeline.length).toBe(2);
-	await refreshRadioHealth(
-		{ ...rows, "1": { ...rows["1"], stable_key: "replacement" } },
-		61000,
-		deps,
-	);
-	expect(getRadioHealth(61000)["1"]?.timeline.length).toBe(1);
-	expect(getRadioHealth(100)["1"]?.registration.value).toBeNull();
-	await refreshRadioHealth(
-		{ ...rows, "2": { ...rows["2"], availability_reason: "mm-restarting" } },
-		91000,
-		deps,
-	);
+	expect(getRadioHealth(rows, 31000)["1"]?.timeline.length).toBe(2);
+	const replaced = {
+		...rows,
+		"1": { ...rows["1"], stable_key: "replacement" },
+	};
+	// Until the replacement is sampled, the old identity's history is not served.
+	expect(getRadioHealth(replaced, 31000)["1"]).toBeUndefined();
+	await refreshRadioHealth(replaced, 61000, deps);
+	expect(getRadioHealth(replaced, 61000)["1"]?.timeline.length).toBe(1);
+	expect(getRadioHealth(rows, 61000)["1"]).toBeUndefined();
+	expect(getRadioHealth(replaced, 100)["1"]?.registration.value).toBeNull();
+	const restarting = {
+		...replaced,
+		"2": { ...rows["2"], availability_reason: "mm-restarting" },
+	};
+	await refreshRadioHealth(restarting, 91000, deps);
 	expect(
-		getRadioHealth(91000)["1"]?.neighbours.find((n) => n.id === "2")
+		getRadioHealth(restarting, 91000)["1"]?.neighbours.find((n) => n.id === "2")
 			?.transmitting,
 	).toBe("unknown");
 });
@@ -140,11 +143,11 @@ test("registration retains its successful owner-read time and expires without an
 		"1": { ifname: "fixture1", stable_key: "port-1", model: "DW5821e" },
 	};
 	await refreshRadioHealth(rows, 31000, deps);
-	expect(getRadioHealth(31000)["1"]?.registration.value).toBe("home");
-	expect(getRadioHealth(31000)["1"]?.registration.capturedAt).toBe(1000);
+	expect(getRadioHealth(rows, 31000)["1"]?.registration.value).toBe("home");
+	expect(getRadioHealth(rows, 31000)["1"]?.registration.capturedAt).toBe(1000);
 	await refreshRadioHealth(rows, 91000, deps);
-	expect(getRadioHealth(91000)["1"]?.registration.value).toBeNull();
-	expect(getRadioHealth(91000)["1"]?.finding.kind).toBe("unknown");
+	expect(getRadioHealth(rows, 91000)["1"]?.registration.value).toBeNull();
+	expect(getRadioHealth(rows, 91000)["1"]?.finding.kind).toBe("unknown");
 });
 
 test("the serving cell is read only on the released AT port, and a refusal says why", async () => {
@@ -171,8 +174,10 @@ test("the serving cell is read only on the released AT port, and a refusal says 
 		},
 	});
 	expect(served).toEqual([1]);
-	expect(getRadioHealth(1000)["1"]?.layer.source).toBe("QENG servingcell");
-	expect(getRadioHealth(1000)["1"]?.metrics.servingCell).toBeUndefined();
+	expect(getRadioHealth(rows, 1000)["1"]?.layer.source).toBe(
+		"QENG servingcell",
+	);
+	expect(getRadioHealth(rows, 1000)["1"]?.metrics.servingCell).toBeUndefined();
 
 	await refreshRadioHealth(rows, 31000, {
 		...base,
@@ -183,7 +188,7 @@ test("the serving cell is read only on the released AT port, and a refusal says 
 			capturedAt: 1000,
 		}),
 	});
-	const refused = radioHealthListSchema.parse(getRadioHealth(31000))["1"];
+	const refused = radioHealthListSchema.parse(getRadioHealth(rows, 31000))["1"];
 	expect(refused?.metrics.servingCell).toMatchObject({
 		value: null,
 		reason: "not-available",
@@ -199,7 +204,7 @@ test("the serving cell is read only on the released AT port, and a refusal says 
 			reason: "timeout" as const,
 		}),
 	});
-	expect(getRadioHealth(61000)["1"]?.metrics.servingCell).toMatchObject({
+	expect(getRadioHealth(rows, 61000)["1"]?.metrics.servingCell).toMatchObject({
 		value: null,
 		reason: "not-reported",
 		source: "QENG servingcell · no reading: timeout",
@@ -213,7 +218,7 @@ test("the serving cell is read only on the released AT port, and a refusal says 
 			throw new Error("unlisted firmware reached the AT port");
 		},
 	});
-	expect(getRadioHealth(91000)["1"]?.metrics.servingCell).toBeUndefined();
+	expect(getRadioHealth(rows, 91000)["1"]?.metrics.servingCell).toBeUndefined();
 });
 
 test("binary journal messages cannot stall later USB diagnostics", async () => {
@@ -234,12 +239,9 @@ test("binary journal messages cannot stall later USB diagnostics", async () => {
 				}),
 			].join("\n"),
 	};
-	await refreshRadioHealth(
-		{ "1": { ifname: "fixture1", stable_key: "port-1" } },
-		3000,
-		deps,
-	);
-	expect(getRadioHealth(3000)["1"]?.usb.events).toEqual([
+	const one = { "1": { ifname: "fixture1", stable_key: "port-1" } };
+	await refreshRadioHealth(one, 3000, deps);
+	expect(getRadioHealth(one, 3000)["1"]?.usb.events).toEqual([
 		{ at: 2000, kind: "reset" },
 	]);
 });
@@ -278,5 +280,37 @@ test("overlapping refreshes skip immediately and release the guard after failure
 		await expect(first).rejects.toThrow("read failed");
 	}
 	await refreshRadioHealth({}, 3000, { ...deps, enabled: async () => false });
-	expect(getRadioHealth(3000)).toEqual({});
+	expect(getRadioHealth({}, 3000)).toEqual({});
+});
+
+test("a staged SIM swap on the same id is neither sampled nor served from the old history", async () => {
+	const live = { ifname: "fixture1", iccid: "8900000000000000001" };
+	const deps = {
+		enabled: async () => true,
+		registration: () => ({ value: "home", capturedAt: 1000 }),
+		readNas: async () => ({ signal: "", band: "" }),
+		readText: async () => "100",
+		realpath: async () => "/sys/1-1/1-1:1.4",
+		run: async () => "",
+		health: () => undefined,
+		modem: () => live as never,
+	};
+	const committed = {
+		"1": { ifname: "fixture1", stable_key: "port-1", iccid: live.iccid },
+	};
+	await refreshRadioHealth(committed, 1000, deps);
+	await refreshRadioHealth(committed, 31000, deps);
+	expect(getRadioHealth(committed, 31000)["1"]?.timeline.length).toBe(2);
+	// The new SIM is live but not yet committed: no sample, no old history.
+	live.iccid = "8900000000000000002";
+	await refreshRadioHealth(committed, 61000, deps);
+	expect(getRadioHealth(committed, 61000)["1"]).toBeUndefined();
+	expect(
+		radioForModem("1", committed["1"], 61000).registration.value,
+	).toBeNull();
+	// Once committed, sampling restarts with a fresh history.
+	const swapped = { "1": { ...committed["1"], iccid: live.iccid } };
+	await refreshRadioHealth(swapped, 91000, deps);
+	expect(getRadioHealth(swapped, 91000)["1"]?.timeline.length).toBe(1);
+	expect(getRadioHealth(committed, 91000)["1"]).toBeUndefined();
 });

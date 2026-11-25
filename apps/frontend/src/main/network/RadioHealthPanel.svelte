@@ -81,6 +81,9 @@ $effect(() => {
 // retained timeline when it opens and again after each new reading.
 let retained = $state<RadioHealth['timeline']>([]);
 $effect(() => {
+	// An identity change (a SIM or device swap) resets the record to an
+	// explicit unknown; never keep showing the previous identity's history.
+	if (radio.capturedAt === 0) retained = [];
 	if (!detailsOpen) return;
 	void radio.capturedAt;
 	let cancelled = false;
@@ -251,6 +254,17 @@ const REASON_TEXT = $derived<Record<string, string>>({
 	'in-use': m['network.radio.reason.inUse'](),
 	'not-rm520': m['network.radio.reason.unsupported'](),
 	'second-at-interface-absent': m['network.radio.reason.unsupported'](),
+	'native-unavailable': m['network.radio.reason.cannotOpen'](),
+	'cannot-open': m['network.radio.reason.cannotOpen'](),
+	'port-stuck': m['network.radio.reason.noAnswer'](),
+	'repeated-timeouts': m['network.radio.reason.noAnswer'](),
+	timeout: m['network.radio.reason.noAnswer'](),
+	'port-not-quiet': m['network.radio.reason.noAnswer'](),
+	'device-changed': m['network.radio.reason.replugged'](),
+	'port-failed': m['network.radio.reason.replugged'](),
+	'modem-error': m['network.radio.reason.modemError'](),
+	'reply-too-long': m['network.radio.reason.modemError'](),
+	'modem-unreadable': m['network.radio.reason.mmUnreadable'](),
 });
 const reasonText = (token: string) =>
 	REASON_TEXT[token] ?? m['network.radio.reason.other']();

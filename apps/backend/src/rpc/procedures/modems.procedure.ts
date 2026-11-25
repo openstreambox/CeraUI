@@ -163,7 +163,11 @@ export const modemProcedure = authedProcedure.use(cellularReadyMiddleware);
  */
 export const getRadioHealthProcedure = modemProcedure
 	.output(radioHealthListSchema)
-	.handler(() => radioHealthListSchema.parse(getRadioHealth()));
+	.handler(() =>
+		radioHealthListSchema.parse(
+			getRadioHealth(getCommittedModemsWireMessage()),
+		),
+	);
 
 export const getAllModemsProcedure = modemProcedure
 	.output(modemListSchema)
