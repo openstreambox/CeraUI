@@ -18,6 +18,9 @@ import {
 	CircleX,
 	RadioTower,
 	Search,
+	SignalHigh,
+	SignalLow,
+	SignalMedium,
 	TriangleAlert,
 } from '@lucide/svelte';
 
@@ -35,6 +38,9 @@ import {
 	type RadioTone,
 	radioStatus,
 	registrationWord,
+	type SignalLevel,
+	secondsToNextReading,
+	signalReadings,
 } from './radio-health-view';
 
 let {
@@ -58,6 +64,25 @@ let {
 
 const headingId = $derived(`radio-health-${id}`);
 let detailsOpen = $state(false);
+
+// A one-second clock, running only while a countdown or the dialog is shown.
+let now = $state(Date.now());
+$effect(() => {
+	if (status !== 'unchecked' && !detailsOpen) return;
+	now = Date.now();
+	const timer = setInterval(() => {
+		now = Date.now();
+	}, 1000);
+	return () => clearInterval(timer);
+});
+const nextIn = $derived(secondsToNextReading(radio.capturedAt, now));
+const nextText = $derived(
+	nextIn === null
+		? m['network.radio.next.unchecked']()
+		: nextIn === 0
+			? m['network.radio.next.checking']()
+			: m['network.radio.next.countdown']({ seconds: String(nextIn) }),
+);
 const status = $derived<RadioStatusKind>(radioStatus(radio, { noSim, connected }));
 const tone = $derived(RADIO_STATUS_TONE[status]);
 // Solid token pairs: the tinted status pill measures below 4.5:1 for these
@@ -138,7 +163,7 @@ const next = $derived.by(() => {
 		case 'no-sim':
 			return m['network.radio.next.noSim']();
 		case 'unchecked':
-			return m['network.radio.next.unchecked']();
+			return nextText;
 		default:
 			return undefined;
 	}
@@ -165,6 +190,24 @@ const networkText = $derived(
 );
 
 
+
+const signals = $derived(signalReadings(radio));
+const SIGNAL_ICON = {
+	high: SignalHigh,
+	medium: SignalMedium,
+	low: SignalLow,
+} satisfies Record<SignalLevel, unknown>;
+const SIGNAL_COLOR: Record<SignalLevel, string> = {
+	high: 'text-signal-good',
+	medium: 'text-signal-fair',
+	low: 'text-signal-weak',
+};
+const levelWord = (level: SignalLevel) =>
+	({
+		high: m['network.radio.level.high'](),
+		medium: m['network.radio.level.medium'](),
+		low: m['network.radio.level.low'](),
+	})[level];
 
 const time = (at: number) =>
 	at > 0
@@ -306,6 +349,31 @@ const history = $derived<HistoryRow[]>(
 	hideFooter
 >
 	<div class="space-y-4 text-xs" data-testid="radio-health-details">
+		{#if radio.capturedAt > 0}
+			<p class="text-muted-foreground" data-testid="radio-health-timing">
+				{m['network.radio.lastReading']({ time: time(radio.capturedAt) ?? '' })}{' · '}{nextText}
+			</p>
+		{/if}
+		<div class="space-y-1">
+			<h4 class="text-sm font-medium">{m['network.radio.signal']()}</h4>
+			{#if signals.length === 0}
+				<p class="text-muted-foreground">{unavailable}</p>
+			{:else}
+				<ul class="space-y-1" data-testid="radio-health-signal">
+					{#each signals as reading (reading.tech)}
+						{const Icon = $derived(SIGNAL_ICON[reading.level])}
+						<li class="flex items-center gap-2" data-signal-level={reading.level}>
+							<Icon class={cn('size-4 shrink-0', SIGNAL_COLOR[reading.level])} aria-hidden="true" />
+							<span class="font-mono text-sm tabular-nums" dir="ltr">{reading.dbm} dBm</span>
+							<span>{levelWord(reading.level)}</span>
+							<span class="text-muted-foreground"
+								>RSRP{#if reading.tech !== 'other'}{' · '}{reading.tech === 'nr' ? '5G' : 'LTE'}{/if}</span
+							>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</div>
 		<div class="space-y-1">
 			<h4 class="text-sm font-medium">{m['network.radio.readings']()}</h4>
 			<dl class="divide-y" data-testid="radio-health-raw">
