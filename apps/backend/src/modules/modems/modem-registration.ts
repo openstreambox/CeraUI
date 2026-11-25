@@ -461,7 +461,9 @@ export async function readSysfsUsbDevices(
  * to the root was read, none is USB and the path is still there afterwards.
  * Undefined when the modem or a path cannot be read, or the device went away
  * during the walk: a USB modem udev has not finished with, or one being
- * unplugged, must not be mistaken for one that is not on USB.
+ * unplugged, must not be mistaken for one that is not on USB. A device that
+ * went away can still read as USB when a surviving ancestor shows USB
+ * evidence before the final check; both answers keep the intent pending.
  */
 export async function isUsbModem(id: ModemId): Promise<boolean | undefined> {
 	const modemInfo = await mmGetModem(id);

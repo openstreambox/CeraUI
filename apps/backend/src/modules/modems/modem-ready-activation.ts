@@ -468,7 +468,8 @@ async function settleTakeover(
 ): Promise<"settled" | "stale" | "unsettled"> {
 	// One state read per step on the device the dial was bound to. The deadline
 	// is checked after each read and no sleep runs past it, so the wait ends at
-	// most one state read after the deadline.
+	// most one state read after the later of the deadline and the dial's end
+	// (the first read always runs, even when the dial ended past the deadline).
 	for (;;) {
 		if (!registered()) return "stale";
 		const code = singleDeviceValue(
@@ -494,8 +495,11 @@ async function settleTakeover(
  * journals `failed` and stays visible until acknowledged. The dial is bound
  * to that device (`ifname`), so the wait reads the device NetworkManager
  * activates. A command already running when the deadline passes is not cut
- * short: the lease ends at most one state read after it, or after the resolve
- * and the 45 s dial when those alone run past it.
+ * short, and the wait always makes one state read after a dial that did not
+ * report success: the takeover ends at most one state read after the later of
+ * the deadline and the dial's end. With a slow pre-dial resolve and dial this
+ * can pass 180 s, for example 170 s of resolve, a 30 s dial and a 30 s read
+ * end at 230 s.
  *
  * The journaled pre-state is the modem's descriptor capture with no `format`,
  * so replay on any build, including one without this change, takes the

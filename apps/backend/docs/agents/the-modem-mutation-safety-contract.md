@@ -56,9 +56,12 @@ taken down, because `nmcli conn down` would block the profile's autoconnect.
 The 180 s deadline starts before the device is resolved; the dial is bound to
 that device (`nmcli conn up uuid <uuid> ifname <device>`), and the wait reads
 that device's state once per 2 s step and never sleeps past the deadline. A
-command already running when the deadline passes is not cut short, so the
-lease ends at most one state read (30 s run timeout) after the deadline, or
-right after the resolve and the 45 s dial when those alone run past it. An
+command already running when the deadline passes is not cut short, and after
+a dial that did not report success the wait always makes one state read, so
+the takeover ends at most one state read (30 s run timeout) after the later of
+the deadline and the dial's end. With a slow pre-dial resolve and dial that
+can pass 180 s: for example 170 s of resolve, a 30 s dial and a 30 s read end
+at 230 s. An
 activation that has not ended by then journals `failed` and stays visible
 until acknowledged. While this backend runs, a Stream Start is therefore never
 admitted while the takeover is still changing the bearer. After a backend
@@ -68,7 +71,8 @@ bearer up (accepted limit, see the rollback table below). A modem whose MM
 physdev is positively not a USB device (the path is there and no level up to
 the sysfs root has USB ids or the `usb` subsystem) is not taken over: its
 intent is consumed as before. A physdev that cannot be read or vanishes during
-the read counts as unknown, not as off USB. A USB modem whose descriptor cannot be captured yet keeps its intent
+the read never counts as off USB: it reads as unknown, or as USB when a
+surviving ancestor still shows USB evidence; either keeps the intent pending. A USB modem whose descriptor cannot be captured yet keeps its intent
 pending for a later poll. The status poll handles modems one after another, so a takeover that
 waits delays the next modem's poll work by that wait. An unreadable active profile or SIM id
 keeps the intent pending for the next poll; another active profile without a
