@@ -129,7 +129,7 @@ import {
 	stateLabelKey,
 	stateTone,
 } from './cellular-row';
-import RadioHealthPanel from "./RadioHealthPanel.svelte";
+import RadioHealthPanel from './RadioHealthPanel.svelte';
 import { openRouterAdminUi, routerAdminOpenReasonKey } from './router-admin-open';
 import type { RouterSignalReadout } from './router-signal';
 import {
@@ -385,6 +385,11 @@ function buildAdminSegments(modem: Modem): AdminSegment[] {
 let openDetails = $state<Record<string, boolean>>({});
 
 const orderedEntries = $derived(sortModemEntries(modemEntries));
+// Radio health names another modem the way that modem's own row is titled.
+const radioModemName = (other: string): string => {
+	const row = modemEntries.find(([rowId]) => rowId === other)?.[1];
+	return (row ? primaryLabel(row, '') : '') || m['network.radio.neighbour']({ id: other });
+};
 
 function toggleDetails(rowId: string): void {
 	openDetails = { ...openDetails, [rowId]: !openDetails[rowId] };
@@ -884,7 +889,15 @@ async function openAdminUi(rowId: string): Promise<void> {
 									{modem.ifname}{#if entry.ip}{' · '}{entry.ip}{/if}
 								</p>
 							{/if}
-							{#if modem.radio_health}<RadioHealthPanel radio={modem.radio_health} id={String(id)} network={modem.status?.network ?? modem.sim_network ?? "?"} />{/if}
+							{#if modem.radio_health}
+								<RadioHealthPanel
+									radio={modem.radio_health}
+									id={String(id)}
+									network={carrier || undefined}
+									noSim={state === 'no-sim' || simless}
+									modemName={radioModemName}
+								/>
+							{/if}
 							<!-- ── ORDERED BY §2, NOT BY THE ORDER THE TODOS LANDED ─────────
 							     Signal (tier 2) → the row's one ACTION (tier 3) → identity and
 							     hardware tags (tiers 4-5). The admin button used to come LAST,
