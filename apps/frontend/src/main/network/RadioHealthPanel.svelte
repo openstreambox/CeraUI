@@ -240,16 +240,17 @@ const history = $derived<HistoryRow[]>(
 	data-testid="radio-health"
 	data-status={status}
 >
-	<div class="flex flex-wrap items-center justify-between gap-2">
-		<h3 id={headingId} class="text-xs font-semibold">{m['network.radio.title']()}</h3>
-		<Badge variant={tone} data-testid="radio-health-status" data-tone={tone}>
-			<StatusIcon class="size-3.5" aria-hidden="true" />
-			{chip}
-		</Badge>
-	</div>
-
+	<!-- The chip and line already say what this block is inside a modem's
+	     Details, so the heading is for screen readers only. -->
+	<h3 id={headingId} class="sr-only">{m['network.radio.title']()}</h3>
 	<div class="space-y-1">
-		<p class="text-sm font-medium leading-snug" data-testid="radio-health-summary">{line}</p>
+		<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+			<Badge variant={tone} data-testid="radio-health-status" data-tone={tone}>
+				<StatusIcon class="size-3.5" aria-hidden="true" />
+				{chip}
+			</Badge>
+			<p class="text-sm font-medium leading-snug" data-testid="radio-health-summary">{line}</p>
+		</div>
 		{#if next}
 			<p class="text-muted-foreground flex items-start gap-1.5 leading-snug" data-testid="radio-health-next">
 				<ArrowRight class="mt-0.5 size-3.5 shrink-0 rtl:rotate-180" aria-hidden="true" />

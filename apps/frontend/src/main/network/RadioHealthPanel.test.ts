@@ -255,3 +255,13 @@ test("the raw readings disclosure is labelled Details, not sources", () => {
 	const summary = getByTestId("radio-health-sources").querySelector("summary");
 	expect(summary?.textContent?.trim()).toBe("Details");
 });
+
+test("the panel is a named region with a screen-reader heading, chip first", () => {
+	const { getByRole, getByTestId } = show(radio(registered));
+	expect(getByRole("region", { name: "Radio health" })).toBe(
+		getByTestId("radio-health"),
+	);
+	expect(getByRole("heading", { name: "Radio health" }).className).toContain(
+		"sr-only",
+	);
+});
