@@ -97,6 +97,10 @@ class World {
 	afterScan: (ifname: string, count: number) => void = () => {};
 	/** Runs once the lock is taken, before the decision inside it. */
 	inLock: () => void = () => {};
+	/** Priority writes NetworkManager refuses (once each). */
+	failPriority = new Set<string>();
+	/** Runs after each accepted priority write. */
+	afterPriority: (uuid: string) => void = () => {};
 	diversity: WifiNetworkDiversity;
 
 	constructor(
@@ -116,9 +120,14 @@ class World {
 			readLinks: async () => new Map(this.links),
 			readProfile: async (uuid) => this.profiles.get(uuid),
 			setPriority: async (uuid, priority) => {
+				if (this.failPriority.delete(uuid)) {
+					this.log.push(`failed priority ${uuid} ${priority}`);
+					return false;
+				}
 				this.log.push(`priority ${uuid} ${priority}`);
 				const old = this.profiles.get(uuid);
 				if (old) this.profiles.set(uuid, { ...old, priority });
+				this.afterPriority(uuid);
 				return true;
 			},
 			scan: async (ifname) => {
@@ -541,6 +550,55 @@ describe("operator intent", () => {
 		w.onAir({ [N1]: 70, [N2]: 70 });
 		await w.run(WIFI_DIVERSITY.scanSlowMs + MIN);
 		expect(w.activations()).toEqual([`activate ${A1} wlA`]);
+	});
+
+	test("a migration whose second radio vanishes after the first mark resumes when it returns", async () => {
+		let hideB = false;
+		const w = new World(() =>
+			[radio(A, "wlA", [A1, A2, A3]), radio(B, "wlB", [B1, B2, B3])].filter(
+				(r) => !hideB || r.id !== B,
+			),
+		);
+		w.afterPriority = (uuid) => {
+			if (uuid === A1) hideB = true;
+		};
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.links.set("wlA", A1);
+		w.links.set("wlB", B2);
+		await w.run(WIFI_DIVERSITY.migrationStableMs + WIFI_DIVERSITY_TICK_MS);
+		expect(w.log).toEqual([`priority ${A1} ${MARK}`]);
+		await w.run(MIN);
+		hideB = false;
+		await w.run(WIFI_DIVERSITY.migrationStableMs + WIFI_DIVERSITY_TICK_MS);
+		expect(w.log).toEqual([`priority ${A1} ${MARK}`, `priority ${B2} ${MARK}`]);
+		// Done: nothing more is written.
+		await w.run(5 * MIN);
+		expect(w.log).toHaveLength(2);
+	});
+
+	test("a migration write that fails is retried, and the done marks are kept", async () => {
+		const w = new World();
+		w.failPriority.add(B2);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.links.set("wlA", A1);
+		w.links.set("wlB", B2);
+		await w.run(WIFI_DIVERSITY.migrationStableMs + 3 * WIFI_DIVERSITY_TICK_MS);
+		expect(w.log).toEqual([
+			`priority ${A1} ${MARK}`,
+			`failed priority ${B2} ${MARK}`,
+			`priority ${B2} ${MARK}`,
+		]);
+	});
+
+	test("a restart in the middle of a migration resumes it from the written marks", async () => {
+		// The previous process marked A's network, then stopped before B's.
+		const w = new World();
+		w.mark(A1);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.links.set("wlA", A1);
+		w.links.set("wlB", B2);
+		await w.run(WIFI_DIVERSITY.migrationStableMs + WIFI_DIVERSITY_TICK_MS);
+		expect(w.log).toEqual([`priority ${B2} ${MARK}`]);
 	});
 
 	test("no migration when the radios share a network or a mark exists", async () => {
