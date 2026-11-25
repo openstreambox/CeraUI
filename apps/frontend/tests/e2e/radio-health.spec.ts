@@ -11,7 +11,15 @@ test('cached radio observations appear in modem details and open their readings 
  // One button opens the readings; nothing in the panel acts on the modem.
  await expect(panel.locator('input,select')).toHaveCount(0);
  await expect(panel.locator('button')).toHaveCount(1);
- await panel.getByTestId('radio-health-open').click();
- await expect(page.getByTestId('radio-health-details')).toBeVisible();
+ const open=panel.getByTestId('radio-health-open');
+ await open.click();
+ const details=page.getByTestId('radio-health-details');
+ await expect(details).toBeVisible();
+ // The read-only body is a tab stop, so the keyboard can scroll it.
+ await details.focus();
+ await expect(details).toBeFocused();
+ await page.keyboard.press('Escape');
+ await expect(details).toBeHidden();
+ await expect(open).toBeFocused();
  await expect(panel).not.toContainText('Weak signal');
 });

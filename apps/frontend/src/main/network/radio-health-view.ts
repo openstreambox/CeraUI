@@ -40,10 +40,27 @@ export function isRegistered(value: RadioMetric["value"]): boolean {
 	return typeof value === "string" && REGISTERED.has(value);
 }
 
+/**
+ * Registered, but outside the backend's data-path rule: SMS-only service, or a
+ * registration where the network prefers no circuit-switched fallback.
+ * ModemManager reports these as registered; they never read OK here.
+ */
+const LIMITED = new Set([
+	"home-sms-only",
+	"roaming-sms-only",
+	"home-csfb-not-preferred",
+	"roaming-csfb-not-preferred",
+]);
+
+export function isLimitedRegistration(value: RadioMetric["value"]): boolean {
+	return typeof value === "string" && LIMITED.has(value);
+}
+
 export type RegistrationWord =
 	| "home"
 	| "roaming"
 	| "registered"
+	| "sms-only"
 	| "searching"
 	| "idle"
 	| "denied"
@@ -55,6 +72,8 @@ export function registrationWord(
 	if (typeof value !== "string") return "other";
 	if (value === "home") return "home";
 	if (value === "roaming") return "roaming";
+	if (value.endsWith("-sms-only")) return "sms-only";
+	if (value.endsWith("-csfb-not-preferred")) return "registered";
 	if (value === "registered" || value === "connected") return "registered";
 	if (value === "searching") return "searching";
 	if (value === "idle") return "idle";
@@ -72,6 +91,7 @@ export function radioStatus(
 	const reg = radio.registration.value;
 	if (reg === null || reg === "unknown") return "unchecked";
 	if (isRegistered(reg)) return row.connected ? "ok" : "registered";
+	if (isLimitedRegistration(reg)) return "registered";
 	return "not-registered";
 }
 
