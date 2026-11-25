@@ -66,6 +66,7 @@ import {
 	blocksStreaming,
 	presenceRecheckTarget,
 } from "./mutation-journal-state.ts";
+import { captureModemUnitLinkId } from "./mutation-rollback.ts";
 
 const REFUSAL_BY_STATE: Readonly<
 	Partial<Record<ModemMutationState, ModemMutationRefusal>>
@@ -117,6 +118,7 @@ async function enumeratePresentKeys(
 
 interface ReturnBlockDeps extends MutationBlockDeps {
 	confirmPresent(key: string, sysfsPath: string | undefined): Promise<boolean>;
+	readUnitLinkId(key: string): Promise<string | undefined>;
 }
 
 export const defaultMutationBlockDeps: ReturnBlockDeps = {
@@ -130,6 +132,7 @@ export const defaultMutationBlockDeps: ReturnBlockDeps = {
 	listEntries: (onUnreadable) =>
 		listMutationEntries(undefined, false, onUnreadable),
 	presentStableKeys: enumeratePresentKeys,
+	readUnitLinkId: captureModemUnitLinkId,
 };
 
 let activeDeps: ReturnBlockDeps = defaultMutationBlockDeps;
@@ -279,6 +282,15 @@ async function reconcileReturns(deps: ReturnBlockDeps): Promise<void> {
 					paths.get(entry.stableKey),
 				);
 				if (!current) present.delete(entry.stableKey);
+				if (
+					current &&
+					entry.state !== "decommissioned" &&
+					entry.unitLinkId !== undefined &&
+					(await deps
+						.readUnitLinkId(entry.stableKey)
+						.catch(() => undefined)) !== entry.unitLinkId
+				)
+					continue;
 				const target = presenceRecheckTarget(entry.state, current);
 				if (!target || isRecoveryPending()) continue;
 				await commitMutationEntry(
