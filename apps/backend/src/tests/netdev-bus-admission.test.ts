@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, jest, spyOn, test } from "bun:test";
 import { logger } from "../helpers/logger.ts";
 import {
+	getNetworkInterfaceIncarnation,
 	handleNetifMonitorEvent,
 	netIfBuildMsg,
 	onNetworkInterfacesChange,
@@ -412,6 +413,23 @@ test("an unrelated USB scan cannot publish an indexed predecessor", async () => 
 	} finally {
 		off();
 	}
+});
+
+test("a continuous USB link keeps its token on an index read failure and advances it on a MAC change", async () => {
+	const output = firstSightIfconfig(MODEM, IP);
+	const f = fixture(output, []);
+	f.set(MODEM, ok("usb"));
+	await updateNetif();
+	const initial = getNetworkInterfaceIncarnation(MODEM);
+	expect(initial).toBeDefined();
+	f.setIpUnavailable();
+	await updateNetif();
+	expect(getNetworkInterfaceIncarnation(MODEM)).toBe(initial);
+
+	f.setOutput(output.replace("02:00:00:00:00:01", "02:00:00:00:00:02"));
+	await updateNetif();
+	expect(getNetworkInterfaceIncarnation(MODEM)).not.toBe(initial);
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toContain(MODEM);
 });
 
 test("a periodic scan cannot publish the predecessor while ifconfig is pending", async () => {
