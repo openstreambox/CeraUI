@@ -1,5 +1,5 @@
 <!--
-  RadioHealthPanel.svelte — read-only radio readout inside a cellular row's
+  RadioHealthPanel.svelte: read-only radio readout inside a cellular row's
   Details. Status first (a chip with its own icon and word, one short line, the
   next step if there is one), then a few compact readings, then every raw
   reading and the recent history behind a disclosure. No modem action controls.
