@@ -1,13 +1,20 @@
+/** The arrival interface's lifetime when the front door's evidence was accepted. */
+export interface ArrivalLifetime {
+	readonly ifindex: number | undefined;
+	readonly incarnation: number | undefined;
+}
 export interface WindowDeps {
 	/**
 	 * `incarnation` is the published token the phone chose `radio` by; `via` is
-	 * the proven receiving interface when the front door named one.
+	 * the proven receiving interface when the front door named one, and
+	 * `viaLifetime` that interface's lifetime when the evidence was accepted.
 	 */
 	open(
 		peer: string,
 		radio: string,
 		incarnation: string,
 		via?: string,
+		viaLifetime?: ArrivalLifetime,
 	): Promise<void>;
 	close(): Promise<void>;
 	check(): Promise<boolean>;
@@ -77,6 +84,7 @@ export function createSignInWindow(deps: WindowDeps) {
 			radio: string,
 			incarnation: string,
 			via?: string,
+			viaLifetime?: ArrivalLifetime,
 		) {
 			if (busy || phase === "signing_in" || phase === "cleanup_unknown")
 				throw Error("busy_other_phone");
@@ -86,7 +94,7 @@ export function createSignInWindow(deps: WindowDeps) {
 			const ticket = ++generation;
 			expiresAt = Date.now() + 600000;
 			try {
-				await deps.open(peer, radio, incarnation, via);
+				await deps.open(peer, radio, incarnation, via, viaLifetime);
 				expiresAt = Date.now() + 600000;
 				phase = "signing_in";
 				disarm = deps.arm(
