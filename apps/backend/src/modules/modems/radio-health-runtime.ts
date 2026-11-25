@@ -7,10 +7,7 @@ import {
 	getRadioRegistrationObservation,
 	readRadioNas,
 } from "./modem-registration.ts";
-import {
-	SYNTHETIC_ID_BASE,
-	type WireModemEntry,
-} from "./modem-wire-projection.ts";
+import type { WireModemEntry } from "./modem-wire-projection.ts";
 import { getModem } from "./modems-state.ts";
 import {
 	diagnoseRadio,
@@ -72,22 +69,6 @@ type RadioIdentityRow = Partial<
 export function radioNeedsReset(id: string, row: object): boolean {
 	const before = previous.get(id);
 	return before !== undefined && before.key !== radioIdentity(row);
-}
-
-/**
- * The committed rows the poll may sample. A ModemManager row (its MM id) is
- * sampled only while ModemManager still has it, so a removal waiting for its
- * commit is not; other rows carry synthetic ids and no ModemManager entry.
- */
-export function radioSampleRows<T>(
-	committed: Readonly<Record<string, T>>,
-	isLive: (id: number) => boolean,
-): Record<string, T> {
-	return Object.fromEntries(
-		Object.entries(committed).filter(
-			([id]) => Number(id) >= SYNTHETIC_ID_BASE || isLive(Number(id)),
-		),
-	);
 }
 
 /** Keep the sampled identity but drop what a later sample would compare with. */

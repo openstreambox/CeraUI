@@ -3,7 +3,6 @@ import { radioHealthListSchema } from "@ceraui/rpc/schemas";
 import {
 	getRadioHealth,
 	radioForModem,
-	radioSampleRows,
 	refreshRadioHealth,
 	resetRadioHealthForTest,
 } from "../modules/modems/radio-health-runtime.ts";
@@ -359,13 +358,6 @@ test("a swap or removal during the awaited reads is not stored under the committ
 			undefined,
 		);
 	}
-});
-
-test("the poll samples live ModemManager rows and synthetic rows, not a pending removal", () => {
-	const committed = { "0": "mm-live", "3": "mm-removed", "1000": "router" };
-	expect(
-		Object.keys(radioSampleRows(committed, (id) => id === 0)).sort(),
-	).toEqual(["0", "1000"]);
 });
 
 test("a SIM that returns after a swap starts without the old byte baseline", async () => {

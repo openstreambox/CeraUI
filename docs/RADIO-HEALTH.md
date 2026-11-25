@@ -68,6 +68,11 @@ CeraUI has no software modem restart. The recent timeline is for inspection afte
 
 Host tests cover subscriber refusals, synthetic path failures, USB resets during payload activity, independent radio contrasts, journal decoding and parser units. The replay fixture is entirely synthetic, with both matching events and negative controls.
 
+Sampling reads the committed modem roster and checks each modem's interface
+and ICCID before and after its reads, so a swap never mixes two identities. A
+modem removed during a 30 s poll can show one last reading, and one neighbour
+entry, until the next poll.
+
 Hardware qualification is not included.
 
 ## Español
