@@ -59,7 +59,6 @@ import {
 import { dirname, join, sep } from "node:path";
 
 import { logger } from "../../helpers/logger.ts";
-import { modemStableKeyForIfname } from "../modems/mutation-identity.ts";
 import {
 	tryAcquireHelperRecoveryLease,
 	tryAcquireModemMutation,
@@ -189,7 +188,9 @@ type Deps = {
 	readonly unitWaitMs: number;
 	readonly pollMs: number;
 	readonly watch: boolean;
-	readonly stableKey: (ifname: string) => string | undefined;
+	readonly stableKey: (
+		ifname: string,
+	) => string | undefined | Promise<string | undefined>;
 	readonly resolveUsb2?: (key: string) => Promise<Usb2Bound | null>;
 	readonly log: (message: string, fields: LogFields) => void;
 };
@@ -255,7 +256,12 @@ const defaultDeps: Deps = {
 	unitWaitMs: UNIT_WAIT_MS,
 	pollMs: POLL_MS,
 	watch: true,
-	stableKey: (ifname) => modemStableKeyForIfname(ifname),
+	// Loaded on use: a static import closes a cycle through the network and
+	// modem modules, which import the USB tree.
+	stableKey: async (ifname) =>
+		(await import("../modems/mutation-identity.ts")).modemStableKeyForIfname(
+			ifname,
+		),
 	log: (message, fields) => {
 		logger.info(message, fields);
 	},
@@ -802,7 +808,7 @@ async function readIdentity(
 	if (!SCOPE_NAME.test(scope)) return null;
 	let stableKey: string | null = null;
 	for (const ifname of await netIfnames(device, node.kernelName)) {
-		const key = currentDeps().stableKey(ifname);
+		const key = await currentDeps().stableKey(ifname);
 		if (key === undefined) continue;
 		if (stableKey !== null && stableKey !== key) return null;
 		stableKey = key;
