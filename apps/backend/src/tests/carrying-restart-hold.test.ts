@@ -1,5 +1,5 @@
 /**
- * Field regression (two bench boards, image 6 CeraUI): after a backend restart
+ * Field regression (image 6 CeraUI): after a backend restart
  * with the engine idle and no client traffic (a package install, a service
  * restart), `system.sshStart` and every power action answered
  * `stream_liveness_unknown` for two minutes. The restarted process took the
