@@ -35,6 +35,7 @@ import { deriveModemStableKey } from "@ceraui/rpc/schemas";
 
 import { mockModems } from "../../mocks/mock-config.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
+import { mockBaseModemId } from "../../mocks/providers/modem-restart.ts";
 
 import { getModemIdPath } from "./modem-wire-producer.ts";
 import { getModem } from "./modems-state.ts";
@@ -60,7 +61,8 @@ export function modemStableKeyForId(id: number): string | undefined {
  */
 function mockIfnameForId(id: number): string | undefined {
 	if (!shouldUseMocks()) return undefined;
-	return mockModems.find((modem) => modem.id === id)?.interfaceName;
+	const base = mockBaseModemId(id);
+	return mockModems.find((modem) => modem.id === base)?.interfaceName;
 }
 
 /**

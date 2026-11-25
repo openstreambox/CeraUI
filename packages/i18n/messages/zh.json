@@ -2864,7 +2864,7 @@
 	"network.restart.dismiss": "关闭",
 	"network.restart.confirm.title": "重启这个调制解调器?",
 	"network.restart.confirm.body": "重启期间会断开约 {seconds} 秒,之后自动重新连接。",
-	"network.restart.confirm.streaming": "直播会通过你的其他连接继续。",
+	"network.restart.confirm.streaming": "如果你的其他连接正在承载直播,直播会通过它们继续。如果这个调制解调器是唯一的连接,会先再次向你确认。",
 	"network.restart.confirm.primary": "重启",
 	"network.restart.onlyLink.title": "这是直播唯一的连接",
 	"network.restart.onlyLink.body": "这个调制解调器重启期间,直播约 {seconds} 秒没有连接,观众可能会看到画面卡住。调制解调器恢复后会自动继续。",

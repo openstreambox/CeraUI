@@ -2909,7 +2909,7 @@
 	"network.restart.dismiss": "Schließen",
 	"network.restart.confirm.title": "Dieses Modem neu starten?",
 	"network.restart.confirm.body": "Es ist beim Neustart etwa {seconds} s weg und verbindet sich danach von selbst wieder.",
-	"network.restart.confirm.streaming": "Dein Stream läuft über deine anderen Verbindungen weiter.",
+	"network.restart.confirm.streaming": "Wenn deine anderen Verbindungen den Stream tragen, läuft er über sie weiter. Ist dieses Modem seine einzige Verbindung, wirst du vorher noch einmal gefragt.",
 	"network.restart.confirm.primary": "Neu starten",
 	"network.restart.onlyLink.title": "Das ist die einzige Verbindung deines Streams",
 	"network.restart.onlyLink.body": "Während dieses Modem neu startet, hat dein Stream etwa {seconds} s keine Verbindung, das Bild kann für Zuschauer einfrieren. Sobald das Modem zurück ist, läuft er von selbst weiter.",

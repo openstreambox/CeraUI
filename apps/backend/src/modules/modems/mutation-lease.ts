@@ -53,8 +53,8 @@ import {
 	currentLifecycleHolder,
 	getMutationBlocks,
 	type ModemMutationLease,
-	tryAcquireModemJournalKey,
 	tryAcquireModemMutation,
+	tryAcquireModemRestartKey,
 } from "../streaming/lifecycle-admission.ts";
 import { isRecoveryPending } from "../streaming/recovery-barrier.ts";
 import { refreshMutationBlocks } from "./mutation-blocks.ts";
@@ -240,24 +240,35 @@ export async function withJournaledModemMutation<T>(
  * a blocked identity, or while a stream is being launched or forwarded, so it
  * cannot change the link set under an admission in progress.
  */
+/**
+ * Why a Restart modem may not begin (or continue to its fallback) right now, or
+ * undefined when it may. Shared by the lease and the recheck before a USB
+ * rebind, so both apply the same rule.
+ */
+export function modemRestartAdmissionRefusal(
+	stableKey: string,
+): ModemMutationRefusal | undefined {
+	if (isRecoveryPending()) return "recovery_pending";
+	const block = getMutationBlocks().find(
+		(candidate) => candidate.stableKey === stableKey,
+	);
+	if (block) return block.refusal;
+	if (isForwardActive()) return "streaming_active";
+	const holder = currentLifecycleHolder();
+	if (holder !== undefined)
+		return holder === "streaming" ? "streaming_active" : "mutation_in_progress";
+	return undefined;
+}
+
 export async function withModemRestartLease<T>(
 	stableKey: string | undefined,
 	run: () => Promise<T>,
 ): Promise<MutationOutcome<T>> {
 	if (stableKey === undefined || stableKey === "")
 		return refuse("identity_unresolved");
-	if (isRecoveryPending()) return refuse("recovery_pending");
-	const block = getMutationBlocks().find(
-		(candidate) => candidate.stableKey === stableKey,
-	);
-	if (block) return refuse(block.refusal);
-	if (isForwardActive()) return refuse("streaming_active");
-	const holder = currentLifecycleHolder();
-	if (holder !== undefined)
-		return refuse(
-			holder === "streaming" ? "streaming_active" : "mutation_in_progress",
-		);
-	const lease = tryAcquireModemJournalKey(stableKey);
+	const refusal = modemRestartAdmissionRefusal(stableKey);
+	if (refusal) return refuse(refusal);
+	const lease = tryAcquireModemRestartKey(stableKey);
 	if (!lease) return refuse("mutation_in_progress");
 	try {
 		return { ok: true, value: await run() };

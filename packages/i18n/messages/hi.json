@@ -2909,7 +2909,7 @@
 	"network.restart.dismiss": "बंद करें",
 	"network.restart.confirm.title": "इस मॉडेम को रीस्टार्ट करें?",
 	"network.restart.confirm.body": "रीस्टार्ट के दौरान यह लगभग {seconds} s के लिए हट जाता है, फिर अपने आप दोबारा जुड़ जाता है।",
-	"network.restart.confirm.streaming": "आपकी स्ट्रीम आपके दूसरे कनेक्शन पर चलती रहेगी।",
+	"network.restart.confirm.streaming": "अगर आपके दूसरे कनेक्शन स्ट्रीम ले जा रहे हैं, तो यह उन पर चलती रहेगी। अगर यह मॉडेम उसका इकलौता कनेक्शन है, तो पहले आपसे दोबारा पूछा जाएगा।",
 	"network.restart.confirm.primary": "रीस्टार्ट करें",
 	"network.restart.onlyLink.title": "यह आपकी स्ट्रीम का इकलौता कनेक्शन है",
 	"network.restart.onlyLink.body": "इस मॉडेम के रीस्टार्ट होने तक आपकी स्ट्रीम लगभग {seconds} s बिना कनेक्शन रहेगी, इसलिए दर्शकों को तस्वीर रुकी हुई दिख सकती है। मॉडेम लौटते ही यह अपने आप चलती रहेगी।",

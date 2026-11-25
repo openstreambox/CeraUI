@@ -25,13 +25,22 @@ test('a qualified modem restarts from its Details after the cost is confirmed', 
 	const status = page.getByTestId('modem-restart-status');
 	await expect(status).toHaveAttribute('data-phase', 'restarting');
 	await expect(status).toContainText('Restarting');
+	// The mock drops the modem from ModemManager's list, then lists it again under
+	// a new index on the same port: its row goes away and a new one replaces it,
+	// while the status above the rows stays.
+	await expect(rm520).toHaveCount(0, { timeout: 30000 });
+	await expect(status).toHaveAttribute('data-phase', 'restarting');
 	await expect(status).toHaveAttribute('data-outcome', 'back_connected', { timeout: 30000 });
 	await expect(status).toContainText('is back and connected after');
+	const back = page.locator('[data-testid="modem-row"]', { hasText: 'RM520N-GL' }).first();
+	await expect(back).toBeVisible();
+	await expect(back).not.toHaveAttribute('data-modem-id', '0');
 
 	// The cooldown is the backend's: a second restart right away is refused calmly.
 	await page.getByTestId('modem-restart-dismiss').click();
 	await expect(status).toHaveCount(0);
-	await rm520.getByTestId('modem-restart').click();
+	await back.getByTestId('modem-details-toggle').click();
+	await back.getByTestId('modem-restart').click();
 	await page.getByRole('button', { name: 'Restart', exact: true }).click();
 	await expect(page.getByTestId('modem-restart-status')).toContainText('This modem restarted a moment ago.');
 });

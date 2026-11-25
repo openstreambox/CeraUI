@@ -7,9 +7,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { LoadOutcome } from "./async-surface";
 import { ModemRestartFlow, restartTargetFor } from "./modem-restart.svelte";
 
+const TARGET_KEY = "platform-fc800000.usb-usb-0:1.4";
+
 const TARGET = {
 	device: "4",
-	stableKey: "platform-fc800000.usb-usb-0:1.4",
+	stableKey: TARGET_KEY,
 	name: "DW5821e",
 	expectedSeconds: 35,
 };
@@ -70,7 +72,11 @@ describe("ModemRestartFlow", () => {
 		expect(flow.phase.kind).toBe("restarting");
 		expect(flow.busy).toBe(true);
 		await running;
-		expect(call).toHaveBeenCalledWith({ device: "4", confirm: true });
+		expect(call).toHaveBeenCalledWith({
+			device: "4",
+			stableKey: TARGET_KEY,
+			confirm: true,
+		});
 		expect(flow.phase).toMatchObject({
 			kind: "result",
 			result: { outcome: "back_connected" },
@@ -89,6 +95,7 @@ describe("ModemRestartFlow", () => {
 		await flow.confirm();
 		expect(call).toHaveBeenLastCalledWith({
 			device: "4",
+			stableKey: TARGET_KEY,
 			confirm: true,
 			onlyLinkConfirmed: true,
 		});

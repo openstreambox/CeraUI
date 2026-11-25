@@ -2912,7 +2912,7 @@
 	"network.restart.dismiss": "Fermer",
 	"network.restart.confirm.title": "Redémarrer ce modem ?",
 	"network.restart.confirm.body": "Il se déconnecte environ {seconds} s pendant le redémarrage, puis se reconnecte tout seul.",
-	"network.restart.confirm.streaming": "Votre stream continue sur vos autres connexions.",
+	"network.restart.confirm.streaming": "Si vos autres connexions portent le stream, il continue sur elles. Si ce modem est sa seule connexion, la question vous sera posée une seconde fois avant.",
 	"network.restart.confirm.primary": "Redémarrer",
 	"network.restart.onlyLink.title": "C’est la seule connexion de votre stream",
 	"network.restart.onlyLink.body": "Pendant le redémarrage de ce modem, votre stream n’a pas de connexion pendant environ {seconds} s et l’image peut se figer pour les spectateurs. Il reprend tout seul quand le modem est revenu.",

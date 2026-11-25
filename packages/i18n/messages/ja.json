@@ -2864,7 +2864,7 @@
 	"network.restart.dismiss": "閉じる",
 	"network.restart.confirm.title": "このモデムを再起動しますか?",
 	"network.restart.confirm.body": "再起動中は約 {seconds} 秒切断され、その後自動で再接続します。",
-	"network.restart.confirm.streaming": "配信はほかの回線で続きます。",
+	"network.restart.confirm.streaming": "ほかの回線で配信している場合は、そのまま続きます。このモデムが配信の唯一の回線なら、先にもう一度確認します。",
 	"network.restart.confirm.primary": "再起動",
 	"network.restart.onlyLink.title": "配信の回線はこれだけです",
 	"network.restart.onlyLink.body": "このモデムの再起動中、配信は約 {seconds} 秒回線がなくなり、視聴者には映像が止まって見えることがあります。モデムが戻ると自動で続きます。",

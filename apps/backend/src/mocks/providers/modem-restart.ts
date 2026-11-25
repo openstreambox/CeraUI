@@ -17,35 +17,61 @@
 
 /**
  * Restart modem under `MOCK_SCENARIO`: the REAL restart flow (guards, lease,
- * wait-by-port) with the device half replaced. A "reset" hides the modem from
- * the roster for {@link MOCK_RESTART_OUT_MS} and then lists it again, connected,
- * so a dev host and the e2e suite see "Restarting…" followed by a result,
- * exactly as on a board, only faster. Nothing is written anywhere.
+ * wait-by-port) with only the device replaced. A "reset" takes the modem out of
+ * the mocked ModemManager list for {@link MOCK_RESTART_OUT_MS} and then lists it
+ * again under a NEW index, on the same USB port and interface, which is what a
+ * board does. The backend's own roster, the published modem rows and the
+ * restart's wait all see that through the normal mmcli path. Nothing is written
+ * anywhere.
  */
 import type { ModemRestartDeps } from "../../modules/modems/modem-restart.ts";
-import { getModems, type Modem } from "../../modules/modems/modems-state.ts";
 
-export const MOCK_RESTART_OUT_MS = 3_000;
+export const MOCK_RESTART_OUT_MS = 6_000;
 
-const resetAt = new Map<number, number>();
+/** base (scenario) index -> the index it is listed under after a restart. */
+const renumbered = new Map<number, number>();
+/** base index -> until when it is missing from the list. */
+const hiddenUntil = new Map<number, number>();
+let nextIndex = 100;
+
+/** The scenario modem behind a listed index, or -1 for an index that no longer exists. */
+export function mockBaseModemId(listed: number): number {
+	for (const [base, index] of renumbered) if (index === listed) return base;
+	return renumbered.has(listed) ? -1 : listed;
+}
+
+/** The index a scenario modem is listed under right now. */
+export function mockListedModemId(base: number): number {
+	return renumbered.get(base) ?? base;
+}
+
+/** Whether a scenario modem is out of the list right now. */
+export function mockModemHidden(base: number, now = Date.now()): boolean {
+	const until = hiddenUntil.get(base);
+	return until !== undefined && now < until;
+}
+
+export function mockRestartModem(listed: number, now = Date.now()): void {
+	const base = mockBaseModemId(listed);
+	if (base < 0) return;
+	hiddenUntil.set(base, now + MOCK_RESTART_OUT_MS);
+	renumbered.set(base, nextIndex);
+	nextIndex += 1;
+}
+
+export function resetMockModemRestarts(): void {
+	renumbered.clear();
+	hiddenUntil.clear();
+	nextIndex = 100;
+}
 
 export function mockModemRestartDeps(): Partial<ModemRestartDeps> {
 	return {
 		mmReset: async (id) => {
-			resetAt.set(id, Date.now());
-			return true;
+			mockRestartModem(id);
+			return "accepted";
 		},
 		usbRebind: async () => false,
-		modems: () => {
-			const visible: Record<number, Modem> = {};
-			for (const [key, modem] of Object.entries(getModems())) {
-				const id = Number(key);
-				const at = resetAt.get(id);
-				if (at !== undefined && Date.now() - at < MOCK_RESTART_OUT_MS) continue;
-				visible[id] = modem;
-			}
-			return visible;
-		},
 		pollMs: 500,
 	};
 }

@@ -27,14 +27,28 @@ import { modemMutationRefusalSchema } from './modems.schema';
  * measured restart plus two poll periods, rounded up.
  */
 export const MODEM_RESTART_MODELS = [
-	{ family: 'dw5821e', pattern: /^DW5821e\b/i, expectedSeconds: 35, boundSeconds: 120 },
-	{ family: 'rm520n-gl', pattern: /^RM520N-GL\b/i, expectedSeconds: 55, boundSeconds: 150 },
+	{
+		family: 'dw5821e',
+		pattern: /^DW5821e\b/i,
+		usbIds: ['413c:81d7'],
+		expectedSeconds: 35,
+		boundSeconds: 120,
+	},
+	{
+		family: 'rm520n-gl',
+		pattern: /^RM520N-GL\b/i,
+		usbIds: ['2c7c:0801'],
+		expectedSeconds: 55,
+		boundSeconds: 150,
+	},
 ] as const;
 
 export type ModemRestartFamily = (typeof MODEM_RESTART_MODELS)[number]['family'];
 
 export type ModemRestartQualification = {
 	readonly family: ModemRestartFamily;
+	/** USB `vendor:product` ids a USB rebind may act on for this model. */
+	readonly usbIds: readonly string[];
 	readonly expectedSeconds: number;
 	readonly boundSeconds: number;
 };
@@ -49,6 +63,7 @@ export function modemRestartQualification(
 		? undefined
 		: {
 				family: entry.family,
+				usbIds: entry.usbIds,
 				expectedSeconds: entry.expectedSeconds,
 				boundSeconds: entry.boundSeconds,
 			};
@@ -61,6 +76,12 @@ export const restartModemInputSchema = z
 	.object({
 		/** The ModemManager index ("2") or object path, as every modem procedure takes. */
 		device: z.string().min(1),
+		/**
+		 * The `stable_key` of the modem the operator confirmed. The index alone can
+		 * name a different modem by the time the request lands (a replug or another
+		 * restart renumbers them), so a mismatch is refused as `unknown_modem`.
+		 */
+		stableKey: z.string().min(1),
 		confirm: z.literal(true),
 		/**
 		 * The operator confirmed that this modem is the only connection carrying

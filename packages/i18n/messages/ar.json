@@ -2921,7 +2921,7 @@
 	"network.restart.dismiss": "إغلاق",
 	"network.restart.confirm.title": "إعادة تشغيل هذا المودم؟",
 	"network.restart.confirm.body": "ينقطع لنحو {seconds} ث أثناء إعادة التشغيل ثم يعيد الاتصال تلقائيًا.",
-	"network.restart.confirm.streaming": "يستمر البث عبر اتصالاتك الأخرى.",
+	"network.restart.confirm.streaming": "إذا كانت اتصالاتك الأخرى تحمل البث فسيستمر عبرها. وإذا كان هذا المودم اتصاله الوحيد فسيُطلب تأكيدك مرة أخرى أولًا.",
 	"network.restart.confirm.primary": "إعادة التشغيل",
 	"network.restart.onlyLink.title": "هذا هو الاتصال الوحيد لبثك",
 	"network.restart.onlyLink.body": "أثناء إعادة تشغيل هذا المودم يبقى بثك بلا اتصال لنحو {seconds} ث، وقد يرى المشاهدون الصورة متجمدة. يستمر تلقائيًا عند عودة المودم.",

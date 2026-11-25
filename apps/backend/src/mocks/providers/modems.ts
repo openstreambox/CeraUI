@@ -26,6 +26,11 @@ import {
 	setMockSimState,
 	shouldUseMocks,
 } from "../mock-service.ts";
+import {
+	mockBaseModemId,
+	mockListedModemId,
+	mockModemHidden,
+} from "./modem-restart.ts";
 
 export type { MockSimLock };
 
@@ -69,7 +74,10 @@ export function handleMmcliCommand(args: string[]): string | null {
 	// mmcli -K -m <id> (get modem info)
 	const modemIndex = args.indexOf("-m");
 	if (modemIndex !== -1 && args[modemIndex + 1]) {
-		const modemId = Number.parseInt(args[modemIndex + 1] as string, 10);
+		const modemId = mockBaseModemId(
+			Number.parseInt(args[modemIndex + 1] as string, 10),
+		);
+		if (modemId < 0 || mockModemHidden(modemId)) return "";
 
 		if (args.includes("--messaging-list-sms")) {
 			return getMockSmsList();
@@ -98,16 +106,17 @@ export function handleMmcliCommand(args: string[]): string | null {
  */
 function getMockModemList(): string {
 	const config = getScenarioConfig();
-	const lines: string[] = [];
-
-	lines.push(`modem-list.length: ${config.modems}`);
-
-	for (let i = 0; i < config.modems; i++) {
+	// A modem being restarted is missing for a moment, then listed under a new
+	// index (`modem-restart.ts`).
+	const listed: number[] = [];
+	for (let i = 0; i < config.modems; i++)
+		if (!mockModemHidden(i)) listed.push(mockListedModemId(i));
+	const lines: string[] = [`modem-list.length: ${listed.length}`];
+	listed.forEach((id, i) => {
 		lines.push(
-			`modem-list.value[${i}]: /org/freedesktop/ModemManager1/Modem/${i}`,
+			`modem-list.value[${i}]: /org/freedesktop/ModemManager1/Modem/${id}`,
 		);
-	}
-
+	});
 	return lines.join("\n");
 }
 
@@ -177,7 +186,7 @@ function getMockModemInfo(modemId: number): string {
 	}
 
 	const lines: string[] = [
-		`modem.dbus-path: /org/freedesktop/ModemManager1/Modem/${modemId}`,
+		`modem.dbus-path: /org/freedesktop/ModemManager1/Modem/${mockListedModemId(modemId)}`,
 		`modem.generic.device-identifier: ${modem.imei.slice(0, 8)}`,
 		`modem.generic.manufacturer: ${modem.manufacturer}`,
 		`modem.generic.model: ${modem.model}`,

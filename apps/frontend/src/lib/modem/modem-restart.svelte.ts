@@ -139,6 +139,7 @@ export class ModemRestartFlow {
 		const outcome = await this.bounded(() =>
 			this.call({
 				device: target.device,
+				stableKey: target.stableKey,
 				confirm: true,
 				...(onlyLinkConfirmed ? { onlyLinkConfirmed: true } : {}),
 			}),

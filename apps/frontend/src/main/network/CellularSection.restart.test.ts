@@ -16,6 +16,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import CellularSection from "./CellularSection.svelte";
 
+const TARGET_KEY = "key-wwu1u4c2";
+
 const restart = vi.fn<(input: unknown) => Promise<RestartModemOutput>>();
 let streaming = false;
 
@@ -198,7 +200,11 @@ describe("Restart modem on the cellular rows", () => {
 		);
 		if (!primary) throw new Error("no Restart button in the dialog");
 		await fireEvent.click(primary);
-		expect(restart).toHaveBeenCalledWith({ device: "4", confirm: true });
+		expect(restart).toHaveBeenCalledWith({
+			device: "4",
+			stableKey: TARGET_KEY,
+			confirm: true,
+		});
 		await waitFor(() =>
 			expect(view.getByTestId("modem-restart-status").dataset.outcome).toBe(
 				"back_connected",
@@ -209,7 +215,7 @@ describe("Restart modem on the cellular rows", () => {
 		);
 	});
 
-	it("while streaming, says the other connections carry on", async () => {
+	it("while streaming, says the other connections carry on, if they carry the stream", async () => {
 		streaming = true;
 		const view = renderRoster([
 			["4", modem("DW5821e Snapdragon X20 LTE", "wwu1u4c2")],
@@ -217,7 +223,7 @@ describe("Restart modem on the cellular rows", () => {
 		await fireEvent.click(view.getByTestId("modem-restart"));
 		await waitFor(() => expect(confirmBody()).not.toBeNull());
 		expect(confirmBody()?.textContent).toContain(
-			"Your stream keeps going on your other connections.",
+			"If your other connections are carrying the stream, it keeps going on them.",
 		);
 	});
 
@@ -251,6 +257,7 @@ describe("Restart modem on the cellular rows", () => {
 		await fireEvent.click(anyway);
 		expect(restart).toHaveBeenLastCalledWith({
 			device: "4",
+			stableKey: TARGET_KEY,
 			confirm: true,
 			onlyLinkConfirmed: true,
 		});

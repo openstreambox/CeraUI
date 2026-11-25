@@ -50,21 +50,35 @@ and nothing outside it is offered or accepted.
   (`cooldown`, with the seconds left).
 - **Only connection carrying a live stream:** refused (`only_link_live`) unless
   the operator confirms that cost. The UI then asks a second time, saying the
-  stream has no connection until the modem is back. With no link telemetry while
-  streaming, the restart counts as being on the only connection.
+  stream has no connection until the modem is back.
+- **What counts as another live link:** a fresh bond row that has carried data
+  and that is positively a different uplink: another modem's interface,
+  Ethernet, Wi-Fi or a USB network device. A CLAT alias, an unresolved row and
+  the target itself never count. With no link telemetry while streaming, the
+  restart counts as being on the only connection.
 - **Same-modem exclusion:** a restart takes the modem's own lease, so a settings
   change or band lock on that modem can't overlap it (`mutation_in_progress`).
-  It never refuses a Stream Start. It doesn't begin during journal replay, on a
-  blocked modem, or while a stream is being launched or forwarded.
-- **No retry loops:** one attempt per press. The only fallback is a single USB
-  unbind/bind when ModemManager refuses the reset. A modem that accepted the
-  reset and didn't come back gets no second action.
+  A whole-subsystem modem transition waits for it too. It never refuses a Stream
+  Start. It doesn't begin during journal replay, on a blocked modem, or while a
+  stream is being launched or forwarded.
+- **The confirmed modem:** the request carries the `stable_key` the operator
+  confirmed. If the index now names another modem, it is refused
+  (`unknown_modem`).
+- **No retry loops:** one attempt per press. A modem that accepted the reset and
+  didn't come back gets no second action.
+- **USB fallback:** a single USB unbind/bind runs only when ModemManager
+  explicitly refuses the reset ("couldn't reset the modem").
+  - A timeout or transport failure may still have delivered the reset, so the
+    modem is only observed.
+  - Before the rebind, the admission and only-link checks run again.
+  - The USB device behind the interface must carry the model's USB ids
+    (`413c:81d7`, `2c7c:0801`).
 
 ## Finding the modem again
 
 The backend waits for a modem with the same `stable_key` (the ID_PATH-derived key
 of its USB port) that is listed under a different index, or that was gone and is
-back, and connected. Possible outcomes:
+back, and connected. The outcome follows the last observation:
 
 - `back_connected`
 - `back_not_connected`, with its connection state
@@ -77,16 +91,19 @@ The client waits up to 170 s for the reply.
 ## Logs
 
 The backend logs one line when a restart starts and one with its outcome. The
-outcome line carries the stable key, model, method, old and new index and elapsed
-seconds. Each refusal gets a warning line. All of them are in the support log
-vocabulary, so they appear in a support download. No IMEI, ICCID or SIM data is
+outcome line carries the model family, method, old and new index and elapsed
+seconds. Every refusal gets one `modem restart refused` warning with its reason.
+These fields are closed vocabularies or bounded numbers, so a support download
+keeps them. No IMEI, ICCID or SIM data is
 logged. Nothing is persisted: a restart changes no setting, so there is nothing
 to roll back.
 
 ## Mock mode
 
-Under `MOCK_SCENARIO` the real flow runs with the device half replaced. A "reset"
-hides the modem for 3 s and then lists it again, connected.
+Under `MOCK_SCENARIO` the real flow runs with the device half replaced. A
+"reset" takes the modem out of the mocked ModemManager list for 6 s, then lists
+it again under a new index on the same port. The row goes away and a new one
+replaces it, as on a board.
 
 ## Español
 

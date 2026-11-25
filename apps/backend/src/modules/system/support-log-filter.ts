@@ -7,6 +7,10 @@
  */
 import { appContract } from "@ceraui/rpc/contracts";
 import {
+	MODEM_RESTART_MODELS,
+	restartModemMethodSchema,
+	restartModemOutcomeSchema,
+	restartModemRefusalSchema,
 	START_FAILURE_CAPTURE_CAUSES,
 	START_FAILURE_CLASSES,
 	START_FAILURE_PHASES,
@@ -189,6 +193,15 @@ const START_PHASES = new Set<string>(START_FAILURE_PHASES);
 const CAPTURE_CAUSES = new Set<string>(START_FAILURE_CAPTURE_CAUSES);
 const RETRY_STATES = new Set(["scheduled", "exhausted", "not_retriable"]);
 
+/** Restart modem's own closed vocabularies (`modem-restart.ts`). */
+const RESTART_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
+	restartFamily: new Set(MODEM_RESTART_MODELS.map((model) => model.family)),
+	restartMethod: new Set(restartModemMethodSchema.options),
+	restartOutcome: new Set(restartModemOutcomeSchema.options),
+	restartRefusal: new Set(restartModemRefusalSchema.options),
+	restartReset: new Set(["accepted", "refused", "unknown"]),
+};
+
 function boundedCount(value: unknown, max: number): value is number {
 	return (
 		typeof value === "number" &&
@@ -313,10 +326,29 @@ function safeMetadata(
 		)
 			out[key] = Math.round(inner);
 		else if (
-			["ok", "retryable", "available"].includes(key) &&
+			["ok", "retryable", "available", "streaming"].includes(key) &&
 			typeof inner === "boolean"
 		)
 			out[key] = inner;
+		else if (
+			key in RESTART_FIELDS &&
+			typeof inner === "string" &&
+			RESTART_FIELDS[key]?.has(inner)
+		)
+			out[key] = inner;
+		else if (
+			["oldDevice", "newDevice"].includes(key) &&
+			boundedCount(inner, 100000)
+		)
+			out[key] = inner;
+		else if (
+			["elapsedSeconds", "retryAfterSeconds"].includes(key) &&
+			typeof inner === "number" &&
+			Number.isFinite(inner) &&
+			inner >= 0 &&
+			inner <= 3600
+		)
+			out[key] = Math.round(inner * 10) / 10;
 	}
 	return out;
 }

@@ -2909,7 +2909,7 @@
 	"network.restart.dismiss": "Dismiss",
 	"network.restart.confirm.title": "Restart this modem?",
 	"network.restart.confirm.body": "It drops off for about {seconds} s while it restarts, then reconnects by itself.",
-	"network.restart.confirm.streaming": "Your stream keeps going on your other connections.",
+	"network.restart.confirm.streaming": "If your other connections are carrying the stream, it keeps going on them. If this modem is its only connection, you’ll be asked again first.",
 	"network.restart.confirm.primary": "Restart",
 	"network.restart.onlyLink.title": "This is your stream’s only connection",
 	"network.restart.onlyLink.body": "While this modem restarts, your stream has no connection for about {seconds} s, so viewers may see it freeze. It carries on by itself once the modem is back.",

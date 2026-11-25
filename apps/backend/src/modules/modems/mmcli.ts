@@ -792,6 +792,47 @@ export async function mmReprobeModem(id: ModemId): Promise<boolean> {
 	}
 }
 
+/**
+ * What became of `mmcli --reset` (Restart modem, `modem-restart.ts`):
+ *   accepted  mmcli confirmed it.
+ *   refused   ModemManager answered that it could not reset the modem.
+ *   unknown   a timeout, a transport failure or anything else: the reset may
+ *             have been delivered, so the caller observes, never acts again.
+ */
+export type MmResetResult = "accepted" | "refused" | "unknown";
+
+/** Classify a failed `mmcli --reset` (see {@link MmResetResult}). */
+export function classifyMmResetError(err: unknown): MmResetResult {
+	if (err instanceof RunTimeoutError) return "unknown";
+	const e = err as { code?: unknown; stderr?: unknown } | undefined;
+	const stderr = typeof e?.stderr === "string" ? e.stderr : "";
+	if (
+		typeof e?.code === "number" &&
+		/couldn't reset the modem/i.test(stderr) &&
+		!/timeout|timed out|no reply|disconnected/i.test(stderr)
+	)
+		return "refused";
+	return "unknown";
+}
+
+/** `mmcli -m <id> --reset`, classified; never throws. */
+export async function mmResetModem(id: ModemId): Promise<MmResetResult> {
+	try {
+		await run(mmcliBinary, ["-m", String(id), "--reset"], { timeout: 40_000 });
+		return "accepted";
+	} catch (err) {
+		const result = classifyMmResetError(err);
+		logger.warn(
+			`modem restart: ModemManager reset failed: ${describeCliError(err)}`,
+			{
+				module: "modems",
+				restartReset: result,
+			},
+		);
+		return result;
+	}
+}
+
 export type NetworkScanResult = {
 	"operator-code": string;
 	"operator-name": string;

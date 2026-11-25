@@ -2912,7 +2912,7 @@
 	"network.restart.dismiss": "Fechar",
 	"network.restart.confirm.title": "Reiniciar este modem?",
 	"network.restart.confirm.body": "Ele cai por cerca de {seconds} s enquanto reinicia e depois se reconecta sozinho.",
-	"network.restart.confirm.streaming": "Sua transmissão continua pelas suas outras conexões.",
+	"network.restart.confirm.streaming": "Se suas outras conexões estiverem levando a transmissão, ela continua por elas. Se este modem for a única conexão, você será perguntado de novo antes.",
 	"network.restart.confirm.primary": "Reiniciar",
 	"network.restart.onlyLink.title": "Esta é a única conexão da sua transmissão",
 	"network.restart.onlyLink.body": "Enquanto este modem reinicia, sua transmissão fica sem conexão por cerca de {seconds} s e quem assiste pode ver a imagem congelar. Ela continua sozinha quando o modem volta.",

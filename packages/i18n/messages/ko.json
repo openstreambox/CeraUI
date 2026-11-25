@@ -2864,7 +2864,7 @@
 	"network.restart.dismiss": "닫기",
 	"network.restart.confirm.title": "이 모뎀을 다시 시작할까요?",
 	"network.restart.confirm.body": "다시 시작하는 동안 약 {seconds}초 끊겼다가 자동으로 다시 연결됩니다.",
-	"network.restart.confirm.streaming": "방송은 다른 연결로 계속됩니다.",
+	"network.restart.confirm.streaming": "다른 연결이 방송을 전달하고 있으면 그 연결로 계속됩니다. 이 모뎀이 유일한 연결이면 먼저 한 번 더 확인합니다.",
 	"network.restart.confirm.primary": "다시 시작",
 	"network.restart.onlyLink.title": "방송의 유일한 연결입니다",
 	"network.restart.onlyLink.body": "이 모뎀이 다시 시작하는 동안 방송은 약 {seconds}초 연결이 없어 시청자에게 화면이 멈춘 것처럼 보일 수 있습니다. 모뎀이 돌아오면 자동으로 이어집니다.",

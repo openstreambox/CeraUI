@@ -89,6 +89,7 @@ import { applyFiveGPreference } from "../../modules/modems/five-g-apply.ts";
 import { readModemGps, setModemGps } from "../../modules/modems/gps.ts";
 import {
 	mmGetModemPorts,
+	mmResetModem,
 	type SimPukUnlockResult,
 	type SimUnlockResult,
 	unlockSimPin,
@@ -802,8 +803,12 @@ export const restartModemProcedure = modemProcedure
 		restartModem(
 			input,
 			shouldMockModems()
-				? { ...defaultModemRestartDeps, ...mockModemRestartDeps() }
-				: undefined,
+				? {
+						...defaultModemRestartDeps,
+						mmReset: mmResetModem,
+						...mockModemRestartDeps(),
+					}
+				: { ...defaultModemRestartDeps, mmReset: mmResetModem },
 		),
 	);
 
