@@ -2881,7 +2881,7 @@
 	"network.modem.fiveG.error.mutation_in_progress": "Hay otro cambio de módem en curso. No se cambió nada. Vuelve a intentarlo en un momento.",
 	"network.radio.title": "Estado de radio",
 	"network.radio.unavailable": "No disponible",
-	"network.radio.chip.ok": "OK",
+	"network.radio.chip.ok": "Normal",
 	"network.radio.chip.registered": "Registrado",
 	"network.radio.line.registered": "Registrado, pero aún sin conexión de datos.",
 	"network.radio.otherModems": "Otros módems",

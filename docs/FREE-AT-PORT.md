@@ -2,7 +2,7 @@
 
 Some modem facts have no ModemManager, QMI or MBIM source: the RM520N-GL's
 temperature (`AT+QTEMP`) and its serving-cell report with the NR band on NSA
-(`AT+QENG="servingcell"`). `mmcli --command` cannot carry them on a stock box:
+(`AT+QENG="servingcell"`). `mmcli --command` cannot carry them on a stock device:
 ModemManager answers `Modem.Command` only when the daemon runs with `--debug`,
 and turning that on restarts the daemon (every bearer drops) and opens any AT
 command, setters included, to every authorised caller. Inhibiting the modem
