@@ -12,7 +12,7 @@
 import { m } from "@ceraui/i18n/svelte";
 import type { StartFailure } from "@ceraui/rpc/schemas";
 
-type StartFailureCopyInput = Pick<
+export type StartFailureCopyInput = Pick<
 	StartFailure,
 	"class" | "retriable" | "captureCause" | "phase" | "code"
 >;
@@ -77,11 +77,14 @@ function classReason(failure: StartFailureCopyInput): string {
 	if (failure.class === "audio_source_unavailable")
 		return m["notifications.streamStartAudioSourceUnavailableFailed"]();
 	const key =
-		failure.class === "mutation_blocked"
-			? "live.startFailure.mutationBlockedNetwork"
-			: failure.captureCause !== undefined
-				? `live.startFailure.class.${failure.class}.${failure.captureCause}`
-				: `live.startFailure.class.${failure.class}`;
+		failure.class === "start_invalid" &&
+		failure.code === "srt_encryption_unavailable"
+			? "live.startFailure.srtEncryptionUnavailable"
+			: failure.class === "mutation_blocked"
+				? "live.startFailure.mutationBlockedNetwork"
+				: failure.captureCause !== undefined
+					? `live.startFailure.class.${failure.class}.${failure.captureCause}`
+					: `live.startFailure.class.${failure.class}`;
 	const cls = m[key];
 	return typeof cls === "function" ? cls() : m["live.startFailed.generic"]();
 }
