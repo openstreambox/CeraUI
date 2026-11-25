@@ -300,7 +300,14 @@ describe("1 · the evaluator cannot flood the history", () => {
 		};
 		const now = Date.now();
 		for (let i = 0; i < 3; i++) recordModeChoice(tag, { ...base, at: now + i });
-		for (let i = 0; i < 300; i++)
+		// Every record is a durable write (file and directory fsync), so the
+		// flood is kept just past the cap: overflowing it once proves the
+		// eviction rule, and hundreds of extra fsyncs only measure the disk
+		// (5 to 12 s for 300 records on a SATA SSD). Even these ~126 fsyncs
+		// took 3.6 s there while other writers shared the disk, so the test
+		// has its own timeout below.
+		const flood = MODE_HISTORY_CAP_PER_SOURCE + 10;
+		for (let i = 0; i < flood; i++)
 			recordModeChoice(tag, {
 				...base,
 				source: "evaluator",
@@ -310,12 +317,16 @@ describe("1 · the evaluator cannot flood the history", () => {
 			});
 		const history = readModeChoice(tag).history;
 		expect(history.filter((r) => r.source === "manual")).toHaveLength(3);
-		expect(history.filter((r) => r.source === "evaluator")).toHaveLength(
-			MODE_HISTORY_CAP_PER_SOURCE,
-		);
+		const evaluator = history.filter((r) => r.source === "evaluator");
+		expect(evaluator).toHaveLength(MODE_HISTORY_CAP_PER_SOURCE);
+		expect(evaluator[0]?.reasons).toEqual([
+			`synthetic-${flood - MODE_HISTORY_CAP_PER_SOURCE}`,
+		]);
 		expect(row(0)?.history).toHaveLength(10);
-		expect(row(0)?.history?.at(-1)?.reasons).toEqual(["synthetic-299"]);
-	});
+		expect(row(0)?.history?.at(-1)?.reasons).toEqual([
+			`synthetic-${flood - 1}`,
+		]);
+	}, 20_000);
 });
 
 describe("2 · a readback is judged by its pair, not its name", () => {
