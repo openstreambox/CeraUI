@@ -2112,6 +2112,14 @@ async function maybeStartOsStage(
 			state.osStageRecovery?.attemptId === attemptId &&
 			state.osStageRecovery.candidateKey === candidateKey
 		) {
+			logger.warn(
+				"update-orchestrator: OS install succeeded but its stage release is unproven",
+				{
+					attemptId,
+					reason: error.reason,
+					diagnostics: readStageDiagnostics(error),
+				},
+			);
 			dispatch({
 				type: "OS_STAGING_FAILED",
 				now: deps.now(),
