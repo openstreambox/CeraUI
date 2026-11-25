@@ -26,7 +26,7 @@ const BACKEND_ENTRY = path.join(import.meta.dirname, "backend-entry.ts");
 const STATE_FILES = ["config.json", "auth_tokens.json"] as const;
 
 /** Preferred slot; local leases skip occupied slots without changing parallelism. */
-const BASE_PORT = 3100;
+const BASE_PORT = Number(process.env.E2E_WORKER_BASE_PORT ?? 3100);
 const READY_TIMEOUT_MS = 60_000;
 const STOP_GRACE_MS = 4_000;
 
