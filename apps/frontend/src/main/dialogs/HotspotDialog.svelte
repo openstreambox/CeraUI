@@ -79,6 +79,7 @@ import { cn } from '$lib/utils';
 import HotspotActivationConfirm from '$main/network/HotspotActivationConfirm.svelte';
 import HotspotOffEditor from '$main/network/HotspotOffEditor.svelte';
 import { type HotspotConfigFields, writeHotspotConfig } from '$main/network/hotspot-config-write';
+import HotspotOffEditor from '$main/network/HotspotOffEditor.svelte';
 import {
 	canRenewHotspotPassword,
 	mayCarryStream,
