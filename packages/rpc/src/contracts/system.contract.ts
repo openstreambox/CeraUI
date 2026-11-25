@@ -1,9 +1,9 @@
 /**
  * System ORPC Contract
  */
+
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
-
 import {
 	allowCellularOnceInputSchema,
 	autostartInputSchema,
@@ -18,6 +18,8 @@ import {
 	logInputSchema,
 	logOutputSchema,
 	powerResponseSchema,
+	phoneBoxSettingsSchema,
+	phoneWaySchema,
 	remoteConfigInputSchema,
 	revisionsSchema,
 	sensorsStatusSchema,
@@ -67,6 +69,8 @@ export const systemContract = oc.router({
 	 * Start software update
 	 */
 	startUpdate: oc.output(successResponseSchema),
+	getPhoneBox: oc.output(phoneBoxSettingsSchema),
+	setPhoneWay: oc.input(phoneWaySchema).output(phoneWaySchema),
 	/** Read-only: what an install a tab watched did, once CeraUI restarted under it. */
 	updateOutcome: oc.input(updateOutcomeInputSchema).output(updateOutcomeSchema),
 	getUpdateSettings: oc.output(updateSettingsSchema),

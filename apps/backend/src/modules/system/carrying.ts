@@ -87,6 +87,17 @@ export class CarryingTracker {
 		} else this.aboveSince = null;
 	}
 
+	snapshot(now: number) {
+		return { state: this.read(now), startup: this.startupChecking(now) };
+	}
+
+	startupChecking(now: number): boolean {
+		return (
+			this.startedUntil !== null &&
+			now < this.startedUntil &&
+			this.read(now) === "unknown"
+		);
+	}
 	read(now: number): StreamLiveness {
 		let unknown =
 			this.aboveSince !== null ||
@@ -107,3 +118,6 @@ export class CarryingTracker {
 export const carryingTracker = new CarryingTracker();
 export const getCarryingLiveness = (): StreamLiveness =>
 	carryingTracker.read(performance.now());
+
+export const getCarryingStatus = () =>
+	carryingTracker.snapshot(performance.now());
