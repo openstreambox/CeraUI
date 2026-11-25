@@ -42,6 +42,10 @@ import type {
 } from "@ceraui/rpc/schemas";
 
 import {
+	localizedStartFeatureList,
+	START_FEATURES_NOTICE_KEYS,
+} from "../streaming/start-feature-notice";
+import {
 	UPDATE_REFUSED_NOTICE_KEY,
 	updateRefusalReasonKey,
 } from "../updates/update-refusal-notice";
@@ -177,6 +181,16 @@ export function resolveNotificationText(
 		return localizePowerText(notification.msg, (key, params) =>
 			lookupTranslation(translations, key)?.(params),
 		);
+	}
+	if (notification.key && START_FEATURES_NOTICE_KEYS.has(notification.key)) {
+		const features = localizedStartFeatureList(
+			notification.params?.features,
+			(key, params) => lookupTranslation(translations, key)?.(params),
+		);
+		const translate = lookupTranslation(translations, notification.key);
+		return features !== undefined && translate
+			? translate({ features })
+			: notification.msg;
 	}
 	if (notification.key) {
 		const translate = lookupTranslation(translations, notification.key);
