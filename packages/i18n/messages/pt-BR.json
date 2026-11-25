@@ -2904,7 +2904,7 @@
 	"network.radio.line.idle": "Não registrado em uma rede.",
 	"network.radio.line.unchecked": "Não foi possível verificar desta vez.",
 	"network.radio.next.sim": "Verifique o plano e os dados restantes, ou teste o SIM em outro modem.",
-	"network.radio.next.data": "Tente reiniciar este modem. Ele fica offline por cerca de um minuto.",
+	"network.radio.next.data": "Desconecte este modem e conecte-o de novo. Ele fica offline por cerca de um minuto.",
 	"network.radio.next.disturbed": "Afaste mais as antenas ou os modems.",
 	"network.radio.next.noSim": "Insira um SIM para verificar o rádio.",
 	"network.radio.next.unchecked": "Atualiza na próxima leitura.",

@@ -141,7 +141,7 @@ describe("status first", () => {
 		expect(summary).toBe("The network refuses this SIM.");
 	});
 
-	test("a broken data path suggests a restart with its cost", () => {
+	test("a broken data path suggests a physical replug with its cost", () => {
 		const { chip, summary, next } = show(
 			radio({
 				...registered,
@@ -150,6 +150,7 @@ describe("status first", () => {
 		);
 		expect(chip).toBe("No data");
 		expect(summary).toBe("Registered, but no data gets through.");
+		expect(next).toContain("Unplug this modem and plug it back in");
 		expect(next).toContain("about a minute");
 	});
 

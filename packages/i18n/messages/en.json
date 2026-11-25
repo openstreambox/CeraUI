@@ -2901,7 +2901,7 @@
 	"network.radio.line.idle": "Not registered on a network.",
 	"network.radio.line.unchecked": "Couldn’t check this time.",
 	"network.radio.next.sim": "Check the plan and data left, or try the SIM in another modem.",
-	"network.radio.next.data": "Try restarting this modem. It’s offline for about a minute.",
+	"network.radio.next.data": "Unplug this modem and plug it back in. It’s offline for about a minute.",
 	"network.radio.next.disturbed": "Move the antennas or modems further apart.",
 	"network.radio.next.noSim": "Insert a SIM to check the radio.",
 	"network.radio.next.unchecked": "It updates with the next reading.",

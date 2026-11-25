@@ -2856,7 +2856,7 @@
 	"network.radio.line.idle": "未注册到任何网络。",
 	"network.radio.line.unchecked": "本次无法检查。",
 	"network.radio.next.sim": "检查套餐和剩余流量，或将 SIM 放到另一个调制解调器中试试。",
-	"network.radio.next.data": "试试重启此调制解调器，它会离线约一分钟。",
+	"network.radio.next.data": "拔下此调制解调器再重新插上，它会离线约一分钟。",
 	"network.radio.next.disturbed": "把天线或调制解调器分开得更远一些。",
 	"network.radio.next.noSim": "插入 SIM 后才能检查无线。",
 	"network.radio.next.unchecked": "下次读数时更新。",
