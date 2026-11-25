@@ -21,17 +21,21 @@ keep-level traffic cannot extend it. A restart therefore cannot lose the
 remaining protection. The first start after a boot takes no such window: no
 earlier process held evidence to lose, anything carried before the reboot was
 already cut, and new client traffic is measured from the first sample interval.
-The evidence is `/run/ceralive/carrying-idle` (`CERALIVE_CARRYING_IDLE_RECORD`).
-A process writes it only after it published confirmed idle and its carrying
-marker was released, and withdraws it before it publishes any protection
-(client sessions, qualifying traffic, unreadable counters or its own startup
-window). A restart skips the window only when that record exists and the OTA
-streaming marker is absent. A failed write, a crash between the two steps, a
-marker that is present or cannot be examined, or a backend from before the
-record (the first upgrade to it) all keep the window. Absence of the marker
-alone is not evidence, because a marker write can fail while protection holds.
-Without the record, an idle box refused SSH and power actions for two minutes
-after every package install or service restart.
+The evidence is a clean idle exit. Every start bumps a per-boot generation in
+`/run/ceralive/carrying-generation` (`CERALIVE_CARRYING_GENERATION`), past any
+recorded exit. The termination handler's first step, before any teardown,
+writes that process's generation to `/run/ceralive/carrying-idle-exit`
+(`CERALIVE_CARRYING_IDLE_EXIT`) only when the box's whole stream liveness is
+idle: no stream, no unconfirmed session, no carrying evidence and no startup
+window of its own. A restart skips the window only when the record names the
+generation it replaces and the OTA streaming marker is absent. A crash or kill,
+an exit while anything was protected, a write that failed (a read-only or full
+`/run`), a damaged record, a marker that is present or cannot be examined, or a
+backend from before the record (the first upgrade to it) all keep the window.
+Neither the marker's absence nor a record that must be withdrawn in time is
+trusted, because a write can fail while protection still holds. Without this,
+an idle box refused SSH and power actions for two minutes after every package
+install or service restart.
 The first readable sample is only a baseline: it clears "unreadable", and the
 first rate needs a second sample of the same interfaces, five seconds later.
 A phone already forwarding when the backend starts is therefore reported idle
@@ -46,7 +50,7 @@ it before restarting the backend on every upgrade while systemd runs: that is a
 restart within the boot. It does not ask systemd whether the backend ran, because
 an old prerm may already have stopped, disabled and unloaded the unit, which
 clears that record. At worst a backend that had not run yet gets the restart
-hold. An upgrade whose earlier backend recorded idle skips it like any other
+hold. An upgrade whose earlier backend exited idle skips it like any other
 restart. A fresh install and an image build write nothing.
 A two-minute hold after the last
 positive evidence covers reconnects. While an above-threshold upload is still

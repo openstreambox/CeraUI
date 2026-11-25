@@ -4,22 +4,23 @@
  * restart), `system.sshStart` and every power action answered
  * `stream_liveness_unknown` for two minutes. The restarted process took the
  * carrying startup hold on every restart within a boot, even when its
- * predecessor had nothing to protect, so the hold stood in for evidence that
- * never existed.
+ * predecessor had nothing to protect.
  *
- * A restart now skips the hold only on positive evidence: the predecessor's
- * idle record, written after it published confirmed idle, and no OTA marker.
- * These tests replay the restart against the real files in a scratch
- * `/run/ceralive`: a fresh marker module instance, idle record and tracker are
- * the restarted process, built in production order (the session at import,
- * then `initCarrying()`, then reconciliation opening the latch), with the
- * production publication order and the production gate.
+ * A restart now skips the hold only on positive evidence: the process it
+ * replaces exited cleanly while the whole box was idle (its generation in the
+ * idle-exit record), and no OTA marker is left. These tests replay restarts
+ * against the real files in a scratch `/run/ceralive`: a fresh marker module
+ * instance, restart evidence and tracker are the restarted process, built in
+ * production order (the session at import, then `initCarrying()`, then
+ * reconciliation opening the latch) and judged by the production gate.
  */
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import * as fs from "node:fs";
 import {
 	chmodSync,
 	existsSync,
 	mkdtempSync,
+	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -39,8 +40,7 @@ import type { EngineRuntimeState } from "../modules/streaming/streaming-backend.
 import { CarryingTracker } from "../modules/system/carrying.ts";
 import {
 	claimFirstStartThisBoot,
-	createCarryingIdleRecord,
-	persistCarryingProtection,
+	createCarryingRestartEvidence,
 	restartNeedsCarryingHold,
 } from "../modules/system/carrying-runtime.ts";
 import { decideDisruptiveAction } from "../modules/system/disruptive-action-gate.ts";
@@ -59,9 +59,10 @@ type MarkerModule = typeof bootMarker;
 /** `silent` is how an idle engine answers: reachable, no status pushed. */
 type Engine = EngineRuntimeState | "silent";
 
-let claimDir = "";
-let claimPath = "";
-let idlePath = "";
+let dir = "";
+const claimPath = () => join(dir, "carrying-boot-claim");
+const generationPath = () => join(dir, "carrying-generation");
+const idleExitPath = () => join(dir, "carrying-idle-exit");
 const markerPresent = () => existsSync(otaStreamingMarkerPath());
 
 function resetOwners() {
@@ -72,13 +73,11 @@ function resetOwners() {
 }
 beforeEach(() => {
 	resetOwners();
-	claimDir = mkdtempSync(join(tmpdir(), "carrying-restart-hold-"));
-	claimPath = join(claimDir, "carrying-boot-claim");
-	idlePath = join(claimDir, "carrying-idle");
+	dir = mkdtempSync(join(tmpdir(), "carrying-restart-hold-"));
 });
 afterEach(() => {
 	resetOwners();
-	rmSync(claimDir, { recursive: true, force: true });
+	rmSync(dir, { recursive: true, force: true });
 });
 
 let restarts = 0;
@@ -86,16 +85,16 @@ const restartMarker = (): Promise<MarkerModule> =>
 	import(`../modules/streaming/ota-streaming-marker.ts?hold=${++restarts}`);
 
 /**
- * One backend process: its own marker owner, idle record, carrying tracker and
- * session. The session is built at import; `initCarrying()` then reads the
- * claim, the idle record and the marker before it publishes anything itself;
- * the latch opens only once reconciliation returns. `markerWrites` false makes
- * every carrying marker write fail, as on a full or unwritable `/run`.
+ * One backend process: its own marker owner, restart evidence, carrying tracker
+ * and session. The session is built at import; `initCarrying()` then reads the
+ * claim, bumps the generation, reads the idle exit and the marker before it
+ * publishes anything itself; the latch opens only once reconciliation returns.
+ * `exit()` is the termination handler's first step; a crash never calls it.
  */
 function startProcess(
 	marker: MarkerModule,
 	engine: () => Engine,
-	options: { markerWrites?: boolean } = {},
+	options: { readOnlyRun?: boolean } = {},
 ) {
 	const session = createStreamSessionOrchestrator({
 		...streamSessionProductionDeps,
@@ -119,28 +118,26 @@ function startProcess(
 		stopRuntime: async () => undefined,
 		onStreamStopped: () => undefined,
 	});
-	const idleRecord = createCarryingIdleRecord(() => idlePath);
-	const firstStartThisBoot = claimFirstStartThisBoot(claimPath);
+	const evidence = createCarryingRestartEvidence(
+		{ generation: generationPath, idleExit: idleExitPath },
+		options.readOnlyRun
+			? {
+					...fs,
+					writeFileSync: () => {
+						throw Object.assign(new Error("read-only"), { code: "EROFS" });
+					},
+				}
+			: fs,
+	);
+	const firstStartThisBoot = claimFirstStartThisBoot(claimPath());
 	const hold = restartNeedsCarryingHold(firstStartThisBoot, {
-		idleRecord: idleRecord.present(),
+		idleExit: evidence.start(),
 		marker: initialOtaStreamLiveness(),
 	});
 	const tracker = new CarryingTracker();
-	let markerProtected: boolean | undefined;
-	// What `publishCarrying()` persists for the tracker's state.
-	const publish = (now: number) => {
-		markerProtected = persistCarryingProtection(
-			tracker.read(now) !== "idle",
-			markerProtected,
-			{
-				setMarker: (protect) =>
-					options.markerWrites === false
-						? false
-						: marker.setCarryingOtaProtection(protect),
-				idleRecord,
-			},
-		);
-	};
+	// What `publishCarrying()` does with the tracker's state.
+	const publish = (now: number) =>
+		marker.setCarryingOtaProtection(tracker.read(now) !== "idle");
 	if (hold) tracker.start(0);
 	tracker.upload(0, null);
 	publish(0);
@@ -155,41 +152,47 @@ function startProcess(
 		tracker.upload(now, bytes);
 		publish(now);
 	};
-	/** The SSH switch and power actions: `getDisruptiveActionDecision()`. */
-	const gate = (now: number) => {
+	/** `getStreamLiveness()`: what admission and the exit record both read. */
+	const liveness = (now: number) => {
 		const leaf = session.streamLiveness();
-		return decideDisruptiveAction({
-			streamLiveness: deriveStreamLiveness({
-				carrying: tracker.read(now),
-				reconciled,
-				live: leaf === "streaming",
-				lifecycle: session.snapshot().state,
-				sentinel: leaf === "idle" ? "absent" : "unknown",
-			}),
-			updateBusy: [],
+		return deriveStreamLiveness({
+			carrying: tracker.read(now),
+			reconciled,
+			live: leaf === "streaming",
+			lifecycle: session.snapshot().state,
+			sentinel: leaf === "idle" ? "absent" : "unknown",
 		});
 	};
-	return { hold, tracker, session, reconcile, sample, gate, idleRecord };
+	/** The SSH switch and power actions: `getDisruptiveActionDecision()`. */
+	const gate = (now: number) =>
+		decideDisruptiveAction({ streamLiveness: liveness(now), updateBusy: [] });
+	/** SIGTERM: the handler records first, before teardown changes anything. */
+	const exit = (now: number) => evidence.recordExit(liveness(now));
+	return { hold, tracker, session, reconcile, sample, gate, exit };
 }
 
 const quiet = { eth1: 10 };
+const refusedUnknown = {
+	allowed: false,
+	reason: "stream_liveness_unknown",
+} as const;
 
-/** An idle first process that ran past its first samples, then went away. */
-async function idleFirstProcess() {
-	const first = startProcess(bootMarker, () => "silent");
-	expect(first.hold).toBe(false);
-	expect(await first.reconcile()).toBe("idle");
-	first.sample(5_000, quiet);
-	expect(first.gate(5_000)).toEqual({ allowed: true });
+/** An idle process that ran past its first samples. */
+async function idleProcess(marker: MarkerModule = bootMarker) {
+	const process = startProcess(marker, () => "silent");
+	expect(await process.reconcile()).toBe("idle");
+	process.sample(5_000, quiet);
+	expect(process.gate(5_000)).toEqual({ allowed: true });
 	expect(markerPresent()).toBe(false);
-	expect(existsSync(idlePath)).toBe(true);
-	return first;
+	return process;
 }
 
-test("a restart after an idle process admits SSH on its first quiet sample", async () => {
-	await idleFirstProcess();
+test("a restart after an idle clean exit admits SSH on its first quiet sample", async () => {
+	const first = await idleProcess();
+	expect(first.hold).toBe(false);
+	expect(first.exit(5_000)).toBe(true);
 
-	// The package's postinst restarts the backend: same boot, empty marker dir.
+	// The package's postinst restarts the backend: same boot.
 	const restarted = startProcess(await restartMarker(), () => "silent");
 	expect(restarted.hold).toBe(false);
 	expect(await restarted.reconcile()).toBe("idle");
@@ -199,8 +202,8 @@ test("a restart after an idle process admits SSH on its first quiet sample", asy
 	expect(inhibitorHeld).toBe(false);
 });
 
-test("a restart after an idle process whose engine reports idle is admitted too", async () => {
-	await idleFirstProcess();
+test("a restart after an idle clean exit whose engine reports idle is admitted too", async () => {
+	(await idleProcess()).exit(5_000);
 	const restarted = startProcess(await restartMarker(), () => "idle");
 	expect(restarted.hold).toBe(false);
 	expect(await restarted.reconcile()).toBe("idle");
@@ -208,18 +211,40 @@ test("a restart after an idle process whose engine reports idle is admitted too"
 	expect(restarted.gate(5_000)).toEqual({ allowed: true });
 });
 
-test("before the first counter sample a restarted process still says unknown", async () => {
-	await idleFirstProcess();
+test("a restarted process says unknown until its first sample and its reconciliation", async () => {
+	(await idleProcess()).exit(5_000);
 	const restarted = startProcess(await restartMarker(), () => "silent");
+	expect(restarted.gate(0)).toEqual(refusedUnknown);
+	restarted.sample(5_000, quiet);
+	expect(restarted.gate(5_000)).toEqual(refusedUnknown);
 	await restarted.reconcile();
-	// The sampler has not read the client counters yet: no evidence, no idle.
-	expect(restarted.gate(0)).toEqual({
-		allowed: false,
-		reason: "stream_liveness_unknown",
-	});
+	expect(restarted.gate(5_000)).toEqual({ allowed: true });
 });
 
-test("a restart while a phone was carried keeps the two-minute hold", async () => {
+test("every later restart needs its own predecessor's idle exit", async () => {
+	(await idleProcess()).exit(5_000);
+	(await idleProcess(await restartMarker())).exit(5_000);
+	const third = startProcess(await restartMarker(), () => "silent");
+	expect(third.hold).toBe(false);
+});
+
+test("a crash keeps the hold even after an earlier idle exit", async () => {
+	(await idleProcess()).exit(5_000);
+	// The second process carries a phone; it cannot write its marker (a
+	// read-only or full /run) and is killed. Its predecessor's record remains.
+	const second = startProcess(await restartMarker(), () => "silent");
+	expect(second.hold).toBe(false);
+	await second.reconcile();
+	expect(existsSync(idleExitPath())).toBe(true);
+
+	const restarted = startProcess(await restartMarker(), () => "silent");
+	expect(restarted.hold).toBe(true);
+	await restarted.reconcile();
+	restarted.sample(5_000, quiet);
+	expect(restarted.gate(5_000)).toEqual(refusedUnknown);
+});
+
+test("an exit while a phone is carried keeps the hold", async () => {
 	const first = startProcess(bootMarker, () => "silent");
 	await first.reconcile();
 	// 2 Mbit/s of client upload long enough to count as carrying.
@@ -229,7 +254,7 @@ test("a restart while a phone was carried keeps the two-minute hold", async () =
 		first.sample(at, { eth1: bytes });
 	}
 	expect(first.gate(30_000)).toEqual({ allowed: false, reason: "streaming" });
-	expect(markerPresent()).toBe(true);
+	expect(first.exit(30_000)).toBe(false);
 
 	const restarted = startProcess(await restartMarker(), () => "silent");
 	expect(restarted.hold).toBe(true);
@@ -237,20 +262,37 @@ test("a restart while a phone was carried keeps the two-minute hold", async () =
 	// Quiet counters do not end the hold: the earlier process's evidence is lost.
 	restarted.sample(5_000, quiet);
 	restarted.sample(119_000, quiet);
-	expect(restarted.gate(119_000)).toEqual({
-		allowed: false,
-		reason: "stream_liveness_unknown",
-	});
+	expect(restarted.gate(119_000)).toEqual(refusedUnknown);
 	restarted.sample(121_000, quiet);
 	restarted.sample(122_000, quiet);
 	expect(restarted.gate(122_000)).toEqual({ allowed: true });
 	expect(markerPresent()).toBe(false);
 });
 
-test("a restart beside a stream with an unreachable engine stays unknown after the hold", async () => {
-	// The earlier process's stream left the empty marker.
+test("an exit beside a running engine session keeps the hold, whatever the marker says", async () => {
+	// A stream whose marker writes failed: no marker, but the session knows.
+	const first = startProcess(bootMarker, () => "streaming");
+	await first.reconcile();
+	first.sample(5_000, quiet);
+	expect(first.gate(5_000)).toEqual(refusedUnknown);
+	expect(first.exit(5_000)).toBe(false);
+	rmSync(otaStreamingMarkerPath(), { force: true });
+
+	const restarted = startProcess(await restartMarker(), () => "silent");
+	expect(restarted.hold).toBe(true);
+});
+
+test("an exit during the process's own first sample keeps the hold", async () => {
+	const first = startProcess(bootMarker, () => "silent");
+	await first.reconcile();
+	expect(first.exit(0)).toBe(false);
+	expect(startProcess(await restartMarker(), () => "silent").hold).toBe(true);
+});
+
+test("a restart beside a stream's marker with an unreachable engine stays unknown after the hold", async () => {
+	(await idleProcess()).exit(5_000);
+	// Something left the empty stream marker after that exit.
 	writeFileSync(otaStreamingMarkerPath(), "");
-	claimFirstStartThisBoot(claimPath);
 
 	const restarted = startProcess(await restartMarker(), () => "unknown");
 	expect(restarted.hold).toBe(true);
@@ -258,99 +300,52 @@ test("a restart beside a stream with an unreachable engine stays unknown after t
 	restarted.sample(121_000, quiet);
 	restarted.sample(122_000, quiet);
 	expect(restarted.tracker.read(122_000)).toBe("idle");
-	expect(restarted.gate(122_000)).toEqual({
-		allowed: false,
-		reason: "stream_liveness_unknown",
-	});
+	expect(restarted.gate(122_000)).toEqual(refusedUnknown);
 	expect(markerPresent()).toBe(true);
 	expect(inhibitorHeld).toBe(true);
 });
 
-test("before reconciliation returns a restarted process says unknown", async () => {
-	await idleFirstProcess();
-	const restarted = startProcess(await restartMarker(), () => "silent");
-	restarted.sample(5_000, quiet);
-	expect(restarted.gate(5_000)).toEqual({
-		allowed: false,
-		reason: "stream_liveness_unknown",
+test("a generation that cannot be advanced keeps the hold", async () => {
+	(await idleProcess()).exit(5_000);
+	// A read-only runtime directory: the restart cannot tell exits apart.
+	const restarted = startProcess(await restartMarker(), () => "silent", {
+		readOnlyRun: true,
 	});
-	await restarted.reconcile();
-	expect(restarted.gate(5_000)).toEqual({ allowed: true });
-});
-
-test("a carrying marker write that failed keeps the hold for the next process", async () => {
-	await idleFirstProcess();
-	// The second process carries a phone but cannot write its marker.
-	const failing = startProcess(await restartMarker(), () => "silent", {
-		markerWrites: false,
-	});
-	expect(failing.hold).toBe(false);
-	await failing.reconcile();
-	let bytes = 0;
-	for (let at = 1_000; at <= 30_000; at += 1_000) {
-		bytes += 250_000;
-		failing.sample(at, { eth1: bytes });
-	}
-	expect(failing.gate(30_000)).toEqual({ allowed: false, reason: "streaming" });
-	// No marker on disk, but no idle record either.
-	expect(markerPresent()).toBe(false);
-	expect(existsSync(idlePath)).toBe(false);
-
-	const restarted = startProcess(await restartMarker(), () => "silent");
 	expect(restarted.hold).toBe(true);
-	await restarted.reconcile();
-	restarted.sample(5_000, quiet);
-	expect(restarted.gate(5_000)).toEqual({
-		allowed: false,
-		reason: "stream_liveness_unknown",
-	});
+	expect(restarted.exit(0)).toBe(false);
 });
 
-test("a crash between withdrawing the idle record and writing the marker keeps the hold", async () => {
-	const first = await idleFirstProcess();
-	// Protection begins: the record goes first, then the process dies.
-	expect(first.idleRecord.withdraw()).toBe(true);
-	expect(existsSync(idlePath)).toBe(false);
-	expect(markerPresent()).toBe(false);
-
-	const restarted = startProcess(await restartMarker(), () => "silent");
-	expect(restarted.hold).toBe(true);
+test("a damaged generation or idle-exit record keeps the hold", async () => {
+	(await idleProcess()).exit(5_000);
+	writeFileSync(idleExitPath(), `${readFileSync(generationPath(), "utf8")}x`);
+	expect(startProcess(await restartMarker(), () => "silent").hold).toBe(true);
 });
 
-test("a restart before the first process recorded idle keeps the hold", async () => {
-	// Killed during its own first sample: unknown, so nothing recorded.
-	const first = startProcess(bootMarker, () => "silent");
-	expect(existsSync(idlePath)).toBe(false);
-	expect(first.gate(0)).toEqual({
-		allowed: false,
-		reason: "stream_liveness_unknown",
-	});
-	const restarted = startProcess(await restartMarker(), () => "silent");
-	expect(restarted.hold).toBe(true);
+test("a lost generation never lets an old idle exit name a later process", async () => {
+	(await idleProcess()).exit(5_000);
+	rmSync(generationPath(), { force: true });
+	// The next process starts past the record, then crashes.
+	const lost = startProcess(await restartMarker(), () => "silent");
+	expect(lost.hold).toBe(true);
+	expect(startProcess(await restartMarker(), () => "silent").hold).toBe(true);
 });
 
-test("an idle record that cannot be examined counts as absent", () => {
-	const notADirectory = join(claimDir, "file");
+test("a marker that cannot be examined keeps the hold", () => {
+	const notADirectory = join(dir, "file");
 	writeFileSync(notADirectory, "");
-	const record = createCarryingIdleRecord(() =>
-		join(notADirectory, "carrying-idle"),
-	);
-	expect(record.present()).toBe(false);
 	const unreadable = initialOtaStreamLiveness(join(notADirectory, "streaming"));
 	expect(unreadable).toBe("unknown");
 	expect(
-		restartNeedsCarryingHold(false, { idleRecord: true, marker: unreadable }),
+		restartNeedsCarryingHold(false, { idleExit: true, marker: unreadable }),
 	).toBe(true);
 });
 
-test("only a restart with an idle record and no marker skips the hold", () => {
-	for (const idleRecord of [true, false])
+test("only a restart after an idle exit and without a marker skips the hold", () => {
+	for (const idleExit of [true, false])
 		for (const marker of ["idle", "unknown"] as const) {
-			expect(restartNeedsCarryingHold(true, { idleRecord, marker })).toBe(
-				false,
-			);
-			expect(restartNeedsCarryingHold(false, { idleRecord, marker })).toBe(
-				!(idleRecord && marker === "idle"),
+			expect(restartNeedsCarryingHold(true, { idleExit, marker })).toBe(false);
+			expect(restartNeedsCarryingHold(false, { idleExit, marker })).toBe(
+				!(idleExit && marker === "idle"),
 			);
 		}
 });

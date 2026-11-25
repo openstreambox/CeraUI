@@ -3,6 +3,8 @@ import { cancelDisruptiveRetries } from "../modules/system/disruptive-retry.ts";
 import { logger } from "./logger.ts";
 
 export interface BackendShutdownDeps {
+	/** Reads the box's state before anything is torn down (carrying restart evidence). */
+	readonly recordIdleExit?: () => void;
 	/** Cancels background retry owners so none starts work during teardown. */
 	readonly stopRecoveryRetries?: () => void;
 	/** Stops the engine reconnect loop, including a heal in flight. */
@@ -45,6 +47,13 @@ export function handleTerminationSignal(
 ): void {
 	if (shuttingDown) return;
 	shuttingDown = true;
+	if (deps.recordIdleExit) {
+		try {
+			deps.recordIdleExit();
+		} catch (error) {
+			logger.error("shutdown: idle exit record failed", { err: error });
+		}
+	}
 	if (signal === "SIGTERM" || signal === "SIGINT")
 		emitDeviceEvent("service_stopping", { signal });
 	cancelDisruptiveRetries();

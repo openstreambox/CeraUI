@@ -110,13 +110,25 @@ test("SSH start beside an unconfirmed own stream offers Stop Stream", async () =
 });
 
 test("SSH start while client traffic is still checked says to wait, not to stop", async () => {
+	// The box's own session is idle; only a client session is unreadable.
 	carryingTracker.session("ssh-test", null, performance.now());
+	const broadcast = spyOn(notifications, "notificationBroadcast");
 	try {
-		const refusal = await refusalUnderUnknown();
+		const result = await call(sshStartProcedure, undefined, {
+			context: buildControlContext(),
+		});
+		expect(result).toEqual({
+			success: false,
+			error: "stream_liveness_unknown",
+		});
+		const refusal = broadcast.mock.calls.find(
+			([name]) => name === "disruptive_action_refused",
+		);
 		expect(refusal?.[7]).toBe("notifications.disruptiveActionCarryingChecking");
 		expect(refusal?.[2]).toContain("still checking");
 		expect(refusal?.[2]).not.toContain("Stop Stream");
 	} finally {
+		broadcast.mockRestore();
 		carryingTracker.session("ssh-test", false, performance.now());
 	}
 });

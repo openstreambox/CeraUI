@@ -47299,7 +47299,7 @@
   ],
   "dependencies": {
     "apps/backend/src/helpers/config-schemas.ts": "b018bacef01534d9904fe8b3fcf3d1b52d5bbedb6dbc70bec707475a04ca5290",
-    "apps/backend/src/main.ts": "882851d9aee27eca0748a2bd14c838d286f5f9a15232f5414c77b58f860351bf",
+    "apps/backend/src/main.ts": "ca172ea83deecd338a83e7721bd7b1cdb187d5dbf2b91b2863aded17fbe62ea5",
     "apps/backend/src/mocks/mock-service.ts": "e7547acc0be1355d2310d9aa39457159a94093a48be13fcffad3239bfc36d19b",
     "apps/backend/src/mocks/providers/streaming.ts": "e0bab1079bf5c6209e287c71c5e169d5545effd0d3bac93d6cfc9a584f910b0e",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -47341,7 +47341,7 @@
     "apps/backend/src/modules/streaming/streaming.ts": "83a8a4edfc179e43cd71912cdbb331ca0b5308589ca1bc498b288d2dbbcf7730",
     "apps/backend/src/modules/streaming/streamloop/autostart.ts": "03d8a15d80b4dd164b75c124e815803be9dd56a6b584e3b93a100c7f21eebd49",
     "apps/backend/src/modules/system/apt-progress.ts": "d7813bc7d07cef5c4e0c0c8199272a5e3ebe0d7c8f6a8c197c30a50b30dc7a8a",
-    "apps/backend/src/modules/system/carrying-runtime.ts": "d028c7117782d1308e3fd9396b8c4d63a30850307b1a7213c179702603b6f571",
+    "apps/backend/src/modules/system/carrying-runtime.ts": "4a26d7cb450edec5b718e7be0aafa25b7714920fbf79ecba7b02a3446b948531",
     "apps/backend/src/modules/system/carrying.ts": "2ebddf550a97b1d7a2978afe98cca50423daf8e779b30dc1112c99e05adb539c",
     "apps/backend/src/modules/system/collectors/cpufreq.ts": "9d47ec1f943ad148334baa4629d58f5ab140337071e5eba1c584f738e0d5f5a8",
     "apps/backend/src/modules/system/collectors/ddr.ts": "04b912ca2207f7921fb597005a83de98cdc78c724b542b97d5f28ca2b8d09a15",

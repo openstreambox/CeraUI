@@ -1,9 +1,9 @@
 import { notificationBroadcast } from "../ui/notifications.ts";
-import { getCarryingLiveness } from "./carrying.ts";
 import {
 	type DisruptiveRefusalReason,
 	isDisruptiveActionPending,
 } from "./disruptive-action-reservation.ts";
+import { getOwnStreamLiveness } from "./stream-liveness-source.ts";
 
 const CLIENT_TRAFFIC = {
 	text: "This action was not run. Try again when the box’s own stream and connected devices’ stream traffic are idle and no update is in progress.",
@@ -12,6 +12,8 @@ const CLIENT_TRAFFIC = {
 // Unknown is not a stream: the box is idle or still finding out, so it says
 // which part is still checking and what helps. Stop settles only an
 // unconfirmed stream of the box's own; client traffic can only be waited out.
+// The part is read from the box's own session, which is what admission sees
+// whether or not it waived the carrying startup hold.
 const CARRYING_CHECKING = {
 	text: "This action was not run. The box is still checking whether connected devices send stream traffic through it. Try again in a few minutes.",
 	key: "notifications.disruptiveActionCarryingChecking",
@@ -32,7 +34,7 @@ export function notifyDisruptiveActionRefused(
 		reason === "update_in_progress" && isDisruptiveActionPending()
 			? BUSY
 			: reason === "stream_liveness_unknown"
-				? getCarryingLiveness() === "unknown"
+				? getOwnStreamLiveness() === "idle"
 					? CARRYING_CHECKING
 					: STREAM_UNCONFIRMED
 				: CLIENT_TRAFFIC;

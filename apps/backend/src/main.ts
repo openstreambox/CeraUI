@@ -1,6 +1,7 @@
 import { moblinkOwner, stopMoblinkRelay } from "./modules/moblink/runtime";
 import {
 	initCarrying,
+	recordCarryingIdleExit,
 	tickCarrying,
 } from "./modules/system/carrying-runtime.ts";
 import { initShutdownProtection } from "./modules/system/shutdown-protection.ts";
@@ -209,6 +210,7 @@ import {
 	getSshStatus,
 	reconcileSshPersistence,
 } from "./modules/system/ssh.ts";
+import { getStreamLiveness } from "./modules/system/stream-liveness-source.ts";
 import { noteStreamReconciliationCompleted } from "./modules/system/stream-reconciliation-latch.ts";
 import { getTailscaleStatus } from "./modules/system/tailscale.ts";
 import { reconcileAptChannel } from "./modules/system/update-apt-channel.ts";
@@ -818,6 +820,11 @@ function stopRecoveryRetries(): void {
 	stopLegacyTokenMigration();
 }
 const termination = terminationHandlers({
+	// First, before teardown stops anything: only an idle box leaves the record
+	// that lets the next start skip the carrying restart hold.
+	recordIdleExit: () => {
+		recordCarryingIdleExit(getStreamLiveness());
+	},
 	stopRecoveryRetries,
 	terminateWifiObservation: () => {
 		stopWifiAdapterModeRestore();

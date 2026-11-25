@@ -22,7 +22,7 @@ test("a backend restart stays protected and repeated reports do not rewrite the 
 	try {
 		// An earlier process ran in this boot without recording idle: its client
 		// evidence is lost.
-		initCarrying(false, { idleRecord: false, marker: "unknown" });
+		initCarrying(false, { idleExit: false, marker: "unknown" });
 		expect(status.mock.calls).toContainEqual([
 			"status",
 			{ carrying: { state: "unknown", startup: true } },
