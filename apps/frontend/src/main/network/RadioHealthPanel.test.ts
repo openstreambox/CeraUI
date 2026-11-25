@@ -3,8 +3,17 @@
 import type { RadioHealth, RadioMetric } from "@ceraui/rpc/schemas";
 import { fireEvent, render } from "@testing-library/svelte";
 import { tick } from "svelte";
-import { beforeAll, describe, expect, test, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import RadioHealthPanel from "./RadioHealthPanel.svelte";
+
+const { getRadioHealth } = vi.hoisted(() => ({
+	getRadioHealth: vi.fn<() => Promise<Record<string, RadioHealth>>>(),
+}));
+vi.mock("$lib/rpc", () => ({ rpc: { modems: { getRadioHealth } } }));
+beforeEach(() => {
+	getRadioHealth.mockReset();
+	getRadioHealth.mockResolvedValue({});
+});
 
 // AppDialog picks Dialog vs Sheet through window.matchMedia, absent in jsdom.
 beforeAll(() => {
@@ -449,4 +458,52 @@ test("the dialog body takes keyboard focus so a long list can scroll", async () 
 	expect(details.getAttribute("tabindex")).toBe("0");
 	expect(details.tagName).toBe("SECTION");
 	expect(details.getAttribute("aria-label")).toBe("Readings and history");
+});
+
+test("the dialog shows the retained history, not only the broadcast sample", async () => {
+	const sample = (offset: number) => ({
+		at: at - offset,
+		finding: {
+			kind: "unknown" as const,
+			confidence: "unknown" as const,
+			evidence: [],
+		},
+	});
+	getRadioHealth.mockResolvedValue({
+		"1": radio({
+			...registered,
+			timeline: [sample(90_000), sample(60_000), sample(30_000)],
+		}),
+	});
+	const view = show(radio({ ...registered, timeline: [sample(30_000)] }));
+	const { part } = await openDetails(view);
+	await vi.waitFor(() =>
+		expect(part("radio-health-history")?.querySelectorAll("li").length).toBe(3),
+	);
+	expect(getRadioHealth).toHaveBeenCalled();
+});
+
+test("a serving-cell read the lease refused names its reason in words", async () => {
+	const view = show(
+		radio({
+			...registered,
+			metrics: {
+				...registered.metrics,
+				servingCell: {
+					value: null,
+					source: "QENG servingcell · not available: not-released",
+					unit: "",
+					technology: "unknown",
+					capturedAt: at,
+					reason: "not-available",
+				},
+			},
+		}),
+	);
+	const { part } = await openDetails(view);
+	const raw = part("radio-health-raw")?.textContent ?? "";
+	expect(raw).toContain(
+		"Unavailable: the modem's second AT port isn't released",
+	);
+	expect(raw).toContain("QENG servingcell · not-released");
 });

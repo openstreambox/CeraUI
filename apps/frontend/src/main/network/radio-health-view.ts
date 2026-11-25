@@ -181,6 +181,23 @@ export function metricLabel(key: string): string {
 	return `${layer}${(name ?? key).toUpperCase()}`;
 }
 
+/**
+ * A serving-cell field the AT lease could not read carries a fixed reason in
+ * its source: "QENG servingcell · not available: not-released". Split it so
+ * the panel can show the reason in words; the token stays for support.
+ */
+export function splitSourceReason(source: string): {
+	source: string;
+	reason: string | null;
+} {
+	const match = source.match(
+		/^(.*) · (?:not available|no reading): ([a-z-]+)$/,
+	);
+	return match?.[1] && match[2]
+		? { source: match[1], reason: match[2] }
+		: { source, reason: null };
+}
+
 export function formatValue(metric: RadioMetric): string | null {
 	if (metric.value === null) return null;
 	if (metric.unit === "raw") return `${metric.value} (raw)`;

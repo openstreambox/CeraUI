@@ -25,8 +25,8 @@ port is unavailable, rather than zero events.
 
 Only the listed RM520N-GL firmware family ending A08M4G gets fixed QMI NAS reads
 through the existing modem facade and QMI proxy. The fixed QENG serving read
-goes through the read-only AT lease on the RM520's second AT port, which
-`ceralive-modem-support` releases from ModemManager ([FREE-AT-PORT.md](FREE-AT-PORT.md)):
+goes through the read-only AT lease on the RM520's second AT port, when a
+modem support package releases it from ModemManager ([FREE-AT-PORT.md](FREE-AT-PORT.md)):
 stock ModemManager refuses `mmcli --command` outside debug mode. The lease opens
 that port only when it is released in udev, ModemManager does not own it and no
 other process holds it, and writes only `AT+QENG="servingcell"`. Otherwise the record carries a `servingCell`

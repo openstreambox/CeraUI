@@ -472,10 +472,11 @@ async function openAdminUi(rowId: string): Promise<void> {
 				{const simless = $derived(isSimlessModem(modem))}
 				{const primary = $derived(primaryLabel(modem, id))}
 				{const radioNamesNetwork = $derived(
-					modem.radio_health !== undefined &&
+					openDetails[id] === true &&
+						modem.radio_health !== undefined &&
 						!simless &&
 						state !== 'no-sim' &&
-						(modem.radio_health.layer.value !== null || modem.radio_health.band.value !== null),
+						modem.radio_health.layer.value !== null,
 				)}
 				{const detail = $derived(detailLine(modem, primary, { omitNetworkType: radioNamesNetwork }))}
 				{const slot = $derived(slotBadgeLabel(modem, primary))}

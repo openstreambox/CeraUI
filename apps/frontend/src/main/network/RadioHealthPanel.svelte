@@ -26,6 +26,7 @@ import {
 
 import Badge from '$lib/components/custom/Badge.svelte';
 import AppDialog from '$lib/components/dialogs/AppDialog.svelte';
+import { rpc } from '$lib/rpc';
 import { cn } from '$lib/utils';
 
 import {
@@ -41,6 +42,7 @@ import {
 	type SignalLevel,
 	secondsToNextReading,
 	signalReadings,
+	splitSourceReason,
 } from './radio-health-view';
 
 let {
@@ -75,6 +77,29 @@ $effect(() => {
 	}, 1000);
 	return () => clearInterval(timer);
 });
+// The broadcast carries only the latest sample; the dialog asks for the
+// retained timeline when it opens and again after each new reading.
+let retained = $state<RadioHealth['timeline']>([]);
+$effect(() => {
+	if (!detailsOpen) return;
+	void radio.capturedAt;
+	let cancelled = false;
+	rpc.modems
+		.getRadioHealth()
+		.then((all) => {
+			if (!cancelled) retained = all[id]?.timeline ?? [];
+		})
+		.catch(() => {
+			// Keep what the broadcast carries; the history is informational.
+		});
+	return () => {
+		cancelled = true;
+	};
+});
+const timeline = $derived(
+	[...new Map([...retained, ...radio.timeline].map((event) => [event.at, event])).values()],
+);
+
 const nextIn = $derived(secondsToNextReading(radio.capturedAt, now));
 const nextText = $derived(
 	nextIn === null
@@ -220,6 +245,15 @@ const time = (at: number) =>
 		: null;
 
 const unavailable = $derived(m['network.radio.unavailable']());
+const REASON_TEXT = $derived<Record<string, string>>({
+	'not-released': m['network.radio.reason.notReleased'](),
+	'owned-by-modemmanager': m['network.radio.reason.owned'](),
+	'in-use': m['network.radio.reason.inUse'](),
+	'not-rm520': m['network.radio.reason.unsupported'](),
+	'second-at-interface-absent': m['network.radio.reason.unsupported'](),
+});
+const reasonText = (token: string) =>
+	REASON_TEXT[token] ?? m['network.radio.reason.other']();
 const readingRows = $derived<[string, RadioMetric][]>([
 	[m['network.radio.registration'](), radio.registration],
 	[m['network.radio.networkType'](), radio.layer],
@@ -261,7 +295,7 @@ const history = $derived<HistoryRow[]>(
 					: m['network.radio.usbEvent.disconnect'](),
 			detail: '',
 		})),
-		...radio.timeline.map((event) => ({
+		...timeline.map((event) => ({
 			at: event.at,
 			text: FINDING_CHIP[event.finding.kind] ?? event.finding.kind,
 			// The evidence tokens stay: they are what supported a finding.
@@ -391,17 +425,20 @@ const history = $derived<HistoryRow[]>(
 				{#each readingRows as [name, metric] (name)}
 					{const shown = $derived(formatValue(metric))}
 					{const at = $derived(time(metric.capturedAt))}
+					{const origin = $derived(splitSourceReason(metric.source))}
 					<div class="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-3 py-1">
 						<dt class="text-muted-foreground">{name}</dt>
 						<dd class="min-w-0">
 							{#if shown === null}
-								<span class="text-muted-foreground">{unavailable}</span>
+								<span class="text-muted-foreground"
+									>{unavailable}{#if origin.reason}{': '}{reasonText(origin.reason)}{/if}</span
+								>
 							{:else}
 								<span class="font-mono tabular-nums" dir="ltr">{shown}</span>
 							{/if}
 							{#if shown !== null || metric.source !== 'not-observed'}
 								<span class="text-muted-foreground block break-words text-(length:--text-micro)" dir="ltr">
-									{metric.source}{#if at && shown !== null}{' · '}{at}{/if}
+									{origin.source}{#if origin.reason}{' · '}{origin.reason}{/if}{#if at && shown !== null}{' · '}{at}{/if}
 								</span>
 							{/if}
 						</dd>

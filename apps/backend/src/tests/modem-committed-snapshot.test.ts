@@ -79,16 +79,43 @@ describe("committed modem snapshot", () => {
 			broadcastRadioHealth();
 			expect(frames.length).toBe(1);
 			const frame = JSON.parse(frames[0] ?? "{}");
-			expect(Object.keys(frame.status.modems["1"])).toEqual([
-				"status",
-				"radio_health",
-			]);
+			expect(Object.keys(frame.status.modems["1"])).toEqual(["radio_health"]);
 			expect(frame.status.modems["1"].radio_health.finding.kind).toBe(
 				"unknown",
 			);
 		} finally {
 			removeClient(client);
 		}
+	});
+
+	test("radio enrichment publishes the committed roster, never a staged change", async () => {
+		setModem(1, modem("one"));
+		setModem(2, modem("two"));
+		broadcastModems();
+		// A reconciliation is mid-flight: a staged signal change and a removal.
+		const staged = modem("one");
+		staged.status = { ...staged.status, signal: 99 } as Modem["status"];
+		setModem(1, staged);
+		removeModem(2);
+		const frames: string[] = [];
+		const client = {
+			data: { isAuthenticated: true, lastActive: Date.now() },
+			send: (frame: string) => frames.push(frame),
+		} as unknown as AppWebSocket;
+		addClient(client);
+		try {
+			broadcastRadioHealth();
+			const frame = JSON.parse(frames[0] ?? "{}");
+			expect(Object.keys(frame.status.modems).sort()).toEqual(["1", "2"]);
+			expect(frame.status.modems["1"].status).toBeUndefined();
+		} finally {
+			removeClient(client);
+		}
+		const result = (await call(getAllModemsProcedure, undefined, {
+			context: context(),
+		})) as Record<string, { status?: { signal?: number } }>;
+		expect(result["1"]?.status?.signal).toBe(0);
+		expect(Object.keys(result).sort()).toEqual(["1", "2"]);
 	});
 
 	test("getAll serves the last complete commit while mutable state is changing", async () => {
