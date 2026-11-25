@@ -311,3 +311,19 @@ describe('statusResponseSchema — network_ingest field (additive)', () => {
 		expect(parsed.network_ingest).toBeNull();
 	});
 });
+
+describe('client carrying projection', () => {
+	test('is additive and preserves explicit unknown independently of encoder streaming', () => {
+		expect(statusResponseSchema.parse({ is_streaming: false }).carrying).toBeUndefined();
+		const parsed = statusResponseSchema.parse({
+			is_streaming: false,
+			carrying: { state: 'streaming' },
+		});
+		expect(parsed.carrying?.state).toBe('streaming');
+		expect(
+			statusResponseSchema.parse({ is_streaming: true, carrying: { state: 'unknown' } }).carrying
+				?.state,
+		).toBe('unknown');
+		expect(statusResponseSchema.safeParse({ carrying: { state: 'offline' } }).success).toBe(false);
+	});
+});
