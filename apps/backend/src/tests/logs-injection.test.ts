@@ -34,14 +34,17 @@ import {
 	mock,
 	spyOn,
 } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { logInputSchema } from "@ceraui/rpc/schemas";
 
 import * as runModule from "../helpers/run.ts";
 import { getLog } from "../modules/system/logs.ts";
 
-const PWNED = "/tmp/pwned";
-const MALICIOUS = "ssh; touch /tmp/pwned";
+const PWNED = join(tmpdir(), `ceraui-log-injection-${randomUUID()}`);
+const MALICIOUS = `ssh; touch ${PWNED}`;
 
 /** Minimal WebSocket stand-in: getSocketSenderId reads `data.senderId`. */
 function fakeConn() {
