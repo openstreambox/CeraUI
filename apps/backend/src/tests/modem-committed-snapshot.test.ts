@@ -7,17 +7,32 @@ import {
 import {
 	broadcastModems,
 	broadcastRadioHealth,
+	getCommittedModemsWireMessage as getCommittedState,
 } from "../modules/modems/modem-status.ts";
 import {
+	refreshModemIdPaths,
+	setModemIdPathReader,
+} from "../modules/modems/modem-wire-producer.ts";
+import {
 	getModemIds,
+	getModem as getModemState,
 	type Modem,
 	removeModem,
 	setModem,
 } from "../modules/modems/modems-state.ts";
 import {
+	getRadioHealth,
 	refreshRadioHealth,
 	resetRadioHealthForTest,
 } from "../modules/modems/radio-health-runtime.ts";
+import {
+	resetRoamingAdvisoryState,
+	standingRoamingAdvisoryNames,
+} from "../modules/modems/roaming-advisory.ts";
+import {
+	getRadioRegistrationObservation,
+	recordRadioRegistration,
+} from "../modules/modems/state/radio-registration.ts";
 import { addClient, removeClient } from "../rpc/events.ts";
 import { getAllModemsProcedure } from "../rpc/procedures/modems.procedure.ts";
 import type { AppWebSocket, RPCContext } from "../rpc/types.ts";
@@ -191,6 +206,157 @@ describe("committed modem snapshot", () => {
 		} finally {
 			removeClient(client);
 			resetRadioHealthForTest();
+		}
+	});
+
+	/** Frames sent to one subscriber while `run` broadcasts. */
+	function capture(run: () => void): Array<{
+		status?: { modems?: Record<string, Record<string, unknown>> };
+		notification?: { show?: { name: string }[]; remove?: { id: string }[] };
+	}> {
+		const frames: string[] = [];
+		const client = {
+			data: { isAuthenticated: true, lastActive: Date.now() },
+			send: (frame: string) => frames.push(frame),
+		} as unknown as AppWebSocket;
+		addClient(client);
+		try {
+			run();
+		} finally {
+			removeClient(client);
+		}
+		return frames.map((frame) => JSON.parse(frame));
+	}
+	type Radio = {
+		neighbours: { id: string; band: { value: unknown } }[];
+		registration: { value: unknown };
+		finding: { kind: string };
+		timeline: {
+			observation?: { neighbours: { id: string; band: { value: unknown } }[] };
+		}[];
+	};
+	const neighbourBand = (radio: Radio | undefined, id: string) =>
+		radio?.neighbours.find((n) => n.id === id)?.band.value ?? null;
+	const sampler = (registration = () => undefined as never) => ({
+		enabled: async () => true,
+		registration,
+		readNas: async () => ({ signal: "", band: "Active band: 'LTE band 3'" }),
+		readText: async () => "100",
+		realpath: async () => "/sys/1-1/1-1:1.4",
+		run: async () => "",
+		health: () => undefined,
+		modem: (id: number) =>
+			getModemIds().includes(id) ? (getModemState(id) as never) : undefined,
+	});
+	const radioModem = (name: string, iccid: string) =>
+		({ ...modem(name), model: "RM520N-GL", iccid }) as Modem;
+
+	test("a swap or removal commit never publishes the old neighbour reading", async () => {
+		resetRadioHealthForTest();
+		try {
+			for (const change of ["swap", "removal"] as const) {
+				clearModems();
+				setModem(1, radioModem("one", "8900000000000000001"));
+				setModem(2, radioModem("two", "8900000000000000002"));
+				broadcastModems();
+				await refreshRadioHealth(Date.now(), sampler());
+				broadcastRadioHealth();
+				const before = getCommittedState()["2"]?.radio_health as Radio;
+				expect(neighbourBand(before, "1")).toBe("LTE band 3");
+
+				if (change === "swap")
+					setModem(1, radioModem("one", "8900000000000000009"));
+				else removeModem(1);
+				for (const fullState of [{}, undefined]) {
+					const frames = capture(() => broadcastModems(fullState));
+					const rows = frames.at(-1)?.status?.modems ?? {};
+					const row2 = rows["2"]?.radio_health as Radio | undefined;
+					expect(row2).toBeDefined();
+					expect(neighbourBand(row2, "1")).toBeNull();
+					if (change === "swap") {
+						// The changed SIM reaches subscribers as a full descriptor.
+						expect(rows["1"]?.iccid).toBe("8900000000000000009");
+						expect(rows["1"]?.name).toBe("one");
+					}
+					const all = (await call(getAllModemsProcedure, undefined, {
+						context: context(),
+					})) as Record<string, { radio_health?: Radio }>;
+					expect(neighbourBand(all["2"]?.radio_health, "1")).toBeNull();
+				}
+				// Nor does the dialog's retained history keep it under that ID.
+				const history = getRadioHealth(getCommittedState())["2"];
+				for (const entry of history?.timeline ?? [])
+					expect(
+						entry.observation?.neighbours.find((n) => n.id === "1")?.band
+							.value ?? null,
+					).toBeNull();
+			}
+		} finally {
+			resetRadioHealthForTest();
+		}
+	});
+
+	test("a registration committed during the reads is what the record shows", async () => {
+		resetRadioHealthForTest();
+		try {
+			const first = radioModem("one", "8900000000000000001");
+			recordRadioRegistration(first, { value: "home", capturedAt: Date.now() });
+			setModem(1, first);
+			broadcastModems();
+			const deps = sampler((m?: Modem) =>
+				getRadioRegistrationObservation(m),
+			) as Parameters<typeof refreshRadioHealth>[1] & object;
+			await refreshRadioHealth(Date.now(), {
+				...deps,
+				readNas: async () => {
+					// Same SIM, new status and registration, committed mid-poll.
+					const next = {
+						...first,
+						status: { ...first.status, connection: "searching" },
+					} as Modem;
+					recordRadioRegistration(next, {
+						value: "searching",
+						capturedAt: Date.now(),
+					});
+					setModem(1, next);
+					broadcastModems({});
+					return { signal: "", band: "" };
+				},
+			});
+			const frames = capture(() => broadcastRadioHealth());
+			const row = frames.at(-1)?.status?.modems?.["1"] as
+				| { status?: { connection?: string }; radio_health?: Radio }
+				| undefined;
+			expect(row?.status?.connection).toBe("searching");
+			expect(row?.radio_health?.registration.value).toBe("searching");
+			expect(row?.radio_health?.finding.kind).toBe("unknown");
+		} finally {
+			resetRadioHealthForTest();
+		}
+	});
+
+	test("a status-only broadcast keeps a roaming advisory in its stable slot", async () => {
+		resetRoamingAdvisoryState();
+		setModemIdPathReader(
+			async () => new Map([["wwan-roamer", "platform-xhci-usb-0:1.2:1.4"]]),
+		);
+		try {
+			await refreshModemIdPaths();
+			const roamer = modem("roamer");
+			roamer.status = { ...roamer.status, roaming: true } as Modem["status"];
+			setModem(1, roamer);
+			setModem(2, modem("other"));
+			capture(() => broadcastModems());
+			const standing = standingRoamingAdvisoryNames();
+			expect(standing).toHaveLength(1);
+			const frames = capture(() => broadcastModems({}));
+			expect(standingRoamingAdvisoryNames()).toEqual(standing);
+			expect(frames.flatMap((f) => f.notification?.remove ?? [])).toEqual([]);
+			expect(frames.flatMap((f) => f.notification?.show ?? [])).toEqual([]);
+		} finally {
+			setModemIdPathReader(null);
+			await refreshModemIdPaths();
+			resetRoamingAdvisoryState();
 		}
 	});
 

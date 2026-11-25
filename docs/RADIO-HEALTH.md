@@ -72,10 +72,13 @@ Sampling reads one committed snapshot per modem: its identity, the
 registration read committed with its status and its home network. A SIM,
 device or registration change commits even when no status field moved. A
 committed identity change starts a new generation, so no byte baseline,
-history or neighbour reading carries over, and a modem changed or removed
-during or after a poll has its readings and neighbour entries withheld until
-it is sampled again. While a SIM swap is read but not yet committed, that
-modem shows no readings, at most until the next 30 s poll.
+history or neighbour reading carries over: a modem changed or removed during
+or after a poll has its readings withheld, and the other modems' records and
+history drop what they said about it, until it is sampled again. A changed
+SIM goes out as a full modem entry. When a later commit changes a modem's
+registration, its record shows that registration and no finding until the
+next sample. While a SIM swap is read but not yet committed, that modem shows
+no readings, at most until the next 30 s poll.
 
 Hardware qualification is not included.
 

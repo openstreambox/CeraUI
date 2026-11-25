@@ -50,17 +50,22 @@ export function resetRadioHealthForTest(): void {
 	records = {};
 	previous.clear();
 	committed.clear();
-	sampledNeighbours.clear();
 	lastAt = 0;
 }
 let records: Record<string, RadioHealth> = {};
-/** The last sample per modem: its committed generation and byte baseline. */
+/**
+ * The last sample per modem: its committed generation, byte baseline, evidence
+ * and the committed registration value its record was built from.
+ */
 const previous = new Map<
 	string,
-	{ generation: number; bytes: number | null; evidence: RadioEvidence }
+	{
+		generation: number;
+		bytes: number | null;
+		evidence: RadioEvidence;
+		registration: string | undefined;
+	}
 >();
-/** The committed generation of each neighbour a stored record was built with. */
-const sampledNeighbours = new Map<string, Map<string, number>>();
 let lastAt = Date.now();
 let refreshing = false;
 
@@ -105,22 +110,38 @@ type CommittedRadio = Readonly<{
 const committed = new Map<string, CommittedRadio>();
 let generations = 0;
 
+/** What a commit changed for radio health. */
+export type RadioRosterChange = {
+	/** IDs still present whose device, interface or SIM changed. */
+	identity: string[];
+	/** True when any ID was added, removed or changed identity. */
+	roster: boolean;
+};
+
 /**
  * Record the committed roster. Called with every complete modem message the
  * moment it becomes the committed one, so its registration and home network
- * are those of the live modem the row was just built from.
+ * are those of the live modem the row was just built from. Every stored record
+ * loses what it says about an ID whose identity changed or that left, its
+ * history included, so no reading of the old modem is served under that ID.
  */
 export function commitRadioRoster(
 	rows: Readonly<Record<string, object>>,
 	live: Pick<typeof defaults, "modem" | "registration"> = defaults,
-): void {
+): RadioRosterChange {
 	const seen = new Set<string>();
+	const identity: string[] = [];
+	const moved = new Set<string>();
 	for (const [id, entry] of Object.entries(rows)) {
 		const row: RadioRow = entry;
 		if (typeof row.ifname !== "string") continue;
 		seen.add(id);
 		const key = radioIdentity(row);
 		const before = committed.get(id);
+		if (before?.key !== key) {
+			moved.add(id);
+			if (before) identity.push(id);
+		}
 		const internal = live.modem(Number(id));
 		const same = internal !== undefined && sameIdentity(internal, row);
 		committed.set(
@@ -134,7 +155,54 @@ export function commitRadioRoster(
 			}),
 		);
 	}
-	for (const id of committed.keys()) if (!seen.has(id)) committed.delete(id);
+	for (const id of committed.keys())
+		if (!seen.has(id)) {
+			committed.delete(id);
+			moved.add(id);
+		}
+	if (moved.size > 0) forgetNeighbours(moved);
+	return { identity, roster: moved.size > 0 };
+}
+
+/** Drop every stored reading of these IDs from the other modems' records. */
+function forgetNeighbours(ids: ReadonlySet<string>): void {
+	const unknownBand = (at: number) => emptyRadio(at).band;
+	const finding = (f: RadioHealth["finding"], at: number) =>
+		f.neighbour !== undefined && ids.has(f.neighbour)
+			? emptyRadio(at).finding
+			: f;
+	for (const [id, record] of Object.entries(records)) {
+		if (ids.has(id)) continue;
+		records[id] = {
+			...record,
+			neighbours: record.neighbours.map((n) =>
+				ids.has(n.id)
+					? { ...n, band: unknownBand(n.capturedAt), transmitting: "unknown" }
+					: n,
+			),
+			finding: finding(record.finding, record.capturedAt),
+			timeline: record.timeline.map((entry) => ({
+				...entry,
+				finding: finding(entry.finding, entry.at),
+				...(entry.observation
+					? {
+							observation: {
+								...entry.observation,
+								neighbours: entry.observation.neighbours.map((n) =>
+									ids.has(n.id)
+										? {
+												...n,
+												band: unknownBand(entry.at),
+												transmitting: "unknown" as const,
+											}
+										: n,
+								),
+							},
+						}
+					: {}),
+			})),
+		};
+	}
 }
 
 const RADIO_ROW_FIELDS = [
@@ -207,49 +275,47 @@ export function radioIdentity(row: RadioIdentityRow): string {
 	return `${row.stable_key ?? ""}:${row.ifname ?? ""}:${row.iccid ?? ""}`;
 }
 
-/** The stored record if it belongs to this committed row, else undefined. */
+/** A registration read still within the 65 s freshness window at `now`. */
+function freshRegistration(
+	observed: RegistrationObservation | undefined,
+	now: number,
+): RegistrationObservation | undefined {
+	return observed &&
+		now >= observed.capturedAt &&
+		now - observed.capturedAt <= 65000
+		? observed
+		: undefined;
+}
+
+/**
+ * The stored record if it belongs to this committed row, else undefined. When
+ * a later commit of the same modem changed its registration, the record shows
+ * that committed registration and no finding, so it never contradicts the
+ * status it is published beside.
+ */
 function currentRecord(
 	id: string,
 	row: RadioIdentityRow,
+	now: number,
 ): RadioHealth | undefined {
 	const record = records[id];
 	const generation = committedGeneration(id, row);
-	if (
-		!record ||
-		generation === undefined ||
-		previous.get(id)?.generation !== generation
-	)
+	const sampled = previous.get(id);
+	if (!record || generation === undefined || sampled?.generation !== generation)
 		return undefined;
-	// A neighbour whose committed identity changed since the sample is no
-	// longer the modem it was read from: its band, transmit reading and any
-	// finding naming it are withheld.
-	const sampled = sampledNeighbours.get(id);
-	const moved = new Set(
-		record.neighbours
-			.map(({ id: other }) => other)
-			.filter(
-				(other) =>
-					sampled?.get(other) === undefined ||
-					sampled.get(other) !== committed.get(other)?.generation,
-			),
-	);
-	if (moved.size === 0) return record;
+	const latest = committed.get(id)?.registration;
+	if (latest?.value === sampled.registration) return record;
+	const registration = freshRegistration(latest, now);
 	return {
 		...record,
-		neighbours: record.neighbours.map((n) =>
-			moved.has(n.id)
-				? {
-						...n,
-						band: emptyRadio(n.capturedAt).band,
-						transmitting: "unknown" as const,
-					}
-				: n,
+		registration: metric(
+			registration?.value ?? null,
+			"ModemManager 3GPP",
+			"state",
+			"unknown",
+			registration?.capturedAt ?? 0,
 		),
-		finding:
-			record.finding.neighbour !== undefined &&
-			moved.has(record.finding.neighbour)
-				? emptyRadio(record.capturedAt).finding
-				: record.finding,
+		finding: emptyRadio(record.capturedAt).finding,
 	};
 }
 
@@ -264,7 +330,7 @@ export function getRadioHealth(
 ): Record<string, RadioHealth> {
 	const out: Record<string, RadioHealth> = {};
 	for (const [id, entry] of Object.entries(committedRows)) {
-		const record = currentRecord(id, entry);
+		const record = currentRecord(id, entry, now);
 		if (!record) continue;
 		out[id] = structuredClone(
 			now < record.capturedAt || now - record.capturedAt > 65000
@@ -290,7 +356,6 @@ export async function refreshRadioHealth(
 		if (!(await deps.enabled())) {
 			records = {};
 			previous.clear();
-			sampledNeighbours.clear();
 			lastAt = now;
 			return;
 		}
@@ -298,7 +363,11 @@ export async function refreshRadioHealth(
 		const next: Record<string, RadioHealth> = {};
 		const samples = new Map<
 			string,
-			{ generation: number; bytes: number | null }
+			{
+				generation: number;
+				bytes: number | null;
+				registration: string | undefined;
+			}
 		>();
 		const evidence: Record<string, RadioEvidence> = {};
 		let kernel:
@@ -364,12 +433,7 @@ export async function refreshRadioHealth(
 				live.capturedAt > snapshot.registration.capturedAt
 					? live
 					: snapshot.registration;
-			const registration =
-				observed &&
-				now >= observed.capturedAt &&
-				now - observed.capturedAt <= 65000
-					? observed
-					: undefined;
+			const registration = freshRegistration(observed, now);
 			record.registration = metric(
 				registration?.value ?? null,
 				"ModemManager 3GPP",
@@ -525,7 +589,11 @@ export async function refreshRadioHealth(
 				next[id] = emptyRadio(now);
 				continue;
 			}
-			samples.set(id, { generation: snapshot.generation, bytes });
+			samples.set(id, {
+				generation: snapshot.generation,
+				bytes,
+				registration: snapshot.registration?.value,
+			});
 			const health = deps.health(modem.ifname);
 			const numeric = Object.entries(record.metrics);
 			evidence[id] = {
@@ -567,10 +635,6 @@ export async function refreshRadioHealth(
 			forgetBaseline(id);
 			next[id] = emptyRadio(now);
 		}
-		const generationOf = new Map(
-			roster.map(([id, snapshot]) => [id, snapshot.generation]),
-		);
-		sampledNeighbours.clear();
 		for (const [id, record] of Object.entries(next)) {
 			const current = evidence[id];
 			const sample = samples.get(id);
@@ -594,17 +658,6 @@ export async function refreshRadioHealth(
 					source: "interface tx_bytes delta; zero payload is not radio silence",
 					capturedAt: now,
 				}));
-			sampledNeighbours.set(
-				id,
-				new Map(
-					record.neighbours.flatMap(({ id: other }) => {
-						const generation = generationOf.get(other);
-						return generation === undefined
-							? []
-							: [[other, generation] as const];
-					}),
-				),
-			);
 			record.timeline = [
 				...(sameGeneration ? (records[id]?.timeline ?? []) : []),
 				{
@@ -640,7 +693,7 @@ export function radioForModem(
 		Partial<Pick<WireModemEntry, "iccid">>,
 	now = Date.now(),
 ): RadioHealth {
-	const record = currentRecord(id, row);
+	const record = currentRecord(id, row, now);
 	if (row.availability_reason?.startsWith("mm-") || !record)
 		return emptyRadio(0);
 	return structuredClone(
