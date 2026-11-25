@@ -214,6 +214,10 @@ import { applyPersistedCountry } from "./modules/wifi/regdomain.ts";
 import { startWifiAdapterModeRestore } from "./modules/wifi/wifi-adapter-mode-transition.ts";
 import { wifiStateInit } from "./modules/wifi/wifi-connections.ts";
 import { handleWifiMonitorEvent as handleHotspotMonitorEvent } from "./modules/wifi/wifi-hotspot-monitor.ts";
+import {
+	stopHotspotStationEvents,
+	syncHotspotStationEvents,
+} from "./modules/wifi/wifi-hotspot-station-events.ts";
 import { terminateWifiDiscovery } from "./modules/wifi/wifi-interfaces.ts";
 import { wifiRadioObservation } from "./modules/wifi/wifi-radio-observation.ts";
 import { broadcastMsgLocal } from "./rpc/compat.ts";
@@ -602,7 +606,9 @@ setBondDisableGuardContext(
 );
 
 // Event-driven wifi: same monitor drives connection up/down + diff broadcast
-wifiStateInit(networkMonitor);
+wifiStateInit(networkMonitor, undefined, {
+	stationEvents: syncHotspotStationEvents,
+});
 
 // Hotspot NM-confirmation: flips station↔hotspot once NM reports the switch
 networkMonitor.on("monitor-event", handleHotspotMonitorEvent);
@@ -767,6 +773,7 @@ const termination = terminationHandlers({
 	stopRecoveryRetries,
 	terminateWifiObservation: () => {
 		stopWifiAdapterModeRestore();
+		stopHotspotStationEvents();
 		wifiRadioObservation.terminate();
 	},
 	terminateWifiDiscovery,
