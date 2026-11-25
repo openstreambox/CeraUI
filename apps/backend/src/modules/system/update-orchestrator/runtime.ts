@@ -171,6 +171,7 @@ import {
 	OS_STAGE_FIRST_RETRY_DELAY_MS,
 	type OsStageSettlementEvidence,
 	osStageCandidateKey,
+	osStageCandidateVersion,
 	osStageFailureSettledSafely,
 	osStageNoticeId,
 	osStagePermission,
@@ -190,6 +191,10 @@ import {
 	retireStagedReceipt,
 } from "./os-staged-receipt-retirement.ts";
 import { settleOsUnlaunchedWitness } from "./os-unlaunched-adapter.ts";
+import {
+	settledUnsafe,
+	UnsafePowerRelease,
+} from "./os-unsafe-power-release.ts";
 import { retireFulfilledPackageNotices } from "./package-notice-retirement.ts";
 import { progressFromWire } from "./package-progress.ts";
 import {
@@ -569,6 +574,9 @@ let stateGeneration = 0;
 // already reading its unit (DOWNLOAD_PROGRESS is the only in-phase change).
 let deferredDownloadGeneration: number | null = null;
 let failedRecoveryInFlight = false;
+// A settled unsafe record keeps its retry policy but stops holding power
+// actions once the physical side is proven quiet.
+const unsafePowerRelease = new UnsafePowerRelease();
 // Boot id and booted slot cannot change while this process runs, so they are
 // read outside the install launch path: an await there would reorder callers.
 // Absent provenance only withholds automatic recovery of that attempt.
@@ -727,6 +735,7 @@ export function resetOrchestratorRuntimeForTest(): void {
 	deferredDownloadGeneration = null;
 	failedRecoveryInFlight = false;
 	packageProvenance = undefined;
+	unsafePowerRelease.reset();
 }
 
 export function getOrchestratorState(): OrchestratorState {
@@ -743,10 +752,7 @@ export function getOrchestratorDisruptionBusyReasons(): readonly UpdateBusyReaso
 	if (!recoveryPersistenceValid) reasons.push("update-recovery");
 	if (startupFlight.inFlight) reasons.push("update-recovery");
 	if (failedRecoveryInFlight) reasons.push("update-recovery");
-	if (
-		state.osStageRecovery?.mode === "unsafe" ||
-		state.osStageRecovery?.activeAttemptId
-	)
+	if (unsafePowerRelease.holds(state.osStageRecovery, deps.now()))
 		reasons.push("update-recovery");
 	if (osSettlementPersistence.pending || osSettlementPersistence.replayPending)
 		reasons.push("pending-durability");
@@ -2112,6 +2118,14 @@ async function maybeStartOsStage(
 			state.osStageRecovery?.attemptId === attemptId &&
 			state.osStageRecovery.candidateKey === candidateKey
 		) {
+			logger.warn(
+				"update-orchestrator: OS install succeeded but its stage release is unproven",
+				{
+					attemptId,
+					reason: error.reason,
+					diagnostics: readStageDiagnostics(error),
+				},
+			);
 			dispatch({
 				type: "OS_STAGING_FAILED",
 				now: deps.now(),
@@ -2848,6 +2862,34 @@ function observeCredentialsSafely(
 		);
 }
 
+// A settled unsafe record must not refuse reboots forever: each tick re-proves
+// whether the physical side is quiet enough for a reboot to boot this slot.
+// Without a settled unsafe record nothing is observed and the tick isn't delayed.
+function refreshUnsafePowerRelease(): Promise<void> | undefined {
+	if (!settledUnsafe(state.osStageRecovery)) {
+		unsafePowerRelease.clear();
+		return undefined;
+	}
+	return unsafePowerRelease.refresh({
+		record: () => state.osStageRecovery,
+		writerActive: () =>
+			osStageInProcess ||
+			activeOsStage !== undefined ||
+			raucStreamAbortInProcess ||
+			osActivationInFlight,
+		proveQuiet: async () => (await deps.isOsStageReady?.()) === true,
+		now: () => deps.now(),
+		released: (record) =>
+			logger.info(
+				"update-orchestrator: settled unsafe OS stage no longer holds power actions",
+				{
+					version: osStageCandidateVersion(record.candidateKey),
+					reason: record.reason,
+				},
+			),
+	});
+}
+
 export async function runOrchestratorTick(): Promise<void> {
 	if (isBoardCapabilityDenied("os-updates") || !boardUpdateAdmissionAllowed()) {
 		scheduleNextTick();
@@ -2855,6 +2897,8 @@ export async function runOrchestratorTick(): Promise<void> {
 	}
 	observeCredentialsSafely(deps);
 	(deps.downloadNotices ?? downloadPausedNotices()).hydrate();
+	const unsafeRelease = refreshUnsafePowerRelease();
+	if (unsafeRelease) await unsafeRelease;
 	if (pendingPackageSuccess.pending) {
 		await replayPendingOsSettlement();
 		await maybeSettleOsUnlaunchedWitness();

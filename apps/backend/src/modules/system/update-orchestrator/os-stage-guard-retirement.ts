@@ -70,13 +70,25 @@ export async function retireReleasedOsStageGuard(deps: {
 				if (reset.exitCode !== 0)
 					throw new OsStageError("rauc_recovery_unproven", { cause: reset });
 			}
+			const final = await read(deps.inspect);
+			// A loaded unit that orders itself against the guard (an image's
+			// shutdown drain with After=ceralive-os-stage-guard.service) keeps systemd
+			// from unloading the stopped transient unit. It then stays loaded and
+			// inactive with this invocation; that is a stopped guard, not a live one.
+			const pinned =
+				final.kind === "terminal" &&
+				final.stopped === true &&
+				final.cleanExit &&
+				final.invocationId === observation.invocationId;
 			if (
-				(await read(deps.inspect)).kind !== "absent" ||
+				(final.kind !== "absent" && !pinned) ||
 				!(await read(() =>
 					deps.kernel({ pid: null, attemptId: deps.attemptId }),
 				))
 			)
-				throw new OsStageError("rauc_recovery_unproven");
+				throw new OsStageError("rauc_recovery_unproven", {
+					diagnostics: { refusal: "guard-not-retired" },
+				});
 			return;
 		}
 		await read(() => deps.sleep(Math.min(100, deadline - deps.now())));

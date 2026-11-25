@@ -1221,6 +1221,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["update-orchestrator: OS attempt recovery requested"],
 	["update-orchestrator: OS attempt settled"],
 	["update-orchestrator: OS install client settled"],
+	[
+		"update-orchestrator: OS install succeeded but its stage release is unproven",
+	],
 	["update-orchestrator: OS job ownership unreadable"],
 	["update-orchestrator: OS recovery evidence unreadable"],
 	["update-orchestrator: OS stage admission refused"],
@@ -1275,6 +1278,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["update-orchestrator: rollback notices deferred"],
 	[
 		"update-orchestrator: scheduled package notice withdrawn, dpkg shows its packages installed",
+	],
+	[
+		"update-orchestrator: settled unsafe OS stage no longer holds power actions",
 	],
 	["update-orchestrator: slot-sync cleanup failed"],
 	["update-orchestrator: slot-sync eligibility read deferred"],

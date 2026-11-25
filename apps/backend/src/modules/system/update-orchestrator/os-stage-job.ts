@@ -111,6 +111,10 @@ export function createOsStageJobOwner(
 				"--property=RemainAfterExit=yes",
 				"--property=StandardOutput=null",
 				"--property=StandardError=journal",
+				// A shutdown waits for a held stage lock: the image's write drain stops
+				// first. Ordering from this side, as the kernel stage does, never keeps
+				// the stopped unit loaded; the drain naming it in After= would.
+				"--property=Before=ceralive-write-drain.service",
 				"/usr/bin/flock",
 				"-n",
 				"-E",
