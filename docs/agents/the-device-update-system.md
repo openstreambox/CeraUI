@@ -476,8 +476,8 @@ until one serialized section either submits its unit or ends it:
     the fetched index of a probe, the routing journal, the published
     transport selection and the reachability cache. A look that is neither a
     command nor one of those (the board's capabilities, the archive
-    directory's `stat`, the routing journal, the image's package list) asks
-    `assertOwnerMayRead`.
+    directory's `stat`, the routing journal, the image's package list, the
+    unit's fragment) asks `assertOwnerMayRead`.
   - The install hands its owner down every layer it uses: its apt runs, the
     space preflight, the unbound reachability probe, the transport selection,
     the pin controller, the routing lease and the launcher.
@@ -487,9 +487,14 @@ until one serialized section either submits its unit or ends it:
     file made for one command. A handle that is open is closed. Nothing else,
     reads included.
   - Code that catches errors to log them lets an owner-ended refusal pass,
-    and stays silent for an owner that has ended meanwhile. A routing
-    teardown that failed is still reported, whoever asked: it left a rule
-    behind.
+    and stays silent for an owner that has ended meanwhile. A teardown that
+    failed is still reported, whoever asked: a routing teardown left a rule
+    behind, and a private curl config that could not be removed still holds
+    the source's access token. That one is logged as a security line
+    (`curl-private-url.ts`), without the token or the directory's name, the
+    probe's result stands, and every install starts by sweeping such
+    directories: the one whose removal failed and any an earlier process
+    left.
 - Updates turned off and a stream are looked at by the owner itself, right
   before each effect (`effectOwner` in `software-updates.ts`): the install
   ends there (`discovery_failed`, `streaming`) instead of starting the next
@@ -499,18 +504,21 @@ until one serialized section either submits its unit or ends it:
   (`submitting`): nothing ends the attempt from outside, and the launcher's
   second look for the unit after a client error is made whatever changed
   meanwhile, because only that look can tell whether a unit exists.
-- **Route repair.** Where the backend elects the default route, apt first asks
-  the host's gateway election for a repaired route (`updateGwWrapper`). That
-  election is shared with the network module and coalesced, so it is never
-  refused for one caller. It keeps who asked instead: a run writes or
-  releases the route unless every requester is an install that has ended.
-  One requester that asks for nobody in particular (the network module's own
-  passes always do), or one install still alive, keeps the write. A run that
-  left the route alone reports no repair, which queues the election again
-  for the network module's next pass.
-- **Draining.** An ended attempt can still have a wait in flight: a command
-  that is running, the launcher's spool setup. Until that has returned the
-  updater is not free: a new install is refused (`already_updating`), the
+- **Route repair is not an install's business.** The host's gateway election
+  (`updateGwWrapper`) changes the default route of the whole device and is
+  shared with the network module, so no install on these images asks for it
+  or starts one, at any point. It does not need it: a pinned run routes apt
+  through its own table (100000) from the chosen uplink's own default route,
+  after probing each uplink bound to its device, and an unbound run goes by a
+  fresh probe of the route as it is and is refused (`repos_unreachable`) when
+  that finds nothing. A package check with no install behind it asks for the
+  repair as on every image; the next check after such a refusal does.
+- **Draining.** An ended attempt can still have waits in flight: commands
+  that are running, the launcher's spool setup. Where its work fans out (the
+  per-uplink probes, the unbound probe's two address families and origins,
+  the space preflight's paired looks) every branch that was started is joined
+  before a refusal travels on (`ownedAll`), so the hold lasts until the last
+  of them has returned, not the first. Until then the updater is not free: a new install is refused (`already_updating`), the
   Packages card's own check answers busy, and the orchestrator's check waits
   for it instead of failing. So what the ended attempt left running never
   meets a newer install, and a retry cannot submit a unit whose output files
@@ -545,7 +553,11 @@ until one serialized section either submits its unit or ends it:
 | Download under the pin fails | `failed`, apt's error (by host), with its failure id, published before the pin's rule and routes are taken down; no archive cleanup first | `failed` / `package_install_refused` | download under the pin fails |
 | Download under the pin failed, stream admitted while its routing is taken down | `failed`, apt's error and failure id, unchanged | `failed` / `package_install_refused`; the event carries the wire's id; nothing is stopped | `image-apt-source-ended-install.test.ts`: the download under the pin fails |
 | Updates turned off while a pinned run sets up (during the routing journal read) | `failed`, `discovery_failed`; no rule or route is added, none is looked at, `apt-get update` never runs | `failed` / `package_install_refused` | `image-apt-source-ended-install.test.ts`: updates are turned off while a pinned run sets up |
-| The install asked for the host's route repair and ends during the election | as it ended; the election runs on for the host and writes no route, unless the network module (or a live install) asked for the same run | as it ended | `gateway-election-requesters.test.ts`; `image-apt-source-ended-install.test.ts`: the host's gateway election, asked for by an install |
+| An install on a board that elects its default route (no pinned transport) | never asks for the gateway election, before or after it ends; it goes by a fresh unbound probe and is refused with `repos_unreachable` when that fails | `failed` / `package_install_refused` when refused | `image-apt-source-ended-install.test.ts`: the host's gateway election is the network module's; the `elected route` install of both harness files |
+| An install ends with several of its commands in flight (the per-uplink lookups, the unbound probe) | as it ended | a new install stays refused (`already_updating`) until the last of them has returned, also when one is refused or fails first | `image-apt-source-ended-install.test.ts`: an install ended while several of its commands are in flight; every sequence of `image-apt-source-sequences.test.ts` |
+| A stream ends the install during the launcher's first look, and a unit exists | `failed`, `streaming`; the unit's fragment is not read | `failed` / `package_install_refused` | `image-apt-source-ended-install.test.ts`: the launcher's first look for a unit |
+| A probe's private curl config cannot be removed | unchanged; a security line is logged, also for an ended install, without the token or the directory's name | unchanged; the next install starts by removing it | `curl-private-url.test.ts`; `image-apt-source-ended-install.test.ts`: a private curl config that could not be removed |
+| A stream is live when the retry after a refused install is due | unchanged (`failed`) | no package check is dispatched: none fails, no event, no backoff; the due image check runs on that tick, and the retry runs once the stream is over | while a stream is live the scheduled retry waits |
 | A launch cancelled after the download under the pin | `failed`, `streaming`; none of the fetched output is logged | `failed` / `package_install_refused` | `image-apt-source-ended-install.test.ts`: a launch cancelled after the download under the pin |
 | A retry refused (clock gate shut) after an install ended | unchanged: the ended install's `failed`, not the old offer | unchanged | `image-apt-source-ended-install.test.ts`: a retry that is refused |
 | Stream before launch, seen by preparation | `failed`, `streaming` | `failed` / `package_install_refused` | stream starts before launch |
@@ -593,8 +605,8 @@ selection, the pin and the download under it), the start RPC beside an offer
 the orchestrator holds, the start RPC as the Packages card calls it (the
 card's own check found the offer, the orchestrator is idle), a start delayed
 behind a running check, and a board whose default route the backend elects
-(the install asks the shared gateway election first). A new wait in the
-install is a new step in both files, or a failed recording.
+while its image does not route apt. A new wait in the install is a new step
+in both files, or a failed recording.
 
 Everything the fakes see is kept in one ledger, and the rule for an install
 that has ended is checked there, whatever a test looks at: any command, file
@@ -603,9 +615,9 @@ the run. The list is read from `effect-owner.ts`, not restated, so nothing
 is exempt by name: a look at the routing rules counts like any other
 command. What the ended install logs is asserted the same way: nothing, but
 for the line `run()` writes for a teardown command and the warning that a
-teardown failed. The gateway election is the host's own work; its calls and
-log lines are kept apart from the install's, and the routes it writes are
-counted.
+teardown failed (a routing rule, or a private curl config left on disk). A
+request for the gateway election by an install fails the run outright,
+ended or not.
 
 `image-apt-source-interleavings.test.ts` lets one thing happen at each
 recorded wait (a stream is admitted and never seen live, updates are turned
@@ -615,8 +627,7 @@ submitted and the pending list kept until the next check; with `systemd-run`
 in flight the unit counts as launched, and a stream then stops it, whoever
 started it; a second start is refused, or is the same attempt while the
 delayed start still waits, and never a second unit. Once updates are off the
-install starts no further command, file step or owned write, and no route is
-written for it.
+install starts no further command, file step or owned write.
 
 `image-apt-source-sequences.test.ts` lets a second thing follow, again at
 every recorded wait before `systemd-run`: a stream ends the install and then
@@ -628,7 +639,9 @@ at a time, and after each the test asserts that it did nothing: it started
 no call and logged nothing (its teardown excepted, as above) and nothing
 that can be seen of it changed (the wire, the package inventory, the frames
 sent, the events logged, the next check's due time and failure count, the
-unit, the routes written). The retry is refused while the old install drains
+unit, requests for the gateway election), and that the hold is kept while
+any of its waits is still parked. The retry is refused while the old install
+drains
 and then launches exactly one unit over a spool only the new install set up;
 Check now waits for the drain and finds the offer with no failed check
 counted; a failure that ends the install is published before any archive
@@ -640,8 +653,8 @@ were turned off meanwhile.
 `image-apt-source-ended-install.test.ts` stands at single waits of the same
 fixture for the moments named in the table, and `effect-owner.test.ts`
 covers the guard itself: both primitives refuse before they spawn, a command
-in flight finishes, and what a pinned run takes down after its owner ended
-is exactly what the list allows.
+in flight finishes, branches started side by side are all joined, and what a
+pinned run takes down after its owner ended is exactly what the list allows.
 
 Leaving `package_install_refused`: "the scheduled tick runs the package check
 at once", "on cellular only, the scheduled check waits and Check now still runs

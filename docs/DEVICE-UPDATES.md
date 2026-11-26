@@ -1493,10 +1493,20 @@ strictly. With a valid record:
   waits.
 - Updates turned off and a stream are looked at right before each of those
   effects, so the install ends there rather than at its next checkpoint.
-- Where the backend elects the default route, apt asks the host's shared
-  gateway election for a repaired route. The election keeps who asked: it
-  leaves the route alone only when every requester is an install that has
-  ended, and the network module's next pass then writes it for the host.
+- No install on these images asks for the host's gateway election: changing
+  the device's default route is the network module's business. A pinned run
+  uses its own routing table, and an unbound one goes by a fresh probe of
+  the route as it is and is refused when that finds nothing. A package check
+  with no install behind it asks for the repair as on every image.
+- Where an install's work fans out (probes per uplink, per address family),
+  every branch that was started is waited for before the updater is free
+  again, also when one of them is refused first.
+- A probe's private curl config that cannot be removed is logged as a
+  security line, whoever the probe was for, and the next install starts by
+  removing it.
+- While a stream is live a scheduled package check waits on these images
+  instead of being refused as busy: no failed check is counted, and the
+  image check that is due runs on that tick.
 - A failure before launch is published when it is known: a failed download
   under the pin before its routing is taken down, and before any archive
   cleanup, which the next install's preflight does. A start that is refused
