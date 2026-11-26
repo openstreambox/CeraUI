@@ -1206,6 +1206,23 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 			return COMMIT_STAGE_REFUSAL;
 		const settled = admitStreamStart(state);
 		if (!settled.allowed) return settled;
+		// A launched unit this orchestrator did not start (the start RPC): the
+		// stream stops it exactly as it stops one of its own, behind the same
+		// fresh read and commit-stage probe. There is no plan to return to an
+		// offer, so nothing is dispatched.
+		if (fenced === "submitted" && state.phase !== "downloading") {
+			const freshWire = deps.getPackageInstallWireState();
+			if (freshWire.kind === "installing" || freshWire.kind === "success")
+				return COMMIT_STAGE_REFUSAL;
+			if (freshWire.kind === "downloading") {
+				if (await commitStageRunning()) return COMMIT_STAGE_REFUSAL;
+				if (pendingPackageSuccess.pending) return COMMIT_STAGE_REFUSAL;
+				await deps.stopPackageInstallUnit();
+				if (pendingPackageSuccess.pending) return COMMIT_STAGE_REFUSAL;
+				const after = admitStreamStart(state);
+				if (!after.allowed) return after;
+			}
+		}
 	}
 
 	const action = onStreamStart(state);
@@ -1289,12 +1306,28 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 // ─── package check cycle ───────────────────────────────────────────────────
 
 async function runPackageCheckCycle(): Promise<void> {
-	if (osSettlementPersistence.pending || !aptUpdatesEnabled()) return;
-	// Not checked yet, not a failure: the image's own source needs a usable clock.
-	if (imageSourceClockWaits()) return;
+	// Whether a package check may start at all, on what is there right now.
+	const admitted = () =>
+		!osSettlementPersistence.pending &&
+		aptUpdatesEnabled() &&
+		// Not checked yet, not a failure: the image's own source needs a usable clock.
+		!imageSourceClockWaits();
+	if (!admitted()) return;
+	if (refusedInstallPending()) {
+		const before = packageCheckGeneration;
+		await deps.quarantine.clearPending();
+		// That was a wait. Updates turned off, another check or anything else
+		// that moved the phase during it means this check does not start: no
+		// dispatch, no event and no backoff for a check that never ran.
+		if (
+			!admitted() ||
+			!refusedInstallPending() ||
+			before !== packageCheckGeneration
+		)
+			return;
+	}
 	const generation = ++packageCheckGeneration;
 	packageCheckDeferral = null;
-	if (refusedInstallPending()) await deps.quarantine.clearPending();
 	const now = deps.now();
 	dispatch({ type: "PACKAGE_CHECK_STARTED", now });
 	const error =
@@ -2996,6 +3029,12 @@ export async function runOrchestratorTick(): Promise<void> {
 			return;
 		}
 		await runScheduledChecks();
+	} else if (state.phase === "available" && unrecordedRefusalBesideOffer()) {
+		// The package check brings the wire and the offer held here back in line,
+		// as it does from every other phase (under the usual cellular rule).
+		const settings = await deps.loadSettings();
+		if (state.phase === "available" && unrecordedRefusalBesideOffer())
+			await runPackageCheckAfterCellularGate(settings);
 	} else if (state.phase === "available") {
 		// Taken before any read, so a check started meanwhile (Check now) wins.
 		const ticket = besideOfferTicket();
@@ -3091,6 +3130,17 @@ function refusedInstallPending(): boolean {
 	return (
 		state.phase === "failed" && state.failureReason === PACKAGE_INSTALL_REFUSED
 	);
+}
+
+/**
+ * Image apt source: an install this orchestrator did not start (the start
+ * RPC) ended before its unit launched. The wire says so while the offer is
+ * still held here; nothing was recorded, because there was no plan to fail.
+ */
+function unrecordedRefusalBesideOffer(): boolean {
+	if (!imageAptSourceInUse() || !deps.packageFailedBeforeLaunch()) return false;
+	const { kind } = deps.getPackageInstallWireState();
+	return kind === "failed" || kind === "update_preflight_failed";
 }
 
 /**

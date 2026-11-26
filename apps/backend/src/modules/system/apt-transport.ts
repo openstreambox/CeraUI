@@ -153,6 +153,15 @@ export async function openPinnedAptTransaction(
 		if (admission.cancelled()) controller.abort();
 		if (controller.signal.aborted) throw new AptTransferAborted();
 	};
+	// Only a transaction with an owner asks: asked before the pin sets a rule
+	// and before each of its writes, so an owner that is gone changes nothing.
+	const owned = admission.stale
+		? {
+				checkOwned: () => {
+					if (admission.stale?.()) throw new AptTransferAborted();
+				},
+			}
+		: {};
 	let reachability = reachabilityFromSelection(selection);
 	return {
 		pinned: true,
@@ -180,7 +189,10 @@ export async function openPinnedAptTransaction(
 							return { ok: false as const, error };
 						}
 					},
-					{ aptOwnership: overrides.ownership ?? aptRoutingOwnership },
+					{
+						aptOwnership: overrides.ownership ?? aptRoutingOwnership,
+						...owned,
+					},
 				);
 				if (!boxed.ok) throw boxed.error;
 				return boxed.value;
@@ -240,6 +252,7 @@ export async function openPinnedAptTransaction(
 					{
 						checkCancelled: cancelled,
 						aptOwnership: overrides.ownership ?? aptRoutingOwnership,
+						...owned,
 					},
 				);
 			} catch (error) {

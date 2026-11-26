@@ -19,6 +19,15 @@
  * through that section, so none of them sees an attempt between the two:
  * whoever enters first decides, and the other finds the decision made.
  *
+ * Ownership follows from that. Everything an install does before launch (a
+ * write, a command, a file, a routing rule) it does as the pending attempt:
+ * `owns(attempt)` is the one question every such effect asks first, and an
+ * attempt that ended, or that a newer one replaced, gets "no" for good.
+ *
+ * An ended attempt may still have a wait in flight. Until that has returned
+ * (`hold` and its release), the attempt is `draining`: the updater is not free
+ * for the next install yet, so what the old one left running cannot meet it.
+ *
  * Import-free on purpose: the fence holds state and order, its callers bring
  * the effects.
  */
@@ -49,7 +58,7 @@ export class InstallAttemptEndedError extends Error {
 	}
 }
 
-type Mutable = InstallAttempt & { value: InstallAttemptState };
+type Mutable = InstallAttempt & { value: InstallAttemptState; holds: number };
 
 export type InstallLaunchFence = ReturnType<typeof createInstallLaunchFence>;
 
@@ -57,6 +66,15 @@ export function createInstallLaunchFence() {
 	let sequence = 0;
 	let current: Mutable | null = null;
 	let section: Promise<void> = Promise.resolve();
+	// Attempts with a wait still in flight, and who waits for the ended ones.
+	const held = new Set<Mutable>();
+	const waiters: (() => void)[] = [];
+	const draining = (): boolean =>
+		[...held].some((attempt) => attempt.value === "ended");
+	const settle = (): void => {
+		if (draining()) return;
+		for (const resolve of waiters.splice(0)) resolve();
+	};
 
 	// One at a time, in arrival order; a failed entry does not block the next.
 	const serialized = <T>(work: () => T | Promise<T>): Promise<T> => {
@@ -72,6 +90,7 @@ export function createInstallLaunchFence() {
 		const attempt: Mutable = {
 			id: ++sequence,
 			value,
+			holds: 0,
 			state: () => attempt.value,
 			pending: () => attempt.value === "pending",
 		};
@@ -96,6 +115,37 @@ export function createInstallLaunchFence() {
 			current = create("submitted");
 		},
 		current: (): InstallAttempt | null => current,
+		/**
+		 * Whether `attempt` is the install in progress and may still act: the
+		 * current attempt, neither ended nor submitted.
+		 */
+		owns: (attempt: InstallAttempt): boolean =>
+			current === attempt && attempt.pending(),
+		/**
+		 * `attempt` has a wait in flight until the returned release is called
+		 * (once). Taken for the install's own run and for its launcher.
+		 */
+		hold(attempt: InstallAttempt): () => void {
+			const owner = attempt as Mutable;
+			owner.holds++;
+			held.add(owner);
+			let released = false;
+			return () => {
+				if (released) return;
+				released = true;
+				if (--owner.holds === 0) held.delete(owner);
+				settle();
+			};
+		},
+		/** An attempt that ended still has a wait in flight. */
+		draining,
+		/** Resolves once no ended attempt has a wait in flight any more. */
+		drained(): Promise<void> {
+			if (!draining()) return Promise.resolve();
+			return new Promise<void>((resolve) => {
+				waiters.push(resolve);
+			});
+		},
 		/** The current attempt's unit was submitted (or a unit was adopted). */
 		launched: (): boolean => current?.value === "submitted",
 		/**
@@ -161,6 +211,8 @@ export function createInstallLaunchFence() {
 		reset(): void {
 			current = null;
 			section = Promise.resolve();
+			held.clear();
+			for (const resolve of waiters.splice(0)) resolve();
 		},
 	};
 }

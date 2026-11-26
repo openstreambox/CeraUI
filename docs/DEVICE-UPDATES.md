@@ -1473,7 +1473,18 @@ strictly. With a valid record:
   orchestrator is not holding the package offer, as after the card's own
   check) is not one the orchestrator started: when it ends before launch the
   card shows the failure and the orchestrator keeps its phase, until the next
-  package check clears the failure and brings the two back in line.
+  package check clears the failure and brings the two back in line (Check
+  now, the next tick while the orchestrator holds the offer, or its scheduled
+  check when it is idle). Once such a unit launched, a stream stops it
+  exactly as it stops one the orchestrator started.
+- Before launch, everything an install does it does as the pending attempt
+  and asks first whether it still is (`owns` in `software-updates.ts`). An
+  install that ended starts no further probe, apt run, spool setup or
+  routing rule and writes nothing, also when a wait it had in flight returns
+  or fails later. Until that wait has returned, the updater is not free: a
+  new install is refused and a check waits. A failure before launch is
+  published when it is known, before any archive cleanup, which the next
+  install's preflight does.
 
 A record that is present but does not validate refuses package checks and
 installs (`discovery_failed`), and never falls back to the first-party

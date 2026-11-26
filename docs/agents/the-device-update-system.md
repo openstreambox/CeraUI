@@ -464,6 +464,30 @@ until one serialized section either submits its unit or ends it:
   repeat it is not sent.
 - Updates turned off are read after every wait of the preparation and once
   more inside the section (`discovery_failed`).
+- **Ownership.** Whatever an install does before launch it does as the
+  pending attempt, and asks first: `owns(attempt)` in `software-updates.ts`
+  is the one check (the fence's current attempt, still pending), and
+  `assertOwned` is the same check on the line right before an effect. It
+  stands before every state and wire write, inside the capability reader's
+  failure handling, before each probe, the route repair and every apt run of
+  the install's own check and preparation (the refresh included), in front of
+  the space preflight's commands (its archive cleanup first), before the
+  launcher prepares the output files, and, for a pinned run, before the
+  routing lease and each routing write. An attempt that ended, or that a
+  newer one replaced, starts and writes nothing. What it had set up is still
+  torn down (the routing rule of a pinned run already in place).
+- **Draining.** An ended attempt can still have a wait in flight: a command
+  that is running, the launcher's spool setup. Until that has returned the
+  updater is not free: a new install is refused (`already_updating`), the
+  Packages card's own check answers busy, and the orchestrator's check waits
+  for it instead of failing. So what the ended attempt left running never
+  meets a newer install, and a retry cannot submit a unit whose output files
+  the old launcher would then recreate.
+- A failure before launch is settled when it is known. After a failed
+  download under the pin there is no archive cleanup in between, in which a
+  stream could take the failure's place; the next install's preflight cleans.
+- The planned-shutdown note is written inside the section, right before
+  `systemd-run`, so an install that ends first leaves none.
 
 | Path (where it ends) | Wire | Orchestrator | Test (`image-apt-source-paths.test.ts` unless named) |
 |---|---|---|---|
@@ -480,13 +504,19 @@ until one serialized section either submits its unit or ends it:
 | Pinned recheck fails, or a standing refusal | `failed`, `discovery_failed` | `failed` / `package_install_refused` | pinned recheck refuses |
 | Pinned recheck would remove a package | `failed`, `removals_required` | `failed` / `package_install_refused` | the pinned recheck would remove a package |
 | Space preflight: archive cleanup, `apt-config`, probe, `stat`, `statfs`, space | `update_preflight_failed` | `failed` / `package_install_refused` | space preflight refuses |
-| Download under the pin fails | `failed`, apt's error (by host), with its failure id | `failed` / `package_install_refused` | download under the pin fails |
+| Download under the pin fails | `failed`, apt's error (by host), with its failure id, as soon as the transfer returned; no archive cleanup first | `failed` / `package_install_refused` | download under the pin fails |
 | Stream before launch, seen by preparation | `failed`, `streaming` | `failed` / `package_install_refused` | stream starts before launch |
 | Stream admission during the pre-launch (pinned) download | `failed`, `streaming` | `failed` / `package_install_refused` at once, never `available` | stream admission during the pre-launch download |
 | The pinned transfer aborts on a live stream nobody admitted (liveness only) | `failed`, `streaming` | `failed` / `package_install_refused` (Check now is not left busy) | the pinned download aborts on a live stream nobody admitted |
 | Stream admitted, and over, while preparation waits (space preflight) | `failed`, `streaming`; the unit never launches | `failed` / `package_install_refused` | a stream admitted and over while preparation waits |
 | Stream admission while the launcher sets up its unit (looking for a unit, preparing the output files) | `failed`, `streaming`; nothing is submitted and nothing stopped | `failed` / `package_install_refused` at once | stream admission while the launcher sets up its unit |
-| An install started through the start RPC (`system.startUpdate`) ends before launch, by a stream or any row above | `failed`, its reason, once; nothing is submitted | unchanged: it did not start this install, so it records nothing and keeps its phase. The wire and the orchestrator disagree until the next package check (Check now, or the scheduled one when due), which clears the wire's failure and lands both on the offer | the start RPC as the Packages card calls it: a stream ends it, and the next check reconciles |
+| An install started through the start RPC (`system.startUpdate`) ends before launch, by a stream or any row above | `failed`, its reason, once; nothing is submitted | unchanged: it did not start this install, so it records nothing and keeps its phase. The wire and the orchestrator disagree until the next package check, which clears the wire's failure and lands both on the offer: Check now, the next tick when the orchestrator holds the offer (`available`), or its scheduled check when it is idle and that check is due | the start RPC as the Packages card calls it: a stream ends it, and the next check reconciles; the start RPC beside an offer the orchestrator holds: the scheduled tick reconciles |
+| A unit the start RPC launched, stream admitted | the unit is stopped, behind the same fresh read and commit-stage probe as one of the orchestrator's (a commit in progress refuses the stream) | unchanged: there is no plan to return to an offer, nothing is dispatched | the start RPC's launched unit is stopped by a stream like any other; `image-apt-source-interleavings.test.ts`, the last wait |
+| An ended install still has a wait in flight (a command, the spool setup) | as it ended; it starts nothing and writes nothing | a new install is refused (`already_updating`) and a check waits until that wait returned | `image-apt-source-sequences.test.ts`: a stream ends it, then it is installed again / then Check now |
+| Updates turned off while Check now clears the refused install's pending list | unchanged | no package check is dispatched: no event, no backoff; the image check runs | updates turned off while the pending list is cleared |
+| Any single wait of the install fails | `failed` or `update_preflight_failed` with that step's reason, once, or the install launches if it can do without the step | `failed` / `package_install_refused`, or follows the unit | `image-apt-source-sequences.test.ts`: the wait fails, then a stream is admitted |
+| Uncertain `systemd-run`, the second look finds no unit | `failed`, the client's error, with a failure id | `failed` / `package_install_refused` | `image-apt-source-sequences.test.ts`: the second look for the unit |
+| Uncertain `systemd-run`, a stream admitted while the second look hangs | unchanged until the look returns | the stream waits; then the launched unit is stopped, or the refusal settled with nothing to stop | `image-apt-source-sequences.test.ts`: hangs while a stream is admitted |
 | Stream admission after the wire already showed the refusal | `failed`, its reason | `failed` / `package_install_refused`, never `available` | stream admission after the wire already settled |
 | Stream admission after systemd refused the unit, before the orchestrator looked | `failed`, the error | `failed` / `package_install_refused`, never `available`; the failure keeps the wire's id | stream admission after systemd refused the unit, before the orchestrator looked |
 | Stream admission after the download under the pin failed, before the orchestrator looked | `failed`, apt's error | `failed` / `package_install_refused`; the failure keeps the wire's id | stream admission after the download under the pin failed keeps the failure's id |
@@ -500,22 +530,44 @@ until one serialized section either submits its unit or ends it:
 | Stream admission after the unit launched | the unit is stopped, as today | `DOWNLOAD_ABORTED_FOR_STREAM` → `available` | once the unit launched, a stream takes today's path |
 | Launched | the unit's result | follows the wire (`DOWNLOAD_FAILED`, `COMMIT_*`) | once the unit launched |
 
-The table lists paths; `image-apt-source-interleavings.test.ts` tests the
-class. It records every wait the real install passes between "start
-accepted" and "`systemd-run` returned" (each fake parks on a sequencer; a
-wait on anything else fails the recording) for five installs: through the
-orchestrator, on an image that routes apt (the download under the pin), the
-start RPC beside an offer the orchestrator holds, the start RPC as the
-Packages card calls it (the card's own check found the offer, the
-orchestrator is idle), and a start delayed behind a running check. At each
-recorded wait it lets one of three things happen (a stream is admitted and
-never seen live, updates are turned off, a second start arrives) and allows
-one outcome: before `systemd-run` is called the install ends as above with
-exactly one `failed` frame, nothing submitted and the pending list kept
-until the next check; with `systemd-run` in flight the unit counts as
-launched; a second start is refused, or is the same attempt while the
-delayed start still waits, and never a second unit. A new wait in the
-install is a new step there, or a failed recording.
+The table lists paths; two test files test the class. Both step the real
+install over fakes that each park on a sequencer
+(`helpers/image-apt-install-harness.ts`). A first run records every wait the
+install passes between "start accepted" and "`systemd-run` returned"; a wait
+on anything no fake stands for fails the recording. That is done for five
+installs: through the orchestrator, on an image that routes apt (the download
+under the pin), the start RPC beside an offer the orchestrator holds, the
+start RPC as the Packages card calls it (the card's own check found the
+offer, the orchestrator is idle), and a start delayed behind a running check.
+A new wait in the install is a new step in both files, or a failed recording.
+
+`image-apt-source-interleavings.test.ts` lets one thing happen at each
+recorded wait (a stream is admitted and never seen live, updates are turned
+off, a second start arrives) and allows one outcome: before `systemd-run` is
+called the install ends as above with exactly one `failed` frame, nothing
+submitted and the pending list kept until the next check; with `systemd-run`
+in flight the unit counts as launched, and a stream then stops it, whoever
+started it; a second start is refused, or is the same attempt while the
+delayed start still waits, and never a second unit.
+
+`image-apt-source-sequences.test.ts` lets a second thing follow, again at
+every recorded wait before `systemd-run`: a stream ends the install and then
+Check now is asked for (once with the wait the install stood at returning,
+once with it failing), or it is installed again, or updates are turned off;
+or the wait fails with nobody else involved and a stream is admitted
+afterwards. What the ended install still has in flight is released one wait
+at a time, and after each the test asserts that it did nothing: it started
+no call (no apt run, no probe, no spool setup, no routing rule; the teardown
+of a rule it had installed excepted) and nothing that can be seen of it
+changed (the wire, the package inventory, the frames sent, the events
+logged, the next check's due time and failure count, the unit). The retry
+is refused while the old install drains and then launches exactly one unit
+over a spool only the new install set up; Check now waits for the drain and
+finds the offer with no failed check counted; a failure that ends the
+install is published before any archive cleanup and survives the stream with
+its id. The uncertain `systemd-run` has its own cases there: the second look
+for the unit answering either way, failing, and hanging while a stream is
+admitted.
 
 Leaving `package_install_refused`: "the scheduled tick runs the package check
 at once", "on cellular only, the scheduled check waits and Check now still runs

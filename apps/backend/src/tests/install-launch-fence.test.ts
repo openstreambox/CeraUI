@@ -134,6 +134,71 @@ describe("the install launch fence", () => {
 		expect(await fence.admitStream(never)).toBe("submitted");
 	});
 
+	it("only the pending current attempt owns the install", async () => {
+		const fence = createInstallLaunchFence();
+		const first = fence.begin();
+		expect(fence.owns(first)).toBe(true);
+		fence.end(first);
+		expect(fence.owns(first)).toBe(false);
+		// A newer attempt owns it; the older one never does again.
+		const second = fence.begin();
+		expect(fence.owns(second)).toBe(true);
+		expect(fence.owns(first)).toBe(false);
+		await fence.submit(second, {
+			refusal: permitted,
+			refuse: never,
+			launch: async () => {},
+			refused: never,
+		});
+		// Submitted, the install is the unit's: nothing is done "before launch".
+		expect(fence.owns(second)).toBe(false);
+	});
+
+	it("an ended attempt drains until its last wait has returned", async () => {
+		const fence = createInstallLaunchFence();
+		const attempt = fence.begin();
+		const run = fence.hold(attempt);
+		const launcher = fence.hold(attempt);
+		// Pending, it is simply the install in progress.
+		expect(fence.draining()).toBe(false);
+		await fence.drained();
+		fence.end(attempt);
+		expect(fence.draining()).toBe(true);
+		let drained = false;
+		const waiting = fence.drained().then(() => {
+			drained = true;
+		});
+		run();
+		run();
+		await Bun.sleep(1);
+		expect(drained).toBe(false);
+		expect(fence.draining()).toBe(true);
+		launcher();
+		await waiting;
+		expect(fence.draining()).toBe(false);
+		// A replaced attempt that still drains keeps the updater too.
+		const next = fence.begin();
+		const hold = fence.hold(next);
+		fence.end(next);
+		fence.begin();
+		expect(fence.draining()).toBe(true);
+		hold();
+		expect(fence.draining()).toBe(false);
+	});
+
+	it("a submitted attempt does not drain: its unit holds the updater", async () => {
+		const fence = createInstallLaunchFence();
+		const attempt = fence.begin();
+		fence.hold(attempt);
+		await fence.submit(attempt, {
+			refusal: permitted,
+			refuse: never,
+			launch: async () => {},
+			refused: never,
+		});
+		expect(fence.draining()).toBe(false);
+	});
+
 	it("a failed turn does not block the next one", async () => {
 		const fence = createInstallLaunchFence();
 		const first = fence.begin();

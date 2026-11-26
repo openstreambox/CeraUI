@@ -827,6 +827,48 @@ describe("each way an install ends before its unit launches", () => {
 		expect(getOrchestratorState().phase).toBe("available");
 	});
 
+	it("the start RPC beside an offer the orchestrator holds: the scheduled tick reconciles", async () => {
+		const fixture = await box("preflight-admission");
+		const { quarantine } = orchestrator();
+		expect(await checkUpdatesNow()).toEqual({ started: true });
+		expect(getOrchestratorState().phase).toBe("available");
+		// Not the orchestrator's install: the start RPC, from any client.
+		expect(startSoftwareUpdate()).toEqual({ started: true });
+		await fixture.downloading.promise;
+		expect(await admitAndPrepareStreamStart()).toEqual({ allowed: true });
+		fixture.downloadGate.resolve();
+		await Bun.sleep(50);
+		expect(launches()).toBe(0);
+		// The wire says `failed` beside the offer the orchestrator still holds.
+		expect(getUpdateState()).toMatchObject({
+			kind: "failed",
+			reason: "streaming",
+		});
+		expect(getOrchestratorState().phase).toBe("available");
+		expect(await quarantine.readPending()).toEqual([]);
+		// The next tick checks packages again, which brings them back in line.
+		await runOrchestratorTick();
+		expect(getUpdateState().kind).toBe("available");
+		expect(getOrchestratorState().phase).toBe("available");
+	});
+
+	it("the start RPC's launched unit is stopped by a stream like any other", async () => {
+		await using _marker = await armedMarkerFixture();
+		await box("launched-running");
+		orchestrator();
+		// The card's own check finds the offer; the orchestrator stays idle.
+		expect(triggerManualUpdateCheck()).toBe(true);
+		await settle(() => getUpdateState().kind === "available");
+		expect(startSoftwareUpdate()).toEqual({ started: true });
+		await settle(() => launches() === 1);
+		expect(getUpdateState().kind).toBe("downloading");
+		expect(await admitAndPrepareStreamStart()).toEqual({ allowed: true });
+		// Stopped behind the same fresh read and commit-stage probe; there is
+		// no plan of the orchestrator's to return to an offer.
+		expect(stops.count).toBe(1);
+		expect(getOrchestratorState().phase).toBe("idle");
+	});
+
 	it("stream admission after systemd refused the unit, before the orchestrator looked", async () => {
 		await using _marker = await armedMarkerFixture();
 		await box("unit-refused");
@@ -971,6 +1013,49 @@ describe("each way an install ends before its unit launches", () => {
 		const os = counts.osChecks;
 		expect(await checkUpdatesNow()).toEqual({ started: true });
 		expect(getUpdateState().kind).toBe("available");
+		expect(counts.osChecks).toBe(os + 1);
+	});
+});
+
+describe("a check that could not start after all", () => {
+	it("updates turned off while the pending list is cleared: no check, no event, no backoff", async () => {
+		await box("simulation");
+		const { counts, quarantine } = orchestrator();
+		await attempt();
+		expect(getOrchestratorState().failureReason).toBe(PACKAGE_INSTALL_REFUSED);
+		const said: string[] = [];
+		spies.push(
+			spyOn(events, "emitEvent").mockImplementation((code) => {
+				said.push(code);
+			}),
+		);
+		// Check now clears the refused install's pending list first: a wait.
+		const clear = quarantine.clearPending.bind(quarantine);
+		const clearing = Promise.withResolvers<void>();
+		const proceed = Promise.withResolvers<void>();
+		quarantine.clearPending = async () => {
+			clearing.resolve();
+			await proceed.promise;
+			return clear();
+		};
+		const before = getOrchestratorState().packageCheck;
+		const os = counts.osChecks;
+		const previous = setup.apt_update_enabled;
+		try {
+			const check = checkUpdatesNow();
+			await clearing.promise;
+			// Updates are turned off during that wait.
+			setup.apt_update_enabled = false;
+			proceed.resolve();
+			expect(await check).toEqual({ started: true });
+		} finally {
+			setup.apt_update_enabled = previous;
+		}
+		// No package check was dispatched for it: nothing failed, nobody was
+		// told, and the next check is due when it was.
+		expect(said).toEqual([]);
+		expect(getOrchestratorState().packageCheck).toEqual(before);
+		// The image check still ran.
 		expect(counts.osChecks).toBe(os + 1);
 	});
 });

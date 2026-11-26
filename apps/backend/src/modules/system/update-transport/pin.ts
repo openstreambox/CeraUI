@@ -93,6 +93,12 @@ export type UpdateStepControl = {
 	readonly cleanup?: () => RoutingCleanup;
 	readonly refreshSelection?: () => Promise<TransportSelection>;
 	readonly checkCancelled?: () => void;
+	/**
+	 * Throws once the caller no longer owns this step. Asked before the lease
+	 * and before every routing write, so nothing is set up for an owner that
+	 * is gone; what was set up before is still torn down.
+	 */
+	readonly checkOwned?: () => void;
 	readonly approveMetered?: (transport: RankedTransport) => boolean;
 };
 
@@ -129,12 +135,14 @@ export function createUpdatePinController(overrides: Partial<PinDeps> = {}) {
 			const file = await deps.readCapabilities();
 			if (!file) throw new UpdatePinError("capabilities-unavailable");
 			const uid = uidFor(job, file);
+			control.checkOwned?.();
 			if (job === "apt")
 				aptLease = await control.aptOwnership?.acquire(deps.run, uid);
 			const attempted = new Set<string>();
 			let ranking = selection;
 			let lastFailure: UpdateTransferError | undefined;
 			while (attempted.size < MAX_ATTEMPTS) {
+				control.checkOwned?.();
 				control.checkCancelled?.();
 				if (lastFailure && control.refreshSelection) {
 					ranking = await control.refreshSelection();
@@ -158,10 +166,12 @@ export function createUpdatePinController(overrides: Partial<PinDeps> = {}) {
 						uid,
 						transport: candidate,
 						step: (transport, flags) => {
+							control.checkOwned?.();
 							control.checkCancelled?.();
 							return step(transport, flags);
 						},
 						runner: aptLease?.runner ?? deps.run,
+						...(control.checkOwned ? { beforeWrite: control.checkOwned } : {}),
 						...(job === "os" && control.cleanup
 							? { cleanup: control.cleanup }
 							: {}),

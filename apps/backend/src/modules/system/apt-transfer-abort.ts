@@ -1,7 +1,15 @@
 // Import-free on purpose: stream-abort.ts reaches the in-flight APT fetch without loading the transport graph.
 let inFlight: AbortController | undefined;
 let admissionEpoch = 0;
-export type AptTransferAdmission = { readonly cancelled: () => boolean };
+export type AptTransferAdmission = {
+	readonly cancelled: () => boolean;
+	/**
+	 * Whoever opened the transaction no longer owns it (an install on an image
+	 * with its own apt source that ended): no rule goes up and no run starts
+	 * for it. Absent for every other transaction.
+	 */
+	readonly stale?: () => boolean;
+};
 
 export function captureAptTransferAdmission(): AptTransferAdmission {
 	const epoch = admissionEpoch;

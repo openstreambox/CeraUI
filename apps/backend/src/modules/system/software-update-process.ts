@@ -9,6 +9,7 @@
 */
 
 import { imageAptSourceInUse } from "./image-apt-source.ts";
+import { InstallAttemptEndedError } from "./install-launch-fence.ts";
 import {
 	buildDetachedAptAllCommand,
 	buildDetachedAptUpgradeCommand,
@@ -38,6 +39,12 @@ export type SoftwareUpdateOutputHandlers = {
 	 * Rejecting means no unit was submitted.
 	 */
 	readonly submit?: <T>(launch: () => Promise<T>) => Promise<T>;
+	/**
+	 * Whether the install this launcher works for still owns the updater (an
+	 * image with its own apt source asks its launch fence). Once it does not,
+	 * the launcher touches nothing more: no spool file, no unit.
+	 */
+	readonly owned?: () => boolean;
 	readonly onObserverError?: (
 		error: unknown,
 		suppressedRetries?: number,
@@ -255,16 +262,23 @@ async function observeDetachedAptUpgrade(
 
 const submitDirectly = <T>(launch: () => Promise<T>): Promise<T> => launch();
 
+// Asked after each of the launcher's waits, before its next effect.
+function assertStillOwned(handlers: SoftwareUpdateOutputHandlers): void {
+	if (handlers.owned?.() === false) throw new InstallAttemptEndedError();
+}
+
 export async function runDetachedAptUpgrade(
 	aptArgs: readonly string[],
 	handlers: SoftwareUpdateOutputHandlers,
 	deps: DetachedAptUpgradeDeps = defaultDetachedAptServiceDeps(),
 ): Promise<number> {
 	const existing = await deps.inspect();
+	assertStillOwned(handlers);
 	if (existing.kind !== "absent") {
 		throw new DetachedAptServiceAlreadyExistsError();
 	}
 	await deps.prepareOutput();
+	assertStillOwned(handlers);
 	const command = buildDetachedAptUpgradeCommand(aptArgs, deps.outputPaths);
 	await (handlers.submit ?? submitDirectly)(() => deps.start(command));
 	handlers.onLaunched?.();
@@ -278,9 +292,11 @@ export async function runDetachedAptAll(
 	deps: DetachedAptUpgradeDeps = defaultDetachedAptServiceDeps(),
 ): Promise<number> {
 	const existing = await deps.inspect();
+	assertStillOwned(handlers);
 	if (existing.kind !== "absent")
 		throw new DetachedAptServiceAlreadyExistsError();
 	await deps.prepareOutput();
+	assertStillOwned(handlers);
 	const command = buildDetachedAptAllCommand(
 		installArgs,
 		verdict,
