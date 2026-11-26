@@ -86,6 +86,7 @@ import {
 import { AptPreflightError } from "./apt-space-parser.ts";
 import {
 	type AptTransferAdmission,
+	abortAptTransferForStream,
 	captureAptTransferAdmission,
 } from "./apt-transfer-abort.ts";
 import {
@@ -138,6 +139,12 @@ import {
 	refreshedImageSuites,
 } from "./image-apt-source.ts";
 import { readImageOwnedPackages } from "./image-owned-packages.ts";
+import {
+	createInstallLaunchFence,
+	type InstallAttempt,
+	InstallAttemptEndedError,
+	type StreamFenceVerdict,
+} from "./install-launch-fence.ts";
 import { classifyPackageLayer } from "./package-layer.ts";
 import { getBootReadiness } from "./readiness.ts";
 import { readUpdateOutcome } from "./software-update-outcome.ts";
@@ -209,7 +216,28 @@ export function isAptAllDiscovery(): boolean {
 }
 let discoveredPackages: UpdatePackage[] = [];
 let lastAptReachability: AptReachabilityWire | undefined;
-let delayedSoftwareUpdateStart: ReturnType<typeof setTimeout> | undefined;
+// A start accepted behind a running check waits here and tries again.
+type DelayedStartTimer = {
+	readonly set: (run: () => void, delayMs: number) => unknown;
+	readonly clear: (handle: unknown) => void;
+};
+const defaultDelayedStartTimer: DelayedStartTimer = {
+	set: (run, delayMs) => {
+		const timer = setTimeout(run, delayMs);
+		timer.unref?.();
+		return timer;
+	},
+	clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+let delayedStartTimer = defaultDelayedStartTimer;
+let delayedSoftwareUpdateStart: unknown;
+
+/** Test seam: the delayed start's timer (null restores it). */
+export function setDelayedStartTimerForTest(
+	timer: DelayedStartTimer | null,
+): void {
+	delayedStartTimer = timer ?? defaultDelayedStartTimer;
+}
 let softwareUpdateRecoveryRetryTimer: ReturnType<typeof setTimeout> | undefined;
 const SOFTWARE_UPDATE_RECOVERY_RETRY_MS = 3_000;
 const APT_REFRESH_TIMEOUT_MS = 5 * oneMinute;
@@ -382,7 +410,8 @@ export function isUpdating() {
 // and the last terminal outcome so a suite that leaves an update mid-flight
 // cannot refuse the next test's start with `already_updating`.
 export function resetSoftwareUpdateState(): void {
-	if (delayedSoftwareUpdateStart) clearTimeout(delayedSoftwareUpdateStart);
+	if (delayedSoftwareUpdateStart)
+		delayedStartTimer.clear(delayedSoftwareUpdateStart);
 	if (softwareUpdateRecoveryRetryTimer) {
 		clearTimeout(softwareUpdateRecoveryRetryTimer);
 	}
@@ -406,9 +435,8 @@ export function resetSoftwareUpdateState(): void {
 	resetAptAllRefusalLogForTest();
 	aptAllMode = false;
 	discoveredPackages = [];
-	installUnitLaunched = false;
-	installLaunchSubmitted = false;
-	installCancelledForStream = false;
+	launchFence.reset();
+	publishedAttemptEnd = null;
 }
 
 export type SoftwareUpdateRecoveryDeps = {
@@ -475,7 +503,15 @@ export function getUpdateState(): UpdateState {
 }
 
 function broadcastUpdateState() {
-	broadcastMsg("status", { update_state: getUpdateState() });
+	const state = getUpdateState();
+	// Image apt source: an install's terminal frame goes out once. A state-only
+	// frame that would repeat it is not sent; any other state is.
+	if (publishedAttemptEnd !== null) {
+		if (imageAptSourceInUse() && JSON.stringify(state) === publishedAttemptEnd)
+			return;
+		publishedAttemptEnd = null;
+	}
+	broadcastMsg("status", { update_state: state });
 }
 
 // Auto-reboot runner DI seam: default runs the real argv-only run(); tests spy it.
@@ -635,14 +671,19 @@ export function buildAptDiscoveryArgs(
 async function getCapableUpdateSize(
 	reachability: AptReachability,
 	refresh?: string,
+	// Image apt source, an install's own discovery: its attempt ended meanwhile.
+	// What it finds then is nobody's: it writes and publishes nothing.
+	stale: () => boolean = () => false,
 ): Promise<SoftwareUpdateError> {
 	aptAllMode = true;
 	pendingPackageSuccess.assertEffectsAllowed();
 	await reconcileAptChannel("capable");
+	if (stale()) return "discovery_failed";
 	const simulation = await runAptCommand(
 		buildAptAllDiscoveryArgs(aptFamilyArgs(reachability.verdict)),
 		APT_DISCOVERY_TIMEOUT_MS,
 	);
+	if (stale()) return "discovery_failed";
 	if (simulation.exitCode !== 0) {
 		logAptAllRefusal(
 			new AptAllRefusalError("discovery_failed", "simulation", {
@@ -657,6 +698,7 @@ async function getCapableUpdateSize(
 		["/usr/bin/apt-mark", "showhold"],
 		APT_DISCOVERY_TIMEOUT_MS,
 	);
+	if (stale()) return "discovery_failed";
 	if (holds.exitCode !== 0) {
 		logAptAllRefusal(
 			new AptAllRefusalError("discovery_failed", "held-packages", {
@@ -668,11 +710,13 @@ async function getCapableUpdateSize(
 		return "discovery_failed";
 	}
 	const imageOwned = await readImageOwnedPackages();
+	if (stale()) return "discovery_failed";
 	try {
 		const sourcePolicy = await runAptCommand(
 			["/usr/bin/apt-cache", ...imageAptSourceArgs(), "policy"],
 			APT_DISCOVERY_TIMEOUT_MS,
 		);
+		if (stale()) return "discovery_failed";
 		if (sourcePolicy.exitCode !== 0)
 			throw new AptAllRefusalError("discovery_failed", "source-policy", {
 				exit: sourcePolicy.exitCode,
@@ -697,6 +741,7 @@ async function getCapableUpdateSize(
 			imageOwned.names,
 			activeImageAptSource(),
 		);
+		if (stale()) return "discovery_failed";
 		if (result.withheld.length > 0)
 			logger.info(
 				"Package updates withheld: the system image ships these packages itself",
@@ -743,6 +788,7 @@ async function getCapableUpdateSize(
 		return null;
 	} catch (error) {
 		if (!(error instanceof AptAllRefusalError)) throw error;
+		if (stale()) return "discovery_failed";
 		logAptAllRefusal(error);
 		aptAllRefusal = error;
 		actionableAllPackages = [];
@@ -1114,14 +1160,12 @@ function imageSourceRefused(capabilities: UpdateCapabilities): boolean {
 	return true;
 }
 
-// This install handed its transaction to systemd (or found a unit after an
-// uncertain submission, or reattached one): its unit's result decides.
-let installUnitLaunched = false;
-// It reached the launch call: whatever happens next is the unit's or the
-// monitor's to settle, never "ended before launch".
-let installLaunchSubmitted = false;
-// Image apt source: stream admission cancelled this install before launch.
-let installCancelledForStream = false;
+// Image apt source: the launch fence of the install in progress
+// (install-launch-fence.ts). Stream admission, the settings recheck and the
+// launcher decide "submitted or ended" there. Other images never consult it.
+const launchFence = createInstallLaunchFence();
+// The terminal frame an attempt published already (broadcastUpdateState).
+let publishedAttemptEnd: string | null = null;
 
 /**
  * Image apt source: the current install ended before its unit launched, with
@@ -1129,50 +1173,113 @@ let installCancelledForStream = false;
  */
 export function packageFailedBeforeLaunch(): boolean {
 	return (
-		!installUnitLaunched &&
+		!launchFence.launched() &&
 		(lastUpdateFailure !== null || lastPreflightFailure !== null)
 	);
 }
 
-/**
- * Image apt source: an install that ends before its unit launched leaves
- * `failed`, once, with its reason, whichever path ended it (some recorded only
- * a check failure, some nothing). A later successful discovery supersedes it.
- */
-function failBeforeLaunch(reason: string): void {
-	if (activeImageAptSource() === undefined || installLaunchSubmitted) return;
-	let changed = false;
-	if (lastUpdateFailure === null && lastPreflightFailure === null) {
-		lastUpdateSucceeded = false;
-		lastUpdateFailure = { reason };
-		changed = true;
-	}
-	if (softUpdateStatus) {
-		softUpdateStatus = null;
-		changed = true;
-	}
-	if (changed)
-		broadcastMsg("status", { updating: null, update_state: getUpdateState() });
+function notifyUpdateFailed(): void {
+	notificationBroadcast(
+		"ceralive_update_failed",
+		"error",
+		"The software update failed. Open Settings → Software Updates to see the reason and retry.",
+		0,
+		true,
+		true,
+		true,
+		"notifications.ceraliveUpdateFailed",
+		undefined,
+		{
+			action: {
+				schema: 1,
+				kind: "navigate",
+				target: "updates-dialog",
+				labelKey: "notifications.openUpdates",
+			},
+		},
+	);
 }
 
-/** The current install reached its launch call, or a unit was reattached. */
-export function packageInstallLaunched(): boolean {
-	return installLaunchSubmitted;
+function notifyUpdateRefused(): void {
+	notificationBroadcast(
+		"ceralive_update_failed",
+		"error",
+		"The software update was refused. Open Settings → Software Updates to see the reason.",
+		0,
+		true,
+		true,
+	);
 }
 
+type AttemptEnd = {
+	/** The failure as the wire shows it, when it is more than a reason. */
+	readonly failure?: UpdateFailure;
+	/** The space preflight's own terminal state instead of `failed`. */
+	readonly preflight?: UpdatePreflightReason;
+	readonly notify?: () => void;
+};
+
 /**
- * Image apt source: a stream started before this install's unit launched.
- * The install ends as a refusal now (a delayed start is cancelled), and its
- * preparation stops before launch. Never an offer restored.
+ * Image apt source: the one terminal frame of an attempt the fence just ended
+ * before its unit launched. The cleared progress and the failure go out
+ * together; a later successful discovery supersedes it.
  */
-export function cancelPendingPackageStart(): void {
-	if (activeImageAptSource() === undefined || installLaunchSubmitted) return;
+function publishAttemptEnd(reason: string, end: AttemptEnd = {}): void {
+	lastUpdateSucceeded = false;
+	lastCleanupWarning = undefined;
+	lastPreflightFailure = end.preflight ?? null;
+	lastUpdateFailure =
+		end.preflight === undefined ? (end.failure ?? { reason }) : null;
+	softUpdateStatus = null;
 	if (delayedSoftwareUpdateStart) {
-		clearTimeout(delayedSoftwareUpdateStart);
+		delayedStartTimer.clear(delayedSoftwareUpdateStart);
 		delayedSoftwareUpdateStart = undefined;
 	}
-	installCancelledForStream = true;
-	failBeforeLaunch("streaming");
+	end.notify?.();
+	broadcastMsg("status", { updating: null, update_state: getUpdateState() });
+	publishedAttemptEnd = JSON.stringify(getUpdateState());
+}
+
+/**
+ * Image apt source: `attempt` ends here, before its unit launched, as `failed`
+ * with `reason`, once. An attempt that ended already, whose unit was
+ * submitted, or that a newer one replaced is left alone, and so is every
+ * other image. True when this call ended it.
+ */
+function failBeforeLaunch(
+	attempt: InstallAttempt | null | undefined,
+	reason: string,
+	end: AttemptEnd = {},
+): boolean {
+	if (!attempt || !imageAptSourceInUse() || !launchFence.end(attempt))
+		return false;
+	publishAttemptEnd(reason, end);
+	return true;
+}
+
+/**
+ * Image apt source: what stops an install that has not launched yet. Updates
+ * turned off and a stream that is not confirmed idle both do, whenever they
+ * are seen; the fence reads this once more right before it submits the unit.
+ */
+function launchRefusal(): string | null {
+	if (!aptUpdatesEnabled()) return "discovery_failed";
+	if (!isStreamConfirmedIdle()) return "streaming";
+	return null;
+}
+
+/**
+ * Image apt source: a stream start meets the install's launch fence. A pending
+ * attempt (a delayed start too) ends here as a refusal, `streaming`, and its
+ * pinned transfer is aborted; nothing is submitted after that. An attempt
+ * whose unit was submitted is the unit's: the caller takes the post-launch
+ * path. Waits for a submission in flight, never for anything else.
+ */
+export function admitStreamAtPackageLaunch(): Promise<StreamFenceVerdict> {
+	return launchFence.admitStream(() => {
+		abortAptTransferForStream();
+		publishAttemptEnd("streaming");
+	});
 }
 
 let clockWaitLogged = false;
@@ -1835,13 +1942,25 @@ const defaultSoftwareUpdateRunner: SoftwareUpdateRunner = (
 	onCommitSucceeded,
 ) => {
 	const admission = captureAptTransferAdmission();
+	// Image apt source: the attempt this start was accepted as.
+	const attempt = imageAptSourceInUse() ? launchFence.begin() : null;
 	const checkStarted = softwareUpdateCheckRunner(async (err) => {
+		// The attempt ended while its own check ran: nothing more is written.
+		if (attempt !== null && !attempt.pending()) return;
 		if (err === null) {
+			let launching = false;
 			try {
-				await doSoftwareUpdate(onCommitSucceeded, admission);
+				launching = await doSoftwareUpdate(
+					onCommitSucceeded,
+					admission,
+					attempt,
+				);
 			} finally {
-				// Whatever returned or threw before the launch call ends here.
-				failBeforeLaunch("not_started");
+				// Whatever returned or threw before the launcher took over ends
+				// here, as what stopped it if that is known. Once the launcher
+				// took over, its own result ends the attempt.
+				if (!launching && attempt !== null)
+					failBeforeLaunch(attempt, launchRefusal() ?? "not_started");
 			}
 			return;
 		}
@@ -1859,8 +1978,7 @@ const defaultSoftwareUpdateRunner: SoftwareUpdateRunner = (
 								: imageSource && err === "captive_portal"
 									? "captive_portal"
 									: "Failed to fetch the updated package list; aborting the update.";
-			lastUpdateSucceeded = false;
-			lastUpdateFailure = {
+			const failure = {
 				reason,
 				...((currentUpdateIdentity ?? availableIdentity)
 					? {
@@ -1869,43 +1987,27 @@ const defaultSoftwareUpdateRunner: SoftwareUpdateRunner = (
 						}
 					: {}),
 			};
-			notificationBroadcast(
-				"ceralive_update_failed",
-				"error",
-				"The software update failed. Open Settings → Software Updates to see the reason and retry.",
-				0,
-				true,
-				true,
-				true,
-				"notifications.ceraliveUpdateFailed",
-				undefined,
-				{
-					action: {
-						schema: 1,
-						kind: "navigate",
-						target: "updates-dialog",
-						labelKey: "notifications.openUpdates",
-					},
-				},
-			);
-			if (imageSource) {
-				// One terminal frame: the cleared progress and the failure together.
-				softUpdateStatus = null;
-				broadcastMsg("status", {
-					updating: null,
-					update_state: getUpdateState(),
-				});
-			} else {
-				softUpdateStatus.result = reason;
-				broadcastMsg("status", {
-					updating: softUpdateStatus,
-					update_state: getUpdateState(),
-				});
-				softUpdateStatus = null;
-				broadcastUpdateState();
-			}
+			// Image apt source: one terminal frame, the cleared progress and the
+			// failure together.
+			if (
+				failBeforeLaunch(attempt, reason, {
+					failure,
+					notify: notifyUpdateFailed,
+				})
+			)
+				return;
+			lastUpdateSucceeded = false;
+			lastUpdateFailure = failure;
+			notifyUpdateFailed();
+			softUpdateStatus.result = reason;
+			broadcastMsg("status", {
+				updating: softUpdateStatus,
+				update_state: getUpdateState(),
+			});
+			softUpdateStatus = null;
+			broadcastUpdateState();
 		}
-		failBeforeLaunch(typeof err === "string" ? err : "refresh_failed");
+		failBeforeLaunch(attempt, typeof err === "string" ? err : "refresh_failed");
 	});
 
 	// Latching a declined check would wedge isUpdating(). For later latch gaps,
@@ -1989,9 +2091,6 @@ export function startSoftwareUpdate(
 		return refuseUpdateStart("check_unavailable");
 	}
 
-	installUnitLaunched = false;
-	installLaunchSubmitted = false;
-	installCancelledForStream = false;
 	currentUpdateIdentity = availableIdentity;
 	lastUpdateFailure = null;
 	lastUpdateSucceeded = false;
@@ -1999,17 +2098,27 @@ export function startSoftwareUpdate(
 	lastCleanupWarning = undefined;
 
 	if (aptGetUpdating || aptDiscoveryRunning) {
+		// Image apt source: the delayed start is the attempt already. A second
+		// start in this window joins it; a stream cancels it through the fence.
+		const attempt = imageAptSourceInUse() ? launchFence.begin() : null;
 		if (!delayedSoftwareUpdateStart) {
-			delayedSoftwareUpdateStart = setTimeout(() => {
+			delayedSoftwareUpdateStart = delayedStartTimer.set(() => {
 				delayedSoftwareUpdateStart = undefined;
+				if (attempt !== null) {
+					if (!attempt.pending()) return;
+					const refusal = launchRefusal();
+					if (refusal !== null) {
+						failBeforeLaunch(attempt, refusal);
+						return;
+					}
+				}
 				if (pendingPackageSuccess.pending) {
-					failBeforeLaunch("check_unavailable");
+					failBeforeLaunch(attempt, "check_unavailable");
 					return;
 				}
 				const outcome = startSoftwareUpdate(onCommitSucceeded);
 				if (!outcome.started) {
-					lastUpdateSucceeded = false;
-					lastUpdateFailure = {
+					const failure = {
 						reason: `Software update could not start after waiting for package discovery: ${outcome.reason}`,
 						...((currentUpdateIdentity ?? availableIdentity)
 							? {
@@ -2018,11 +2127,12 @@ export function startSoftwareUpdate(
 								}
 							: {}),
 					};
+					if (failBeforeLaunch(attempt, failure.reason, { failure })) return;
+					lastUpdateSucceeded = false;
+					lastUpdateFailure = failure;
 					broadcastUpdateState();
-					failBeforeLaunch(outcome.reason);
 				}
 			}, 3 * 1000);
-			delayedSoftwareUpdateStart.unref?.();
 		}
 		return { started: true };
 	}
@@ -2033,7 +2143,20 @@ export function startSoftwareUpdate(
 		return { started: true };
 	}
 
-	return softwareUpdateRunner(onCommitSucceeded);
+	if (!imageAptSourceInUse()) return softwareUpdateRunner(onCommitSucceeded);
+	// A delayed start resuming is its attempt still; any other start is a new
+	// one, and only if the runner accepts it.
+	const resumed = launchFence.current()?.pending() === true;
+	const attempt = launchFence.begin();
+	const outcome = softwareUpdateRunner(onCommitSucceeded);
+	if (!outcome.started && !resumed) launchFence.drop(attempt);
+	// Started now: a delayed start still armed for this attempt has nothing
+	// left to do, and must not find "already updating" and fail it.
+	if (outcome.started && delayedSoftwareUpdateStart) {
+		delayedStartTimer.clear(delayedSoftwareUpdateStart);
+		delayedSoftwareUpdateStart = undefined;
+	}
+	return outcome;
 }
 
 type SoftwareUpdateProcessMonitor = {
@@ -2053,6 +2176,8 @@ type SoftwareUpdateProcessMonitor = {
 export function createSoftwareUpdateProcessMonitor(
 	prefetched = "",
 	launched: Pick<SoftUpdateStatus, "run" | "targets"> = {},
+	// Image apt source: the attempt whose transaction this monitor settles.
+	attempt: InstallAttempt | null = null,
 ): SoftwareUpdateProcessMonitor {
 	// The CeraLive offer this update was taken against, fixed when it is taken.
 	const offer = standingCeraliveOffer();
@@ -2146,6 +2271,10 @@ export function createSoftwareUpdateProcessMonitor(
 			flush();
 		} catch (err) {
 			flush();
+			// Image apt source: the attempt ended before the launcher submitted
+			// anything. That end was published where it happened; it is no error
+			// of the transaction.
+			if (err instanceof InstallAttemptEndedError) return 1;
 			const message = redactImageAptSecret(
 				err instanceof Error ? err.message : String(err),
 			);
@@ -2157,8 +2286,14 @@ export function createSoftwareUpdateProcessMonitor(
 					: 1;
 		}
 
+		// Image apt source: an attempt that ended before its unit launched has
+		// published its end already. Nothing is left to settle, and nothing of
+		// it may touch the state of an install started since.
+		const ended = () => attempt !== null && attempt.state() === "ended";
+		if (ended()) return code;
 		// Keep the in-flight latch until cleanup settles; its result cannot change code.
 		const cleaned = await cleanAptCache(defaultAptSpaceDeps.run);
+		if (ended()) return code;
 		lastCleanupWarning =
 			code === 0 && !cleaned ? "post_clean_failed" : undefined;
 		// Read while this update still holds the updater, so no check or start interleaves.
@@ -2179,6 +2314,16 @@ export function createSoftwareUpdateProcessMonitor(
 									}
 								: {}),
 						};
+			// Image apt source: a failure before the unit launched (the download
+			// under the pin) ends the attempt in one terminal frame.
+			if (
+				failure !== null &&
+				failBeforeLaunch(attempt, failure.reason, {
+					failure,
+					notify: notifyUpdateFailed,
+				})
+			)
+				return code;
 			// getUpdateState()-relevant assignments happen FIRST and
 			// unconditionally, before any broadcast/notification call below —
 			// a caller awaiting settle() must observe the real outcome even if
@@ -2261,74 +2406,98 @@ export function createSoftwareUpdateProcessMonitor(
 async function doSoftwareUpdate(
 	onCommitSucceeded?: () => void,
 	admission?: AptTransferAdmission,
-): Promise<void> {
+	attempt: InstallAttempt | null = null,
+): Promise<boolean> {
 	return runLegacyPackageEffects(
-		() => prepareSoftwareUpdate(onCommitSucceeded, admission),
+		() => prepareSoftwareUpdate(onCommitSucceeded, admission, attempt),
 		() => {
+			if (attempt !== null) {
+				failBeforeLaunch(attempt, "not_started");
+				return false;
+			}
 			softUpdateStatus = null;
 			broadcastMsg("status", {
 				updating: null,
 				update_state: getUpdateState(),
 			});
+			return false;
 		},
 	);
 }
 
+/**
+ * Prepares the install and hands it to the launcher. Resolves true once the
+ * launcher has the transaction (its result then ends the install), false when
+ * the install ended here. `attempt` is the install's attempt on an image with
+ * its own apt source, null on any other.
+ */
 async function prepareSoftwareUpdate(
 	onCommitSucceeded?: () => void,
 	admission?: AptTransferAdmission,
-): Promise<void> {
+	attempt: InstallAttempt | null = null,
+): Promise<boolean> {
 	pendingPackageSuccess.assertEffectsAllowed();
-	if (!aptUpdatesEnabled()) return;
-	// Image apt source: any stream before the unit launched refuses the
-	// install; the next check offers it again. Other images: as before.
-	if (!isStreamConfirmedIdle()) {
-		failBeforeLaunch("streaming");
-		return;
-	}
+	// Image apt source, read after every wait: the attempt goes on only while
+	// it is pending, updates are on and no stream is up. Anything else ends it
+	// here as a refusal, and an attempt that ended already writes nothing more.
+	const stopped = (): boolean => {
+		if (attempt === null) return false;
+		if (!attempt.pending()) return true;
+		const refusal = launchRefusal();
+		if (refusal === null) return false;
+		failBeforeLaunch(attempt, refusal);
+		return true;
+	};
+	// Image apt source: this path's own end, as `failed` with `reason`, once.
+	const refused = (reason: string, end?: AttemptEnd): boolean =>
+		attempt !== null && (failBeforeLaunch(attempt, reason, end) || true);
+	if (stopped()) return false;
+	if (!aptUpdatesEnabled() || !isStreamConfirmedIdle()) return false;
 
 	const capabilities = await readPackageCapabilities();
+	if (stopped()) return false;
 	if (capabilities === null || imageSourceRefused(capabilities)) {
+		if (refused("discovery_failed")) return false;
 		refuseUnknownPackageInstall();
-		return;
+		return false;
 	}
 	const network = await openAptNetwork(
 		capabilities,
 		{ maxAgeMs: 0 },
 		admission,
 	);
+	if (stopped()) return false;
 	const reachability = network.reachability;
 	pendingPackageSuccess.assertEffectsAllowed();
 	const freshCapabilities = await readPackageCapabilities();
-	if (freshCapabilities === null) {
+	if (stopped()) return false;
+	if (freshCapabilities === null || imageSourceRefused(freshCapabilities)) {
+		if (refused("discovery_failed")) return false;
 		refuseUnknownPackageInstall();
-		return;
+		return false;
 	}
 	const capable = freshCapabilities.mode === "capable";
 	pendingPackageSuccess.assertEffectsAllowed();
 	const imageRefusal = imageSourceInstallRefusal();
-	if (imageRefusal !== null) {
-		lastUpdateSucceeded = false;
-		lastUpdateFailure = { reason: imageRefusal };
-		if (softUpdateStatus) softUpdateStatus.result = imageRefusal;
-		softUpdateStatus = null;
-		broadcastMsg("status", { updating: null, update_state: getUpdateState() });
-		return;
-	}
+	if (imageRefusal !== null && refused(imageRefusal)) return false;
 	if (capable) {
 		const discovery = await network.within(
-			(attempt) => getCapableUpdateSize(attempt),
+			(reached) =>
+				getCapableUpdateSize(
+					reached,
+					undefined,
+					attempt === null ? undefined : () => !attempt.pending(),
+				),
 			(): SoftwareUpdateError => {
-				failCurrentCheck("discovery_failed");
+				if (attempt === null || attempt.pending())
+					failCurrentCheck("discovery_failed");
 				return "discovery_failed";
 			},
 		);
+		if (stopped()) return false;
 		if (discovery !== null) {
 			// Image apt source: `failed` at once, never the standing offer first.
-			if (activeImageAptSource() !== undefined) {
-				failBeforeLaunch(aptAllRefusal?.reason ?? "discovery_failed");
-				return;
-			}
+			if (refused(aptAllRefusal?.reason ?? "discovery_failed")) return false;
 			if (softUpdateStatus)
 				softUpdateStatus.result = aptAllRefusal?.reason ?? "discovery_failed";
 			softUpdateStatus = null;
@@ -2336,7 +2505,7 @@ async function prepareSoftwareUpdate(
 				updating: null,
 				update_state: getUpdateState(),
 			});
-			return;
+			return false;
 		}
 	}
 	// The one vector this run simulates, sizes, launches and publishes.
@@ -2359,6 +2528,7 @@ async function prepareSoftwareUpdate(
 						: reachability.verdict === "unreachable"
 							? "The software repositories are unreachable."
 							: "No actionable application packages are available.";
+		if (refused(reason)) return false;
 		lastUpdateSucceeded = false;
 		lastUpdateFailure = { reason };
 		if (softUpdateStatus) softUpdateStatus.result = reason;
@@ -2368,7 +2538,7 @@ async function prepareSoftwareUpdate(
 		});
 		softUpdateStatus = null;
 		broadcastUpdateState();
-		return;
+		return false;
 	}
 	const args = admitted
 		? buildAptAllInstallArgs(
@@ -2396,6 +2566,7 @@ async function prepareSoftwareUpdate(
 					),
 				() => ({ exitCode: 1, stdout: "", stderr: "update routing refused" }),
 			);
+			if (stopped()) return false;
 			if (probe.exitCode !== 0)
 				throw new AptAllRefusalError("discovery_failed", "pinned-simulation", {
 					exit: probe.exitCode,
@@ -2406,6 +2577,7 @@ async function prepareSoftwareUpdate(
 		} catch (error) {
 			if (!(error instanceof AptAllRefusalError)) throw error;
 			logAptAllRefusal(error);
+			if (refused(error.reason, { notify: notifyUpdateRefused })) return false;
 			lastUpdateFailure = { reason: error.reason };
 			softUpdateStatus = null;
 			notificationBroadcast(
@@ -2420,14 +2592,15 @@ async function prepareSoftwareUpdate(
 				updating: null,
 				update_state: getUpdateState(),
 			});
-			return;
+			return false;
 		}
 	}
 	if (capable && aptAllRefusal !== null) {
+		if (refused(aptAllRefusal.reason)) return false;
 		lastUpdateFailure = { reason: aptAllRefusal.reason };
 		softUpdateStatus = null;
 		broadcastMsg("status", { updating: null, update_state: getUpdateState() });
-		return;
+		return false;
 	}
 	try {
 		await network.within(
@@ -2448,6 +2621,16 @@ async function prepareSoftwareUpdate(
 				"package success persistence pending",
 			);
 		if (!(error instanceof AptPreflightError)) throw error;
+		if (attempt !== null) {
+			// An attempt that ended while the preflight ran stays as it ended.
+			if (!stopped()) {
+				logger.warn("Software update preflight refused", {
+					preflight_reason: error.reason,
+				});
+				failBeforeLaunch(attempt, error.reason, { preflight: error.reason });
+			}
+			return false;
+		}
 		lastPreflightFailure = error.reason;
 		lastUpdateFailure = null;
 		lastUpdateSucceeded = false;
@@ -2458,8 +2641,9 @@ async function prepareSoftwareUpdate(
 			preflight_reason: error.reason,
 		});
 		broadcastMsg("status", { updating: null, update_state: getUpdateState() });
-		return;
+		return false;
 	}
+	if (stopped()) return false;
 	// Fetch under the pin so the unit's own download stage is a cache hit.
 	let prefetched = "";
 	if (capable && network.pinned) {
@@ -2484,12 +2668,15 @@ async function prepareSoftwareUpdate(
 				),
 			{ abortable: true },
 		);
+		// An attempt that ended during the transfer is over; a live stream nobody
+		// admitted ends it as `streaming` below.
+		if (attempt !== null && !attempt.pending()) return false;
 		if (fetched.exitCode !== 0 && !network.aborted()) {
-			const failed = createSoftwareUpdateProcessMonitor();
+			const failed = createSoftwareUpdateProcessMonitor("", {}, attempt);
 			failed.handlers.onStdout(fetched.stdout);
 			failed.handlers.onStderr(fetched.stderr);
 			await failed.finish(Promise.resolve(fetched.exitCode));
-			return;
+			return false;
 		}
 		prefetched = fetched.stdout;
 	}
@@ -2499,25 +2686,22 @@ async function prepareSoftwareUpdate(
 		refuseUpdateStart("streaming");
 		// Image apt source: stream admission, the pinned transfer's own abort
 		// and a liveness-only abort alike end the install as a refusal.
-		if (activeImageAptSource() !== undefined) {
-			failBeforeLaunch("streaming");
-			return;
-		}
+		if (refused("streaming")) return false;
 		softUpdateStatus = null;
 		broadcastUpdateState();
-		return;
+		return false;
 	}
 	pendingPackageSuccess.assertEffectsAllowed();
-	// Stream admission cancelled this install while it was being prepared.
-	if (installCancelledForStream) {
-		failBeforeLaunch("streaming");
-		return;
-	}
+	if (stopped()) return false;
 	notePlannedShutdown("software_update");
-	const monitor = createSoftwareUpdateProcessMonitor(prefetched, {
-		run: softUpdateStatus?.run,
-		...(targets ? { targets } : {}),
-	});
+	const monitor = createSoftwareUpdateProcessMonitor(
+		prefetched,
+		{
+			run: softUpdateStatus?.run,
+			...(targets ? { targets } : {}),
+		},
+		attempt,
+	);
 	const finalFamily = installFamily(network.reachability.verdict);
 	const detachedArgs =
 		admitted && network.pinned
@@ -2529,22 +2713,58 @@ async function prepareSoftwareUpdate(
 	// running it in this unit's cgroup then lets that restart kill the package
 	// transaction itself. PID 1 owns this service, and the next backend process
 	// reattaches to its durable output instead of relaunching apt.
-	// From here the monitor settles the outcome. `onLaunched` marks the unit as
-	// the transaction's owner (systemd accepted it, or an uncertain submission
-	// found it); a refusal before that is still "before launch".
-	installLaunchSubmitted = true;
-	const handlers: SoftwareUpdateOutputHandlers = {
-		...monitor.handlers,
-		onLaunched: () => {
-			installUnitLaunched = true;
-		},
-	};
+	// Image apt source: the launcher submits the unit inside the launch fence.
+	// Until `systemd-run` returned there (or an uncertain submission was counted
+	// as a launch) the install has not launched, and a stream or updates turned
+	// off still end it; from then on the unit's own result decides.
+	const handlers: SoftwareUpdateOutputHandlers =
+		attempt === null
+			? monitor.handlers
+			: { ...monitor.handlers, submit: fencedSubmission(attempt) };
 	void monitor.finish(
 		capable
 			? runDetachedAptAll(detachedArgs, finalFamily, handlers)
 			: runDetachedAptUpgrade(args, handlers),
 		capable ? onCommitSucceeded : undefined,
 	);
+	return true;
+}
+
+/**
+ * Image apt source: the launcher's pass through the launch fence. Inside it,
+ * and nowhere else, the unit is submitted: the attempt must still be pending,
+ * updates on and no stream up, read right before `systemd-run`. A submission
+ * the launcher reports as definitively refused ends the attempt there, with
+ * its error on the wire; any other outcome is a launch.
+ */
+function fencedSubmission(
+	attempt: InstallAttempt,
+): NonNullable<SoftwareUpdateOutputHandlers["submit"]> {
+	return (launch) =>
+		launchFence.submit(attempt, {
+			refusal: launchRefusal,
+			refuse: (reason) => publishAttemptEnd(reason),
+			launch,
+			refused: (error) => {
+				const reason =
+					redactImageAptSecret(
+						error instanceof Error ? error.message : String(error),
+					).trim() || "the update unit was refused";
+				publishAttemptEnd(reason, {
+					failure: {
+						reason,
+						failure_id: randomUUID(),
+						...((currentUpdateIdentity ?? availableIdentity)
+							? {
+									identity: (currentUpdateIdentity ??
+										availableIdentity) as UpdateIdentity,
+								}
+							: {}),
+					},
+					notify: notifyUpdateFailed,
+				});
+			},
+		});
 }
 
 /**
@@ -2658,13 +2878,11 @@ async function recoverSoftwareUpdate(
 		// That window is exactly what let the update-orchestrator's own resume
 		// (resume.ts resumeCommitting()) observe neither a live nor a settled
 		// state and misclassify a successful recovery as unresolved.
-		installUnitLaunched = true;
-		installLaunchSubmitted = true;
+		launchFence.adopt();
 		await monitor.finish(recovered.completion, getRecoveredUpdateExitHook());
 	} else {
 		// Still running: this can take minutes. Never block boot on it.
-		installUnitLaunched = true;
-		installLaunchSubmitted = true;
+		launchFence.adopt();
 		void monitor.finish(recovered.completion, getRecoveredUpdateExitHook());
 	}
 	return true;

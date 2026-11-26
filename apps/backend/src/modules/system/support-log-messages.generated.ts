@@ -2014,6 +2014,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["tailscaled ", ": ", " ", ""],
 	["tc_apply_failed"],
 	["terminal unit probe failed"],
+	["the install ended before its unit was submitted"],
 	["the mock BT mic seed is missing"],
 	["timeout"],
 	["tls-error"],

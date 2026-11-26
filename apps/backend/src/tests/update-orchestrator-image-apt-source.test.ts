@@ -168,3 +168,48 @@ describe("installs from the image's own source are manual only", () => {
 		expect(counts.installs).toBe(1);
 	});
 });
+
+describe("a scheduled tick decides on the phase it finds after its waits", () => {
+	// The tick reads the settings, and a manual install starts meanwhile.
+	async function tickAcrossAnInstallStart(counts: { packageChecks: number }) {
+		const settings = Promise.withResolvers<void>();
+		const { deps } = counting();
+		setOrchestratorRuntimeDepsForTest({
+			...deps,
+			runPackageCheck: async () => {
+				counts.packageChecks++;
+				return null;
+			},
+			loadSettings: async () => {
+				await settings.promise;
+				return deps.loadSettings();
+			},
+		});
+		setOrchestratorStateForTest(initialOrchestratorState(0));
+		const tick = runOrchestratorTick();
+		await Bun.sleep(5);
+		setOrchestratorStateForTest({
+			...initialOrchestratorState(0),
+			phase: "downloading",
+		});
+		settings.resolve();
+		await tick;
+	}
+
+	test("without the image's source, it runs no package check over the install", async () => {
+		withoutImageSource();
+		const counts = { packageChecks: 0 };
+		await tickAcrossAnInstallStart(counts);
+		expect(counts.packageChecks).toBe(0);
+		expect(getOrchestratorState().phase).toBe("downloading");
+	});
+
+	test("with it, the same", async () => {
+		withImageSource();
+		writeFileSync(flag, "");
+		const counts = { packageChecks: 0 };
+		await tickAcrossAnInstallStart(counts);
+		expect(counts.packageChecks).toBe(0);
+		expect(getOrchestratorState().phase).toBe("downloading");
+	});
+});

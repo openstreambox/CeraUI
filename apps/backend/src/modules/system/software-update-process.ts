@@ -31,6 +31,13 @@ export type SoftwareUpdateOutputHandlers = {
 	readonly onAttached?: () => void;
 	/** systemd accepted the unit: from here the transaction is the unit's. */
 	readonly onLaunched?: () => void;
+	/**
+	 * Runs the unit's submission: `systemd-run`, and what an uncertain result
+	 * is taken for. An image with its own apt source passes its launch fence
+	 * here (install-launch-fence.ts); without it the launcher submits directly.
+	 * Rejecting means no unit was submitted.
+	 */
+	readonly submit?: <T>(launch: () => Promise<T>) => Promise<T>;
 	readonly onObserverError?: (
 		error: unknown,
 		suppressedRetries?: number,
@@ -246,6 +253,8 @@ async function observeDetachedAptUpgrade(
 	return state.exitCode;
 }
 
+const submitDirectly = <T>(launch: () => Promise<T>): Promise<T> => launch();
+
 export async function runDetachedAptUpgrade(
 	aptArgs: readonly string[],
 	handlers: SoftwareUpdateOutputHandlers,
@@ -256,7 +265,8 @@ export async function runDetachedAptUpgrade(
 		throw new DetachedAptServiceAlreadyExistsError();
 	}
 	await deps.prepareOutput();
-	await deps.start(buildDetachedAptUpgradeCommand(aptArgs, deps.outputPaths));
+	const command = buildDetachedAptUpgradeCommand(aptArgs, deps.outputPaths);
+	await (handlers.submit ?? submitDirectly)(() => deps.start(command));
 	handlers.onLaunched?.();
 	return observeDetachedAptUpgrade({ kind: "running" }, handlers, deps);
 }
@@ -276,25 +286,34 @@ export async function runDetachedAptAll(
 		verdict,
 		deps.outputPaths,
 	);
-	try {
-		await deps.start(command);
-	} catch (error) {
-		// A client error or timeout does not say PID 1 refused the unit. On an
-		// image with its own apt source, look for the fixed unit before calling
-		// it refused: found, or unknowable, the transaction is the unit's.
-		if (!imageAptSourceInUse()) throw error;
-		let state: DetachedAptServiceState;
-		try {
-			state = await deps.inspect();
-		} catch {
-			state = { kind: "running" };
-		}
-		if (state.kind === "absent") throw error;
-		handlers.onLaunched?.();
-		return observeDetachedAptUpgrade(state, handlers, deps);
-	}
+	// The submission is one step: nothing may come between `systemd-run` and
+	// what its result is taken for. It rejects only when no unit was submitted.
+	const state = await (handlers.submit ?? submitDirectly)(
+		async (): Promise<
+			Exclude<DetachedAptServiceState, { readonly kind: "absent" }>
+		> => {
+			try {
+				await deps.start(command);
+				return { kind: "running" };
+			} catch (error) {
+				// A client error or timeout does not say PID 1 refused the unit. On
+				// an image with its own apt source, look for the fixed unit before
+				// calling it refused: found, or unknowable, the transaction is the
+				// unit's.
+				if (!imageAptSourceInUse()) throw error;
+				let found: DetachedAptServiceState;
+				try {
+					found = await deps.inspect();
+				} catch {
+					found = { kind: "running" };
+				}
+				if (found.kind === "absent") throw error;
+				return found;
+			}
+		},
+	);
 	handlers.onLaunched?.();
-	return observeDetachedAptUpgrade({ kind: "running" }, handlers, deps);
+	return observeDetachedAptUpgrade(state, handlers, deps);
 }
 
 export async function recoverDetachedAptUpgrade(

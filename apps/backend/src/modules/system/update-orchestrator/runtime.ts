@@ -47,16 +47,16 @@ import {
 import { withServiceReservation } from "../disruptive-service-reservation.ts";
 import { getIdleStatus } from "../idle-activity.ts";
 import { imageAptSourceInUse } from "../image-apt-source.ts";
+import type { StreamFenceVerdict } from "../install-launch-fence.ts";
 import {
+	admitStreamAtPackageLaunch,
 	aptUpdatesEnabled,
-	cancelPendingPackageStart,
 	getLastInstallUnitVerdict,
 	getUpdateState,
 	type InstallUnitVerdict,
 	imageSourceClockWaits,
 	isAptAllDiscovery,
 	packageFailedBeforeLaunch,
-	packageInstallLaunched,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
 	type SoftwareUpdateError,
@@ -293,10 +293,12 @@ export interface OrchestratorRuntimeDeps {
 	readonly getPackageInstallWireState: () => UpdateState;
 	/** Image apt source: the current install ended before its unit launched. */
 	readonly packageFailedBeforeLaunch: () => boolean;
-	/** The current install reached its launch call (or reattached a unit). */
-	readonly packageInstallLaunched: () => boolean;
-	/** Image apt source: a stream before launch cancels the install's pending start. */
-	readonly cancelPendingPackageStart: () => void;
+	/**
+	 * Image apt source: a stream start meets the package install's launch
+	 * fence. It ends an install whose unit is not submitted yet, and says how
+	 * the install was decided (install-launch-fence.ts).
+	 */
+	readonly admitStreamAtPackageLaunch: () => Promise<StreamFenceVerdict>;
 	readonly stopPackageInstallUnit: () => Promise<void>;
 	readonly killAndRestartRaucForStream: () => Promise<void>;
 	readonly isCommitStageRunning: () => Promise<boolean>;
@@ -433,8 +435,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
 	getPackageInstallWireState: getUpdateState,
 	packageFailedBeforeLaunch,
-	packageInstallLaunched,
-	cancelPendingPackageStart,
+	admitStreamAtPackageLaunch,
 	stopPackageInstallUnit: stopPackageInstallUnitForStream,
 	killAndRestartRaucForStream,
 	isCommitStageRunning: async () =>
@@ -1173,6 +1174,36 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 	const cached = admitStreamStart(state);
 	if (!cached.allowed) return cached;
 
+	// Image apt source: the launch fence decides between this stream and a
+	// package install, whoever started it (the orchestrator or the standalone
+	// start). An install whose unit is not submitted yet ends here, as a
+	// refusal: no offer is restored, the next check brings it back. One whose
+	// submission is in flight is waited for; once submitted it is the unit's,
+	// and the stream takes the path below.
+	if (imageAptSourceInUse()) {
+		const fenced = await deps.admitStreamAtPackageLaunch();
+		if (
+			(fenced === "cancelled" || fenced === "ended") &&
+			state.phase === "downloading"
+		) {
+			const wire = deps.getPackageInstallWireState();
+			dispatch({
+				type: "DOWNLOAD_FAILED",
+				now: deps.now(),
+				reason: PACKAGE_INSTALL_REFUSED,
+				...(wire.kind === "failed" && wire.failure_id !== undefined
+					? { failureId: wire.failure_id }
+					: {}),
+			});
+			return { allowed: true };
+		}
+		// The wait may have let the pipeline move on: decide on what is there now.
+		if (isDisruptiveActionPending() || pendingPackageSuccess.pending)
+			return COMMIT_STAGE_REFUSAL;
+		const settled = admitStreamStart(state);
+		if (!settled.allowed) return settled;
+	}
+
 	const action = onStreamStart(state);
 	if (state.phase === "kernel-downloading") {
 		kernelRuntime.cancelDownload();
@@ -1182,24 +1213,6 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 		return { allowed: true };
 	}
 
-	// Image apt source: a stream before the apt unit launched ends the install
-	// as a refusal. Pending work is stopped, a delayed start is cancelled, and
-	// no offer is restored: the next check brings it back. Only a stream after
-	// the unit launched takes the path below.
-	if (
-		state.phase === "downloading" &&
-		imageAptSourceInUse() &&
-		!deps.packageInstallLaunched()
-	) {
-		deps.cancelPendingPackageStart();
-		await deps.stopPackageInstallUnit();
-		dispatch({
-			type: "DOWNLOAD_FAILED",
-			now: deps.now(),
-			reason: PACKAGE_INSTALL_REFUSED,
-		});
-		return { allowed: true };
-	}
 	if (state.phase === "downloading") {
 		const freshWire = deps.getPackageInstallWireState();
 		packageHoldAttempt ??= packageDownloadAttempt(freshWire);
@@ -3073,12 +3086,16 @@ async function runScheduledChecks(): Promise<void> {
 	if (capabilities === null) return;
 	const now = deps.now();
 	const osClock = osScheduleClock();
+	// The phase as it is now, after the waits above: a manual install may have
+	// started meanwhile. Only an install that never launched counts as idle.
+	const phase = (): OrchestratorPhase =>
+		refusedInstallPending() ? "idle" : state.phase;
 	let packageCheckRan = false;
 	if (
 		aptUpdatesEnabled() &&
 		shouldAttemptScheduledCheck({
 			now,
-			phase: "idle",
+			phase: phase(),
 			clock: state.packageCheck,
 			kind: "packages",
 			settings,
@@ -3093,7 +3110,7 @@ async function runScheduledChecks(): Promise<void> {
 		capabilities.features.includes("rauc-verity-streaming") &&
 		shouldAttemptScheduledCheck({
 			now,
-			phase: "idle",
+			phase: phase(),
 			clock: osClock,
 			kind: "os",
 			settings,

@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { UpdateState } from "@ceraui/rpc/schemas";
 import { logger } from "../helpers/logger.ts";
+import * as events from "../modules/events/emit.ts";
 import { setup } from "../modules/setup.ts";
 import { defaultAptSpaceDeps } from "../modules/system/apt-space-admission.ts";
 import { abortAptTransferForStream } from "../modules/system/apt-transfer-abort.ts";
@@ -25,6 +26,7 @@ import {
 	setImageClockGateFlagForTest,
 } from "../modules/system/image-apt-source.ts";
 import { setImageOwnedPackagesReaderForTest } from "../modules/system/image-owned-packages.ts";
+import { softwareUpdateOutputPaths } from "../modules/system/software-update-output.ts";
 import * as transaction from "../modules/system/software-update-process.ts";
 import {
 	getUpdateState,
@@ -147,16 +149,20 @@ type Path =
 	| "policy"
 	| "nothing-actionable"
 	| "pinned-recheck"
+	| "pinned-removals"
 	| "space-preflight"
 	| "download"
 	| "download-liveness"
 	| "download-admission"
 	| "preflight-admission"
 	| "start-rejected"
+	| "launcher-setup"
+	| "unit-refused"
 	| "throw"
 	| "launched"
 	| "launched-running";
 
+const launcher = transaction.runDetachedAptAll;
 const scratch: string[] = [];
 let launchCount = 0;
 const launches = () => launchCount;
@@ -273,6 +279,11 @@ async function box(failing: Path) {
 					stderr: "E: pinned recheck failed",
 				};
 			}
+			// The plan has come to need a removal since it was offered.
+			if (failing === "pinned-removals" && once.pinned) {
+				once.pinned = false;
+				return ok(`${OFFER}Remv libqmi-glib5 [1.36.0-1]\n`);
+			}
 			return ok(OFFER);
 		}
 		if (argv.includes("-s")) {
@@ -329,20 +340,42 @@ async function box(failing: Path) {
 			bsize: 1n,
 		})),
 		spyOn(transaction, "runDetachedAptAll").mockImplementation(
-			(_args, _verdict, handlers) => {
-				launchCount++;
-				if (failing === "launched-running") {
-					handlers.onLaunched?.();
-					// The unit keeps running until the test ends.
-					return unitRunning.promise;
-				}
-				if (failing === "start-rejected")
-					return Promise.reject(new Error("systemd-run: unit refused"));
+			async (args, verdict, handlers) => {
+				// These paths run the real launcher over a unit of this file.
+				if (failing === "launcher-setup" || failing === "unit-refused")
+					return launcher(args, verdict, handlers, {
+						outputPaths: softwareUpdateOutputPaths(),
+						inspect: async () => ({ kind: "absent" }),
+						prepareOutput: async () => {
+							if (failing !== "launcher-setup") return;
+							downloading.resolve();
+							await downloadGate.promise;
+						},
+						start: async () => {
+							launchCount++;
+							throw new Error("systemd-run: unit refused");
+						},
+						cleanup: async () => {},
+						readOutput: async (_file, offset) => ({
+							bytes: new Uint8Array(),
+							nextOffset: offset,
+						}),
+						sleep: async () => {},
+					});
+				// The launcher submits its unit through the handlers (the launch
+				// fence on these images); only then is the unit launched.
+				await (handlers.submit ?? ((launch) => launch()))(async () => {
+					launchCount++;
+					if (failing === "start-rejected")
+						throw new Error("systemd-run: unit refused");
+				});
 				handlers.onLaunched?.();
+				// The unit keeps running until the test ends.
+				if (failing === "launched-running") return unitRunning.promise;
 				handlers.onStderr(
 					"E: Sub-process /usr/bin/dpkg returned an error code (1)\n",
 				);
-				return Promise.resolve(100);
+				return 100;
 			},
 		),
 	);
@@ -472,7 +505,7 @@ describe("each way an install ends before its unit launches", () => {
 	it("the install's own check is refused (repository unreachable)", async () => {
 		await box("install-refresh");
 		const { counts } = orchestrator();
-		// Terminal frames: cleared progress and the failure in one frame.
+		// Every frame that says `failed`: one, with the cleared progress in it.
 		const terminal: unknown[] = [];
 		let watching = false;
 		spies.push(
@@ -484,11 +517,10 @@ describe("each way an install ends before its unit launches", () => {
 				if (
 					watching &&
 					type === "status" &&
-					"updating" in frame &&
 					frame.update_state?.kind === "failed"
 				)
 					terminal.push({
-						updating: frame.updating,
+						updating: "updating" in frame ? frame.updating : "not in the frame",
 						reason: frame.update_state.reason,
 					});
 			}),
@@ -728,6 +760,144 @@ describe("each way an install ends before its unit launches", () => {
 		await expectRefused(counts, { reason: "discovery_failed" }, quarantine);
 	});
 
+	it("the pinned recheck would remove a package", async () => {
+		await box("pinned-removals");
+		const { counts } = orchestrator();
+		await attempt();
+		await expectRefused(counts, { reason: "removals_required" });
+	});
+
+	it("stream admission while the launcher sets up its unit", async () => {
+		await using _marker = await armedMarkerFixture();
+		const fixture = await box("launcher-setup");
+		const { counts, quarantine } = orchestrator();
+		await attempt(async () => {
+			// The launcher looked for a unit and is preparing its output files.
+			await fixture.downloading.promise;
+			// Admitted, and never seen live: only the launch fence stops it.
+			expect(await admitAndPrepareStreamStart()).toEqual({ allowed: true });
+			expect(getOrchestratorState()).toMatchObject({
+				phase: "failed",
+				failureReason: PACKAGE_INSTALL_REFUSED,
+			});
+			// No unit was submitted, so none is stopped.
+			expect(stops.count).toBe(0);
+			fixture.downloadGate.resolve();
+		}, false);
+		await Bun.sleep(50);
+		// The launcher went on and submitted nothing.
+		expect(launches()).toBe(0);
+		await expectRefused(counts, { reason: "streaming" }, quarantine);
+	});
+
+	it("the standalone start: a stream admitted and over during its preflight", async () => {
+		const fixture = await box("preflight-admission");
+		const { counts, quarantine } = orchestrator();
+		expect(await checkUpdatesNow()).toEqual({ started: true });
+		// The start RPC: the orchestrator does not start this install.
+		expect(startSoftwareUpdate()).toEqual({ started: true });
+		await fixture.downloading.promise;
+		expect(getOrchestratorState().phase).toBe("available");
+		expect(await admitAndPrepareStreamStart()).toEqual({ allowed: true });
+		expect(getUpdateState()).toMatchObject({
+			kind: "failed",
+			reason: "streaming",
+		});
+		fixture.downloadGate.resolve();
+		await Bun.sleep(50);
+		// Its preparation resumed and launched nothing.
+		expect(launches()).toBe(0);
+		expect(getUpdateState()).toMatchObject({
+			kind: "failed",
+			reason: "streaming",
+		});
+		// The orchestrator keeps its offer and recorded no pending packages.
+		expect(getOrchestratorState().phase).toBe("available");
+		expect(await quarantine.readPending()).toEqual([]);
+		const os = counts.osChecks;
+		expect(await checkUpdatesNow()).toEqual({ started: true });
+		expect(getUpdateState().kind).toBe("available");
+		expect(counts.osChecks).toBe(os + 1);
+	});
+
+	it("stream admission after systemd refused the unit, before the orchestrator looked", async () => {
+		await using _marker = await armedMarkerFixture();
+		await box("unit-refused");
+		const { counts, quarantine } = orchestrator();
+		const failed: unknown[] = [];
+		spies.push(
+			spyOn(events, "emitEvent").mockImplementation((code, params) => {
+				if (code === "update_failed") failed.push(params);
+			}),
+		);
+		expect(await checkUpdatesNow()).toEqual({ started: true });
+		expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+			started: true,
+		});
+		await settle(() => getUpdateState().kind === "failed");
+		const wire = getUpdateState();
+		expect(wire).toMatchObject({
+			kind: "failed",
+			reason: "systemd-run: unit refused",
+		});
+		expect(launches()).toBe(1);
+		// The orchestrator has not polled yet when a stream is admitted.
+		expect(getOrchestratorState().phase).toBe("downloading");
+		expect(await admitAndPrepareStreamStart()).toEqual({ allowed: true });
+		// Settled as the refusal it is: no unit to stop, never the offer.
+		expect(stops.count).toBe(0);
+		expect(getOrchestratorState()).toMatchObject({
+			phase: "failed",
+			failureReason: PACKAGE_INSTALL_REFUSED,
+		});
+		// The failure keeps the id the wire gave it.
+		const id = wire.kind === "failed" ? wire.failure_id : undefined;
+		expect(id).toBeString();
+		expect(failed).toEqual([
+			{ stage: "download", reason: PACKAGE_INSTALL_REFUSED, id },
+		]);
+		await expectRefused(
+			counts,
+			{ reason: "systemd-run: unit refused" },
+			quarantine,
+		);
+	});
+
+	it("stream admission after the download under the pin failed keeps the failure's id", async () => {
+		await box("download");
+		const { counts } = orchestrator();
+		const failed: unknown[] = [];
+		spies.push(
+			spyOn(events, "emitEvent").mockImplementation((code, params) => {
+				if (code === "update_failed") failed.push(params);
+			}),
+		);
+		const previous = process.env.CERALIVE_DEVICE_TYPE;
+		const restore = () => {
+			if (previous === undefined) delete process.env.CERALIVE_DEVICE_TYPE;
+			else process.env.CERALIVE_DEVICE_TYPE = previous;
+		};
+		try {
+			await attempt(async () => {
+				process.env.CERALIVE_DEVICE_TYPE = "real";
+				await settle(() => getUpdateState().kind === "failed");
+				restore();
+			}, false);
+		} finally {
+			restore();
+		}
+		const wire = getUpdateState();
+		const id = wire.kind === "failed" ? wire.failure_id : undefined;
+		expect(id).toBeString();
+		// The orchestrator has not polled yet when a stream is admitted.
+		expect(getOrchestratorState().phase).toBe("downloading");
+		expect(await admitAndPrepareStreamStart()).toEqual({ allowed: true });
+		expect(failed).toEqual([
+			{ stage: "download", reason: PACKAGE_INSTALL_REFUSED, id },
+		]);
+		await expectRefused(counts, {});
+	});
+
 	it("systemd refuses the unit outright", async () => {
 		await using _marker = await armedMarkerFixture();
 		await box("start-rejected");
@@ -795,6 +965,34 @@ describe("each way an install ends before its unit launches", () => {
 		expect(await checkUpdatesNow()).toEqual({ started: true });
 		expect(getUpdateState().kind).toBe("available");
 		expect(counts.osChecks).toBe(os + 1);
+	});
+});
+
+describe("a start the install's own check cannot begin", () => {
+	it("leaves the plan queued and answers not_available", async () => {
+		await using _marker = await armedMarkerFixture();
+		const { flag } = await box("launched");
+		const { quarantine } = orchestrator();
+		expect(await checkUpdatesNow()).toEqual({ started: true });
+		// The clock gate shuts: the check an install starts with cannot run.
+		setImageClockGateFlagForTest(`${flag}.gone`);
+		expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+			started: false,
+			reason: "not_available",
+		});
+		// Nothing started: the wire is as it was and no attempt exists.
+		expect(getOrchestratorState().phase).toBe("awaiting-idle");
+		expect(getUpdateState().kind).toBe("available");
+		expect(packageFailedBeforeLaunch()).toBe(false);
+		expect(await quarantine.readPending()).toEqual([]);
+		expect(launches()).toBe(0);
+		// The request stands: once the check can run, the next tick starts it.
+		setImageClockGateFlagForTest(flag);
+		await runOrchestratorTick();
+		expect(getOrchestratorState().phase).toBe("downloading");
+		expect(await quarantine.readPending()).toEqual([
+			{ name: "modemmanager", version: FIX },
+		]);
 	});
 });
 

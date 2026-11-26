@@ -441,10 +441,35 @@ the wire's failure so the offer comes back. Nothing is restored in place. The
 pending package list stays until that check clears it; quarantine records only
 a failed commit, and nothing here reached dpkg.
 
+**The launch fence** (`install-launch-fence.ts`) is the one place that decides
+between "submitted" and "ended". An accepted start is an attempt, `pending`
+until one serialized section either submits its unit or ends it:
+
+- The launcher submits there and nowhere else. Looking for an existing unit
+  and preparing the output files come before the section; `systemd-run`, and
+  what an uncertain result is taken for, run inside it. Right before
+  `systemd-run` the section reads once more whether updates are still on and
+  no stream is up, and ends the attempt instead if not.
+- Stream admission enters the same section, whichever way the install was
+  started (the orchestrator's Install now or the start RPC). A pending attempt
+  ends there as a refusal with `streaming`, its pinned transfer is aborted and
+  a delayed start is cancelled; the launcher then finds the attempt ended and
+  submits nothing. No unit exists, so none is stopped. An attempt whose
+  submission is in flight is waited for; once submitted, the stream takes the
+  post-launch path. An attempt that already ended (a refused unit, a failed
+  download) is settled as that refusal, with the failure id the wire gave it.
+- An ended attempt writes and publishes nothing more: its preparation checks
+  the attempt after every wait, and so does its install-time discovery. Its
+  terminal frame is the only `failed` frame; a state-only frame that would
+  repeat it is not sent.
+- Updates turned off are read after every wait of the preparation and once
+  more inside the section (`discovery_failed`).
+
 | Path (where it ends) | Wire | Orchestrator | Test (`image-apt-source-paths.test.ts` unless named) |
 |---|---|---|---|
-| Start refused synchronously (disruptive action, success fence, updates off, stream, busy, recovery unsettled, check not started) | unchanged | stays where it was; manual install answers busy or stream | existing start-refusal tests |
-| Install's own check: refresh, reachability, captive portal, `dpkg_interrupted` | `failed`, the check's own reason (`repos_unreachable`, `captive_portal`, …), one terminal frame | `failed` / `package_install_refused` | install's own check refused |
+| Start refused synchronously (disruptive action, success fence, updates off, stream, busy, recovery unsettled) | unchanged | stays where it was; manual install answers busy or stream | existing start-refusal tests |
+| The install's own check cannot start (clock gate shut, a refusal of the check itself): `check_unavailable` | unchanged, no attempt | stays `awaiting-idle`; Install now answers `not_available`, and the request starts on a later tick once the check can run | a start the install's own check cannot begin |
+| Install's own check: refresh, reachability, captive portal, `dpkg_interrupted` | `failed`, the check's own reason (`repos_unreachable`, `captive_portal`, …), one terminal frame | `failed` / `package_install_refused` | install's own check refused (counts every `failed` frame) |
 | Record or capabilities refused at install | `failed`, `discovery_failed` | `failed` / `package_install_refused` | record stops validating |
 | Clock gate or dpkg journal at preparation | `failed`, `check_unavailable` or `dpkg_interrupted` | `failed` / `package_install_refused` | clock gate closes |
 | Install-time discovery simulation fails (also when update routing refuses it) | `failed`, `discovery_failed` (the offer is not shown first) | `failed` / `package_install_refused` | discovery simulation fails |
@@ -453,21 +478,42 @@ a failed commit, and nothing here reached dpkg.
 | Install network unreachable, captive, probe or certificate refused | `failed`, its reason | `failed` / `package_install_refused` | install's network unreachable |
 | Nothing installable any more | `failed`, its reason | `failed` / `package_install_refused` | nothing is installable |
 | Pinned recheck fails, or a standing refusal | `failed`, `discovery_failed` | `failed` / `package_install_refused` | pinned recheck refuses |
+| Pinned recheck would remove a package | `failed`, `removals_required` | `failed` / `package_install_refused` | the pinned recheck would remove a package |
 | Space preflight: archive cleanup, `apt-config`, probe, `stat`, `statfs`, space | `update_preflight_failed` | `failed` / `package_install_refused` | space preflight refuses |
-| Download under the pin fails | `failed`, apt's error (by host) | `failed` / `package_install_refused` | download under the pin fails |
+| Download under the pin fails | `failed`, apt's error (by host), with its failure id | `failed` / `package_install_refused` | download under the pin fails |
 | Stream before launch, seen by preparation | `failed`, `streaming` | `failed` / `package_install_refused` | stream starts before launch |
 | Stream admission during the pre-launch (pinned) download | `failed`, `streaming` | `failed` / `package_install_refused` at once, never `available` | stream admission during the pre-launch download |
 | The pinned transfer aborts on a live stream nobody admitted (liveness only) | `failed`, `streaming` | `failed` / `package_install_refused` (Check now is not left busy) | the pinned download aborts on a live stream nobody admitted |
 | Stream admitted, and over, while preparation waits (space preflight) | `failed`, `streaming`; the unit never launches | `failed` / `package_install_refused` | a stream admitted and over while preparation waits |
+| Stream admission while the launcher sets up its unit (looking for a unit, preparing the output files) | `failed`, `streaming`; nothing is submitted and nothing stopped | `failed` / `package_install_refused` at once | stream admission while the launcher sets up its unit |
+| The start RPC (not the orchestrator's install), a stream admitted and over during its preparation | `failed`, `streaming`; nothing is submitted | unchanged: it did not start this install and keeps its offer; Check now clears the failure | the standalone start: a stream admitted and over during its preflight |
 | Stream admission after the wire already showed the refusal | `failed`, its reason | `failed` / `package_install_refused`, never `available` | stream admission after the wire already settled |
+| Stream admission after systemd refused the unit, before the orchestrator looked | `failed`, the error | `failed` / `package_install_refused`, never `available`; the failure keeps the wire's id | stream admission after systemd refused the unit, before the orchestrator looked |
+| Stream admission after the download under the pin failed, before the orchestrator looked | `failed`, apt's error | `failed` / `package_install_refused`; the failure keeps the wire's id | stream admission after the download under the pin failed keeps the failure's id |
 | Stream admission while the start waits behind a running check | `failed`, `streaming`; the delayed start is cancelled and never runs | `failed` / `package_install_refused` | stream admission cancels the delayed start |
 | systemd refuses the unit outright (unit exists, spool, command or source pair, or `systemd-run` fails and no unit is found) | `failed`, the error | `failed` / `package_install_refused` | systemd refuses the unit outright |
 | Uncertain `systemd-run` (unit found, or its state unreadable) | the unit's progress | follows the unit | `image-apt-source-transactions.test.ts`: an uncertain submission is a launch |
-| Updates turned off once the install started | `failed`, `discovery_failed` | `failed` / `package_install_refused` | updates are turned off once the install started |
+| Updates turned off once the install started, wherever it is seen (its check, any wait of the preparation, the fence) | `failed`, `discovery_failed` | `failed` / `package_install_refused` | updates are turned off once the install started |
 | A throw inside preparation | `failed`, `not_started` (the check logs the rejection) | `failed` / `package_install_refused` | preparation throws |
-| Delayed start (behind a running check) cannot start | `failed`, its reason | `failed` / `package_install_refused` | a start delayed behind a running check |
+| Delayed start (behind a running check) cannot start | `failed`, its reason (`streaming` or `discovery_failed` when that is what stops it) | `failed` / `package_install_refused` | a start delayed behind a running check |
+| Stream admission while `systemd-run` is in flight | the unit's progress: the admission waits for the result | the post-launch path below | `image-apt-source-interleavings.test.ts`, the last wait |
 | Stream admission after the unit launched | the unit is stopped, as today | `DOWNLOAD_ABORTED_FOR_STREAM` → `available` | once the unit launched, a stream takes today's path |
 | Launched | the unit's result | follows the wire (`DOWNLOAD_FAILED`, `COMMIT_*`) | once the unit launched |
+
+The table lists paths; `image-apt-source-interleavings.test.ts` tests the
+class. It records every wait the real install passes between "start
+accepted" and "`systemd-run` returned" (each fake parks on a sequencer; a
+wait on anything else fails the recording) for four installs: through the
+orchestrator, on an image that routes apt (the download under the pin), the
+start RPC, and a start delayed behind a running check. At each recorded wait
+it lets one of three things happen (a stream is admitted and never seen
+live, updates are turned off, a second start arrives) and allows one
+outcome: before `systemd-run` is called the install ends as above with
+exactly one `failed` frame, nothing submitted and the pending list kept
+until the next check; with `systemd-run` in flight the unit counts as
+launched; a second start is refused, or is the same attempt while the
+delayed start still waits, and never a second unit. A new wait in the
+install is a new step there, or a failed recording.
 
 Leaving `package_install_refused`: "the scheduled tick runs the package check
 at once", "on cellular only, the scheduled check waits and Check now still runs
@@ -477,12 +523,17 @@ runs Check now afterwards and sees the offer again and an image check run;
 the stream rows also retry the install and see its pending package versions
 recorded. The legacy periodic loop does not run on these images, so no
 background discovery brings an offer back behind the orchestrator ("the legacy
-periodic loop does not run on such a box").
+periodic loop does not run on such a box"). A check that was already running
+when an install was refused may still finish and show the offer again; the
+orchestrator follows at its next check. The scheduled tick decides on the
+phase it finds after its own waits, with only `package_install_refused`
+counted as `idle`, so it never starts a check over an install that began
+meanwhile.
 
-Images without the record keep their behaviour throughout: a stream during
-the download returns the plan to the offer (`DOWNLOAD_ABORTED_FOR_STREAM`),
-install failures keep their own reasons and the shared `failed`, and the
-legacy loop runs as before.
+Images without the record keep their behaviour throughout: the fence is not
+consulted, a stream during the download returns the plan to the offer
+(`DOWNLOAD_ABORTED_FOR_STREAM`), install failures keep their own reasons and
+the shared `failed`, and the legacy loop runs as before.
 
 `dpkg_interrupted` reaches the wire as an install failure's reason. A package
 check that finds dpkg's journal reports `discovery_failed`: the check-failure

@@ -1451,6 +1451,16 @@ strictly. With a valid record:
   not run on these images, and the unpinned reachability probe reads an HTTP
   error from the image host as unreachable. The path table is in
   [the update-system contract](agents/the-device-update-system.md#image-apt-source-every-way-an-install-ends-before-launch).
+- "Launched" is decided in one place, the launch fence
+  (`install-launch-fence.ts`). The launcher submits the unit inside one
+  serialized section; a stream start and the "updates still on" recheck pass
+  through the same section, for an install started through the orchestrator
+  or through the start RPC alike. Whoever enters first decides: a stream
+  before `systemd-run` was called ends the install as a refusal and nothing
+  is submitted afterwards, a stream that arrives while `systemd-run` is in
+  flight waits for its result and then meets a launched unit, and updates
+  turned off before the submission end the install too. Nothing sees an
+  install between "can still be cancelled" and "submitted".
 
 A record that is present but does not validate refuses package checks and
 installs (`discovery_failed`), and never falls back to the first-party
