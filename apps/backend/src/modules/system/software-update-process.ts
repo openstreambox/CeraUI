@@ -70,6 +70,21 @@ export class DetachedAptServiceAlreadyExistsError extends Error {
 	}
 }
 
+/**
+ * The last transaction's unit has stopped, but another loaded unit names it
+ * (an image's shutdown drain with After=ceralive-software-update.service), so
+ * systemd keeps it loaded and refuses a new unit by its name until the next
+ * boot.
+ */
+export class DetachedAptServicePinnedError extends Error {
+	constructor() {
+		super(
+			"the previous software update's stopped unit is still loaded; restart the device before installing again",
+		);
+		this.name = "DetachedAptServicePinnedError";
+	}
+}
+
 export class DetachedAptServiceCleanupError extends Error {
 	constructor(
 		readonly transactionExitCode: number,
@@ -252,6 +267,7 @@ export async function runDetachedAptUpgrade(
 	if (existing.kind !== "absent") {
 		throw new DetachedAptServiceAlreadyExistsError();
 	}
+	if (existing.loaded) throw new DetachedAptServicePinnedError();
 	await deps.prepareOutput();
 	await deps.start(buildDetachedAptUpgradeCommand(aptArgs, deps.outputPaths));
 	return observeDetachedAptUpgrade({ kind: "running" }, handlers, deps);
@@ -266,6 +282,7 @@ export async function runDetachedAptAll(
 	const existing = await deps.inspect();
 	if (existing.kind !== "absent")
 		throw new DetachedAptServiceAlreadyExistsError();
+	if (existing.loaded) throw new DetachedAptServicePinnedError();
 	await deps.prepareOutput();
 	await deps.start(
 		buildDetachedAptAllCommand(installArgs, verdict, deps.outputPaths),

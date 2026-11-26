@@ -20,7 +20,17 @@ import {
 } from "./update-orchestrator/os-stage-systemd.ts";
 
 export type DetachedAptServiceState =
-	| { readonly kind: "absent" }
+	| {
+			readonly kind: "absent";
+			/**
+			 * Stopped, but systemd still has it loaded: another loaded unit names
+			 * it (an image's shutdown drain with
+			 * After=ceralive-software-update.service). Nothing runs or waits in
+			 * it, so there is nothing to observe, but systemd refuses a new unit by
+			 * this name until it unloads, which on such an image is the next boot.
+			 */
+			readonly loaded?: true;
+	  }
 	| { readonly kind: "running" }
 	| {
 			readonly kind: "finished";
@@ -101,6 +111,17 @@ export function parseDetachedAptServiceState(
 	) {
 		return { kind: "running" };
 	}
+	// A stopped unit that a reference keeps loaded. Without the reference
+	// systemd would have unloaded it, and that absence is what recovery reads.
+	// It needs a Job row that names no job: a queued job may still start it,
+	// and a probe that never asked can't tell, so both stay unrecognized.
+	const job = properties.get("Job");
+	if (
+		activeState === "inactive" &&
+		subState === "dead" &&
+		(job === "" || job === "0")
+	)
+		return { kind: "absent", loaded: true };
 	throw new DetachedAptServiceStateError(activeState, subState);
 }
 
@@ -109,8 +130,9 @@ export function parseDetachedAptServiceProbe(
 	command: readonly string[],
 ): DetachedAptServiceState {
 	const state = parseDetachedAptServiceState(result.stdout);
+	const unloaded = state.kind === "absent" && !state.loaded;
 	if (result.exitCode !== 0) {
-		if (state.kind === "absent") {
+		if (unloaded) {
 			return state;
 		}
 		throw new DetachedAptServiceCommandError(
@@ -119,9 +141,10 @@ export function parseDetachedAptServiceProbe(
 			result.stderr,
 		);
 	}
-	if (state.kind === "absent") {
+	if (unloaded) {
 		return state;
 	}
+	// A loaded unit by this name is identity-checked whatever its state.
 	validateDetachedAptServiceIdentity(result.stdout);
 	return state;
 }

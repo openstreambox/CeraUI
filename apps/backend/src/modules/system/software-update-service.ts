@@ -41,6 +41,8 @@ import {
 } from "./update-orchestrator/stored-state-file.ts";
 
 const SYSTEMD_COMMAND_TIMEOUT_MS = 10_000;
+/** The image's shutdown drain; its stop waits for writers ordered before it. */
+const WRITE_DRAIN_UNIT = "ceralive-write-drain.service";
 
 export type {
 	SoftwareUpdateOutputPaths,
@@ -117,6 +119,10 @@ export function buildDetachedAptUpgradeCommand(
 		"--setenv=LC_ALL=C",
 		`--property=StandardOutput=append:${outputPaths.stdout}`,
 		`--property=StandardError=append:${outputPaths.stderr}`,
+		// A shutdown waits for a running transaction: the image's write drain
+		// stops first. Ordering from this side never keeps the stopped unit
+		// loaded; the drain naming this unit in After= would.
+		`--property=Before=${WRITE_DRAIN_UNIT}`,
 		"--",
 		"/usr/bin/apt-get",
 		...aptArgs,
@@ -154,6 +160,10 @@ export function buildDetachedAptAllCommand(
 		"--setenv=LC_ALL=C",
 		`--property=StandardOutput=append:${outputPaths.stdout}`,
 		`--property=StandardError=append:${outputPaths.stderr}`,
+		// A shutdown waits for a running transaction: the image's write drain
+		// stops first. Ordering from this side never keeps the stopped unit
+		// loaded; the drain naming this unit in After= would.
+		`--property=Before=${WRITE_DRAIN_UNIT}`,
 		"--",
 		"/usr/bin/flock",
 		"-x",
@@ -183,14 +193,14 @@ async function inspectService(): Promise<DetachedAptServiceState> {
 		"systemctl",
 		"show",
 		SOFTWARE_UPDATE_UNIT,
-		"--property=Id,FragmentPath,Description,LoadState,ActiveState,SubState,Transient,Type,RemainAfterExit,User,ExecMainCode,ExecMainStatus,ExecStart,ExecStartPre,ExecStartPost,StandardOutput,StandardError",
+		"--property=Id,FragmentPath,Description,LoadState,ActiveState,SubState,Job,Transient,Type,RemainAfterExit,User,ExecMainCode,ExecMainStatus,ExecStart,ExecStartPre,ExecStartPost,StandardOutput,StandardError",
 		"--no-pager",
 	];
 	const result = await spawnWithTimeout(command, {
 		timeoutMs: SYSTEMD_COMMAND_TIMEOUT_MS,
 	});
 	const state = parseDetachedAptServiceProbe(result, command);
-	if (state.kind !== "absent") {
+	if (state.kind !== "absent" || state.loaded) {
 		const fragment = await readStoredStateFile(
 			SOFTWARE_UPDATE_FRAGMENT_PATH,
 			STORED_STATE_LIMITS.intent,
