@@ -1305,16 +1305,21 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 
 // ─── package check cycle ───────────────────────────────────────────────────
 
-async function runPackageCheckCycle(): Promise<void> {
+/**
+ * `waitsOutStream`: the scheduled check on an image with its own apt source.
+ * Resolves true when it did not run because a stream is live: nothing was
+ * dispatched, and the caller treats the check as deferred.
+ */
+async function runPackageCheckCycle(waitsOutStream = false): Promise<boolean> {
 	// Whether a package check may start at all, on what is there right now.
 	const admitted = () =>
 		!osSettlementPersistence.pending &&
 		aptUpdatesEnabled() &&
 		// Not checked yet, not a failure: the image's own source needs a usable clock.
 		!imageSourceClockWaits();
-	if (!admitted()) return;
+	if (!admitted()) return false;
+	const before = packageCheckGeneration;
 	if (refusedInstallPending()) {
-		const before = packageCheckGeneration;
 		await deps.quarantine.clearPending();
 		// That was a wait. Updates turned off, another check or anything else
 		// that moved the phase during it means this check does not start: no
@@ -1324,14 +1329,30 @@ async function runPackageCheckCycle(): Promise<void> {
 			!refusedInstallPending() ||
 			before !== packageCheckGeneration
 		)
-			return;
+			return false;
+	}
+	// Waiting out a stream: everything that waits comes first (the cleanup
+	// above, the capability read), so the look at the stream is the last
+	// thing before the dispatch and apt's own admission. A stream that
+	// started during either wait defers the check like one that was live
+	// from the start.
+	const phase = state.phase;
+	const regime = waitsOutStream ? await readCapabilityRegime() : undefined;
+	if (waitsOutStream) {
+		if (
+			!admitted() ||
+			state.phase !== phase ||
+			before !== packageCheckGeneration
+		)
+			return false;
+		if (deps.isStreamLive()) return true;
 	}
 	const generation = ++packageCheckGeneration;
 	packageCheckDeferral = null;
 	const now = deps.now();
 	dispatch({ type: "PACKAGE_CHECK_STARTED", now });
 	const error =
-		(await readCapabilityRegime()) !== null
+		(waitsOutStream ? regime : await readCapabilityRegime()) !== null
 			? await deps.runPackageCheck()
 			: "discovery_failed";
 	const outcomeNow = deps.now();
@@ -1389,7 +1410,7 @@ async function runPackageCheckCycle(): Promise<void> {
 				// Even a newer check whose announcement was deduped supersedes this proof.
 				() => generation === packageCheckGeneration,
 			);
-		return;
+		return false;
 	}
 	const rateLimited =
 		error === "captive_portal" ? false : isRateLimitedError(error);
@@ -1419,6 +1440,7 @@ async function runPackageCheckCycle(): Promise<void> {
 		id: `packages:${String(error)}`,
 		reason: String(error),
 	});
+	return false;
 }
 
 // Best-effort mirror-status detection affects cadence, not the update verdict.
@@ -3202,8 +3224,10 @@ async function runPackageCheckAfterCellularGate(
 	// on. No dispatch, no event, no backoff; the image check that is due runs
 	// on this tick.
 	if (imageAptSourceInUse() && deps.isStreamLive()) return "deferred";
-	await runPackageCheckCycle();
-	return "ran";
+	// The same look is taken once more inside, after the check's own waits.
+	return (await runPackageCheckCycle(imageAptSourceInUse()))
+		? "deferred"
+		: "ran";
 }
 
 // The image check's clock, brought forward to an automatic restage's retry.

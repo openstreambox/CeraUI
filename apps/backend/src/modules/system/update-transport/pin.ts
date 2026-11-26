@@ -1,4 +1,7 @@
-import type { EffectOwner } from "../../../helpers/effect-owner.ts";
+import {
+	type EffectOwner,
+	OwnerEndedError,
+} from "../../../helpers/effect-owner.ts";
 import { RunAbortError, RunTimeoutError, run } from "../../../helpers/run.ts";
 import type {
 	AptRoutingLease,
@@ -187,6 +190,10 @@ export function createUpdatePinController(overrides: Partial<PinDeps> = {}) {
 					if (!transfer) throw error;
 					// runPinnedStep has already cleaned up; an AggregateError is never classified.
 					control.checkCancelled?.();
+					// The cooldown is shared with every later transfer: a failure
+					// of an owner that has ended does not put the uplink on it.
+					if (control.owner?.ended())
+						throw new OwnerEndedError("the uplink's cooldown");
 					unhealthy.set(
 						key(candidate.candidate.ifname, candidate.family),
 						deps.now() + UPDATE_TRANSPORT_HOLD_MS,

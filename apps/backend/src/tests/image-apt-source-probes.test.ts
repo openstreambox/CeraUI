@@ -7,8 +7,15 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { readFileSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import {
 	buildProbeArgv,
 	classifyProbe,
@@ -19,6 +26,7 @@ import { parseAptSourceOrigins } from "../modules/system/apt-source-origins.ts";
 import {
 	curlUrlConfig,
 	runCurlWithPrivateUrl,
+	setPrivateCurlDirectoryForTest,
 } from "../modules/system/curl-private-url.ts";
 import {
 	IMAGE_APT_SOURCE_POLICY,
@@ -51,9 +59,19 @@ function imageSource(host: string) {
 	};
 }
 
+const scratch: string[] = [];
+const scratchDirectory = (): string => {
+	const made = mkdtempSync(join(tmpdir(), "image-apt-probes-"));
+	scratch.push(made);
+	return made;
+};
+
 afterEach(() => {
 	setImageAptSourceReaderForTest(null);
 	resetAptReachabilityCacheForTest();
+	setPrivateCurlDirectoryForTest(null);
+	for (const made of scratch.splice(0))
+		rmSync(made, { recursive: true, force: true });
 });
 
 // The unbound probe, with every curl recorded as the runner received it.
@@ -152,6 +170,9 @@ describe("the image source's URL never reaches curl's command line", () => {
 
 	it("curl reads it from a file only this user can read, gone afterwards", async () => {
 		const url = `https://updates.example.org/${TOKEN}/apt/dists/${SUITE}/InRelease`;
+		// The service's own directory, here a scratch one.
+		const directory = join(scratchDirectory(), "curl-private");
+		setPrivateCurlDirectoryForTest(directory);
 		let file = "";
 		const result = await runCurlWithPrivateUrl(
 			["curl", "-q", "-sS"],
@@ -162,15 +183,19 @@ describe("the image source's URL never reaches curl's command line", () => {
 				file = argv[4] as string;
 				expect(readFileSync(file, "utf8")).toBe(`url = "${url}"\n`);
 				expect(statSync(file).mode & 0o777).toBe(0o600);
-				expect(statSync(dirname(file)).mode & 0o777).toBe(0o700);
+				expect(dirname(file)).toBe(directory);
+				expect(statSync(directory).mode & 0o777).toBe(0o700);
 				return "ran";
 			},
 		);
 		expect(result).toBe("ran");
-		expect(() => statSync(dirname(file))).toThrow();
+		// That file is removed, by its own path; nothing else is in there.
+		expect(() => statSync(file)).toThrow();
+		expect(readdirSync(directory)).toEqual([]);
 	});
 
 	it("the file goes even when curl could not run", async () => {
+		setPrivateCurlDirectoryForTest(join(scratchDirectory(), "curl-private"));
 		let file = "";
 		await expect(
 			runCurlWithPrivateUrl(["curl"], "https://example.org/", async (argv) => {
@@ -178,7 +203,7 @@ describe("the image source's URL never reaches curl's command line", () => {
 				throw new Error("curl: not found");
 			}),
 		).rejects.toThrow("curl: not found");
-		expect(() => statSync(dirname(file))).toThrow();
+		expect(() => statSync(file)).toThrow();
 	});
 
 	it("quotes what a config line could otherwise end", () => {

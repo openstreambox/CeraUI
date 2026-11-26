@@ -47,7 +47,6 @@ import {
 	restoreUpdatesSetting,
 	SPOOL,
 	SUBMIT,
-	SWEEP,
 	TIMEOUT_MS,
 	useInstallHarness,
 	VARIANTS,
@@ -194,8 +193,6 @@ describe("the launch fence: every wait before the unit is submitted", () => {
 				expect(steps).toContain("apt-get -d (download under the pin)");
 			// Only the start behind a running check waits on the timer.
 			expect(steps.includes(DELAY)).toBe(variant === "delayed");
-			// Every install starts by sweeping private curl configs.
-			expect(steps).toContain(SWEEP);
 		},
 		TIMEOUT_MS,
 	);

@@ -63,10 +63,7 @@ import {
 import { defaultAptSpaceDeps } from "../../modules/system/apt-space-admission.ts";
 import { setAptTransportDepsForTest } from "../../modules/system/apt-transport.ts";
 import * as board from "../../modules/system/board-capabilities.ts";
-import {
-	PRIVATE_FILE_LEFT_BEHIND,
-	resetPrivateCurlFilesForTest,
-} from "../../modules/system/curl-private-url.ts";
+import { PRIVATE_FILE_LEFT_BEHIND } from "../../modules/system/curl-private-url.ts";
 import {
 	IMAGE_APT_SOURCE_POLICY,
 	setDpkgUpdatesDirForTest,
@@ -180,8 +177,11 @@ export const REINSPECT = "unit: systemctl show";
 /** A unit that was found is then checked against its fragment. */
 export const FRAGMENT = "unit: read its fragment";
 export const DELAY = "delayed start: timer";
-/** An install's first step: private curl configs left on disk are removed. */
-export const SWEEP = "file: private-file:remove (list the directory)";
+/** A probe's private curl config is removed by its exact path. */
+export const CONFIG_REMOVAL = "file: private-file:remove (remove the file)";
+/** A probe's first step: the service's private directory is there. */
+export const CONFIG_DIRECTORY =
+	"file: private-file:create (make the directory)";
 /** Recorded when an install asked for the host's gateway election. */
 export const ELECTION_REQUESTED = "asked for the host's gateway election";
 /** The first step of the unit's output files. */
@@ -491,7 +491,6 @@ export async function teardownInstall(): Promise<void> {
 	resetAptReachabilityCacheForTest();
 	resetSoftwareUpdateCheckRunner();
 	resetSoftwareUpdateState();
-	resetPrivateCurlFilesForTest();
 	setSpawnOverrideForTest(null);
 	setOwnedFileBackendForTest(null);
 	setOwnedWriteObserverForTest(null);
@@ -583,8 +582,10 @@ export async function acceptedInstall(variant: Variant) {
 		by: "flow" | "beside" | "outside";
 		args: unknown[];
 	}[] = [];
-	/** The private directories that exist: made and not removed. */
-	const privateDirectories = new Set<string>();
+	/** The private files that exist: written and not removed. */
+	const privateFiles = new Set<string>();
+	/** The routing journal of a pinned run, as its store holds it. */
+	const journal = { entries: [] as readonly AptRoutingEntry[] };
 
 	// Every command of both spawn primitives.
 	setSpawnOverrideForTest(async (argv) => {
@@ -624,14 +625,17 @@ export async function acceptedInstall(variant: Variant) {
 				isSymbolicLink: () => false,
 				uid: 0,
 				mode: 0o700,
-				mtimeMs: 0,
 			};
 		},
 		setMode: () => fileWrite("set its mode"),
-		removeFile: () => fileWrite("remove the file"),
+		removeFile: async (file) => {
+			await fileWrite("remove the file");
+			privateFiles.delete(file);
+		},
 		removeTree: async (directory) => {
 			await fileWrite("remove the directory");
-			privateDirectories.delete(directory);
+			for (const file of privateFiles)
+				if (path.dirname(file) === directory) privateFiles.delete(file);
 		},
 		createExclusive: async () => {
 			await fileWrite("create the file");
@@ -649,18 +653,12 @@ export async function acceptedInstall(variant: Variant) {
 		},
 		makeTempDirectory: async (prefix) => {
 			await fileWrite("make a private directory");
-			const directory = `${prefix}${++temporary}`;
-			privateDirectories.add(directory);
-			return directory;
+			return `${prefix}${++temporary}`;
 		},
-		listDirectory: async (directory) => {
-			if ((await fileStep("list the directory")) === "fail")
-				throw new Error("the directory could not be listed");
-			return [...privateDirectories]
-				.filter((made) => path.dirname(made) === directory)
-				.map((made) => path.basename(made));
+		writeNew: async (file) => {
+			await fileWrite("write the file");
+			privateFiles.add(file);
 		},
-		writeNew: () => fileWrite("write the file"),
 	};
 	setOwnedFileBackendForTest(files);
 	setOwnedWriteObserverForTest((next) => {
@@ -794,11 +792,10 @@ export async function acceptedInstall(variant: Variant) {
 	if (pinned) {
 		// The real selection, pin and routing lease. Underneath: the routing
 		// journal's store, the pin's capability file and which uplinks exist.
-		let entries: readonly AptRoutingEntry[] = [];
 		const ownership = createAptRoutingOwnership({
-			read: () => wait("routing journal: read", () => entries),
+			read: () => wait("routing journal: read", () => journal.entries),
 			save: (next) => {
-				entries = next;
+				journal.entries = next;
 			},
 		});
 		const pin = createUpdatePinController({
@@ -985,7 +982,8 @@ export async function acceptedInstall(variant: Variant) {
 		effectsSince: (mark: { calls: number }) =>
 			box.callsSince(mark).filter((label) => effects.has(label)),
 		electionRequests,
-		privateDirectories,
+		privateFiles,
+		journal,
 		/** Every line anybody logged since `mark`, with what was logged with it. */
 		everyLogSince: (mark: { logs: number }) =>
 			logged

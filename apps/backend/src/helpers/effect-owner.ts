@@ -203,8 +203,6 @@ export type OwnedFileBackend = {
 		isSymbolicLink(): boolean;
 		readonly uid: number;
 		readonly mode: number;
-		/** When it was last changed. */
-		readonly mtimeMs: number;
 	}>;
 	readonly setMode: (path: string, mode: number) => Promise<void>;
 	/** Removes one file, if it is there. */
@@ -217,8 +215,6 @@ export type OwnedFileBackend = {
 		mode: number,
 	) => Promise<OwnedFileHandle>;
 	readonly makeTempDirectory: (prefix: string) => Promise<string>;
-	/** The names in a directory. */
-	readonly listDirectory: (path: string) => Promise<string[]>;
 	/** Writes a file that must not exist yet. */
 	readonly writeNew: (
 		path: string,
@@ -251,7 +247,6 @@ const nodeFiles: OwnedFileBackend = {
 		};
 	},
 	makeTempDirectory: (prefix) => fs.mkdtemp(prefix),
-	listDirectory: (path) => fs.readdir(path),
 	writeNew: (path, data, mode) =>
 		fs.writeFile(path, data, { mode, flag: "wx" }),
 };
@@ -319,11 +314,6 @@ export function ownedFiles(owner: EffectOwner | undefined) {
 		makeTempDirectory(kind: OwnedWrite, prefix: string) {
 			may(kind);
 			return files.makeTempDirectory(prefix);
-		},
-		/** A look for what `kind` is about to change or remove. */
-		listDirectory(kind: OwnedWrite, path: string) {
-			may(kind);
-			return files.listDirectory(path);
 		},
 		writeNew(kind: OwnedWrite, path: string, data: string, mode: number) {
 			may(kind);

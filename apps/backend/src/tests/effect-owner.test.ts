@@ -27,7 +27,11 @@ import { spawnWithTimeout } from "../helpers/spawn-policy.ts";
 import type { AptRoutingEntry } from "../modules/system/apt-routing-journal.ts";
 import { createAptRoutingOwnership } from "../modules/system/apt-routing-ownership.ts";
 import { rankTransports } from "../modules/system/update-transport/core.ts";
-import { createUpdatePinController } from "../modules/system/update-transport/pin.ts";
+import {
+	createUpdatePinController,
+	UPDATE_TRANSPORT_HOLD_MS,
+	UpdateTransferError,
+} from "../modules/system/update-transport/pin.ts";
 import {
 	PINNED_CAPABILITIES,
 	sample,
@@ -276,7 +280,6 @@ describe("owned writes and files", () => {
 					isSymbolicLink: () => false,
 					uid: 0,
 					mode: 0o700,
-					mtimeMs: 0,
 				};
 			},
 			setMode: async () => {
@@ -306,10 +309,6 @@ describe("owned writes and files", () => {
 			makeTempDirectory: async (prefix) => {
 				steps.push("makeTempDirectory");
 				return `${prefix}1`;
-			},
-			listDirectory: async () => {
-				steps.push("listDirectory");
-				return [];
 			},
 			writeNew: async () => {
 				steps.push("writeNew");
@@ -350,6 +349,67 @@ describe("owned writes and files", () => {
 		await handle.close();
 		await files.removeTree("private-file:remove", "/tmp/x-1");
 		expect(steps).toEqual(["createExclusive", "close", "removeTree"]);
+	});
+});
+
+describe("the uplink cooldown of the pin controller", () => {
+	const selection = rankTransports([sample("eth0", "ethernet", 4)]);
+	const controller = async () => {
+		const pin = createUpdatePinController({
+			readCapabilities: async () =>
+				updateCapabilityFileSchema.parse(PINNED_CAPABILITIES),
+			now: () => 1000,
+		});
+		await pin.sweep();
+		return pin;
+	};
+
+	it("is not written for the fetch failure of an owner that has ended", async () => {
+		spawned((line) =>
+			line.endsWith("route show default") ? "default dev eth0" : "",
+		);
+		const debug = spyOn(logger, "debug").mockImplementation(() => logger);
+		const pin = await controller();
+		const { state, effects } = owner();
+		await expect(
+			pin.run(
+				"os",
+				selection,
+				async () => {
+					// Its last transfer fails, and it has ended by then.
+					state.ended = true;
+					throw new UpdateTransferError("no-route");
+				},
+				{ owner: effects },
+			),
+		).rejects.toBeInstanceOf(OwnerEndedError);
+		// The uplink is as usable for the next transfer as it was.
+		expect(pin.unhealthyUntil("eth0", 4)).toBeUndefined();
+		debug.mockRestore();
+	});
+
+	it("is written for a live owner's, and for nobody's, as before", async () => {
+		spawned((line) =>
+			line.endsWith("route show default") ? "default dev eth0" : "",
+		);
+		const debug = spyOn(logger, "debug").mockImplementation(() => logger);
+		for (const control of [{ owner: owner().effects }, {}]) {
+			const pin = await controller();
+			await expect(
+				pin.run(
+					"os",
+					selection,
+					async () => {
+						throw new UpdateTransferError("no-route");
+					},
+					control,
+				),
+			).rejects.toBeInstanceOf(UpdateTransferError);
+			expect(pin.unhealthyUntil("eth0", 4)).toBe(
+				1000 + UPDATE_TRANSPORT_HOLD_MS,
+			);
+		}
+		debug.mockRestore();
 	});
 });
 

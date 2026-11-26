@@ -1,6 +1,7 @@
 import {
 	assertOwnerMayRead,
 	type EffectOwner,
+	OwnerEndedError,
 	ownedWrite,
 } from "../../helpers/effect-owner.ts";
 import type { run } from "../../helpers/run.ts";
@@ -116,8 +117,13 @@ export function createAptRoutingOwnership(
 				entries = retained ?? (await store.read());
 				retained = entries;
 				if (entries.length || dirty) {
-					for (const entry of [...entries].reverse())
+					// What an earlier run left is recovered for a live owner only:
+					// an owner that has ended takes down nothing but the entries
+					// this lease installed itself (below).
+					for (const entry of [...entries].reverse()) {
+						if (owner?.ended()) throw new OwnerEndedError("routing recovery");
 						await remove(entry, bounded);
+					}
 					if (dirty) save(entries, "routing-journal:retire");
 					throw new AptRoutingRefusal("cleanup-pending");
 				}

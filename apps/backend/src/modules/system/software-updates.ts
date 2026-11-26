@@ -124,7 +124,6 @@ import {
 	parseFail,
 	parseOk,
 } from "./cli-parse.ts";
-import { sweepPrivateCurlFiles } from "./curl-private-url.ts";
 import {
 	requestCompletionReboot,
 	resetCompletionRebootForTest,
@@ -1602,10 +1601,6 @@ function checkForSoftwareUpdates(
 
 	void runLegacyPackageEffects(
 		async () => {
-			// An install starts by removing what an earlier probe could not: a
-			// private curl config still on disk holds the source's access token.
-			if (owner !== null) await sweepPrivateCurlFiles(effectOwner(owner));
-			if (abandoned()) return;
 			const capabilities = await readPackageCapabilities(owner);
 			if (abandoned()) return;
 			if (capabilities === null) {
@@ -2657,6 +2652,12 @@ async function prepareSoftwareUpdate(
 	);
 	if (stopped()) return false;
 	const reachability = network.reachability;
+	// Image apt source: a route this fresh probe finds dead refuses the
+	// install here, by the probe's verdict, before any simulation runs.
+	if (attempt !== null && reachability.verdict === "unreachable") {
+		lastAptReachability = aptReachabilityWire(reachability);
+		if (refused("repos_unreachable")) return false;
+	}
 	pendingPackageSuccess.assertEffectsAllowed();
 	const freshCapabilities = await readPackageCapabilities(attempt);
 	if (stopped()) return false;

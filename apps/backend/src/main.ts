@@ -183,6 +183,7 @@ import {
 import { hasCapability } from "./modules/system/board-capabilities.ts";
 import { initCeraliveUpdateNotice } from "./modules/system/ceralive-update-notice.ts";
 import { initCpu } from "./modules/system/cpu.ts";
+import { wipePrivateCurlConfigs } from "./modules/system/curl-private-url.ts";
 import {
 	detectHardwareKindFromDeviceTree,
 	observeRealDeviceAtBoot,
@@ -380,6 +381,10 @@ if (!configAvailableAtBind) {
 //     failure is logged, flags the device readiness-reduced (surfaced on
 //     /api/health via the boot-readiness rollup), and is swallowed so boot never
 //     crashes and the WS server (bound above) stays reachable. ---
+
+// Before anything can probe: private curl configs an earlier process left
+// (each holds the image apt source's access token) go with their directory.
+await guardNonCritical("private-curl-configs", wipePrivateCurlConfigs);
 
 // Recovery must finish before an update may install any new UID routing rule.
 const deviceAtBoot = observeRealDeviceAtBoot(bondDisableSimulationSelected());

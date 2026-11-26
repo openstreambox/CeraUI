@@ -387,7 +387,7 @@ async function box(failing: Path) {
 			ownership,
 		});
 	}
-	return { flag, downloading, downloadGate };
+	return { flag, downloading, downloadGate, seen };
 }
 
 // The orchestrator over the real package code, counting image checks.
@@ -601,12 +601,14 @@ describe("each way an install ends before its unit launches", () => {
 	});
 
 	it("the install's network is unreachable", async () => {
-		await box("install-reachability");
+		const { seen } = await box("install-reachability");
 		const { counts } = orchestrator();
 		await attempt();
-		await expectRefused(counts, {
-			reason: "The software repositories are unreachable.",
-		});
+		// Refused on the probe's verdict, before any install-time simulation:
+		// the only one that ran is the first check's.
+		expect(seen.simulation).toBe(1);
+		expect(seen.holds).toBe(1);
+		await expectRefused(counts, { reason: "repos_unreachable" });
 	});
 
 	it("nothing is installable any more", async () => {
@@ -1249,6 +1251,55 @@ describe("the refused install is never stranded", () => {
 		expect(counts.osChecks).toBe(os + 2);
 		expect(getUpdateState().kind).toBe("failed");
 		// The stream over, the retry runs and finds the offer.
+		live = false;
+		setStreamLivenessSourceForTest(null);
+		await runOrchestratorTick();
+		expect(getUpdateState().kind).toBe("available");
+		expect(getOrchestratorState()).toMatchObject({
+			phase: "available",
+			packageCheck: { consecutiveFailures: 0 },
+		});
+	});
+
+	it("a stream that starts while the retry clears the pending list defers it too", async () => {
+		await box("simulation");
+		let live = false;
+		const { counts, quarantine } = orchestrator({ streamLive: () => live });
+		const said: { code: string; params: unknown }[] = [];
+		await attempt();
+		expect(getOrchestratorState().failureReason).toBe(PACKAGE_INSTALL_REFUSED);
+		spies.push(
+			spyOn(events, "emitEvent").mockImplementation((code, params) => {
+				said.push({ code, params });
+			}),
+		);
+		// No stream when the tick comes. One starts while the retry clears the
+		// refused install's pending list.
+		const clear = quarantine.clearPending.bind(quarantine);
+		quarantine.clearPending = async () => {
+			await clear();
+			live = true;
+			setStreamLivenessSourceForTest(() => "streaming");
+		};
+		setOrchestratorStateForTest({
+			...getOrchestratorState(),
+			osCheck: { ...getOrchestratorState().osCheck, nextAttemptAt: 0 },
+		});
+		const before = getOrchestratorState().packageCheck;
+		const os = counts.osChecks;
+		const cleared = counts.pendingCleared;
+		await runOrchestratorTick();
+		// The cleanup ran (the image check clears the list as well).
+		expect(counts.pendingCleared).toBeGreaterThan(cleared);
+		// The check did not run: nothing was dispatched, so nothing failed. No
+		// refusal event, no backoff; the image check that was due ran.
+		expect(getOrchestratorState().packageCheck).toEqual(before);
+		expect(said.filter(({ code }) => code === "update_refused")).toEqual([]);
+		expect(getOrchestratorState().phase).not.toBe("checking");
+		expect(counts.osChecks).toBe(os + 1);
+		expect(getUpdateState().kind).toBe("failed");
+		// The stream over, the retry runs and finds the offer.
+		quarantine.clearPending = clear;
 		live = false;
 		setStreamLivenessSourceForTest(null);
 		await runOrchestratorTick();

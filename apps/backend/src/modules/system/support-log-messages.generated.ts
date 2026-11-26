@@ -289,7 +289,6 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	[
 		"Persisted update settings rejected; update checks stop until the file is fixed",
 	],
-	["Private curl configs could not be looked for"],
 	["Production mode: Serving static files from ./public"],
 	["Proxy error: ", ""],
 	["RPC ", " err"],
@@ -1988,6 +1987,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["reply-too-long"],
 	["resolution"],
 	["route-unavailable"],
+	["routing recovery"],
 	["ruleset_publish_failed"],
 	["ruleset_reload_failed"],
 	["runtime_config_authority_unavailable"],
@@ -2022,6 +2022,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["terminal unit probe failed"],
 	["the install's unit"],
 	["the mock BT mic seed is missing"],
+	["the uplink's cooldown"],
 	["timeout"],
 	["tls-error"],
 	["too many steering uplinks: ", ""],

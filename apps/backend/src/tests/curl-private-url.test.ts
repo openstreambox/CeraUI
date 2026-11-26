@@ -1,7 +1,6 @@
 /// <reference types="bun" />
 
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { inspect } from "node:util";
 import {
@@ -11,75 +10,63 @@ import {
 } from "../helpers/effect-owner.ts";
 import { logger } from "../helpers/logger.ts";
 import {
+	PRIVATE_CURL_DIRECTORY,
 	PRIVATE_FILE_LEFT_BEHIND,
-	resetPrivateCurlFilesForTest,
 	runCurlWithPrivateUrl,
-	sweepPrivateCurlFiles,
+	wipePrivateCurlConfigs,
 } from "../modules/system/curl-private-url.ts";
 
 const TOKEN = "k7Qm2xV9pL4sT8wZ";
-const NOW = 1_800_000_000_000;
-const now = () => NOW;
 const URL = `https://updates.example.org/${TOKEN}/apt/dists/suite/InRelease`;
 
-/** Private directories as an object, and removals that can be made to fail. */
+/** Files as an object: every file step is recorded, removals can fail. */
 function privateFiles() {
 	const state = {
-		directories: new Set<string>(),
-		contents: new Map<string, string>(),
-		/** Directories whose removal fails (EBUSY). */
-		stuck: new Set<string>(),
-		/** When each directory was last changed (now, unless told). */
-		changed: new Map<string, number>(),
-		unlistable: false,
-		made: 0,
+		files: new Map<string, { data: string; mode: number }>(),
+		/** Every step, in order: what was done to which path. */
+		steps: [] as string[],
+		/** Removals fail (EBUSY). */
+		stuck: false,
 	};
 	const never = async () => {
 		throw new Error("not used by a private curl run");
 	};
+	const busy = (target: string) =>
+		Object.assign(new Error(`EBUSY: resource busy or locked, rm '${target}'`), {
+			code: "EBUSY",
+		});
 	const backend: OwnedFileBackend = {
-		makeDirectory: never,
-		inspect: async (directory) => ({
-			isDirectory: () => true,
-			isSymbolicLink: () => false,
-			uid: 0,
-			mode: 0o700,
-			mtimeMs: state.changed.get(directory) ?? NOW,
-		}),
+		inspect: never,
 		setMode: never,
-		removeFile: never,
 		createExclusive: never,
+		makeTempDirectory: never,
+		makeDirectory: async (directory, mode) => {
+			state.steps.push(`mkdir ${mode.toString(8)} ${directory}`);
+		},
+		writeNew: async (file, data, mode) => {
+			state.steps.push(`write ${mode.toString(8)} ${file}`);
+			state.files.set(file, { data, mode });
+		},
+		removeFile: async (file) => {
+			state.steps.push(`rm ${file}`);
+			if (state.stuck) throw busy(file);
+			state.files.delete(file);
+		},
 		removeTree: async (directory) => {
-			if (state.stuck.has(directory))
-				throw Object.assign(
-					new Error(`EBUSY: resource busy or locked, rm '${directory}'`),
-					{ code: "EBUSY" },
-				);
-			state.directories.delete(directory);
-		},
-		makeTempDirectory: async (prefix) => {
-			const directory = `${prefix}${(++state.made).toString(36)}x9Qf`;
-			state.directories.add(directory);
-			return directory;
-		},
-		listDirectory: async (directory) => {
-			if (state.unlistable) throw new Error("EACCES: permission denied");
-			return [...state.directories]
-				.filter((made) => path.dirname(made) === directory)
-				.map((made) => path.basename(made));
-		},
-		writeNew: async (file, data) => {
-			state.contents.set(file, data);
+			state.steps.push(`rm -r ${directory}`);
+			if (state.stuck) throw busy(directory);
+			for (const file of state.files.keys())
+				if (path.dirname(file) === directory) state.files.delete(file);
 		},
 	};
 	setOwnedFileBackendForTest(backend);
 	return state;
 }
 
-/** Everything logged at `level`, as it would be printed. */
-function logged(level: "error" | "warn") {
+/** Everything logged as an error, as it would be printed. */
+function errors() {
 	const lines: string[] = [];
-	const spy = spyOn(logger, level).mockImplementation(
+	const spy = spyOn(logger, "error").mockImplementation(
 		(message: unknown, meta?: unknown) => {
 			lines.push(`${String(message)} ${inspect(meta, { depth: 6 })}`);
 			return logger;
@@ -88,142 +75,121 @@ function logged(level: "error" | "warn") {
 	return { lines, restore: () => spy.mockRestore() };
 }
 
-const ended: EffectOwner = { ended: () => true };
 const curl = async (argv: string[]) => ({ exitCode: 0, argv });
 
-afterEach(() => {
-	setOwnedFileBackendForTest(null);
-	resetPrivateCurlFilesForTest();
-});
+afterEach(() => setOwnedFileBackendForTest(null));
 
 describe("a private curl config", () => {
-	it("holds the URL for one run and is gone afterwards", async () => {
+	it("is written only in the service's own directory and removed by its exact path", async () => {
 		const files = privateFiles();
-		const errors = logged("error");
-		const result = await runCurlWithPrivateUrl(["curl", "-sS"], URL, curl);
-		expect(result.argv.slice(0, 3)).toEqual(["curl", "-sS", "-K"]);
-		expect(result.argv.join(" ")).not.toContain(TOKEN);
-		expect([...files.contents.values()].join("")).toContain(TOKEN);
-		expect([...files.directories]).toEqual([]);
-		expect(errors.lines).toEqual([]);
-		errors.restore();
-	});
-
-	it("that cannot be removed is reported, and the run's result stands", async () => {
-		const files = privateFiles();
-		const errors = logged("error");
-		const result = await runCurlWithPrivateUrl(["curl"], URL, async (argv) => {
-			// The directory exists now: its removal will fail.
-			for (const directory of files.directories) files.stuck.add(directory);
-			return curl(argv);
-		});
-		expect(result.exitCode).toBe(0);
-		expect(errors.lines).toHaveLength(1);
-		const [report] = errors.lines as [string];
-		const [left] = [...files.directories] as [string];
-		expect(report).toStartWith(PRIVATE_FILE_LEFT_BEHIND);
-		// Where such files live and what failed; not which one, not the token.
-		expect(report).toContain(path.join(tmpdir(), "ceraui-curl-*"));
-		expect(report).toContain("EBUSY");
-		expect(report).not.toContain(path.basename(left));
-		expect(report).not.toContain(TOKEN);
-		errors.restore();
-	});
-
-	it("is reported for an owner that has ended too", async () => {
-		const files = privateFiles();
-		const errors = logged("error");
-		// The owner ends while curl runs: the removal is its teardown.
-		let over = false;
-		const owner: EffectOwner = { ended: () => over };
-		await runCurlWithPrivateUrl(
-			["curl"],
+		const logged = errors();
+		let during: string[] = [];
+		const result = await runCurlWithPrivateUrl(
+			["curl", "-sS"],
 			URL,
 			async (argv) => {
-				over = true;
-				for (const directory of files.directories) files.stuck.add(directory);
+				during = [...files.files.keys()];
 				return curl(argv);
 			},
-			owner,
 		);
-		expect(errors.lines).toHaveLength(1);
-		expect(errors.lines[0]).toStartWith(PRIVATE_FILE_LEFT_BEHIND);
-		expect(errors.lines[0]).not.toContain(TOKEN);
-		expect(files.directories.size).toBe(1);
-		errors.restore();
+		// curl got the file, never the URL.
+		expect(result.argv.slice(0, 3)).toEqual(["curl", "-sS", "-K"]);
+		expect(result.argv.join(" ")).not.toContain(TOKEN);
+		const [file] = during as [string];
+		expect(result.argv[3]).toBe(file);
+		expect(path.dirname(file)).toBe(PRIVATE_CURL_DIRECTORY);
+		expect(PRIVATE_CURL_DIRECTORY).toBe("/run/ceralive/curl-private");
+		// The directory 0700, the file 0600, and that one file removed again.
+		expect(files.steps).toEqual([
+			`mkdir 700 ${PRIVATE_CURL_DIRECTORY}`,
+			`write 600 ${file}`,
+			`rm ${file}`,
+		]);
+		expect([...files.files]).toEqual([]);
+		expect(logged.lines).toEqual([]);
+		logged.restore();
+	});
+
+	it.each(["a live owner", "an owner that has ended", "nobody"] as const)(
+		"that cannot be removed is reported as a security line for %s, and the run's result stands",
+		async (whom) => {
+			const files = privateFiles();
+			const logged = errors();
+			let over = false;
+			const owner: EffectOwner | undefined =
+				whom === "nobody" ? undefined : { ended: () => over };
+			const result = await runCurlWithPrivateUrl(
+				["curl"],
+				URL,
+				async (argv) => {
+					// The removal is the run's teardown: made although the owner
+					// has ended, and it fails.
+					over = whom === "an owner that has ended";
+					files.stuck = true;
+					return curl(argv);
+				},
+				owner,
+			);
+			expect(result.exitCode).toBe(0);
+			expect(logged.lines).toHaveLength(1);
+			const [report] = logged.lines as [string];
+			const [left] = [...files.files.keys()] as [string];
+			expect(report).toStartWith(PRIVATE_FILE_LEFT_BEHIND);
+			// Which directory and what failed; not which file, not the token.
+			expect(report).toContain(PRIVATE_CURL_DIRECTORY);
+			expect(report).toContain("EBUSY");
+			expect(report).not.toContain(path.basename(left));
+			expect(report).not.toContain(TOKEN);
+			logged.restore();
+		},
+	);
+
+	it("is not written for an owner that has ended, and then nothing is removed", async () => {
+		const files = privateFiles();
+		let over = false;
+		const owner: EffectOwner = { ended: () => over };
+		const backend = files.steps;
+		// The owner ends while the directory is made sure of.
+		const original = backend.push.bind(backend);
+		backend.push = (...steps: string[]) => {
+			over = true;
+			return original(...steps);
+		};
+		await expect(
+			runCurlWithPrivateUrl(["curl"], URL, curl, owner),
+		).rejects.toThrow("not done for an owner that has ended");
+		expect(files.steps).toEqual([`mkdir 700 ${PRIVATE_CURL_DIRECTORY}`]);
 	});
 });
 
-describe("the sweep an install starts with", () => {
-	it("removes what an earlier run could not, and what an earlier process left", async () => {
+describe("the backend's start", () => {
+	it("wipes that one directory, by its fixed path, and looks at nothing else", async () => {
 		const files = privateFiles();
-		const errors = logged("error");
-		await runCurlWithPrivateUrl(["curl"], URL, async (argv) => {
-			for (const directory of files.directories) files.stuck.add(directory);
-			return curl(argv);
+		const logged = errors();
+		// What an earlier process left there, and files that are not its business.
+		files.files.set(`${PRIVATE_CURL_DIRECTORY}/left.conf`, {
+			data: URL,
+			mode: 0o600,
 		});
-		expect(files.directories.size).toBe(1);
-		// Whatever held it has let go; and a process that died left another,
-		// an hour ago. A third is fresh: some other process's probe in flight.
-		files.stuck.clear();
-		const abandoned = path.join(tmpdir(), "ceraui-curl-Zk3LmQ");
-		files.directories.add(abandoned);
-		files.changed.set(abandoned, NOW - 60 * 60_000);
-		const fresh = path.join(tmpdir(), "ceraui-curl-fresh1");
-		files.directories.add(fresh);
-		files.changed.set(fresh, NOW - 5_000);
-		// Other names in the same place are nobody's business here.
-		files.directories.add(path.join(tmpdir(), "ceraui-update-index-a1"));
-		files.directories.add(path.join(tmpdir(), "someone-elses"));
-		await sweepPrivateCurlFiles(undefined, now);
-		expect([...files.directories].sort()).toEqual(
-			[
-				fresh,
-				path.join(tmpdir(), "ceraui-update-index-a1"),
-				path.join(tmpdir(), "someone-elses"),
-			].sort(),
-		);
-		expect(errors.lines).toHaveLength(1);
-		errors.restore();
+		files.files.set("/run/ceralive/clock-gate-open", { data: "", mode: 0o644 });
+		files.files.set("/tmp/ceraui-curl-abc/url", { data: URL, mode: 0o600 });
+		await wipePrivateCurlConfigs();
+		expect(files.steps).toEqual([`rm -r ${PRIVATE_CURL_DIRECTORY}`]);
+		expect([...files.files.keys()].sort()).toEqual([
+			"/run/ceralive/clock-gate-open",
+			"/tmp/ceraui-curl-abc/url",
+		]);
+		expect(logged.lines).toEqual([]);
+		logged.restore();
 	});
 
-	it("leaves the config of a run in flight alone", async () => {
+	it("reports a wipe that fails, and goes on", async () => {
 		const files = privateFiles();
-		let during: string[] = [];
-		await runCurlWithPrivateUrl(["curl"], URL, async (argv) => {
-			await sweepPrivateCurlFiles();
-			during = [...files.directories];
-			return curl(argv);
-		});
-		expect(during).toHaveLength(1);
-		expect([...files.directories]).toEqual([]);
-	});
-
-	it("reports again what it still cannot remove, also for an owner that has ended", async () => {
-		const files = privateFiles();
-		const errors = logged("error");
-		const stray = path.join(tmpdir(), "ceraui-curl-Zk3LmQ");
-		files.directories.add(stray);
-		files.changed.set(stray, NOW - 60 * 60_000);
-		files.stuck.add(stray);
-		await sweepPrivateCurlFiles(ended, now);
-		expect(errors.lines).toHaveLength(1);
-		expect(errors.lines[0]).toStartWith(PRIVATE_FILE_LEFT_BEHIND);
-		expect(errors.lines[0]).not.toContain("Zk3LmQ");
-		// It is remembered: the next sweep tries again without a listing.
-		files.stuck.clear();
-		files.unlistable = true;
-		const warnings = logged("warn");
-		await sweepPrivateCurlFiles(ended);
-		expect([...files.directories]).toEqual([]);
-		// A listing that fails is nothing an ended owner reports.
-		expect(warnings.lines).toEqual([]);
-		await sweepPrivateCurlFiles();
-		expect(warnings.lines).toHaveLength(1);
-		expect(warnings.lines[0]).toStartWith(
-			"Private curl configs could not be looked for",
-		);
-		warnings.restore();
-		errors.restore();
+		const logged = errors();
+		files.stuck = true;
+		await wipePrivateCurlConfigs();
+		expect(logged.lines).toHaveLength(1);
+		expect(logged.lines[0]).toStartWith(PRIVATE_FILE_LEFT_BEHIND);
+		logged.restore();
 	});
 });

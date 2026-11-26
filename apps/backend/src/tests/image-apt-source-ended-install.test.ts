@@ -10,7 +10,11 @@
 import { describe, expect, it } from "bun:test";
 import path from "node:path";
 import { setup } from "../modules/setup.ts";
-import { PRIVATE_FILE_LEFT_BEHIND } from "../modules/system/curl-private-url.ts";
+import {
+	PRIVATE_CURL_DIRECTORY,
+	PRIVATE_FILE_LEFT_BEHIND,
+	wipePrivateCurlConfigs,
+} from "../modules/system/curl-private-url.ts";
 import { setImageClockGateFlagForTest } from "../modules/system/image-apt-source.ts";
 import {
 	getUpdateState,
@@ -32,6 +36,8 @@ import { useSessionOwnerForFile } from "./helpers/bind-session-owner.ts";
 import {
 	acceptedInstall,
 	atEveryWait,
+	CONFIG_DIRECTORY,
+	CONFIG_REMOVAL,
 	DOWNLOAD,
 	expectEndedBeforeLaunch,
 	expectLaunched,
@@ -45,7 +51,6 @@ import {
 	recordWaits,
 	SPOOL,
 	SUBMIT,
-	SWEEP,
 	TIMEOUT_MS,
 	teardownInstall,
 	useInstallHarness,
@@ -281,7 +286,7 @@ describe("the host's gateway election is the network module's", () => {
 	it(
 		"a check with no install behind it asks for the repair as it always did",
 		async () => {
-			const { box } = await standingAt("elected route", SWEEP);
+			const { box } = await standingAt("elected route", REFRESH_COMMAND);
 			const { sequencer } = box;
 			expect(await admitStream(box)).toEqual({ allowed: true });
 			await sequencer.drain();
@@ -347,31 +352,94 @@ describe("an install ended while several of its commands are in flight", () => {
 	);
 
 	it(
-		"the unbound probe: four curl runs out, one fails first, the hold lasts until all are back",
+		"the unbound probe: one of four probes is refused at its next step while three are still out",
 		async () => {
-			const { box } = await standingAt("orchestrated", "curl -4");
+			// Four probes (two origins, two address families) each start by
+			// making sure of the private directory.
+			const { box } = await standingAt("orchestrated", CONFIG_DIRECTORY);
 			const { sequencer } = box;
-			const curls = () =>
-				sequencer.parkedOfFlow().filter((label) => label.startsWith("curl "));
-			expect(curls()).toHaveLength(4);
+			const out = () =>
+				sequencer.parkedOfFlow().filter((label) => label === CONFIG_DIRECTORY);
+			expect(out()).toHaveLength(4);
 			expect(await admitStream(box)).toEqual({ allowed: true });
 			const mark = box.mark();
-			sequencer.release("curl -4", "fail");
-			while (sequencer.parkedOfFlow().length > 0) {
+			// One returns. Its next step, writing the config, is refused, which
+			// fails that probe at once; the other three have not come back.
+			sequencer.release(CONFIG_DIRECTORY);
+			for (let left = 3; left > 0; left--) {
 				await settleMicrotasks();
 				await settleEventLoop(1);
 				expectNoStaleEffect(box, mark);
-				if (sequencer.parkedOfFlow().length === 0) break;
+				expect(out()).toHaveLength(left);
+				// A join that gave up at the first refusal would have released
+				// the install's hold here.
 				expect(installDraining()).toBe(true);
 				expect(sequencer.outside(() => startSoftwareUpdate())).toEqual({
 					started: false,
 					reason: "already_updating",
 				});
-				sequencer.step();
+				sequencer.release(CONFIG_DIRECTORY);
 			}
 			await sequencer.drain(() => expectNoStaleEffect(box, mark));
 			expect(installDraining()).toBe(false);
+			expect([...box.privateFiles]).toEqual([]);
 			await expectEndedBeforeLaunch(box, "streaming", false);
+		},
+		TIMEOUT_MS,
+	);
+});
+
+describe("routing rules an earlier pinned run left in the journal", () => {
+	const RECOVERED = [
+		{
+			family: 4 as const,
+			args: "rule add priority 120 uidrange 42042-42042 lookup 100000".split(
+				" ",
+			),
+		},
+	];
+	const READ = "routing journal: read";
+	const routing = (
+		box: Awaited<ReturnType<typeof acceptedInstall>>,
+		from: number,
+	) =>
+		box.sequencer
+			.calls()
+			.slice(from)
+			.map(({ label }) => label)
+			.filter((label) => label.startsWith("ip "));
+
+	it(
+		"are not deleted by an install that ended while it read the journal",
+		async () => {
+			const { box } = await standingAt("pinned", READ);
+			box.journal.entries = RECOVERED;
+			expect(await admitStream(box)).toEqual({ allowed: true });
+			const mark = box.mark();
+			await box.sequencer.drain(() => expectNoStaleEffect(box, mark));
+			// Not its rule: nothing was deleted and the entry is still recorded.
+			expect(routing(box, mark.calls)).toEqual([]);
+			expect(box.journal.entries).toEqual(RECOVERED);
+			expect(getUpdateState()).toMatchObject(STREAMING);
+		},
+		TIMEOUT_MS,
+	);
+
+	it(
+		"are recovered by an install that is still alive",
+		async () => {
+			const { box } = await standingAt("pinned", READ);
+			box.journal.entries = RECOVERED;
+			const from = box.sequencer.calls().length;
+			await box.sequencer.drain();
+			expect(routing(box, from)).toContain(
+				"ip rule del priority 120 uidrange 42042-42042 lookup 100000",
+			);
+			expect(
+				box.journal.entries.filter(
+					(entry) => entry.args.join(" ") === RECOVERED[0]?.args.join(" "),
+				),
+			).toEqual([]);
 		},
 		TIMEOUT_MS,
 	);
@@ -407,39 +475,34 @@ describe("the launcher's first look for a unit", () => {
 });
 
 describe("a private curl config that could not be removed", () => {
-	const REMOVAL = "file: private-file:remove (remove the directory)";
-
 	it(
-		"is reported although its install has ended, without the token, and removed when the next install starts",
+		"is reported although its install has ended, without the token, and goes when the backend next starts",
 		async () => {
-			const { box } = await standingAt("orchestrated", REMOVAL);
+			const { box } = await standingAt("orchestrated", CONFIG_REMOVAL);
 			const { sequencer } = box;
 			expect(await admitStream(box)).toEqual({ allowed: true });
 			const mark = box.mark();
 			// The first of the four removals fails.
 			sequencer.step("fail");
 			await sequencer.drain(() => expectNoStaleEffect(box, mark));
-			expect([...box.privateDirectories]).toHaveLength(1);
-			const [left] = [...box.privateDirectories] as [string];
+			expect([...box.privateFiles]).toHaveLength(1);
+			const [left] = [...box.privateFiles] as [string];
+			// It was written inside the service's own directory and nowhere else.
+			expect(path.dirname(left)).toBe(PRIVATE_CURL_DIRECTORY);
 			const reports = box
 				.everyLogSince(mark)
 				.filter((line) => line.startsWith(PRIVATE_FILE_LEFT_BEHIND));
 			expect(reports).toHaveLength(1);
-			// Where such files live, never which one, and never the token.
-			expect(reports[0]).toContain("ceraui-curl-*");
+			// Which directory, never which file, and never the token.
+			expect(reports[0]).toContain(PRIVATE_CURL_DIRECTORY);
 			expect(reports[0]).not.toContain(path.basename(left));
 			expect(reports[0]).not.toContain(TOKEN);
-			// The next install starts by removing it.
+			// Nothing sweeps while the backend runs: the next install leaves it.
 			await expectOfferAtNextCheck(box);
-			expect(box.privateDirectories.has(left)).toBe(true);
-			expect(
-				await sequencer.outside(() => installUpdatesNow({ scope: "packages" })),
-			).toEqual({ started: true });
-			expect(sequencer.next()).toBe(SWEEP);
-			await sequencer.drain();
-			// (The first install's `failed` frame is still in the list.)
-			await expectLaunched(box, false);
-			expect([...box.privateDirectories]).toEqual([]);
+			expect(box.privateFiles.has(left)).toBe(true);
+			// The backend's next start removes that one directory.
+			await wipePrivateCurlConfigs();
+			expect([...box.privateFiles]).toEqual([]);
 		},
 		TIMEOUT_MS,
 	);
