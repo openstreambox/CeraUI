@@ -14,6 +14,11 @@ import type {
 	AptReachability as AptReachabilityWire,
 } from "@ceraui/rpc";
 import {
+	type EffectOwner,
+	isOwnerEnded,
+	ownedWrite,
+} from "../../helpers/effect-owner.ts";
+import {
 	type SpawnWithTimeoutResult,
 	spawnWithTimeout,
 } from "../../helpers/spawn-policy.ts";
@@ -75,7 +80,13 @@ export type AptReachabilityDeps = {
 	readonly runProbe: (
 		argv: string[],
 		privateUrl?: string,
+		owner?: EffectOwner,
 	) => Promise<Pick<SpawnWithTimeoutResult, "exitCode" | "stdout">>;
+	/**
+	 * Whom this probe is run for (an install on an image with its own apt
+	 * source). Once it has ended, no further curl starts and nothing is cached.
+	 */
+	readonly owner?: EffectOwner;
 	readonly now?: () => number;
 	readonly maxAgeMs?: number;
 	readonly ifname?: string;
@@ -262,11 +273,15 @@ export async function readAptSources(
 
 export const defaultAptReachabilityDeps: AptReachabilityDeps = {
 	readSources: () => readAptSources(),
-	runProbe: (argv, privateUrl) =>
+	runProbe: (argv, privateUrl, owner) =>
 		privateUrl === undefined
-			? spawnWithTimeout(argv, { timeoutMs: PROBE_TIMEOUT_MS })
-			: runCurlWithPrivateUrl(argv, privateUrl, (full) =>
-					spawnWithTimeout(full, { timeoutMs: PROBE_TIMEOUT_MS }),
+			? spawnWithTimeout(argv, { timeoutMs: PROBE_TIMEOUT_MS, owner })
+			: runCurlWithPrivateUrl(
+					argv,
+					privateUrl,
+					(full) =>
+						spawnWithTimeout(full, { timeoutMs: PROBE_TIMEOUT_MS, owner }),
+					owner,
 				),
 };
 
@@ -298,7 +313,10 @@ export async function probeAptReachability(
 		origins = parseAptSourceOrigins(await deps.readSources());
 	} catch {
 		const value = deriveVerdict([]);
-		if (deps.ifname === undefined) cache = { at: now, value };
+		if (deps.ifname === undefined)
+			ownedWrite(deps.owner, "reachability-cache:store", () => {
+				cache = { at: now, value };
+			});
 		return value;
 	}
 
@@ -318,8 +336,8 @@ export async function probeAptReachability(
 					// The image source's URL carries its access token: curl gets it
 					// privately, never as an argument.
 					const result = carriesImageAptSecret(origin.probeUrl)
-						? await deps.runProbe(argv.slice(0, -1), argv.at(-1))
-						: await deps.runProbe(argv);
+						? await deps.runProbe(argv.slice(0, -1), argv.at(-1), deps.owner)
+						: await deps.runProbe(argv, undefined, deps.owner);
 					return classifyProbe({
 						exitCode: result.exitCode,
 						stdout: result.stdout,
@@ -327,6 +345,8 @@ export async function probeAptReachability(
 						scheme: deps.ifname === undefined ? origin.scheme : "https",
 					});
 				} catch (error) {
+					// Not a finding about the network: the probe's owner has ended.
+					if (isOwnerEnded(error)) throw error;
 					return error instanceof Error &&
 						/not found|ENOENT|Executable/i.test(error.message)
 						? "probe_unavailable"
@@ -338,6 +358,9 @@ export async function probeAptReachability(
 		}),
 	);
 	const value = deriveVerdict(byOrigin);
-	if (deps.ifname === undefined) cache = { at: now, value };
+	if (deps.ifname === undefined)
+		ownedWrite(deps.owner, "reachability-cache:store", () => {
+			cache = { at: now, value };
+		});
 	return value;
 }

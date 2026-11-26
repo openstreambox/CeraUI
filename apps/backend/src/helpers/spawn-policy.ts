@@ -1486,6 +1486,7 @@ import {
 	SpawnTimeoutError,
 	type SpawnWithTimeoutResult,
 } from "./bounded-spawn.ts";
+import { activeSpawnOverride, assertOwnerMayRun } from "./effect-owner.ts";
 
 /** Rejection raised when a supervised worker fails to become ready in time. */
 export class StartupTimeoutError extends Error {
@@ -1505,11 +1506,15 @@ export async function spawnWithTimeout(
 	argv: string[],
 	opts?: BoundedSpawnOptions,
 ): Promise<SpawnWithTimeoutResult> {
+	// The one owner check of this primitive: refused before it starts.
+	assertOwnerMayRun(opts?.owner, argv);
 	const timeoutMs = opts?.timeoutMs ?? DEFAULT_SPAWN_TIMEOUT_MS;
 	const command = argv.join(" ");
 	if (opts?.signal?.aborted) {
 		throw new SpawnTimeoutError(command);
 	}
+	const override = activeSpawnOverride();
+	if (override) return override(argv);
 
 	const child = Bun.spawn(argv, {
 		stdin: "ignore",

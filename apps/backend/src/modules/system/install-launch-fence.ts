@@ -28,9 +28,11 @@
  * (`hold` and its release), the attempt is `draining`: the updater is not free
  * for the next install yet, so what the old one left running cannot meet it.
  *
- * Import-free on purpose: the fence holds state and order, its callers bring
- * the effects.
+ * Free of this project's modules on purpose (but for the refusal's type): the
+ * fence holds state and order, its callers bring the effects.
  */
+
+import { OwnerEndedError } from "../../helpers/effect-owner.ts";
 
 export type InstallAttemptState = "pending" | "ended" | "submitted";
 
@@ -50,15 +52,25 @@ export type InstallAttempt = {
  */
 export type StreamFenceVerdict = "none" | "cancelled" | "ended" | "submitted";
 
-/** The attempt ended before the launcher reached the section: nothing ran. */
-export class InstallAttemptEndedError extends Error {
+/**
+ * The attempt ended before the launcher reached the section: nothing ran. It
+ * is the owner-ended refusal of effect-owner.ts, so what recognises one stays
+ * silent for the other.
+ */
+export class InstallAttemptEndedError extends OwnerEndedError {
 	constructor() {
-		super("the install ended before its unit was submitted");
+		super("the install's unit");
+		this.message = "the install ended before its unit was submitted";
 		this.name = "InstallAttemptEndedError";
 	}
 }
 
-type Mutable = InstallAttempt & { value: InstallAttemptState; holds: number };
+type Mutable = InstallAttempt & {
+	value: InstallAttemptState;
+	holds: number;
+	/** `systemd-run` has been asked for and its outcome is not known yet. */
+	submitting: boolean;
+};
 
 export type InstallLaunchFence = ReturnType<typeof createInstallLaunchFence>;
 
@@ -91,6 +103,7 @@ export function createInstallLaunchFence() {
 			id: ++sequence,
 			value,
 			holds: 0,
+			submitting: false,
 			state: () => attempt.value,
 			pending: () => attempt.value === "pending",
 		};
@@ -121,6 +134,14 @@ export function createInstallLaunchFence() {
 		 */
 		owns: (attempt: InstallAttempt): boolean =>
 			current === attempt && attempt.pending(),
+		/**
+		 * `attempt`'s submission is in flight: `systemd-run` was asked for and
+		 * the section holds the decision. Nothing ends the attempt from outside
+		 * now, and what the launcher does to learn the outcome (its second look
+		 * for the unit) is not refused.
+		 */
+		submitting: (attempt: InstallAttempt): boolean =>
+			current === attempt && (attempt as Mutable).submitting,
 		/**
 		 * `attempt` has a wait in flight until the returned release is called
 		 * (once). Taken for the install's own run and for its launcher.
@@ -182,14 +203,21 @@ export function createInstallLaunchFence() {
 					steps.refuse(reason);
 					throw new InstallAttemptEndedError();
 				}
+				owner.submitting = true;
 				try {
 					const result = await steps.launch();
 					owner.value = "submitted";
 					return result;
 				} catch (error) {
-					owner.value = "ended";
-					steps.refused(error);
+					// The launch can find, at its own last look, that the attempt
+					// has just ended: that end is published already.
+					if (owner.value !== "ended") {
+						owner.value = "ended";
+						steps.refused(error);
+					}
 					throw error;
+				} finally {
+					owner.submitting = false;
 				}
 			});
 		},

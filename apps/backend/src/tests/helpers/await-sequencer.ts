@@ -96,6 +96,17 @@ export function createAwaitSequencer() {
 		inside: <T>(work: () => T): T => context.exit(work),
 		/** Runs `work` beside the flow: its gates park, its calls are its own. */
 		beside: <T>(work: () => T): T => context.run("beside", work),
+		/** Who the caller is: the flow, something beside it, or outside it. */
+		context: (): "flow" | "beside" | "outside" => context.getStore() ?? "flow",
+		/**
+		 * A call that does not wait (a write to memory): kept in `calls()` like
+		 * a gate's, without parking.
+		 */
+		note(label: string): void {
+			const by = context.getStore();
+			if (!armed || by === "outside") return;
+			calls.push({ label, by: by === "beside" ? "beside" : "flow" });
+		},
 		/**
 		 * A fake's wait. `timer` marks a wait on a delay rather than on I/O.
 		 * Resolves `"fail"` when the test released it as a failure.

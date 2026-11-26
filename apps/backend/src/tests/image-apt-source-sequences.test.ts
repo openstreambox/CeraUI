@@ -49,6 +49,7 @@ import {
 import { useSessionOwnerForFile } from "./helpers/bind-session-owner.ts";
 import {
 	type Accepted,
+	ARCHIVE_CLEANUP,
 	acceptedInstall,
 	atEveryWait,
 	BESIDE_START_RPC,
@@ -56,12 +57,14 @@ import {
 	expectLaunched,
 	expectNoStaleEffect,
 	expectOfferAtNextCheck,
+	FRAGMENT,
 	failedFrames,
 	installDraining,
 	type Mark,
 	PENDING,
 	REINSPECT,
 	recordWaits,
+	restoreUpdatesSetting,
 	SPOOL,
 	SUBMIT,
 	TIMEOUT_MS,
@@ -78,7 +81,6 @@ useInstallHarness();
 const beforeSubmit = (label: string) => label !== SUBMIT;
 const STREAMING = { kind: "failed", reason: "streaming" } as const;
 const isStreaming = ({ reason }: { reason?: string }) => reason === "streaming";
-const ARCHIVE_CLEANUP = "space preflight: apt-get clean";
 
 /** The install at wait `step`, ended there by a stream that is never live. */
 async function endedByStreamAt(
@@ -447,12 +449,18 @@ describe("an uncertain systemd-run: the second look for the unit", () => {
 		"start RPC from the Packages card",
 	] as const;
 
-	async function atSecondLook(variant: Variant, created: boolean) {
+	async function atSecondLook(
+		variant: Variant,
+		created: boolean,
+		// What happens while `systemd-run` is in flight.
+		meanwhile?: () => void,
+	) {
 		const steps = await recordWaits(variant);
 		const box = await acceptedInstall(variant);
 		await box.sequencer.advance(steps.length - 1);
 		expect(box.sequencer.next()).toBe(SUBMIT);
 		box.unit.unit.createdDespiteClientError = created;
+		meanwhile?.();
 		box.sequencer.step("fail");
 		await settleMicrotasks();
 		// The second look is in flight, inside the fence.
@@ -506,6 +514,21 @@ describe("an uncertain systemd-run: the second look for the unit", () => {
 			TIMEOUT_MS,
 		);
 
+		it(
+			"updates are turned off while systemd-run is in flight: the second look is made all the same",
+			async () => {
+				// The unit may exist: only looking can tell, whatever the setting.
+				const box = await atSecondLook(variant, true, () => {
+					setup.apt_update_enabled = false;
+				});
+				await box.sequencer.drain();
+				restoreUpdatesSetting();
+				await expectLaunched(box);
+				expect(failedFrames(box.frames)).toEqual([]);
+			},
+			TIMEOUT_MS,
+		);
+
 		it.each(SECOND_LOOKS)(
 			"hangs while a stream is admitted, then $name",
 			async ({ created, look, launched }) => {
@@ -524,6 +547,9 @@ describe("an uncertain systemd-run: the second look for the unit", () => {
 				expectNoStaleEffect(box, mark);
 				expect(getUpdateState().kind).toBe("downloading");
 				sequencer.step(look);
+				// A unit that was found is then checked against its fragment.
+				await settleMicrotasks();
+				if (sequencer.next() === FRAGMENT) sequencer.step();
 				expect(await admission).toEqual({ allowed: true });
 				if (!launched) {
 					// Refused after all: nothing to stop, and never the offer.

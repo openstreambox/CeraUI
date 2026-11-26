@@ -827,9 +827,14 @@ describe("each way an install ends before its unit launches", () => {
 		expect(getOrchestratorState().phase).toBe("available");
 	});
 
-	it("the start RPC beside an offer the orchestrator holds: the scheduled tick reconciles", async () => {
+	it("the start RPC beside an offer the orchestrator holds: Check now reconciles, and a due image check is not held up", async () => {
 		const fixture = await box("preflight-admission");
-		const { quarantine } = orchestrator();
+		// Packages may not use cellular, system images may; only cellular is up.
+		let metered = false;
+		const { counts, quarantine } = orchestrator({
+			allowPackagesOverCellular: false,
+			onlyMetered: () => metered,
+		});
 		expect(await checkUpdatesNow()).toEqual({ started: true });
 		expect(getOrchestratorState().phase).toBe("available");
 		// Not the orchestrator's install: the start RPC, from any client.
@@ -840,14 +845,25 @@ describe("each way an install ends before its unit launches", () => {
 		await Bun.sleep(50);
 		expect(launches()).toBe(0);
 		// The wire says `failed` beside the offer the orchestrator still holds.
-		expect(getUpdateState()).toMatchObject({
-			kind: "failed",
-			reason: "streaming",
-		});
+		const refused = { kind: "failed", reason: "streaming" };
+		expect(getUpdateState()).toMatchObject(refused);
 		expect(getOrchestratorState().phase).toBe("available");
 		expect(await quarantine.readPending()).toEqual([]);
-		// The next tick checks packages again, which brings them back in line.
+		// The scheduled tick does not check packages for it. The image check
+		// that is due runs on schedule, on cellular too, and the offer stays.
+		metered = true;
+		const os = counts.osChecks;
+		setOrchestratorStateForTest({
+			...getOrchestratorState(),
+			osCheck: { ...getOrchestratorState().osCheck, nextAttemptAt: 0 },
+		});
 		await runOrchestratorTick();
+		expect(counts.osChecks).toBe(os + 1);
+		expect(getOrchestratorState().phase).toBe("available");
+		expect(getUpdateState()).toMatchObject(refused);
+		// The user's Check now is the check that brings the two back in line.
+		metered = false;
+		expect(await checkUpdatesNow()).toEqual({ started: true });
 		expect(getUpdateState().kind).toBe("available");
 		expect(getOrchestratorState().phase).toBe("available");
 	});

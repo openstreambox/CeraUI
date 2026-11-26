@@ -125,16 +125,12 @@ export async function runPinnedStep<T>(input: {
 	) => Promise<T>;
 	readonly runner: typeof run;
 	readonly cleanup?: () => RoutingCleanup;
-	/** Throws to stop the setup before its next write; teardown still runs. */
-	readonly beforeWrite?: () => void;
 }): Promise<T> {
 	const { job, uid, transport, step, runner } = input;
-	const beforeWrite = () => input.beforeWrite?.();
 	const table = tableFor(job);
 	const chosen = familyArgs(transport.family);
 	const other = familyArgs(transport.family === 4 ? 6 : 4);
 	const route = await routeFor(transport, runner);
-	beforeWrite();
 	const installed: string[][] = [];
 	let outcome:
 		| { readonly ok: true; readonly value: T }
@@ -145,7 +141,6 @@ export async function runPinnedStep<T>(input: {
 	const failures: unknown[] = [];
 	try {
 		await flushTable(runner, transport.family, table);
-		beforeWrite();
 		// A removed DHCP default must NOT fall through to main during a transfer.
 		await runner("ip", [
 			...chosen,
@@ -158,7 +153,6 @@ export async function runPinnedStep<T>(input: {
 			"metric",
 			"4278198272",
 		]);
-		beforeWrite();
 		await runner("ip", [
 			...chosen,
 			...route,
@@ -167,10 +161,8 @@ export async function runPinnedStep<T>(input: {
 			"metric",
 			"0",
 		]);
-		beforeWrite();
 		installed.push([...other, ...ruleArgs("del", uid, undefined)]);
 		await runner("ip", [...other, ...ruleArgs("add", uid, undefined)]);
-		beforeWrite();
 		installed.push([...chosen, ...ruleArgs("del", uid, table)]);
 		await runner("ip", [...chosen, ...ruleArgs("add", uid, table)]);
 		outcome = {

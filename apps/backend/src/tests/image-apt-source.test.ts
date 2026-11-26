@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setSpawnOverrideForTest } from "../helpers/effect-owner.ts";
 import { logger } from "../helpers/logger.ts";
 import { discoverAptAllPackages } from "../modules/system/apt-all-packages.ts";
 import { policySources } from "../modules/system/apt-all-source-policy.ts";
@@ -417,8 +418,14 @@ token was ${TOKEN}
 			lines.push(message);
 			return logger;
 		});
-		// The settle's archive cleanup runs the host's apt-get, which refuses a non-root user.
 		const warn = spyOn(logger, "warn").mockImplementation(() => logger);
+		// The settle cleans apt's archives: that command is answered here, and
+		// no other may be started.
+		const commands: string[] = [];
+		setSpawnOverrideForTest(async (argv) => {
+			commands.push(argv.join(" "));
+			return { exitCode: 0, stdout: "", stderr: "" };
+		});
 		// Every status frame sent to local clients, serialized as the socket sends it.
 		const frames: string[] = [];
 		const broadcast = spyOn(compat, "broadcastMsg").mockImplementation(
@@ -461,7 +468,9 @@ token was ${TOKEN}
 				.join("\n");
 			expect(logged).toContain(`https://${HOST}/pool/main`);
 			expect(logged).not.toContain(TOKEN);
+			expect(commands).toEqual(["/usr/bin/apt-get clean"]);
 		} finally {
+			setSpawnOverrideForTest(null);
 			broadcast.mockRestore();
 			info.mockRestore();
 			error.mockRestore();

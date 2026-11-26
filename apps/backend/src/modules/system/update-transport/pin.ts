@@ -1,3 +1,4 @@
+import type { EffectOwner } from "../../../helpers/effect-owner.ts";
 import { RunAbortError, RunTimeoutError, run } from "../../../helpers/run.ts";
 import type {
 	AptRoutingLease,
@@ -86,6 +87,8 @@ function uidFor(job: UpdateJob, file: CapabilityFile): number {
 type Step<T> = (
 	transport: RankedTransport,
 	aptFlags: readonly string[],
+	/** `last`: no other transport would be tried if this one fails. */
+	attempt: { readonly last: boolean },
 ) => Promise<T>;
 
 export type UpdateStepControl = {
@@ -94,11 +97,11 @@ export type UpdateStepControl = {
 	readonly refreshSelection?: () => Promise<TransportSelection>;
 	readonly checkCancelled?: () => void;
 	/**
-	 * Throws once the caller no longer owns this step. Asked before the lease
-	 * and before every routing write, so nothing is set up for an owner that
-	 * is gone; what was set up before is still torn down.
+	 * Whom the step is run for. Every routing command of it, and its routing
+	 * lease, carry that owner: once it has ended nothing more is set up, and
+	 * what was set up is still torn down (effect-owner.ts).
 	 */
-	readonly checkOwned?: () => void;
+	readonly owner?: EffectOwner;
 	readonly approveMetered?: (transport: RankedTransport) => boolean;
 };
 
@@ -135,43 +138,46 @@ export function createUpdatePinController(overrides: Partial<PinDeps> = {}) {
 			const file = await deps.readCapabilities();
 			if (!file) throw new UpdatePinError("capabilities-unavailable");
 			const uid = uidFor(job, file);
-			control.checkOwned?.();
+			const owner = control.owner;
+			const runner: typeof run = owner
+				? (bin, args, opts) => deps.run(bin, args, { ...opts, owner })
+				: deps.run;
 			if (job === "apt")
-				aptLease = await control.aptOwnership?.acquire(deps.run, uid);
+				aptLease = await control.aptOwnership?.acquire(runner, uid, owner);
 			const attempted = new Set<string>();
 			let ranking = selection;
 			let lastFailure: UpdateTransferError | undefined;
 			while (attempted.size < MAX_ATTEMPTS) {
-				control.checkOwned?.();
 				control.checkCancelled?.();
 				if (lastFailure && control.refreshSelection) {
 					ranking = await control.refreshSelection();
 					control.checkCancelled?.();
 				}
-				const candidate = ranking.ranked.find(
-					(row) =>
-						row.healthy &&
-						!attempted.has(key(row.candidate.ifname, row.family)) &&
-						!unhealthyUntil(row.candidate.ifname, row.family) &&
-						(row.candidate.metered === false ||
-							!control.approveMetered ||
-							control.approveMetered(row)),
-				);
+				const eligible = (row: RankedTransport) =>
+					row.healthy &&
+					!attempted.has(key(row.candidate.ifname, row.family)) &&
+					!unhealthyUntil(row.candidate.ifname, row.family) &&
+					(row.candidate.metered === false ||
+						!control.approveMetered ||
+						control.approveMetered(row));
+				const candidate = ranking.ranked.find(eligible);
 				if (!candidate) break;
 				control.checkCancelled?.();
 				attempted.add(key(candidate.candidate.ifname, candidate.family));
+				// Whether a failure of this transport is the transfer's last word.
+				const last =
+					!control.refreshSelection &&
+					(attempted.size >= MAX_ATTEMPTS || !ranking.ranked.some(eligible));
 				try {
 					return await runPinnedStep({
 						job,
 						uid,
 						transport: candidate,
 						step: (transport, flags) => {
-							control.checkOwned?.();
 							control.checkCancelled?.();
-							return step(transport, flags);
+							return step(transport, flags, { last });
 						},
-						runner: aptLease?.runner ?? deps.run,
-						...(control.checkOwned ? { beforeWrite: control.checkOwned } : {}),
+						runner: aptLease?.runner ?? runner,
 						...(job === "os" && control.cleanup
 							? { cleanup: control.cleanup }
 							: {}),

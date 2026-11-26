@@ -1,7 +1,13 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+	type EffectOwner,
+	isOwnerEnded,
+	ownedFiles,
+	ownedWrite,
+} from "../../../helpers/effect-owner.ts";
 import { logger } from "../../../helpers/logger.ts";
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
 import {
@@ -66,7 +72,16 @@ export type UpdateTransportDeps = {
 	 * access token comes as `privateUrl` and is left out of `argv`: it must
 	 * reach curl without appearing on its command line.
 	 */
-	run: (argv: string[], privateUrl?: string) => Promise<SpawnWithTimeoutResult>;
+	run: (
+		argv: string[],
+		privateUrl?: string,
+		owner?: EffectOwner,
+	) => Promise<SpawnWithTimeoutResult>;
+	/**
+	 * Whom this selection is made for; set by `selectUpdateTransport`. Once it
+	 * has ended, no further command starts and nothing is written or published.
+	 */
+	owner?: EffectOwner;
 	mmIfnames: () => string[];
 	routerIfnames: () => string[];
 	dongleIfnames: () => string[];
@@ -99,11 +114,14 @@ export const defaultUpdateTransportDeps: UpdateTransportDeps = {
 			.map(([ifname]) => ifname),
 	readSources,
 	credentials: aptClientPaths,
-	run: (argv, privateUrl) =>
+	run: (argv, privateUrl, owner) =>
 		privateUrl === undefined
-			? spawnWithTimeout(argv, { timeoutMs: TIMEOUT_MS })
-			: runCurlWithPrivateUrl(argv, privateUrl, (full) =>
-					spawnWithTimeout(full, { timeoutMs: TIMEOUT_MS }),
+			? spawnWithTimeout(argv, { timeoutMs: TIMEOUT_MS, owner })
+			: runCurlWithPrivateUrl(
+					argv,
+					privateUrl,
+					(full) => spawnWithTimeout(full, { timeoutMs: TIMEOUT_MS, owner }),
+					owner,
 				),
 	mmIfnames: () =>
 		Object.values(getModems())
@@ -196,6 +214,7 @@ async function resolvedAddress(
 		}
 		return "dns-failed";
 	} catch (error) {
+		if (isOwnerEnded(error)) throw error;
 		return failureFromError(error);
 	}
 }
@@ -265,6 +284,7 @@ async function curl(
 			...response,
 		};
 	} catch (error) {
+		if (isOwnerEnded(error)) throw error;
 		return {
 			state: failureFromError(error),
 			code: 0,
@@ -315,6 +335,7 @@ async function endpoint(
 					latencyMs: httpProbe.latencyMs,
 				};
 		} catch (error) {
+			if (isOwnerEnded(error)) throw error;
 			return {
 				host,
 				state: failureFromError(error),
@@ -385,10 +406,19 @@ async function debian(
 					: response.state,
 			latencyMs: response.latencyMs,
 		};
-	const dir = await mkdtemp(join(tmpdir(), "ceraui-update-index-"));
+	const files = ownedFiles(deps.owner);
+	const dir = await files.makeTempDirectory(
+		"private-file:create",
+		join(tmpdir(), "ceraui-update-index-"),
+	);
 	try {
 		const inRelease = join(dir, "InRelease");
-		await Bun.write(inRelease, response.body);
+		await files.writeNew(
+			"private-file:create",
+			inRelease,
+			response.body,
+			0o600,
+		);
 		const verified = await deps.run([
 			"gpgv",
 			"--keyring",
@@ -401,13 +431,14 @@ async function debian(
 			latencyMs: response.latencyMs,
 		};
 	} catch (error) {
+		if (isOwnerEnded(error)) throw error;
 		return {
 			host,
 			state: failureFromError(error),
 			latencyMs: response.latencyMs,
 		};
 	} finally {
-		await rm(dir, { recursive: true, force: true });
+		await files.removeTree("private-file:remove", dir);
 	}
 }
 
@@ -451,9 +482,24 @@ export async function onlyMeteredUplinksRemain(
 export async function selectUpdateTransport(
 	profile: UpdateProfile,
 	deps: UpdateTransportDeps = defaultUpdateTransportDeps,
+	// Whom the selection is made for (an install on an image with its own apt
+	// source). Every command and write of it then carries that owner.
+	owner?: EffectOwner,
 ): Promise<TransportSelection> {
-	const selection = await probeUpdateTransport(profile, deps);
-	recordTransportSelection(profile.profile, selection);
+	const selection = await probeUpdateTransport(
+		profile,
+		owner === undefined
+			? deps
+			: {
+					...deps,
+					owner,
+					run: (argv, privateUrl) => deps.run(argv, privateUrl, owner),
+				},
+	);
+	// An ended owner publishes no finding: the record keeps the last real one.
+	ownedWrite(owner, "transport-selection:publish", () =>
+		recordTransportSelection(profile.profile, selection),
+	);
 	if (profile.profile === "os" && selection.status === "none") {
 		logger.warn("No healthy update transport", {
 			profile: "os",
@@ -482,7 +528,8 @@ async function probeUpdateTransport(
 			"device",
 			"show",
 		]);
-	} catch {
+	} catch (error) {
+		if (isOwnerEnded(error)) throw error;
 		return rankTransports([]);
 	}
 	if (nmcli.exitCode !== 0) return rankTransports([]);

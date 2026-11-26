@@ -3029,12 +3029,6 @@ export async function runOrchestratorTick(): Promise<void> {
 			return;
 		}
 		await runScheduledChecks();
-	} else if (state.phase === "available" && unrecordedRefusalBesideOffer()) {
-		// The package check brings the wire and the offer held here back in line,
-		// as it does from every other phase (under the usual cellular rule).
-		const settings = await deps.loadSettings();
-		if (state.phase === "available" && unrecordedRefusalBesideOffer())
-			await runPackageCheckAfterCellularGate(settings);
 	} else if (state.phase === "available") {
 		// Taken before any read, so a check started meanwhile (Check now) wins.
 		const ticket = besideOfferTicket();
@@ -3130,17 +3124,6 @@ function refusedInstallPending(): boolean {
 	return (
 		state.phase === "failed" && state.failureReason === PACKAGE_INSTALL_REFUSED
 	);
-}
-
-/**
- * Image apt source: an install this orchestrator did not start (the start
- * RPC) ended before its unit launched. The wire says so while the offer is
- * still held here; nothing was recorded, because there was no plan to fail.
- */
-function unrecordedRefusalBesideOffer(): boolean {
-	if (!imageAptSourceInUse() || !deps.packageFailedBeforeLaunch()) return false;
-	const { kind } = deps.getPackageInstallWireState();
-	return kind === "failed" || kind === "update_preflight_failed";
 }
 
 /**

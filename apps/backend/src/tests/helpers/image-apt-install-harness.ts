@@ -10,13 +10,25 @@
 
 /**
  * An install on an image with its own apt source, held at its first wait: the
- * real package code and the real orchestrator over fakes that each park on a
- * sequencer (await-sequencer.ts). The tests that step it through its waits
- * share this fixture, the recording of those waits, and what may be observed
- * of an install at any moment.
+ * real package code, its probes, the transport selection, the pin, the routing
+ * lease, the launcher and the orchestrator, over fakes at the bottom only.
  *
- * Only in-process fakes: the unit, apt, the probes, the routing rules and the
- * delayed start's timer are all objects in this file.
+ * The fakes stand where the code leaves the process:
+ * - every command, at the two spawn primitives (`setSpawnOverrideForTest`);
+ * - every file written for an install, at the owned-file backend
+ *   (`setOwnedFileBackendForTest`), and every owned write to state, at its
+ *   observer (`setOwnedWriteObserverForTest`);
+ * - the few reads that are neither: the capability files, the routing
+ *   journal's store, the unit's fragment, two `stat` calls, the delayed
+ *   start's timer and the unit's output.
+ *
+ * Each parks on a sequencer (await-sequencer.ts), so a test stands at every
+ * wait of the install in turn. Everything is kept in one ledger: once an
+ * install has ended, any command, file step or owned write of its own that is
+ * not on the teardown list of effect-owner.ts fails the test, and so does
+ * anything it logs.
+ *
+ * Only in-process fakes: no command of this file ever reaches the system.
  */
 
 import { afterEach, beforeEach, expect, spyOn } from "bun:test";
@@ -27,13 +39,30 @@ import {
 	type UpdateCapabilities,
 	updateCapabilityFileSchema,
 } from "@ceraui/rpc/schemas";
+import {
+	isOwnerTeardownCommand,
+	isOwnerTeardownWrite,
+	type OwnedFileBackend,
+	type OwnedWrite,
+	type SpawnOverrideResult,
+	setOwnedFileBackendForTest,
+	setOwnedWriteObserverForTest,
+	setSpawnOverrideForTest,
+} from "../../helpers/effect-owner.ts";
 import { logger } from "../../helpers/logger.ts";
 import * as events from "../../modules/events/emit.ts";
+import * as gateways from "../../modules/network/gateways.ts";
 import { setup } from "../../modules/setup.ts";
+import {
+	deriveVerdict,
+	resetAptReachabilityCacheForTest,
+} from "../../modules/system/apt-reachability.ts";
 import type { AptRoutingEntry } from "../../modules/system/apt-routing-journal.ts";
-import { createAptRoutingOwnership } from "../../modules/system/apt-routing-ownership.ts";
+import {
+	AptRoutingRefusal,
+	createAptRoutingOwnership,
+} from "../../modules/system/apt-routing-ownership.ts";
 import { defaultAptSpaceDeps } from "../../modules/system/apt-space-admission.ts";
-import { abortAptTransferForStream } from "../../modules/system/apt-transfer-abort.ts";
 import { setAptTransportDepsForTest } from "../../modules/system/apt-transport.ts";
 import * as board from "../../modules/system/board-capabilities.ts";
 import {
@@ -44,13 +73,17 @@ import {
 } from "../../modules/system/image-apt-source.ts";
 import { setImageOwnedPackagesReaderForTest } from "../../modules/system/image-owned-packages.ts";
 import { softwareUpdateOutputPaths } from "../../modules/system/software-update-output.ts";
+import { setDetachedAptServiceDepsForTest } from "../../modules/system/software-update-service.ts";
 import {
-	type DetachedAptServiceDeps,
-	setDetachedAptServiceDepsForTest,
-} from "../../modules/system/software-update-service.ts";
+	SOFTWARE_UPDATE_DESCRIPTION,
+	SOFTWARE_UPDATE_FRAGMENT_PATH,
+	SOFTWARE_UPDATE_LOCK,
+	SOFTWARE_UPDATE_UNIT,
+} from "../../modules/system/software-update-service-contract.ts";
 import {
 	getAvailableUpdates,
 	getUpdateState,
+	installAttemptStateForTest,
 	packageFailedBeforeLaunch,
 	packageInstallDraining,
 	resetAptReachabilityProbeForTest,
@@ -58,7 +91,6 @@ import {
 	resetSoftwareUpdateState,
 	runSoftwareUpdateCheck,
 	setAptCommandRunnerForTest,
-	setAptReachabilityProbeForTest,
 	setDelayedStartTimerForTest,
 	startSoftwareUpdate,
 	triggerManualUpdateCheck,
@@ -74,19 +106,24 @@ import {
 	setOrchestratorRuntimeDepsForTest,
 	setOrchestratorStateForTest,
 } from "../../modules/system/update-orchestrator/runtime.ts";
+import * as storedState from "../../modules/system/update-orchestrator/stored-state-file.ts";
+import { stopPackageInstallUnitForStream } from "../../modules/system/update-orchestrator/stream-abort.ts";
 import {
 	initialOrchestratorState,
 	PACKAGE_INSTALL_REFUSED,
 } from "../../modules/system/update-orchestrator/types.ts";
-import { rankTransports } from "../../modules/system/update-transport/core.ts";
+import {
+	defaultUpdateTransportDeps,
+	selectUpdateTransport,
+} from "../../modules/system/update-transport/executor.ts";
 import { createUpdatePinController } from "../../modules/system/update-transport/pin.ts";
 import { notificationRemove } from "../../modules/ui/notifications.ts";
 import * as compat from "../../rpc/compat.ts";
 import { armedMarkerFixture } from "../software-updates-marker-harness.ts";
-import { sample } from "./apt-transport-fixture.ts";
+import { PINNED_CAPABILITIES } from "./apt-transport-fixture.ts";
 import {
-	type AwaitSequencer,
 	createAwaitSequencer,
+	type GateAnswer,
 	settleEventLoop,
 } from "./await-sequencer.ts";
 import {
@@ -132,35 +169,27 @@ const POLICY = `modemmanager:
 `;
 const OFFER = `Reading package lists...\nBuilding dependency tree...\nReading state information...\nCalculating upgrade...\n1 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\nInst modemmanager [${OLD}] (${FIX} OpenStreamBox:${EMERGENCY} [arm64])\nConf modemmanager (${FIX} OpenStreamBox:${EMERGENCY} [arm64])\n`;
 const REFRESH = `Hit:1 ${URI} ${SUITE} InRelease\nHit:2 ${URI} ${EMERGENCY} InRelease\nReading package lists...\n`;
-const OK_REACH = {
-	ipv4: "ok",
-	ipv6: "ok",
-	used: "any",
-	verdict: "any",
-	detail: [],
-} as const;
-const UNREACHABLE = {
-	ipv4: "no_route",
-	ipv6: "no_route",
-	used: "none",
-	verdict: "unreachable",
-	detail: [],
-} as const;
-
 /** The pending package list an orchestrated install records. */
 export const PENDING = [{ name: "modemmanager", version: FIX }];
 /** The launcher's `systemd-run`: once it returned, the unit is submitted. */
 export const SUBMIT = "unit: systemd-run";
 /** What an uncertain `systemd-run` is followed by, inside the launch fence. */
 export const REINSPECT = "unit: systemctl show";
+/** A unit that was found is then checked against its fragment. */
+export const FRAGMENT = "unit: read its fragment";
 export const DELAY = "delayed start: timer";
-export const SPOOL = "unit: prepare its output files";
+/** The shared gateway election writes the host's default route. */
+export const ROUTE_WRITE = "election: write the default route";
+/** The first step of the unit's output files. */
+export const SPOOL = "file: spool:secure-directory (make the directory)";
 export const REFRESH_COMMAND = "apt-get update";
+export const DOWNLOAD = "apt-get -d (download under the pin)";
+export const ARCHIVE_CLEANUP = "apt-get clean";
 /**
  * Each test replays the install once per wait: far more than one test's usual
  * budget on a loaded machine.
  */
-export const TIMEOUT_MS = 480_000;
+export const TIMEOUT_MS = 900_000;
 
 /**
  * - `orchestrated`: Install now through the orchestrator, apt unbound.
@@ -171,6 +200,10 @@ export const TIMEOUT_MS = 480_000;
  * - `start RPC from the Packages card`: the same as the shipped dialog calls
  *   it. The card's own check found the offer, the orchestrator is idle.
  * - `delayed`: Install now while another check runs, so the start waits.
+ * - `route repair`: Install now on a board whose default route the backend
+ *   elects: before it probes, apt asks the host's shared gateway election for
+ *   a repaired route. The election is the host's own and runs on when the
+ *   install ends; what it must not do then is write a route for it.
  */
 export const VARIANTS = [
 	"orchestrated",
@@ -178,6 +211,7 @@ export const VARIANTS = [
 	"start RPC",
 	"start RPC from the Packages card",
 	"delayed",
+	"route repair",
 ] as const;
 export type Variant = (typeof VARIANTS)[number];
 /** The orchestrator's phase beside a standalone start: it never changes it. */
@@ -187,34 +221,83 @@ export const BESIDE_START_RPC: Partial<Record<Variant, "available" | "idle">> =
 		"start RPC from the Packages card": "idle",
 	};
 
-const ok = (stdout = "") => ({ exitCode: 0, stdout, stderr: "" });
-const aptFailed = () => ({ exitCode: 100, stdout: "", stderr: "E: failed\n" });
+const ok = (stdout = ""): SpawnOverrideResult => ({
+	exitCode: 0,
+	stdout,
+	stderr: "",
+});
+const failed = (exitCode: number, stderr: string): SpawnOverrideResult => ({
+	exitCode,
+	stdout: "",
+	stderr,
+});
 
-function aptLabel(argv: readonly string[]): string {
-	if (argv[0] === "/usr/bin/apt-mark") return "apt-mark showhold";
-	if (argv[0] === "/usr/bin/apt-cache")
-		return argv.at(-1) === "policy"
-			? "apt-cache policy"
-			: "apt-cache policy <package>";
-	if (argv[1] === "update" || argv.includes("update")) return REFRESH_COMMAND;
-	if (argv.includes("-s") && argv.includes("install"))
-		return "apt-get -s install (pinned recheck)";
-	if (argv.includes("-s")) return "apt-get -s (discovery)";
-	if (argv.includes("-d")) return "apt-get -d (download under the pin)";
-	return `apt ${argv.slice(0, 2).join(" ")}`;
+const bin = (argv: readonly string[]) => path.basename(argv[0] ?? "");
+
+/** The name a command's wait goes by. */
+function commandLabel(argv: readonly string[]): string {
+	const args = argv.slice(1);
+	switch (bin(argv)) {
+		case "apt-mark":
+			return "apt-mark showhold";
+		case "apt-cache":
+			return argv.at(-1) === "policy"
+				? "apt-cache policy"
+				: "apt-cache policy <package>";
+		case "apt-config":
+			return "apt-config shell";
+		case "apt-get":
+			if (args.includes("update")) return REFRESH_COMMAND;
+			if (args.includes("clean")) return ARCHIVE_CLEANUP;
+			if (args.includes("--print-uris")) return "apt-get --print-uris";
+			if (args.includes("-s"))
+				return args.includes("install")
+					? "apt-get -s install (pinned recheck)"
+					: "apt-get -s (discovery)";
+			if (args.includes("-d")) return DOWNLOAD;
+			return `apt-get ${args[0]}`;
+		case "systemd-run":
+			return SUBMIT;
+		case "systemctl":
+			return args[0] === "show" ? REINSPECT : `unit: systemctl ${args[0]}`;
+		case "curl": {
+			const device = args[args.indexOf("--interface") + 1];
+			return `curl ${args.includes("-6") ? "-6" : "-4"}${
+				args.includes("--interface") ? ` on ${device?.replace("if!", "")}` : ""
+			}`;
+		}
+		case "resolvectl":
+			return `resolvectl ${args.slice(0, 3).join(" ")} query`;
+		case "nmcli":
+			return "nmcli device show";
+		case "gpgv":
+			return "gpgv InRelease";
+		default:
+			// The routing commands, in full.
+			return argv.join(" ");
+	}
 }
 
-function aptAnswer(argv: readonly string[]) {
-	if (argv[0] === "/usr/bin/apt-cache")
-		return ok(argv.at(-1) === "policy" ? INVENTORY : POLICY);
-	if (argv.includes("update")) return ok(REFRESH);
-	if (argv.includes("-s")) return ok(OFFER);
-	return ok();
-}
+const SYSTEMCTL_ABSENT =
+	"LoadState=not-found\nActiveState=inactive\nSubState=dead\n";
+// One uplink, unmetered, as NetworkManager lists it.
+const NMCLI =
+	"GENERAL.DEVICE:eth0\nGENERAL.IP-IFACE:eth0\nGENERAL.TYPE:ethernet\nGENERAL.STATE:100 (connected)\nGENERAL.METERED:no";
+const IN_RELEASE = `Origin: OpenStreamBox\nLabel: OpenStreamBox\nSuite: ${SUITE}\n`;
+/** What apt prints for the download under the pin. */
+export const DOWNLOADED = `Get:1 ${URI} ${EMERGENCY}/main arm64 modemmanager arm64 ${FIX} [1234 kB]\nFetched 1234 kB in 1s (1234 kB/s)\n`;
+const uplink = (ip: string) => ({
+	ip,
+	tp: 0,
+	txb: 0,
+	rxb: 0,
+	enabled: true,
+	error: 0,
+});
 
-// The detached unit, as an object: `systemd-run`, `systemctl show` and the
-// stop are answers from here.
-function fakeUnit(sequencer: AwaitSequencer) {
+// The detached unit, as systemd would know it: `systemd-run`, `systemctl
+// show` and the stop are commands like any other, answered from here.
+function fakeUnit() {
 	const unit = {
 		/** `systemd-run` calls made (the submission is in flight or done). */
 		submissions: 0,
@@ -227,55 +310,118 @@ function fakeUnit(sequencer: AwaitSequencer) {
 		createdDespiteClientError: false,
 		// Stopped, or the test is over: whatever looks finds it gone or finished.
 		ended: null as "absent" | "finished" | null,
+		/** The script `systemd-run` was given. */
+		script: "",
 		wake: Promise.withResolvers<void>(),
 	};
-	const deps: DetachedAptServiceDeps = {
-		outputPaths: softwareUpdateOutputPaths(),
-		prepareOutput: async () => {
-			if ((await sequencer.gate(SPOOL)) === "fail")
-				throw new Error("the output files could not be created");
-		},
-		start: async () => {
-			unit.submissions++;
-			if ((await sequencer.gate(SUBMIT)) === "fail") {
-				if (unit.createdDespiteClientError) unit.state = "running";
-				throw new Error("systemd-run: Connection timed out");
-			}
-			unit.state = "running";
-		},
-		inspect: async () => {
-			if ((await sequencer.gate(REINSPECT)) === "fail")
-				throw new Error("systemctl show: Connection timed out");
-			if (unit.ended === "finished")
-				return { kind: "finished", exitCode: 100, cleanup: "stop" };
-			return { kind: unit.ended ?? unit.state };
-		},
-		cleanup: async () => {
-			// Nothing to clean up: the unit is an object.
-		},
-		readOutput: async (_file, offset) => ({
-			bytes: new Uint8Array(),
-			nextOffset: offset,
-		}),
-		// The unit runs until it is stopped or the test ends.
-		sleep: async () => {
-			await unit.wake.promise;
-			await settleEventLoop(1);
-		},
+	// `systemctl show`, in the shape systemd prints it.
+	const show = (): string => {
+		const now = unit.ended ?? unit.state;
+		if (now === "absent") return SYSTEMCTL_ABSENT;
+		const states =
+			now === "finished"
+				? "LoadState=loaded\nActiveState=failed\nSubState=failed\nExecMainCode=1\nExecMainStatus=100\n"
+				: "LoadState=loaded\nActiveState=active\nSubState=running\nExecMainCode=0\nExecMainStatus=0\n";
+		return `Id=${SOFTWARE_UPDATE_UNIT}\nFragmentPath=${SOFTWARE_UPDATE_FRAGMENT_PATH}\nDescription=${SOFTWARE_UPDATE_DESCRIPTION}\n${states}Transient=yes\nType=exec\nRemainAfterExit=yes\nStandardOutput=append\nStandardError=append\nUser=\nExecStartPre=\nExecStartPost=\nExecStart={ path=/usr/bin/flock ; argv[]=/usr/bin/flock -x ${SOFTWARE_UPDATE_LOCK} /bin/sh -ec ${unit.script} ; ignore_errors=no ; start_time=[Thu 2026-11-26 09:00:00 UTC] ; stop_time=[n/a] ; pid=4242 ; code=(null) ; status=0/0 }\n`;
 	};
 	return {
 		unit,
-		deps,
+		show,
+		/** `systemd-run` was asked for. */
+		submitting(argv: readonly string[]) {
+			unit.submissions++;
+			unit.script = argv.at(-1) ?? "";
+		},
 		stop() {
 			unit.stops++;
 			unit.ended = "absent";
 			unit.wake.resolve();
 		},
 		finish() {
-			unit.ended ??= "finished";
+			unit.ended ??= unit.state === "running" ? "finished" : "absent";
 			unit.wake.resolve();
 		},
 	};
+}
+
+type Unit = ReturnType<typeof fakeUnit>;
+
+/** What a command answers once its wait is released. */
+function commandAnswer(
+	argv: readonly string[],
+	unit: Unit,
+): SpawnOverrideResult {
+	const args = argv.slice(1);
+	const line = argv.join(" ");
+	switch (bin(argv)) {
+		case "apt-cache":
+			return ok(argv.at(-1) === "policy" ? INVENTORY : POLICY);
+		case "apt-config":
+			return ok("ARCHIVES='/cache/archives/';");
+		case "apt-get":
+			if (args.includes("update")) return ok(REFRESH);
+			if (args.includes("--print-uris"))
+				return ok(
+					"After this operation, 2 kB of additional disk space will be used.\n'https://updates.example.org/a.deb' a.deb 4000 SHA256:abc\n",
+				);
+			if (args.includes("-s")) return ok(OFFER);
+			// The download says what it fetched, from the source's own URL.
+			return ok(args.includes("-d") ? DOWNLOADED : "");
+		case "systemd-run":
+			unit.unit.state = "running";
+			return ok();
+		case "systemctl":
+			if (args[0] === "show") return ok(unit.show());
+			if (args[0] === "stop") unit.stop();
+			return ok();
+		case "nmcli":
+			return ok(NMCLI);
+		case "resolvectl":
+			// One address family answers: the uplink is IPv4 only.
+			return args.includes("-6")
+				? failed(1, "")
+				: ok(`${argv.at(-1)}: 192.0.2.10`);
+		case "curl":
+			// The per-uplink probe fetches the index; the unbound one asks for
+			// the status only.
+			return ok(
+				args.includes("--resolve")
+					? `${IN_RELEASE}\n<<<update-probe>>>200 0.05`
+					: "200 ",
+			);
+		case "ip":
+			return ok(
+				line.endsWith("route show default")
+					? "default dev eth0\ndefault dev wlan0"
+					: "",
+			);
+		default:
+			return ok();
+	}
+}
+
+/** What a command answers when its wait is released as a failure. */
+function commandFailure(
+	argv: readonly string[],
+	unit: Unit,
+): SpawnOverrideResult {
+	switch (bin(argv)) {
+		case "apt-get":
+		case "apt-cache":
+		case "apt-mark":
+		case "apt-config":
+			return failed(100, "E: failed\n");
+		case "systemd-run":
+			if (unit.unit.createdDespiteClientError) unit.unit.state = "running";
+			return failed(1, "systemd-run: Connection timed out");
+		case "systemctl":
+			return failed(1, `systemctl ${argv[1]}: Connection timed out`);
+		case "curl":
+			// Could not connect.
+			return failed(7, "curl: (7) Failed to connect");
+		default:
+			return failed(1, `${bin(argv)}: failed`);
+	}
 }
 
 const scratch: string[] = [];
@@ -285,6 +431,41 @@ const installSpies: ReturnType<typeof spyOn>[] = [];
 const cleanups: (() => void | Promise<void>)[] = [];
 const updatesEnabled = setup.apt_update_enabled;
 const hasBoardCapability = board.hasCapability;
+const updateGwWrapper = gateways.updateGwWrapper;
+const readStoredStateFile = storedState.readStoredStateFile;
+
+/** A line the device logged, and who logged it. */
+type Logged = {
+	readonly level: "debug" | "info" | "warn" | "error";
+	readonly message: string;
+	readonly by: "flow" | "beside" | "outside";
+	/** It reports a routing teardown that failed: a rule or route was left. */
+	readonly teardownFailed: boolean;
+};
+
+// A pinned run whose teardown failed: the pin's aggregate, or the lease that
+// could not be released clean.
+const isTeardownFailure = (meta: unknown): boolean => {
+	const error = (meta as { error?: unknown } | undefined)?.error;
+	return (
+		error instanceof AggregateError ||
+		(error instanceof AptRoutingRefusal && error.reason === "cleanup-pending")
+	);
+};
+const logged: Logged[] = [];
+// Whose log lines are whose: the sequencer of the install in progress.
+let logContext: (() => Logged["by"]) | undefined;
+
+/**
+ * What an install did after it had ended that is not on the teardown list:
+ * collected as it happens, whatever the test looks at.
+ */
+const staleEffects: string[] = [];
+
+/** The stale effects seen since the last call, and none left behind. */
+export function takeStaleEffects(): string[] {
+	return staleEffects.splice(0);
+}
 
 /** Puts updates back as the test file found them. */
 export function restoreUpdatesSetting(): void {
@@ -307,8 +488,14 @@ export async function teardownInstall(): Promise<void> {
 	setDelayedStartTimerForTest(null);
 	setStreamLivenessSourceForTest(null);
 	resetAptReachabilityProbeForTest();
+	resetAptReachabilityCacheForTest();
 	resetSoftwareUpdateCheckRunner();
 	resetSoftwareUpdateState();
+	setSpawnOverrideForTest(null);
+	setOwnedFileBackendForTest(null);
+	setOwnedWriteObserverForTest(null);
+	logContext = undefined;
+	logged.length = 0;
 	notificationRemove("ceralive_update_failed");
 	for (const dir of quarantineDirs.splice(0))
 		await rm(dir, { recursive: true, force: true });
@@ -317,18 +504,30 @@ export async function teardownInstall(): Promise<void> {
 	for (const spy of installSpies.splice(0)) spy.mockRestore();
 }
 
-/** Quiet logs for the file's tests, and the fixture torn down after each. */
+/**
+ * Logs kept instead of printed for the file's tests, and the fixture torn
+ * down after each.
+ */
 export function useInstallHarness(): void {
 	beforeEach(() => {
-		spies = [
-			spyOn(logger, "info").mockImplementation(() => logger),
-			spyOn(logger, "warn").mockImplementation(() => logger),
-			spyOn(logger, "error").mockImplementation(() => logger),
-		];
+		spies = (["debug", "info", "warn", "error"] as const).map((level) =>
+			spyOn(logger, level).mockImplementation(
+				(message: unknown, meta?: unknown) => {
+					logged.push({
+						level,
+						message: String(message),
+						by: logContext?.() ?? "outside",
+						teardownFailed: isTeardownFailure(meta),
+					});
+					return logger;
+				},
+			),
+		);
 	});
 	afterEach(async () => {
 		await teardownInstall();
 		for (const spy of spies.splice(0)) spy.mockRestore();
+		staleEffects.length = 0;
 	});
 }
 
@@ -346,6 +545,19 @@ export async function acceptedInstall(variant: Variant) {
 	const flag = path.join(dir, "clock-gate-open");
 	await writeFile(flag, "");
 	const sequencer = createAwaitSequencer();
+	logContext = sequencer.context;
+	// The labels of what an ended install may still do (effect-owner.ts).
+	const teardown = new Set<string>();
+	// Every effect passes here before it happens.
+	const effect = (label: string, isTeardown: boolean): void => {
+		if (isTeardown) teardown.add(label);
+		else if (
+			sequencer.armed() &&
+			sequencer.context() === "flow" &&
+			installAttemptStateForTest() === "ended"
+		)
+			staleEffects.push(label);
+	};
 	// A fake's answer once its wait is released; `failure` when it is released
 	// as a failure (by default the call throws).
 	const wait = async <T>(
@@ -354,9 +566,91 @@ export async function acceptedInstall(variant: Variant) {
 		failure: () => T = () => {
 			throw new Error(`${label}: failed`);
 		},
-	): Promise<T> =>
-		(await sequencer.gate(label)) === "fail" ? failure() : answer();
+	): Promise<T> => {
+		effect(label, false);
+		return (await sequencer.gate(label)) === "fail" ? failure() : answer();
+	};
 	const pinned = variant === "pinned";
+	const routed = variant === "route repair";
+	const unit = fakeUnit();
+	// What kind of call a label stands for: something done, or a look.
+	const effects = new Set<string>();
+	/** The default routes the gateway election wrote. */
+	const routeWrites: string[] = [];
+
+	// Every command of both spawn primitives.
+	setSpawnOverrideForTest(async (argv) => {
+		const label = commandLabel(argv);
+		effects.add(label);
+		effect(label, isOwnerTeardownCommand(argv));
+		if (bin(argv) === "systemd-run") unit.submitting(argv);
+		return (await sequencer.gate(label)) === "fail"
+			? commandFailure(argv, unit)
+			: commandAnswer(argv, unit);
+	});
+
+	// Every file made or changed for an install. The write's kind is told to
+	// the observer right before the file step it belongs to.
+	let kind: OwnedWrite | undefined;
+	const fileStep = async (step: string): Promise<GateAnswer> => {
+		const label = `file: ${kind} (${step})`;
+		effects.add(label);
+		effect(label, kind !== undefined && isOwnerTeardownWrite(kind));
+		return sequencer.gate(label);
+	};
+	const fileWrite = async (step: string): Promise<void> => {
+		const label = `file: ${kind} (${step})`;
+		effects.add(label);
+		effect(label, kind !== undefined && isOwnerTeardownWrite(kind));
+		if ((await sequencer.gate(label)) === "fail")
+			throw new Error(`${label}: failed`);
+	};
+	let temporary = 0;
+	const files: OwnedFileBackend = {
+		makeDirectory: () => fileWrite("make the directory"),
+		inspect: async () => {
+			if ((await fileStep("look at it")) === "fail")
+				throw new Error("the directory could not be read");
+			return {
+				isDirectory: () => true,
+				isSymbolicLink: () => false,
+				uid: 0,
+				mode: 0o700,
+			};
+		},
+		setMode: () => fileWrite("set its mode"),
+		removeFile: () => fileWrite("remove the file"),
+		removeTree: () => fileWrite("remove the directory"),
+		createExclusive: async () => {
+			await fileWrite("create the file");
+			return {
+				stat: async () => {
+					if ((await fileStep("look at the file")) === "fail")
+						throw new Error("the file could not be read");
+					return { isFile: () => true, uid: 0, nlink: 1 };
+				},
+				chmod: () => fileWrite("set the file's mode"),
+				close: async () => {
+					// Nothing is open: the file is an object.
+				},
+			};
+		},
+		makeTempDirectory: async (prefix) => {
+			await fileWrite("make a private directory");
+			return `${prefix}${++temporary}`;
+		},
+		writeNew: () => fileWrite("write the file"),
+	};
+	setOwnedFileBackendForTest(files);
+	setOwnedWriteObserverForTest((next) => {
+		kind = next;
+		if (next.startsWith("spool:") || next.startsWith("private-file:")) return;
+		// A write to state does not wait: it is kept in the ledger as it is.
+		const label = `write: ${next}`;
+		effects.add(label);
+		effect(label, isOwnerTeardownWrite(next));
+		sequencer.note(label);
+	});
 
 	setImageAptSourceReaderForTest((file) => FILES[file] ?? null);
 	setImageClockGateFlagForTest(flag);
@@ -366,6 +660,7 @@ export async function acceptedInstall(variant: Variant) {
 		() => wait("read the image's own package list", () => null),
 		path.join(dir, "no-pin"),
 	);
+	resetAptReachabilityCacheForTest();
 	const capabilities: UpdateCapabilities = {
 		mode: "capable",
 		features: [
@@ -376,6 +671,8 @@ export async function acceptedInstall(variant: Variant) {
 	};
 	const frames: { kind: string; reason?: string }[] = [];
 	const emitted: { code: string; params: unknown }[] = [];
+	let besideEvents = 0;
+	const outputs = softwareUpdateOutputPaths();
 	installSpies.push(
 		spyOn(capabilityFile, "readUpdateCapabilities").mockImplementation(() =>
 			wait(
@@ -393,26 +690,13 @@ export async function acceptedInstall(variant: Variant) {
 		spyOn(board, "hasCapability").mockImplementation((capability, deps) =>
 			sequencer.isOutside()
 				? hasBoardCapability(capability, deps)
-				: wait(`read the board capability ${capability}`, () => pinned),
+				: wait(
+						`read the board capability ${capability}`,
+						() => pinned || (routed && capability === "os-updates"),
+					),
 		),
-		spyOn(defaultAptSpaceDeps, "run").mockImplementation((argv) =>
-			wait(
-				argv.includes("clean")
-					? "space preflight: apt-get clean"
-					: argv[0] === "/usr/bin/apt-config"
-						? "space preflight: apt-config"
-						: "space preflight: apt-get --print-uris",
-				() =>
-					argv.includes("clean")
-						? ok()
-						: argv[0] === "/usr/bin/apt-config"
-							? ok("ARCHIVES='/cache/archives/';")
-							: ok(
-									"After this operation, 2 kB of additional disk space will be used.\n'https://updates.example.org/a.deb' a.deb 4000 SHA256:abc\n",
-								),
-				aptFailed,
-			),
-		),
+		// The space preflight's commands are spawned; its two looks at the
+		// archive directory are not.
 		spyOn(defaultAptSpaceDeps, "stat").mockImplementation(() =>
 			wait("space preflight: stat", () => ({ dev: 1n })),
 		),
@@ -421,6 +705,18 @@ export async function acceptedInstall(variant: Variant) {
 				bavail: 10n ** 12n,
 				bsize: 1n,
 			})),
+		),
+		// A unit that was found is checked against the fragment systemd wrote.
+		spyOn(storedState, "readStoredStateFile").mockImplementation(
+			(file, maxBytes) =>
+				file === SOFTWARE_UPDATE_FRAGMENT_PATH
+					? wait(
+							FRAGMENT,
+							() =>
+								`[Service]\nStandardOutput=append:${outputs.stdout}\nStandardError=append:${outputs.stderr}\n`,
+							() => null,
+						)
+					: readStoredStateFile(file, maxBytes),
 		),
 		// Every status frame that carries the package state, in order.
 		spyOn(compat, "broadcastMsg").mockImplementation((type, data) => {
@@ -436,20 +732,24 @@ export async function acceptedInstall(variant: Variant) {
 		// Every event the device would log, in order.
 		spyOn(events, "emitEvent").mockImplementation((code, params) => {
 			emitted.push({ code, params });
+			// What runs beside the install (the host's election) reports for
+			// itself: that it found the device offline is not the install's.
+			if (sequencer.context() === "beside") besideEvents++;
 		}),
 	);
-	setAptReachabilityProbeForTest(() =>
-		wait<typeof OK_REACH | typeof UNREACHABLE>(
-			"reachability probe",
-			() => OK_REACH,
-			() => UNREACHABLE,
-		),
-	);
-	setAptCommandRunnerForTest((argv) =>
-		wait(aptLabel(argv), () => aptAnswer(argv), aptFailed),
-	);
-	const unit = fakeUnit(sequencer);
-	setDetachedAptServiceDepsForTest(unit.deps);
+	// The real launcher, but for the unit's output and its poll interval: the
+	// unit runs until it is stopped or the test ends.
+	setDetachedAptServiceDepsForTest((real) => ({
+		...real,
+		readOutput: async (_file, offset) => ({
+			bytes: new Uint8Array(),
+			nextOffset: offset,
+		}),
+		sleep: async () => {
+			await unit.unit.wake.promise;
+			await settleEventLoop(1);
+		},
+	}));
 	cleanups.push(async () => {
 		sequencer.disarm();
 		unit.finish();
@@ -475,7 +775,8 @@ export async function acceptedInstall(variant: Variant) {
 	});
 
 	if (pinned) {
-		// The routing journal and the `ip` runner of the pin, as waits too.
+		// The real selection, pin and routing lease. Underneath: the routing
+		// journal's store, the pin's capability file and which uplinks exist.
 		let entries: readonly AptRoutingEntry[] = [];
 		const ownership = createAptRoutingOwnership({
 			read: () => wait("routing journal: read", () => entries),
@@ -487,32 +788,88 @@ export async function acceptedInstall(variant: Variant) {
 			readCapabilities: () =>
 				wait(
 					"pin: read the capability file",
-					() =>
-						updateCapabilityFileSchema.parse({
-							schema: 1,
-							features: ["apt-all-packages", "transport-uidrange"],
-							apt_uid: 42042,
-							ota_uid: 42041,
-						}),
+					() => updateCapabilityFileSchema.parse(PINNED_CAPABILITIES),
 					() => undefined,
 				),
 			now: () => 1000,
-			run: (_bin, args) =>
-				wait(`ip ${args.slice(0, 3).join(" ")}`, () =>
-					args.join(" ").endsWith("route show default")
-						? "default dev eth0\ndefault dev wlan0"
-						: "",
-				),
 		});
 		await pin.sweep();
 		setAptTransportDepsForTest({
-			select: () =>
-				wait("select the update transport", () =>
-					rankTransports([sample("eth0", "ethernet", 4)]),
+			select: (owner) =>
+				selectUpdateTransport(
+					{ profile: "apt", board: "apt", channel: "stable" },
+					{
+						...defaultUpdateTransportDeps,
+						listIfnames: () => ["eth0"],
+						mmIfnames: () => [],
+						routerIfnames: () => [],
+						dongleIfnames: () => [],
+					},
+					owner,
 				),
 			pin,
 			ownership,
 		});
+	}
+
+	if (routed) {
+		// The real election and its requester bookkeeping, over an election
+		// that finds the better uplink. It is the host's, whoever asked for
+		// it: its waits park like the install's, and its calls and its log
+		// lines are its own.
+		const host = <T>(label: string, answer: () => T): Promise<T> =>
+			sequencer.beside(() => wait(label, answer));
+		const election: gateways.GatewayElectionDeps = {
+			canRouteClients: async () => true,
+			resolve: () =>
+				host("election: resolve", () => ({
+					addrs: ["203.0.113.10"],
+					fromCache: true,
+				})),
+			validateDns: () => undefined,
+			checkConnectivity: () =>
+				host("election: check the default route", () => true),
+			interfaces: () => ({
+				"uplink-a": uplink("192.0.2.2"),
+				"uplink-b": uplink("198.51.100.2"),
+			}),
+			eligible: () => true,
+			defaultInterface: async () => "uplink-a",
+			// A write counts from the moment it is started.
+			installRoute: (ifname, family) => {
+				routeWrites.push(`${ifname}/${family}`);
+				return host(ROUTE_WRITE, () => undefined);
+			},
+			releaseRoutes: () => {
+				routeWrites.push("released");
+				return host("election: release the default routes", () => undefined);
+			},
+			probes: {
+				probeRepository: (ifname) =>
+					host(`election: probe the repositories on ${ifname}`, () =>
+						deriveVerdict([
+							{
+								origin: {
+									url: `https://${HOST}`,
+									host: HOST,
+									scheme: "https",
+									probeUrl: `https://${HOST}/`,
+								},
+								ipv4: ifname === "uplink-b" ? "ok" : "unknown",
+								ipv6: "no_route",
+							},
+						]),
+					),
+				probeViaDevice: async () => true,
+				probeViaSourceIp: async () => true,
+			},
+		};
+		installSpies.push(
+			spyOn(gateways, "updateGwWrapper").mockImplementation(
+				(force, _deps, owner) =>
+					sequencer.beside(() => updateGwWrapper(force, election, owner)),
+			),
+		);
 	}
 
 	// `parkChecks`: the orchestrator's package check parks on the sequencer
@@ -548,10 +905,8 @@ export async function acceptedInstall(variant: Variant) {
 			},
 			getPackageInstallWireState: getUpdateState,
 			packageFailedBeforeLaunch,
-			stopPackageInstallUnit: async () => {
-				abortAptTransferForStream();
-				unit.stop();
-			},
+			// The real stop: its `systemctl stop` is answered by the unit above.
+			stopPackageInstallUnit: stopPackageInstallUnitForStream,
 			checkOsManifest: async () => {
 				counts.osChecks++;
 				return {
@@ -614,7 +969,7 @@ export async function acceptedInstall(variant: Variant) {
 			wire: getUpdateState(),
 			inventory: getAvailableUpdates(),
 			frames: frames.length,
-			events: emitted.length,
+			events: emitted.length - besideEvents,
 			orchestrator: {
 				phase: orchestrator.phase,
 				failureReason: orchestrator.failureReason,
@@ -622,6 +977,8 @@ export async function acceptedInstall(variant: Variant) {
 				packageCheck: orchestrator.packageCheck,
 			},
 			unit: { submissions: unit.unit.submissions, stops: unit.unit.stops },
+			// How often the election started to write the host's default route.
+			routes: routeWrites.length,
 		};
 	};
 	const box = {
@@ -634,33 +991,63 @@ export async function acceptedInstall(variant: Variant) {
 		quarantine,
 		flag,
 		observe,
-		/** A point in time to compare later calls and state against. */
-		mark: () => ({ calls: sequencer.calls().length, seen: observe() }),
+		/** A point in time to compare later calls, logs and state against. */
+		mark: () => ({
+			calls: sequencer.calls().length,
+			logs: logged.length,
+			seen: observe(),
+		}),
 		/**
-		 * The install's own calls since `mark`. The teardown of a routing rule
-		 * it had installed is not a new effect and is left out.
+		 * The install's own calls since `mark`: every command, file step, owned
+		 * write and read it started. Only what effect-owner.ts lists as the
+		 * teardown of an ended owner is left out.
 		 */
 		callsSince: (mark: { calls: number }) =>
 			sequencer
 				.calls()
 				.slice(mark.calls)
-				.filter(({ by, label }) => by === "flow" && !ROUTING_TEARDOWN(label))
+				.filter(({ by, label }) => by === "flow" && !teardown.has(label))
 				.map(({ label }) => label),
+		/**
+		 * Of those, what was done rather than looked at: commands, file steps
+		 * and owned writes.
+		 */
+		effectsSince: (mark: { calls: number }) =>
+			box.callsSince(mark).filter((label) => effects.has(label)),
+		routeWrites,
+		/** Every line anybody logged since `mark`. */
+		everyLogSince: (mark: { logs: number }) =>
+			logged.slice(mark.logs).map(({ message }) => message),
+		/**
+		 * What the install itself logged since `mark`. Left out is only what
+		 * its teardown says: the line `run()` writes for a teardown command,
+		 * and the warning that a teardown failed and left a rule behind.
+		 */
+		logsSince: (mark: { logs: number }) =>
+			logged
+				.slice(mark.logs)
+				.filter(
+					({ by, level, message, teardownFailed }) =>
+						by === "flow" &&
+						!teardownFailed &&
+						!(
+							level === "debug" &&
+							message.startsWith("run: ") &&
+							isOwnerTeardownCommand(message.slice(5).split(" "))
+						),
+				)
+				.map(({ level, message }) => `${level}: ${message}`),
 	};
 	return box;
 }
-
-// Removing the rule and routes a pinned run had set up: `ip … del`, and the
-// table flush that reads what is left to delete.
-const ROUTING_TEARDOWN = (label: string) =>
-	label.startsWith("ip ") && (/ del\b/.test(label) || / show\b/.test(label));
 
 export type Accepted = Awaited<ReturnType<typeof acceptedInstall>>;
 export type Mark = ReturnType<Accepted["mark"]>;
 
 /**
  * Nothing stale happened since `mark`: the ended install started no call
- * (no apt run, no probe, no spool setup, no routing rule) and, unless
+ * (no command, no file step, no owned write, no read) and logged nothing,
+ * but for the teardown effect-owner.ts lists. And, unless
  * `stateToo` is off because something else is legitimately at work, nothing
  * that can be seen of the install changed: no write to the wire or the
  * inventory, no frame, no event, no backoff, no unit.
@@ -671,6 +1058,7 @@ export function expectNoStaleEffect(
 	stateToo = true,
 ): void {
 	expect(box.callsSince(mark)).toEqual([]);
+	expect(box.logsSince(mark)).toEqual([]);
 	if (stateToo) expect(box.observe()).toEqual(mark.seen);
 }
 
@@ -684,6 +1072,8 @@ export async function expectOfferAtNextCheck(box: Accepted): Promise<void> {
 	const { sequencer, counts, quarantine } = box;
 	sequencer.disarm();
 	restoreUpdatesSetting();
+	// The next check comes when the last probe's finding has aged out.
+	resetAptReachabilityCacheForTest();
 	const os = counts.osChecks;
 	expect(await sequencer.outside(() => checkUpdatesNow())).toEqual({
 		started: true,
@@ -797,7 +1187,10 @@ export async function atEveryWait(
 		runs++;
 		try {
 			await each(step);
+			// Whatever the test looked at: an ended install did nothing more.
+			expect(takeStaleEffects()).toEqual([]);
 		} catch (error) {
+			takeStaleEffects();
 			failures.push(
 				`at wait ${step} of ${steps.length} ("${steps[step]}"): ${error instanceof Error ? error.message : String(error)}`,
 			);

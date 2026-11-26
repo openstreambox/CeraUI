@@ -32,6 +32,12 @@ import type {
 	UpdateOutcome,
 	UpdateTarget,
 } from "@ceraui/rpc/schemas";
+import {
+	assertOwnerMayRead,
+	type EffectOwner,
+	isOwnerEnded,
+	OwnerEndedError,
+} from "../../helpers/effect-owner.ts";
 import { invariant } from "../../helpers/invariant.ts";
 import { logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
@@ -91,6 +97,7 @@ import {
 } from "./apt-transfer-abort.ts";
 import {
 	type AptTransaction,
+	classifyAptFetchFailure,
 	legacyAptTransaction,
 	openPinnedAptTransaction,
 } from "./apt-transport.ts";
@@ -142,7 +149,7 @@ import { readImageOwnedPackages } from "./image-owned-packages.ts";
 import {
 	createInstallLaunchFence,
 	type InstallAttempt,
-	InstallAttemptEndedError,
+	type InstallAttemptState,
 	type StreamFenceVerdict,
 } from "./install-launch-fence.ts";
 import { classifyPackageLayer } from "./package-layer.ts";
@@ -247,6 +254,8 @@ const APT_DOWNLOAD_TIMEOUT_MS = 60 * oneMinute;
 
 type AptReachabilityProbe = (options?: {
 	readonly maxAgeMs?: number;
+	/** Whom the probe is run for: its commands and its cache write. */
+	readonly owner?: EffectOwner;
 }) => Promise<AptReachability>;
 
 const EMULATED_APT_REACHABILITY: AptReachability = {
@@ -276,41 +285,49 @@ export function resetAptReachabilityProbeForTest(): void {
 
 async function prepareAptNetwork(
 	options?: { readonly maxAgeMs?: number },
-	owner: InstallOwner = null,
+	// The install the network is prepared for (image apt source). Without one
+	// every call below is made exactly as it always was.
+	owner?: EffectOwner,
 ): Promise<AptReachability> {
 	if (!aptUpdatesEnabled()) throw new Error("updates_disabled");
-	if (!(await hasCapability("os-updates"))) {
-		assertOwned(owner);
-		return aptReachabilityProbe(options);
-	}
-	assertOwned(owner);
-	const repaired = await updateGwWrapper(true);
-	assertOwned(owner);
+	assertOwnerMayRead(owner, "the board's capabilities");
+	if (!(await hasCapability("os-updates")))
+		return owner
+			? aptReachabilityProbe({ ...options, owner })
+			: aptReachabilityProbe(options);
+	// The host's own default-route election, shared with the network module.
+	// An install only asks for it: the election writes its route unless every
+	// requester is an install that has ended (gateways.ts).
+	const repaired = owner
+		? await updateGwWrapper(true, undefined, owner)
+		: await updateGwWrapper(true);
 	if (!repaired) {
+		// An install that ended meanwhile reports nothing.
+		if (owner?.ended()) throw new OwnerEndedError("the apt network");
 		logger.warn("Apt preflight refused: host default-route repair failed");
 		return deriveVerdict([]);
 	}
 	// A bound NIC probe is not evidence for apt's unbound sockets after a route change.
-	return aptReachabilityProbe({ maxAgeMs: 0 });
+	return owner
+		? aptReachabilityProbe({ maxAgeMs: 0, owner })
+		: aptReachabilityProbe({ maxAgeMs: 0 });
 }
 
 // An image that routes `apt_uid` gets the OS transfers' per-transaction selector and pin.
-// `owner` is the install this network is opened for (image apt source): once
-// it no longer owns the install, no probe starts (InstallAttemptEndedError).
+// `admission.owner` is the install this network is opened for (image apt
+// source): every command of its probes and routing is then run for it, and
+// refused once it has ended (OwnerEndedError).
 async function openAptNetwork(
 	capabilities: UpdateCapabilities,
 	options?: { readonly maxAgeMs?: number },
 	admission?: AptTransferAdmission,
-	owner: InstallOwner = null,
 ): Promise<AptTransaction> {
 	if (!aptUpdatesEnabled()) throw new Error("updates_disabled");
-	const realBoard = await hasCapability("os-updates");
-	assertOwned(owner);
-	return realBoard &&
+	return (await hasCapability("os-updates")) &&
 		capabilities.mode === "capable" &&
 		capabilities.features.includes("transport-uidrange")
 		? openPinnedAptTransaction(admission)
-		: legacyAptTransaction(await prepareAptNetwork(options, owner));
+		: legacyAptTransaction(await prepareAptNetwork(options, admission?.owner));
 }
 
 function aptReachabilityWire(
@@ -336,6 +353,9 @@ export async function runAptCommand(
 	argv: string[],
 	timeoutMs: number,
 	signal?: AbortSignal,
+	// Whom the command is run for: refused before it starts once that owner
+	// has ended (effect-owner.ts).
+	owner?: EffectOwner,
 ): Promise<SpawnWithTimeoutResult> {
 	assertDisruptiveActionFree();
 	pendingPackageSuccess.assertEffectsAllowed();
@@ -344,6 +364,7 @@ export async function runAptCommand(
 			timeoutMs,
 			env: { ...process.env, LC_ALL: "C", LANG: "C", LANGUAGE: undefined },
 			...(signal ? { signal } : {}),
+			...(owner ? { owner } : {}),
 		});
 		pendingPackageSuccess.assertEffectsAllowed();
 		return result;
@@ -687,10 +708,9 @@ async function getCapableUpdateSize(
 	owner: InstallOwner = null,
 ): Promise<SoftwareUpdateError> {
 	const stale = () => !owns(owner);
-	const runApt: typeof runAptCommand = (...args) => {
-		assertOwned(owner);
-		return runAptCommand(...args);
-	};
+	const effects = effectOwner(owner);
+	const runApt = (argv: string[], timeoutMs: number) =>
+		runAptCommand(argv, timeoutMs, undefined, effects);
 	if (stale()) return "discovery_failed";
 	aptAllMode = true;
 	pendingPackageSuccess.assertEffectsAllowed();
@@ -726,7 +746,7 @@ async function getCapableUpdateSize(
 		failCurrentCheck("discovery_failed");
 		return "discovery_failed";
 	}
-	const imageOwned = await readImageOwnedPackages();
+	const imageOwned = await readImageOwnedPackages(effects);
 	if (stale()) return "discovery_failed";
 	try {
 		const sourcePolicy = await runApt(
@@ -1201,9 +1221,36 @@ function owns(owner: InstallOwner): boolean {
 	return owner === null || launchFence.owns(owner);
 }
 
-/** {@link owns}, for the line right before an effect: throws instead of acting. */
-function assertOwned(owner: InstallOwner): void {
-	if (!owns(owner)) throw new InstallAttemptEndedError();
+/**
+ * The install as the owner of its effects (effect-owner.ts). Every command it
+ * starts and every file or record it writes carries this, down to the spawn
+ * primitives, which refuse it once the install has ended. Asked right before
+ * each effect, it also looks once more at what stops an install that has not
+ * launched: updates turned off or a stream end it here, before the effect.
+ * After launch the unit's observation is not the install's to end.
+ */
+function effectOwner(owner: InstallAttempt): EffectOwner;
+function effectOwner(owner: InstallOwner): EffectOwner | undefined;
+function effectOwner(owner: InstallOwner): EffectOwner | undefined {
+	if (owner === null) return undefined;
+	return {
+		ended: () => {
+			if (owner.state() === "submitted") return false;
+			// `systemd-run` is in flight: the launch fence holds the decision,
+			// and the second look for the unit must be made whatever changed.
+			if (launchFence.submitting(owner)) return false;
+			if (!launchFence.owns(owner)) return true;
+			const refusal = launchRefusal();
+			if (refusal === null) return false;
+			failBeforeLaunch(owner, refusal);
+			return true;
+		},
+	};
+}
+
+/** Test seam: the state of the install attempt in progress, if any. */
+export function installAttemptStateForTest(): InstallAttemptState | null {
+	return launchFence.current()?.state() ?? null;
 }
 
 /** Image apt source: an install that ended still has a wait in flight. */
@@ -1313,13 +1360,13 @@ function launchRefusal(): string | null {
 }
 
 /**
- * Image apt source: the admission of an install's pinned apt runs. A stream
- * start cancels them, as on every image, and so does the install no longer
- * owning the updater: no routing rule goes up and no apt run starts for it.
+ * Image apt source: the admission of an install's apt network. A stream start
+ * cancels its pinned runs, as on every image, and the install is the owner of
+ * everything the network does for it: probes, routing and apt runs.
  */
 function ownedAptAdmission(owner: InstallAttempt): AptTransferAdmission {
 	const stream = captureAptTransferAdmission();
-	return { cancelled: stream.cancelled, stale: () => !owns(owner) };
+	return { cancelled: stream.cancelled, owner: effectOwner(owner) };
 }
 
 /**
@@ -1504,20 +1551,20 @@ function checkForSoftwareUpdates(
 ): boolean {
 	// The continuation (an install's preparation, a discovery) runs detached
 	// from this check: a rejection it does not handle is logged, not lost.
+	const report = (error: unknown) => {
+		// An effect refused for an install that has ended is none of its news.
+		if (isOwnerEnded(error)) return;
+		logger.warn("Software update check continuation failed", {
+			error: error instanceof Error ? error : String(error),
+		});
+	};
 	const deliver: typeof callback = (...args) => {
 		try {
 			const continued = callback(...args);
-			if (continued instanceof Promise)
-				continued.catch((error: unknown) => {
-					logger.warn("Software update check continuation failed", {
-						error: error instanceof Error ? error : String(error),
-					});
-				});
+			if (continued instanceof Promise) continued.catch(report);
 			return continued;
 		} catch (error) {
-			logger.warn("Software update check continuation failed", {
-				error: error instanceof Error ? error : String(error),
-			});
+			report(error);
 			return undefined;
 		}
 	};
@@ -1575,12 +1622,8 @@ function checkForSoftwareUpdates(
 			}
 			await reconcileAptChannel(capabilities.mode);
 			if (abandoned()) return;
-			const network = await openAptNetwork(
-				capabilities,
-				undefined,
-				owner === null ? undefined : ownedAptAdmission(owner),
-				owner,
-			);
+			const admission = owner === null ? undefined : ownedAptAdmission(owner);
+			const network = await openAptNetwork(capabilities, undefined, admission);
 			if (abandoned()) return;
 			const reachability = network.reachability;
 			pendingPackageSuccess.assertEffectsAllowed();
@@ -1605,14 +1648,15 @@ function checkForSoftwareUpdates(
 				return;
 			}
 			// Each attempt's reachability carries the family it is pinned to.
-			const res = await network.transfer((reachability) => {
-				// The refresh itself: never started for an install that ended.
-				assertOwned(owner);
-				return runAptCommand(
+			// The refresh is run for the install: never started once it has ended.
+			const res = await network.transfer((reachability) =>
+				runAptCommand(
 					buildAptRefreshArgs(reachability.verdict),
 					APT_REFRESH_TIMEOUT_MS,
-				);
-			});
+					undefined,
+					admission?.owner,
+				),
+			);
 			if (abandoned()) return;
 			const stdout = res.stdout;
 			const stderr = res.stderr;
@@ -2063,8 +2107,10 @@ const defaultSoftwareUpdateRunner: SoftwareUpdateRunner = (
 						attempt,
 					);
 				} catch (error) {
-					// An effect refused because the attempt ended: not a failure.
-					if (!(error instanceof InstallAttemptEndedError)) throw error;
+					// An effect refused because the attempt ended, or whatever
+					// fails once it has: not this install's failure any more. A
+					// throw that ends it (below) is, and the check logs it.
+					if (!isOwnerEnded(error) && attempt?.state() !== "ended") throw error;
 				} finally {
 					// Whatever returned or threw before the launcher took over ends
 					// here, as what stopped it if that is known. Once the launcher
@@ -2211,6 +2257,15 @@ export function startSoftwareUpdate(
 		return refuseUpdateStart("check_unavailable");
 	}
 
+	// Image apt source: what the wire shows stands until a start is accepted.
+	// A start that is refused after all puts it back (below).
+	const shown = {
+		identity: currentUpdateIdentity,
+		failure: lastUpdateFailure,
+		succeeded: lastUpdateSucceeded,
+		preflight: lastPreflightFailure,
+		cleanup: lastCleanupWarning,
+	};
 	currentUpdateIdentity = availableIdentity;
 	lastUpdateFailure = null;
 	lastUpdateSucceeded = false;
@@ -2269,7 +2324,16 @@ export function startSoftwareUpdate(
 	const resumed = launchFence.current()?.pending() === true;
 	const attempt = launchFence.begin();
 	const outcome = softwareUpdateRunner(onCommitSucceeded);
-	if (!outcome.started && !resumed) launchFence.drop(attempt);
+	if (!outcome.started && !resumed) {
+		launchFence.drop(attempt);
+		// Not accepted: the earlier outcome is still what happened last. (A
+		// delayed start that cannot resume ends as its own failure instead.)
+		currentUpdateIdentity = shown.identity;
+		lastUpdateFailure = shown.failure;
+		lastUpdateSucceeded = shown.succeeded;
+		lastPreflightFailure = shown.preflight;
+		lastCleanupWarning = shown.cleanup;
+	}
 	// Started now: a delayed start still armed for this attempt has nothing
 	// left to do, and must not find "already updating" and fail it.
 	if (outcome.started && delayedSoftwareUpdateStart) {
@@ -2394,7 +2458,7 @@ export function createSoftwareUpdateProcessMonitor(
 			// Image apt source: the attempt ended before the launcher submitted
 			// anything. That end was published where it happened; it is no error
 			// of the transaction.
-			if (err instanceof InstallAttemptEndedError) return 1;
+			if (isOwnerEnded(err)) return 1;
 			const message = redactImageAptSecret(
 				err instanceof Error ? err.message : String(err),
 			);
@@ -2499,6 +2563,9 @@ export function createSoftwareUpdateProcessMonitor(
 		const settled = settle(completion, onCommitSucceeded !== undefined);
 		// Keep the deliberate restart detached so a caller's catch cannot swallow it.
 		void settled.then((code) => {
+			// Image apt source: an install that ended before its unit launched
+			// has nothing to report here, the prefetched output included.
+			if (attempt !== null && attempt.state() === "ended") return;
 			if (aptLog) logger.info(aptLog);
 			if (aptErr) logger.error(aptErr);
 
@@ -2568,6 +2635,9 @@ async function prepareSoftwareUpdate(
 	// Image apt source: this path's own end, as `failed` with `reason`, once.
 	const refused = (reason: string, end?: AttemptEnd): boolean =>
 		attempt !== null && (failBeforeLaunch(attempt, reason, end) || true);
+	// Image apt source: the install as the owner of every command and write
+	// below. The spawn primitives and the owned writes ask it before they act.
+	const effects = effectOwner(attempt);
 	if (stopped()) return false;
 	if (!aptUpdatesEnabled() || !isStreamConfirmedIdle()) return false;
 
@@ -2582,7 +2652,6 @@ async function prepareSoftwareUpdate(
 		capabilities,
 		{ maxAgeMs: 0 },
 		admission,
-		attempt,
 	);
 	if (stopped()) return false;
 	const reachability = network.reachability;
@@ -2662,9 +2731,8 @@ async function prepareSoftwareUpdate(
 	if (admitted) {
 		try {
 			const probe = await network.within(
-				(reached) => {
-					assertOwned(attempt);
-					return runAptCommand(
+				(reached) =>
+					runAptCommand(
 						[
 							"/usr/bin/apt-get",
 							"-s",
@@ -2676,8 +2744,9 @@ async function prepareSoftwareUpdate(
 							).filter((arg) => arg !== "-y" && arg !== "--no-download"),
 						],
 						APT_DISCOVERY_TIMEOUT_MS,
-					);
-				},
+						undefined,
+						effects,
+					),
 				() => ({ exitCode: 1, stdout: "", stderr: "update routing refused" }),
 			);
 			if (stopped()) return false;
@@ -2723,9 +2792,9 @@ async function prepareSoftwareUpdate(
 					admitted && network.pinned
 						? buildAptAllInstallArgs(admitted, installFamily(reached.verdict))
 						: args,
-					attempt === null
+					effects === undefined
 						? pendingAwareAptSpaceDeps
-						: ownedAptSpaceDeps(attempt),
+						: ownedAptSpaceDeps(effects),
 				),
 			() => {
 				throw new AptPreflightError("probe_failed");
@@ -2776,13 +2845,25 @@ async function prepareSoftwareUpdate(
 			});
 		}
 		const fetched = await network.transfer(
-			(reached, signal) => {
-				assertOwned(attempt);
-				return runAptCommand(
+			async (reached, signal, transfer) => {
+				const result = await runAptCommand(
 					buildAptAllDownloadArgs(aptFamilyArgs(reached.verdict)),
 					APT_DOWNLOAD_TIMEOUT_MS,
 					signal,
+					effects,
 				);
+				// Image apt source: a download failure no other transport will be
+				// tried after is settled here, when it is known. The routing
+				// teardown that follows is a wait, and a stream admitted during it
+				// must find apt's failure, not take its place.
+				if (
+					attempt !== null &&
+					result.exitCode !== 0 &&
+					signal?.aborted !== true &&
+					(transfer.last || classifyAptFetchFailure(result) === undefined)
+				)
+					settleDownloadFailure(attempt, result);
+				return result;
 			},
 			{ abortable: true },
 		);
@@ -2840,18 +2921,16 @@ async function prepareSoftwareUpdate(
 	const handlers: SoftwareUpdateOutputHandlers =
 		attempt === null
 			? monitor.handlers
-			: {
-					...monitor.handlers,
-					owned: () => owns(attempt),
-					submit: fencedSubmission(attempt),
-				};
+			: { ...monitor.handlers, submit: fencedSubmission(attempt) };
+	// The launcher's commands and its spool setup are run for the install.
+	const unit = defaultDetachedAptServiceDeps(effects);
 	// The launcher's waits (its look for a unit, the spool setup) are the
 	// attempt's: the updater is not free until they have returned.
 	const release = attempt === null ? undefined : launchFence.hold(attempt);
 	const launched = monitor.finish(
 		capable
-			? runDetachedAptAll(detachedArgs, finalFamily, handlers)
-			: runDetachedAptUpgrade(args, handlers),
+			? runDetachedAptAll(detachedArgs, finalFamily, handlers, unit)
+			: runDetachedAptUpgrade(args, handlers, unit),
 		capable ? onCommitSucceeded : undefined,
 	);
 	void (release === undefined ? launched : launched.finally(release));
@@ -2859,27 +2938,56 @@ async function prepareSoftwareUpdate(
 }
 
 /**
- * Image apt source: the space preflight's commands and reads, each one only
- * while the install still owns the updater (its first command cleans the
- * archive cache).
+ * Image apt source: the space preflight's commands, run for the install (its
+ * first one cleans the archive cache).
  */
 function ownedAptSpaceDeps(
-	owner: InstallAttempt,
+	owner: EffectOwner,
 ): typeof pendingAwareAptSpaceDeps {
 	return {
-		run: (argv, options) => {
-			assertOwned(owner);
-			return pendingAwareAptSpaceDeps.run(argv, options);
+		...pendingAwareAptSpaceDeps,
+		owner,
+		run: (argv, options) =>
+			pendingAwareAptSpaceDeps.run(argv, { ...options, owner }),
+		stat: (file) => {
+			assertOwnerMayRead(owner, "the archive directory");
+			return pendingAwareAptSpaceDeps.stat(file);
 		},
-		stat: (path) => {
-			assertOwned(owner);
-			return pendingAwareAptSpaceDeps.stat(path);
-		},
-		statfs: (path) => {
-			assertOwned(owner);
-			return pendingAwareAptSpaceDeps.statfs(path);
+		statfs: (file) => {
+			assertOwnerMayRead(owner, "the archive directory's free space");
+			return pendingAwareAptSpaceDeps.statfs(file);
 		},
 	};
+}
+
+/**
+ * Image apt source: the download under the pin failed for good. `failed` with
+ * apt's own error and a failure id, published before the pin is torn down.
+ */
+function settleDownloadFailure(
+	attempt: InstallAttempt,
+	fetched: SpawnWithTimeoutResult,
+): void {
+	const stdout = redactImageAptSecret(fetched.stdout);
+	const stderr = redactImageAptSecret(fetched.stderr);
+	const reason =
+		stderr.trim() || `apt-get exited with code ${fetched.exitCode}`;
+	const ended = failBeforeLaunch(attempt, reason, {
+		failure: {
+			reason,
+			failure_id: randomUUID(),
+			...((currentUpdateIdentity ?? availableIdentity)
+				? {
+						identity: (currentUpdateIdentity ??
+							availableIdentity) as UpdateIdentity,
+					}
+				: {}),
+		},
+		notify: notifyUpdateFailed,
+	});
+	if (!ended) return;
+	if (stdout) logger.info(stdout);
+	if (stderr) logger.error(stderr);
 }
 
 /**

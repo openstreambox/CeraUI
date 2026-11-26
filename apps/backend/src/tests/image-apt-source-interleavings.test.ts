@@ -34,6 +34,7 @@ import { PACKAGE_INSTALL_REFUSED } from "../modules/system/update-orchestrator/t
 import { settleMicrotasks } from "./helpers/await-sequencer.ts";
 import { useSessionOwnerForFile } from "./helpers/bind-session-owner.ts";
 import {
+	ARCHIVE_CLEANUP,
 	acceptedInstall,
 	atEveryWait,
 	BESIDE_START_RPC,
@@ -41,8 +42,11 @@ import {
 	expectEndedBeforeLaunch,
 	expectLaunched,
 	PENDING,
+	REINSPECT,
+	ROUTE_WRITE,
 	recordWaits,
 	restoreUpdatesSetting,
+	SPOOL,
 	SUBMIT,
 	TIMEOUT_MS,
 	useInstallHarness,
@@ -89,7 +93,11 @@ async function run(
 					phase: "failed",
 					failureReason: PACKAGE_INSTALL_REFUSED,
 				});
+			// The host's election may still be running for it: from here on it
+			// starts no route write that only this install asked for.
+			const routes = box.routeWrites.length;
 			await sequencer.drain();
+			expect(box.routeWrites.length).toBe(routes);
 			await expectEndedBeforeLaunch(
 				box,
 				"streaming",
@@ -123,12 +131,21 @@ async function run(
 
 	if (event === "updates off") {
 		setup.apt_update_enabled = false;
-		await sequencer.drain();
 		if (submitting) {
+			await sequencer.drain();
 			restoreUpdatesSetting();
 			await expectLaunched(box);
 			return;
 		}
+		// From here on the install does nothing more: no command, no file
+		// step, no owned write, and no route written for it. It ends where it
+		// would have done the next one.
+		const mark = box.mark();
+		const routes = box.routeWrites.length;
+		await sequencer.drain(() => {
+			expect(box.effectsSince(mark)).toEqual([]);
+		});
+		expect(box.routeWrites.length).toBe(routes);
 		expect(getUpdateState()).toMatchObject({
 			kind: "failed",
 			reason: "discovery_failed",
@@ -176,13 +193,16 @@ describe("the launch fence: every wait before the unit is submitted", () => {
 			// Its own check, its preparation and the launcher are all in there.
 			expect(steps).toContain("apt-get update");
 			expect(steps).toContain("apt-get -s (discovery)");
-			expect(steps).toContain("space preflight: apt-get clean");
-			expect(steps).toContain("unit: systemctl show");
-			expect(steps).toContain("unit: prepare its output files");
+			expect(steps).toContain(ARCHIVE_CLEANUP);
+			expect(steps).toContain(REINSPECT);
+			expect(steps).toContain(SPOOL);
 			if (variant === "pinned")
 				expect(steps).toContain("apt-get -d (download under the pin)");
 			// Only the start behind a running check waits on the timer.
 			expect(steps.includes(DELAY)).toBe(variant === "delayed");
+			// Where the backend elects the default route, apt waits for the
+			// election, which writes the route while the install lives.
+			expect(steps.includes(ROUTE_WRITE)).toBe(variant === "route repair");
 		},
 		TIMEOUT_MS,
 	);

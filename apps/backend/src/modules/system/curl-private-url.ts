@@ -8,9 +8,9 @@
 	(at your option) any later version.
 */
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type EffectOwner, ownedFiles } from "../../helpers/effect-owner.ts";
 
 /**
  * A URL that carries a secret never goes on curl's command line: any local
@@ -22,19 +22,32 @@ export function curlUrlConfig(url: string): string {
 	return `url = "${url.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
 }
 
-/** Runs curl's `argv` (without its URL) against `url`, given privately. */
+/**
+ * Runs curl's `argv` (without its URL) against `url`, given privately. For an
+ * `owner` that has ended, no file is made; one already made is still removed.
+ */
 export async function runCurlWithPrivateUrl<Result>(
 	argv: readonly string[],
 	url: string,
 	run: (argv: string[]) => Promise<Result>,
+	owner?: EffectOwner,
 ): Promise<Result> {
-	// mkdtemp makes the directory 0700; the file is created 0600 and must be new.
-	const dir = await mkdtemp(join(tmpdir(), "ceraui-curl-"));
+	const files = ownedFiles(owner);
+	// The directory is made 0700; the file is created 0600 and must be new.
+	const dir = await files.makeTempDirectory(
+		"private-file:create",
+		join(tmpdir(), "ceraui-curl-"),
+	);
 	try {
 		const file = join(dir, "url");
-		await writeFile(file, curlUrlConfig(url), { mode: 0o600, flag: "wx" });
+		await files.writeNew(
+			"private-file:create",
+			file,
+			curlUrlConfig(url),
+			0o600,
+		);
 		return await run([...argv, "-K", file]);
 	} finally {
-		await rm(dir, { recursive: true, force: true });
+		await files.removeTree("private-file:remove", dir);
 	}
 }
