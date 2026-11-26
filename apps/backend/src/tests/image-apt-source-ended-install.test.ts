@@ -458,6 +458,44 @@ describe("an orchestrated install's failure, and what the Packages card does bef
 	);
 
 	it(
+		"a recheck, an install of the card's own that launches, then a stream: the refusal is recorded and that unit stopped",
+		async () => {
+			const { box, id } = await failedDownload();
+			const { sequencer, unit } = box;
+			await cardRechecks(box);
+			// The card installs through the start RPC, and this one gets as far
+			// as its unit.
+			expect(startSoftwareUpdate()).toEqual({ started: true });
+			for (let turn = 0; turn < 400; turn++) {
+				if (unit.unit.state === "running") break;
+				await settleEventLoop(1);
+			}
+			expect(unit.unit.submissions).toBe(1);
+			expect(unit.unit.state).toBe("running");
+			expect(getOrchestratorState().phase).toBe("downloading");
+			// A stream, before any tick. The fence reports a launched unit: the
+			// orchestrator's own install is still the refusal it was, and the
+			// card's unit is stopped for the stream.
+			expect(await admitStream(box)).toEqual({ allowed: true });
+			expect(failures(box)).toEqual([
+				{
+					code: "update_failed",
+					params: { stage: "download", reason: PACKAGE_INSTALL_REFUSED, id },
+				},
+			]);
+			expect(unit.unit.stops).toBe(1);
+			// Not quietly back at the offer as if nothing had failed.
+			expect(getOrchestratorState()).toMatchObject({
+				phase: "failed",
+				failureReason: PACKAGE_INSTALL_REFUSED,
+			});
+			await sequencer.outside(() => runOrchestratorTick());
+			expect(failures(box)).toHaveLength(1);
+		},
+		TIMEOUT_MS,
+	);
+
+	it(
 		"a recheck and then a stream: the refusal the stream settles carries the failure's id",
 		async () => {
 			const { box, id } = await failedDownload();

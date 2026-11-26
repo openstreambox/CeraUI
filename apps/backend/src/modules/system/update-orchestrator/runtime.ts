@@ -1215,14 +1215,17 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 	// and the stream takes the path below.
 	if (imageAptSourceInUse()) {
 		const fenced = await deps.admitStreamAtPackageLaunch();
+		// The install this orchestrator started: its own terminal state if it
+		// ended before launch, whatever the fence says of the install in
+		// progress now. The wire may show a later recheck's offer, and the
+		// fence a later install of the Packages card's, even a launched one.
+		const ended =
+			state.phase === "downloading" ? takeStartedPackageAttemptEnd() : null;
 		if (
-			(fenced === "cancelled" || fenced === "ended") &&
-			state.phase === "downloading"
+			state.phase === "downloading" &&
+			(ended !== null || fenced === "cancelled" || fenced === "ended")
 		) {
-			// The install this orchestrator started: its own terminal state if
-			// it had ended already (the wire may show a later recheck's offer).
-			const wire =
-				takeStartedPackageAttemptEnd() ?? deps.getPackageInstallWireState();
+			const wire = ended ?? deps.getPackageInstallWireState();
 			dispatch({
 				type: "DOWNLOAD_FAILED",
 				now: deps.now(),
@@ -1231,7 +1234,9 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 					? { failureId: wire.failure_id }
 					: {}),
 			});
-			return { allowed: true };
+			// A unit a later start launched is not this refusal's: the stream
+			// goes on to stop it, as one this orchestrator did not start.
+			if (fenced !== "submitted") return { allowed: true };
 		}
 		// The wait may have let the pipeline move on: decide on what is there now.
 		if (isDisruptiveActionPending() || pendingPackageSuccess.pending)
