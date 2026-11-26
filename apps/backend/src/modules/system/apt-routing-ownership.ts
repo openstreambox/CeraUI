@@ -1,3 +1,9 @@
+import {
+	assertOwnerMayRead,
+	type EffectOwner,
+	OwnerEndedError,
+	ownedWrite,
+} from "../../helpers/effect-owner.ts";
 import type { run } from "../../helpers/run.ts";
 import {
 	type AptRoutingEntry,
@@ -26,9 +32,14 @@ export type AptRoutingLease = {
 	readonly release: () => void;
 };
 export type AptRoutingOwnership = {
+	/**
+	 * `owner` is whom the lease is taken for: it records no new rule once that
+	 * owner has ended, and still strikes the ones it removes.
+	 */
 	readonly acquire: (
 		runner: typeof run,
 		uid: number,
+		owner?: EffectOwner,
 	) => Promise<AptRoutingLease>;
 };
 const prefix = (family: 4 | 6): string[] => (family === 6 ? ["-6"] : []);
@@ -51,7 +62,8 @@ export function createAptRoutingOwnership(
 	let retained: readonly AptRoutingEntry[] | undefined;
 	let dirty = false;
 	return {
-		async acquire(raw, uid) {
+		async acquire(raw, uid, owner) {
+			assertOwnerMayRead(owner, "the routing journal");
 			if (busy) throw new AptRoutingRefusal("busy");
 			busy = true;
 			let deadline = now() + 10_000;
@@ -64,12 +76,19 @@ export function createAptRoutingOwnership(
 				});
 			};
 			let entries: readonly AptRoutingEntry[];
-			const save = (next: readonly AptRoutingEntry[]) => {
-				retained = next;
-				dirty = true;
-				store.save(next);
-				entries = next;
-				dirty = false;
+			// Recording a rule about to be installed is done for the owner; striking
+			// one that was removed is its teardown and always allowed.
+			const save = (
+				next: readonly AptRoutingEntry[],
+				kind: "routing-journal:record" | "routing-journal:retire",
+			) => {
+				ownedWrite(owner, kind, () => {
+					retained = next;
+					dirty = true;
+					store.save(next);
+					entries = next;
+					dirty = false;
+				});
 			};
 			const remove = async (entry: AptRoutingEntry, runner: typeof run) => {
 				const args = [...entry.args];
@@ -89,15 +108,23 @@ export function createAptRoutingOwnership(
 							`Cannot find device "${entry.args[devIndex + 1]}"`;
 					if (!absent(error) && !missingDevice) throw error;
 				}
-				save(entries.filter((row) => entryKey(row) !== entryKey(entry)));
+				save(
+					entries.filter((row) => entryKey(row) !== entryKey(entry)),
+					"routing-journal:retire",
+				);
 			};
 			try {
 				entries = retained ?? (await store.read());
 				retained = entries;
 				if (entries.length || dirty) {
-					for (const entry of [...entries].reverse())
+					// What an earlier run left is recovered for a live owner only:
+					// an owner that has ended takes down nothing but the entries
+					// this lease installed itself (below).
+					for (const entry of [...entries].reverse()) {
+						if (owner?.ended()) throw new OwnerEndedError("routing recovery");
 						await remove(entry, bounded);
-					if (dirty) save(entries);
+					}
+					if (dirty) save(entries, "routing-journal:retire");
 					throw new AptRoutingRefusal("cleanup-pending");
 				}
 				for (const family of [4, 6] as const) {
@@ -158,7 +185,7 @@ export function createAptRoutingOwnership(
 					const entry = parsed.data;
 					if (entries.some((row) => entryKey(row) === entryKey(entry)))
 						throw new AptRoutingRefusal("unjournaled-state");
-					save([...entries, entry]);
+					save([...entries, entry], "routing-journal:record");
 					return raw(bin, args, options);
 				}
 				if (tokens[1] === "del") {

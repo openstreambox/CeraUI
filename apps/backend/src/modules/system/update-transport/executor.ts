@@ -1,7 +1,14 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+	type EffectOwner,
+	isOwnerEnded,
+	ownedAll,
+	ownedFiles,
+	ownedWrite,
+} from "../../../helpers/effect-owner.ts";
 import { logger } from "../../../helpers/logger.ts";
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
 import {
@@ -23,6 +30,13 @@ import {
 	getModemNetMarker,
 	getRouterCellularMarker,
 } from "../../network/router-cellular-scan.ts";
+import { runCurlWithPrivateUrl } from "../curl-private-url.ts";
+import {
+	activeImageAptSource,
+	carriesImageAptSecret,
+	imageAptSourceIndexes,
+	imageAptSourceInUse,
+} from "../image-apt-source.ts";
 import { updateChannelUrl } from "../update-channel-url.ts";
 import { parseAuthorityJson } from "../update-orchestrator/strict-authority-json.ts";
 import { UPDATE_INVENTORY_NMCLI_FIELDS } from "./candidate-inventory.ts";
@@ -54,11 +68,34 @@ export type UpdateTransportDeps = {
 	listIfnames: () => string[];
 	readSources: () => Promise<string>;
 	credentials: () => Promise<AptClientPaths | undefined>;
-	run: (argv: string[]) => Promise<SpawnWithTimeoutResult>;
+	/**
+	 * Runs one bounded command. A curl URL that carries the image source's
+	 * access token comes as `privateUrl` and is left out of `argv`: it must
+	 * reach curl without appearing on its command line.
+	 */
+	run: (
+		argv: string[],
+		privateUrl?: string,
+		owner?: EffectOwner,
+	) => Promise<SpawnWithTimeoutResult>;
+	/**
+	 * Whom this selection is made for; set by `selectUpdateTransport`. Once it
+	 * has ended, no further command starts and nothing is written or published.
+	 */
+	owner?: EffectOwner;
 	mmIfnames: () => string[];
 	routerIfnames: () => string[];
 	dongleIfnames: () => string[];
 };
+
+/**
+ * The image's own source, from what its validator parsed: its two signed
+ * indexes and the keyring that signs them. Undefined on any other image.
+ */
+function imageDebianSources(): DebianSource[] | undefined {
+	const keyring = activeImageAptSource()?.keyring ?? "";
+	return imageAptSourceIndexes()?.map(({ url }) => ({ url, keyring }));
+}
 
 async function readSources(): Promise<string> {
 	const names = (await readdir(SOURCE_DIR))
@@ -84,7 +121,15 @@ export const defaultUpdateTransportDeps: UpdateTransportDeps = {
 			.map(([ifname]) => ifname),
 	readSources,
 	credentials: aptClientPaths,
-	run: (argv) => spawnWithTimeout(argv, { timeoutMs: TIMEOUT_MS }),
+	run: (argv, privateUrl, owner) =>
+		privateUrl === undefined
+			? spawnWithTimeout(argv, { timeoutMs: TIMEOUT_MS, owner })
+			: runCurlWithPrivateUrl(
+					argv,
+					privateUrl,
+					(full) => spawnWithTimeout(full, { timeoutMs: TIMEOUT_MS, owner }),
+					owner,
+				),
 	mmIfnames: () =>
 		Object.values(getModems())
 			.map(({ ifname }) => ifname)
@@ -176,6 +221,7 @@ async function resolvedAddress(
 		}
 		return "dns-failed";
 	} catch (error) {
+		if (isOwnerEnded(error)) throw error;
 		return failureFromError(error);
 	}
 }
@@ -224,10 +270,13 @@ async function curl(
 		...(cert ? ["--cert", cert.cert, "--key", cert.key] : []),
 		"-w",
 		`${MARKER}%{http_code} %{time_total}`,
-		url,
 	];
 	try {
-		const result = await deps.run(argv);
+		// The image source's URL carries its access token: curl gets it
+		// privately, never as an argument.
+		const result = carriesImageAptSecret(url)
+			? await deps.run(argv, url)
+			: await deps.run([...argv, url]);
 		if (result.exitCode !== 0)
 			return {
 				state: failure(result),
@@ -242,6 +291,7 @@ async function curl(
 			...response,
 		};
 	} catch (error) {
+		if (isOwnerEnded(error)) throw error;
 		return {
 			state: failureFromError(error),
 			code: 0,
@@ -292,6 +342,7 @@ async function endpoint(
 					latencyMs: httpProbe.latencyMs,
 				};
 		} catch (error) {
+			if (isOwnerEnded(error)) throw error;
 			return {
 				host,
 				state: failureFromError(error),
@@ -342,19 +393,39 @@ async function debian(
 	family: Family,
 	deps: UpdateTransportDeps,
 ): Promise<HostProbe> {
-	if (!source.keyring)
-		return { host: source.url, state: "tampered", latencyMs: 0 };
+	// The image source's URL carries its access token: findings name its host only.
+	const image = activeImageAptSource();
+	const imageHost =
+		image !== undefined && new URL(source.url).hostname === image.host;
+	const host = imageHost ? image.host : source.url;
+	if (!source.keyring) return { host, state: "tampered", latencyMs: 0 };
 	const response = await curl(source.url, ifname, family, "GET", deps);
+	// The image's source is https only: any HTTP status came over verified TLS
+	// from the repository itself (403, 404, 5xx), never from a sign-in page,
+	// which cannot present the host's certificate. It is unreachable, not captive.
+	const repositoryAnswered = imageHost && response.state === "captive-http";
 	if (response.state !== "clear" || response.code !== 200)
 		return {
-			host: source.url,
-			state: response.state === "clear" ? "no-route" : response.state,
+			host,
+			state:
+				response.state === "clear" || repositoryAnswered
+					? "no-route"
+					: response.state,
 			latencyMs: response.latencyMs,
 		};
-	const dir = await mkdtemp(join(tmpdir(), "ceraui-update-index-"));
+	const files = ownedFiles(deps.owner);
+	const dir = await files.makeTempDirectory(
+		"private-file:create",
+		join(tmpdir(), "ceraui-update-index-"),
+	);
 	try {
 		const inRelease = join(dir, "InRelease");
-		await Bun.write(inRelease, response.body);
+		await files.writeNew(
+			"private-file:create",
+			inRelease,
+			response.body,
+			0o600,
+		);
 		const verified = await deps.run([
 			"gpgv",
 			"--keyring",
@@ -362,18 +433,19 @@ async function debian(
 			inRelease,
 		]);
 		return {
-			host: source.url,
+			host,
 			state: verified.exitCode === 0 ? "clear" : "tampered",
 			latencyMs: response.latencyMs,
 		};
 	} catch (error) {
+		if (isOwnerEnded(error)) throw error;
 		return {
-			host: source.url,
+			host,
 			state: failureFromError(error),
 			latencyMs: response.latencyMs,
 		};
 	} finally {
-		await rm(dir, { recursive: true, force: true });
+		await files.removeTree("private-file:remove", dir);
 	}
 }
 
@@ -417,9 +489,24 @@ export async function onlyMeteredUplinksRemain(
 export async function selectUpdateTransport(
 	profile: UpdateProfile,
 	deps: UpdateTransportDeps = defaultUpdateTransportDeps,
+	// Whom the selection is made for (an install on an image with its own apt
+	// source). Every command and write of it then carries that owner.
+	owner?: EffectOwner,
 ): Promise<TransportSelection> {
-	const selection = await probeUpdateTransport(profile, deps);
-	recordTransportSelection(profile.profile, selection);
+	const selection = await probeUpdateTransport(
+		profile,
+		owner === undefined
+			? deps
+			: {
+					...deps,
+					owner,
+					run: (argv, privateUrl) => deps.run(argv, privateUrl, owner),
+				},
+	);
+	// An ended owner publishes no finding: the record keeps the last real one.
+	ownedWrite(owner, "transport-selection:publish", () =>
+		recordTransportSelection(profile.profile, selection),
+	);
 	if (profile.profile === "os" && selection.status === "none") {
 		logger.warn("No healthy update transport", {
 			profile: "os",
@@ -448,7 +535,8 @@ async function probeUpdateTransport(
 			"device",
 			"show",
 		]);
-	} catch {
+	} catch (error) {
+		if (isOwnerEnded(error)) throw error;
 		return rankTransports([]);
 	}
 	if (nmcli.exitCode !== 0) return rankTransports([]);
@@ -461,15 +549,18 @@ async function probeUpdateTransport(
 	);
 	const sources =
 		profile.profile === "apt"
-			? parseDebianSources(await deps.readSources())
+			? (imageDebianSources() ?? parseDebianSources(await deps.readSources()))
 			: [];
 	if (profile.profile === "apt" && sources.length === 0)
 		return rankTransports([]);
-	const credentials =
-		profile.profile === "apt" ? await deps.credentials() : undefined;
+	// The first-party archive is probed (with its client certificate) only where it is a source.
+	const firstParty = profile.profile === "apt" && !imageAptSourceInUse();
+	const credentials = firstParty ? await deps.credentials() : undefined;
 	// Live verification against the Todo-12-deployed apt.ceralive.tv is deferred; fixture contracts are the current evidence.
 	const imageBase = profile.profile === "os" ? await updateChannelUrl() : "";
-	const samples: TransportSample[] = await Promise.all(
+	// Every probe that was started is waited for, also when one is refused.
+	const samples: TransportSample[] = await ownedAll(
+		deps.owner,
 		candidates.flatMap((candidate) =>
 			([4, 6] as const).map(async (family) => ({
 				candidate,
@@ -477,15 +568,20 @@ async function probeUpdateTransport(
 				hosts:
 					profile.profile === "apt"
 						? [
-								await endpoint(
-									"https://apt.ceralive.tv",
-									candidate.ifname,
-									family,
-									profile,
-									deps,
-									credentials,
-								),
-								...(await Promise.all(
+								...(firstParty
+									? [
+											await endpoint(
+												"https://apt.ceralive.tv",
+												candidate.ifname,
+												family,
+												profile,
+												deps,
+												credentials,
+											),
+										]
+									: []),
+								...(await ownedAll(
+									deps.owner,
 									sources.map((source) =>
 										debian(source, candidate.ifname, family, deps),
 									),

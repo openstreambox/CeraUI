@@ -275,3 +275,9 @@ export type StreamAdmission =
 	  };
 
 export type StreamStartAction = "abort-network" | "continue-local" | "none";
+
+/**
+ * Image apt source: an install that ended before its apt unit launched. A
+ * package-only failure: the next package check or image check leaves it.
+ */
+export const PACKAGE_INSTALL_REFUSED = "package_install_refused";

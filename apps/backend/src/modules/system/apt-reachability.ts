@@ -14,6 +14,12 @@ import type {
 	AptReachability as AptReachabilityWire,
 } from "@ceraui/rpc";
 import {
+	type EffectOwner,
+	isOwnerEnded,
+	ownedAll,
+	ownedWrite,
+} from "../../helpers/effect-owner.ts";
+import {
 	type SpawnWithTimeoutResult,
 	spawnWithTimeout,
 } from "../../helpers/spawn-policy.ts";
@@ -22,7 +28,14 @@ import {
 	aptClientPaths,
 } from "../addons/apt-client-tls.ts";
 import { deviceBindingArgs } from "../network/device-bound-probe.ts";
-import { type AptOrigin, parseAptSourceOrigins } from "./apt-source-origins.ts";
+import {
+	type AptOrigin,
+	imageAptSourceOrigins,
+	isImageAptSourceHost,
+	parseAptSourceOrigins,
+} from "./apt-source-origins.ts";
+import { runCurlWithPrivateUrl } from "./curl-private-url.ts";
+import { carriesImageAptSecret } from "./image-apt-source.ts";
 import { parseAuthorityJson } from "./update-orchestrator/strict-authority-json.ts";
 
 export { type AptOrigin, parseAptSourceOrigins } from "./apt-source-origins.ts";
@@ -58,13 +71,31 @@ export type AptReachability = AptReachabilityWire & {
 
 export type AptReachabilityDeps = {
 	readonly readSources: () => Promise<string>;
+	/**
+	 * Runs one curl probe. A URL that carries the image source's access token
+	 * comes as `privateUrl` and is left out of `argv`: it must reach curl
+	 * without appearing on its command line.
+	 */
 	readonly runProbe: (
 		argv: string[],
+		privateUrl?: string,
+		owner?: EffectOwner,
 	) => Promise<Pick<SpawnWithTimeoutResult, "exitCode" | "stdout">>;
+	/**
+	 * Whom this probe is run for (an install on an image with its own apt
+	 * source). Once it has ended, no further curl starts and nothing is cached.
+	 */
+	readonly owner?: EffectOwner;
 	readonly now?: () => number;
 	readonly maxAgeMs?: number;
 	readonly ifname?: string;
 };
+
+// The first-party archive's own probe (`/__tls-probe`, the client certificate)
+// applies to that host only where it is not this image's own apt source.
+function isFirstPartyProbe(host: string): boolean {
+	return host === "apt.ceralive.tv" && !isImageAptSourceHost(host);
+}
 
 export function buildProbeArgv(
 	family: 4 | 6,
@@ -72,7 +103,7 @@ export function buildProbeArgv(
 	ifname?: string,
 	credentials?: AptClientPaths,
 ): string[] {
-	const firstParty = new URL(url).hostname === "apt.ceralive.tv";
+	const firstParty = isFirstPartyProbe(new URL(url).hostname);
 	return [
 		"curl",
 		"-q",
@@ -104,7 +135,7 @@ export function classifyProbe(outcome: {
 	readonly scheme: AptOrigin["scheme"];
 }): AptFamilyProbe {
 	if (outcome.exitCode === 0) {
-		if (outcome.originHost === "apt.ceralive.tv") {
+		if (isFirstPartyProbe(outcome.originHost)) {
 			const parts = outcome.stdout.split("\n<<<apt-probe>>>");
 			const [body, status] = parts;
 			if (parts.length !== 2 || status !== "200") return "unknown";
@@ -126,6 +157,10 @@ export function classifyProbe(outcome: {
 				? Number(rawCode)
 				: Number.NaN;
 		if (Number.isFinite(code)) {
+			// The image's own source is https only: an HTTP error came from the
+			// repository over verified TLS, so the host is not usable (unreachable).
+			if (code >= 400 && isImageAptSourceHost(outcome.originHost))
+				return "no_route";
 			const redirectUrl = redirectParts.join(" ");
 			if (outcome.scheme === "http" && code >= 300 && code < 400) {
 				try {
@@ -152,7 +187,7 @@ export function classifyProbe(outcome: {
 		case 6:
 			return "dns_failed";
 		case 58:
-			return outcome.originHost === "apt.ceralive.tv"
+			return isFirstPartyProbe(outcome.originHost)
 				? "credentials_invalid"
 				: "unknown";
 		default:
@@ -234,7 +269,16 @@ export async function readAptSources(
 
 export const defaultAptReachabilityDeps: AptReachabilityDeps = {
 	readSources: () => readAptSources(),
-	runProbe: (argv) => spawnWithTimeout(argv, { timeoutMs: PROBE_TIMEOUT_MS }),
+	runProbe: (argv, privateUrl, owner) =>
+		privateUrl === undefined
+			? spawnWithTimeout(argv, { timeoutMs: PROBE_TIMEOUT_MS, owner })
+			: runCurlWithPrivateUrl(
+					argv,
+					privateUrl,
+					(full) =>
+						spawnWithTimeout(full, { timeoutMs: PROBE_TIMEOUT_MS, owner }),
+					owner,
+				),
 };
 
 let cache: { readonly at: number; readonly value: AptReachability } | undefined;
@@ -262,22 +306,40 @@ export async function probeAptReachability(
 
 	let origins: AptOrigin[];
 	try {
-		origins = parseAptSourceOrigins(await deps.readSources());
+		// An image with its own apt source is probed at what its validator
+		// parsed, whatever else is on disk; any other image reads its sources.
+		origins =
+			imageAptSourceOrigins() ??
+			parseAptSourceOrigins(await deps.readSources());
 	} catch {
 		const value = deriveVerdict([]);
-		if (deps.ifname === undefined) cache = { at: now, value };
+		if (deps.ifname === undefined)
+			ownedWrite(deps.owner, "reachability-cache:store", () => {
+				cache = { at: now, value };
+			});
 		return value;
 	}
 
-	const byOrigin = await Promise.all(
+	// Every probe that was started is waited for, also when one is refused.
+	const byOrigin = await ownedAll(
+		deps.owner,
 		origins.map(async (origin): Promise<AptOriginProbe> => {
-			const credentials =
-				origin.host === "apt.ceralive.tv" ? await aptClientPaths() : undefined;
+			const credentials = isFirstPartyProbe(origin.host)
+				? await aptClientPaths()
+				: undefined;
 			const probe = async (family: 4 | 6): Promise<AptFamilyProbe> => {
 				try {
-					const result = await deps.runProbe(
-						buildProbeArgv(family, origin.probeUrl, deps.ifname, credentials),
+					const argv = buildProbeArgv(
+						family,
+						origin.probeUrl,
+						deps.ifname,
+						credentials,
 					);
+					// The image source's URL carries its access token: curl gets it
+					// privately, never as an argument.
+					const result = carriesImageAptSecret(origin.probeUrl)
+						? await deps.runProbe(argv.slice(0, -1), argv.at(-1), deps.owner)
+						: await deps.runProbe(argv, undefined, deps.owner);
 					return classifyProbe({
 						exitCode: result.exitCode,
 						stdout: result.stdout,
@@ -285,17 +347,22 @@ export async function probeAptReachability(
 						scheme: deps.ifname === undefined ? origin.scheme : "https",
 					});
 				} catch (error) {
+					// Not a finding about the network: the probe's owner has ended.
+					if (isOwnerEnded(error)) throw error;
 					return error instanceof Error &&
 						/not found|ENOENT|Executable/i.test(error.message)
 						? "probe_unavailable"
 						: "unknown";
 				}
 			};
-			const [ipv4, ipv6] = await Promise.all([probe(4), probe(6)]);
+			const [ipv4, ipv6] = await ownedAll(deps.owner, [probe(4), probe(6)]);
 			return { origin, ipv4, ipv6 };
 		}),
 	);
 	const value = deriveVerdict(byOrigin);
-	if (deps.ifname === undefined) cache = { at: now, value };
+	if (deps.ifname === undefined)
+		ownedWrite(deps.owner, "reachability-cache:store", () => {
+			cache = { at: now, value };
+		});
 	return value;
 }

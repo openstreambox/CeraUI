@@ -12,6 +12,7 @@ import {
 	APT_PACKAGE_NAME_RE,
 	compareAptPackageNames,
 } from "./apt-package-name.ts";
+import { isImageAptSourcePair } from "./image-apt-source.ts";
 import { softwareUpdateOutputPaths } from "./software-update-output.ts";
 import { parseOsStageSystemdProperties } from "./update-orchestrator/os-stage-systemd.ts";
 
@@ -96,14 +97,17 @@ export function isExpectedAptAllInstallArgv(argv: readonly string[]): boolean {
 	];
 	if (!prefix.every((item, i) => argv[i] === item)) return false;
 	let index = prefix.length;
-	if (argv[index] === "-o") {
-		if (
-			!["Acquire::ForceIPv4=true", "Acquire::ForceIPv6=true"].includes(
-				argv[index + 1] ?? "",
-			)
+	if (
+		argv[index] === "-o" &&
+		["Acquire::ForceIPv4=true", "Acquire::ForceIPv6=true"].includes(
+			argv[index + 1] ?? "",
 		)
-			return false;
+	)
 		index += 2;
+	// An image with its own apt source: exactly its source pair, nothing else.
+	if (argv[index] === "-o") {
+		if (!isImageAptSourcePair(argv.slice(index, index + 4))) return false;
+		index += 4;
 	}
 	if (argv[index++] !== "install" || index === argv.length) return false;
 	let previous = "";
@@ -142,7 +146,11 @@ export function expectedAptAllScript(
 		throw new InvalidDetachedAptUpgradeArgumentsError();
 	if (family.length && !install.includes(family[1] ?? ""))
 		throw new InvalidDetachedAptUpgradeArgumentsError();
-	return `/usr/bin/apt-get -d -y upgrade --with-new-pkgs${family.length ? ` ${family.join(" ")}` : ""} && /usr/bin/apt-get ${install.join(" ")}`;
+	// The download stage reads the same single source as the install it feeds.
+	const at = install.indexOf("install");
+	const source = install.slice(at - 4, at);
+	const download = [...family, ...(isImageAptSourcePair(source) ? source : [])];
+	return `/usr/bin/apt-get -d -y upgrade --with-new-pkgs${download.length ? ` ${download.join(" ")}` : ""} && /usr/bin/apt-get ${install.join(" ")}`;
 }
 
 export function validateDetachedAptServiceIdentity(output: string): void {
@@ -197,7 +205,7 @@ export function validateDetachedAptServiceIdentity(output: string): void {
 		}
 		const script = execStart.slice(prefix.length, scriptEnd);
 		const match =
-			/^\/usr\/bin\/apt-get -d -y upgrade --with-new-pkgs(?<family> -o Acquire::ForceIPv[46]=true)? && \/usr\/bin\/apt-get (?<install>.+)$/.exec(
+			/^\/usr\/bin\/apt-get -d -y upgrade --with-new-pkgs(?<family> -o Acquire::ForceIPv[46]=true)?(?: -o Dir::Etc::SourceList=\S+ -o Dir::Etc::SourceParts=\/dev\/null)? && \/usr\/bin\/apt-get (?<install>.+)$/.exec(
 				script,
 			);
 		const family = match?.groups?.family?.trim().split(" ") ?? [];

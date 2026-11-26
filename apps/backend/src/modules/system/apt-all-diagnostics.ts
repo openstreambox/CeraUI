@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { stripVTControlCharacters } from "node:util";
+import { redactImageAptSecret } from "./image-apt-source.ts";
 
 export type AptAllDiagnosticStep =
 	| "simulation"
@@ -56,7 +57,8 @@ export function prepareAptDiagnostic(text: string): {
 	readonly detail: string;
 	readonly fingerprint: string;
 } {
-	const normalized = stripVTControlCharacters(text)
+	// The image source's token also outside a URL, before any other rule.
+	const normalized = stripVTControlCharacters(redactImageAptSecret(text))
 		.replace(/\r\n?|[\u2028\u2029]/g, "\n")
 		.replace(/[^\S\n]+/gu, " ")
 		.replace(/(?!\n)[\p{Cc}\p{Cf}]/gu, "");

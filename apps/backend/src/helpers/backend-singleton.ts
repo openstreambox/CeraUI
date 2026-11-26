@@ -133,6 +133,11 @@ export async function acquireBackendSingleton(
 	};
 }
 
+/** Whether this process holds the backend's single-instance lock right now. */
+export function holdsBackendSingletonLease(): boolean {
+	return processLease !== undefined;
+}
+
 /** Retained until process death, not scoped to the top-level module's evaluation. */
 export async function enforceBackendSingleton(
 	acquire: () => Promise<BackendSingletonLease> = acquireBackendSingleton,
