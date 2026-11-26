@@ -4,6 +4,7 @@ import {
 	nmConnGetFields,
 	nmConnSetFields,
 } from "../network/network-manager.ts";
+import { newApnProvenance, writeApnProvenance } from "./apn-provenance.ts";
 import { automaticBearerFamilyEligible } from "./automatic-bearer-family.ts";
 import {
 	type CarrierIntent,
@@ -57,6 +58,7 @@ export interface CarrierProfileDeps {
 	) => Promise<boolean>;
 	readonly readIntent: typeof readCarrierIntent;
 	readonly writeIntent: typeof writeCarrierIntent;
+	readonly writeProvenance: typeof writeApnProvenance;
 	readonly journal: typeof withJournaledModemMutation;
 }
 export const defaultCarrierProfileDeps: CarrierProfileDeps = {
@@ -65,6 +67,7 @@ export const defaultCarrierProfileDeps: CarrierProfileDeps = {
 	pairPresent: isModemPairAtStableKey,
 	readIntent: readCarrierIntent,
 	writeIntent: writeCarrierIntent,
+	writeProvenance: writeApnProvenance,
 	journal: withJournaledModemMutation,
 };
 const matches = (
@@ -240,8 +243,21 @@ export async function reconcileAutomaticCarrierProfile(
 					(await deps.pairPresent(key, identity))
 				) {
 					await deps.writeIntent(identity, applied);
-					if (sameCarrierIntent(await deps.readIntent(identity), applied))
+					if (sameCarrierIntent(await deps.readIntent(identity), applied)) {
+						// Replaces a provider database record for this profile. Without
+						// it the applied intent still reads as the carrier table's.
+						await deps
+							.writeProvenance(
+								identity,
+								newApnProvenance(identity, "carrier-table", policy.apn),
+							)
+							.catch(() =>
+								logger.warn("carrier table APN provenance not recorded", {
+									module: "modems",
+								}),
+							);
 						return { confirmed: true, value: "updated" as const };
+					}
 				}
 				const restored = await restoreAutomaticCarrierProfile(
 					key,

@@ -12,7 +12,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { sanitizeModemConfigForNetworkManager } from "./modem-nm-config.ts";
 import { newProfileConfig } from "./modem-registration.ts";
 import { resolveWireConfig } from "./modem-wire-projection.ts";
 import {
@@ -283,18 +282,31 @@ describe("the profile a new SIM gets", () => {
 		expect(rest).toEqual(previous);
 	});
 
-	test("with the home APN to write, writes it with Automatic APN off", () => {
+	test("with the home APN to write, CeraUI applies it and stays automatic", () => {
 		const hint = describeHomeApn(db, "23217");
 		const config = newProfileConfig(hint, true);
+		// Automatic to CeraUI: preparation and copying read it as automatic,
+		// and registration records the APN as the database's.
 		expect(config).toMatchObject({
-			autoconfig: false,
+			autoconfig: true,
 			apn: "web",
 			apn_hint: hint,
 		});
-		const fields = sanitizeModemConfigForNetworkManager({ ...config });
-		expect(fields["gsm.apn"]).toBe("web");
-		expect(fields["gsm.auto-config"]).toBe("no");
-		expect(Object.keys(fields).some((k) => k.includes("hint"))).toBe(false);
+	});
+
+	test("a database APN the carrier intent cannot record keeps the old default", () => {
+		const odd: ProviderDatabase = [
+			{
+				name: "Example",
+				networks: ["23217"],
+				apns: [
+					{ apn: "web@odd", username: "", password: "", usage: ["internet"] },
+				],
+			},
+		];
+		const config = newProfileConfig(describeHomeApn(odd, "23217"), true);
+		expect(config).toMatchObject({ autoconfig: true, apn: "internet" });
+		expect(config.apn_hint).toBeUndefined();
 	});
 
 	test("for a SIM the database does not list, keeps Automatic APN", () => {
@@ -315,11 +327,14 @@ describe("the wire's apn_source", () => {
 		);
 	});
 
-	test("disappears once the APN or Automatic APN changes", () => {
-		const config = newProfileConfig(hint, true);
-		expect(deriveApnSource(hint, { ...config, apn: "other" })).toBe(undefined);
-		expect(deriveApnSource(hint, { ...config, autoconfig: true })).toBe(
-			undefined,
+	test("follows the record, not the values", () => {
+		// The hint on a stored profile comes from its provenance record, so an
+		// equal value typed by someone carries no hint and shows nothing.
+		expect(deriveApnSource(undefined, { autoconfig: false })).toBeUndefined();
+		// Shown on an NM build without Automatic APN too, where the dialog has
+		// the switch off and the APN field visible.
+		expect(deriveApnSource(hint, { autoconfig: false })).toBe(
+			"provider-database",
 		);
 	});
 

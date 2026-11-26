@@ -20046,7 +20046,7 @@
 		"apps/backend/src/modules/devices/usb-events.ts": "3eed84dd1003d7fe60a9aa9742dd74b75118a6daaaf1197546d25ed7bdd94995",
 		"apps/backend/src/modules/modems/modem-network-scan.ts": "b66e5ea40679d5fae6cf922d803f42f306e08bb53bc95ac6ead6d1f5229c00f7",
 		"apps/backend/src/modules/modems/modem-status.ts": "ae0a1531183e1203862c338cc615b6e8912e29aa2ad3ec30f183f71b83994ce6",
-		"apps/backend/src/modules/modems/modems-state.ts": "03d1e7e3921a35866bfdc3b68f6fe37f804cdb2bf075eab352b2705fb8346ef8",
+		"apps/backend/src/modules/modems/modems-state.ts": "7ef2fcd41c74345fd0d0c4e9c1cfe8940594b4799de31683851cddbc56bfa695",
 		"apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
 		"apps/backend/src/modules/network/network-ingest.ts": "04753a910fc6443947813f8396ee72053d663b3948f1e0ea35a8c973a0fee9dc",
 		"apps/backend/src/modules/network/network-interfaces.ts": "40d32fb0812ac305da0492d8438f4b422a1cceac334955f62d40f44b2d4a18f1",

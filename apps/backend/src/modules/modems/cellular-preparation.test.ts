@@ -124,6 +124,7 @@ function fixture(equipment = "000000000000001") {
 			return true;
 		},
 		intent: async () => undefined,
+		provenance: async () => undefined,
 		journal: async (_key, _kind, _inverse, work) => {
 			calls.push("armed");
 			const result = await work({
@@ -484,3 +485,104 @@ for (const kind of ["qmap", "eps"] as const) {
 		});
 	}
 }
+
+// A profile created with the provider database's APN (CeraUI #266 redesign)
+// is automatic to CeraUI with that APN applied, and no carrier table row
+// selects its SIM. Preparation reads the provenance record, not the APN value.
+async function applied(origin: "provider-database" | "carrier-table" | "none") {
+	const f = fixture("000000000000011");
+	const { newCarrierIntent } = await import("./automatic-carrier-intent.ts");
+	const { newApnProvenance } = await import("./apn-provenance.ts");
+	const target = f.target();
+	const identity = {
+		uuid: UUID,
+		deviceId: target.deviceId,
+		simId: target.simId,
+	};
+	let autoconnect = "yes";
+	const deps: CellularPreparationDeps = {
+		...f.deps,
+		fields: async () =>
+			[
+				target.deviceId,
+				target.simId,
+				"no",
+				"web",
+				autoconnect,
+				`cellular-${UUID}`,
+			] as never,
+		setFields: async (_uuid, fields) => {
+			f.calls.push("profile-demote");
+			autoconnect = fields["connection.autoconnect"] ?? autoconnect;
+			return true;
+		},
+		intent: async () => newCarrierIntent(identity, "automatic", "web"),
+		provenance: async () =>
+			origin === "none"
+				? undefined
+				: newApnProvenance(
+						identity,
+						origin,
+						"web",
+						origin === "provider-database" ? "23217" : undefined,
+					),
+	};
+	return { f, deps };
+}
+
+test("a provider database APN keeps QMAP and raw-IP preparation with no carrier row", async () => {
+	const { f, deps } = await applied("provider-database");
+	const run = () =>
+		prepareCellularActivation(UUID, f.target(), undefined, f.current, deps);
+	expect(await run()).toBe("waiting-usb");
+	expect(f.calls).toContain("qmap-fix");
+	expect(f.calls.indexOf("profile-demote")).toBeLessThan(
+		f.calls.indexOf("acquire"),
+	);
+	expect(await run()).toBe("pending");
+	expect(await run()).toBe("ready");
+	expect(f.raw()).toBe("Y");
+	// No carrier row: the initial EPS bearer is not the database's to set.
+	expect(f.calls).not.toContain("eps-set");
+});
+
+for (const origin of ["carrier-table", "none"] as const) {
+	test(`a carrier table APN whose row is no longer selected stays preserved (${origin})`, async () => {
+		const { f, deps } = await applied(origin);
+		expect(
+			await prepareCellularActivation(
+				UUID,
+				f.target(),
+				undefined,
+				f.current,
+				deps,
+			),
+		).toBe("preserved");
+		expect(f.calls).not.toContain("acquire");
+	});
+}
+
+test("a provider database record bound to another APN does not count", async () => {
+	const { f, deps } = await applied("provider-database");
+	const { newApnProvenance } = await import("./apn-provenance.ts");
+	const target = f.target();
+	const stale: CellularPreparationDeps = {
+		...deps,
+		provenance: async () =>
+			newApnProvenance(
+				{ uuid: UUID, deviceId: target.deviceId, simId: target.simId },
+				"provider-database",
+				"other.apn",
+				"23217",
+			),
+	};
+	expect(
+		await prepareCellularActivation(
+			UUID,
+			f.target(),
+			undefined,
+			f.current,
+			stale,
+		),
+	).toBe("preserved");
+});

@@ -5,12 +5,24 @@
  * mmcli/nmcli answers, so the NetworkManager write itself is asserted.
  */
 
-import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import * as runner from "../helpers/run.ts";
+import {
+	newApnProvenance,
+	readApnProvenance,
+	resolveApnOrigin,
+	writeApnProvenance,
+} from "../modules/modems/apn-provenance.ts";
+import {
+	effectiveCarrierAutomatic,
+	newCarrierIntent,
+	readCarrierIntent,
+	writeCarrierIntent,
+} from "../modules/modems/automatic-carrier-intent.ts";
 import { resetGsmAutoconfigProbe } from "../modules/modems/gsm-autoconfig.ts";
 import { resetGsmConnections } from "../modules/modems/gsm-connections.ts";
 import { registerModemSafe } from "../modules/modems/modem-registration.ts";
@@ -20,6 +32,7 @@ import {
 } from "../modules/modems/modem-wire-adapters.ts";
 import { withConnectionConfig } from "../modules/modems/modem-wire-producer.ts";
 import { resolveWireConfig } from "../modules/modems/modem-wire-projection.ts";
+import { defaultModemApplyDeps } from "../modules/modems/modems.ts";
 import {
 	getModem,
 	getModemIds,
@@ -55,6 +68,12 @@ const NEW_UUID = "00000000-0000-4000-8000-0000000000a2";
 
 let dir = "";
 let previousPath: string | undefined;
+const STORES = [
+	"CERALIVE_AUTOMATIC_CARRIER_STATE_DIR",
+	"CERALIVE_APN_PROVENANCE_STATE_DIR",
+	"CERALIVE_CELLULAR_PREPARATION_STATE_DIR",
+] as const;
+const previousStores = new Map<string, string | undefined>();
 
 beforeEach(async () => {
 	dir = await mkdtemp(path.join(tmpdir(), "home-apn-"));
@@ -64,6 +83,10 @@ beforeEach(async () => {
 		dir,
 		"serviceproviders.xml",
 	);
+	for (const name of STORES) {
+		previousStores.set(name, process.env[name]);
+		process.env[name] = path.join(dir, name.toLowerCase());
+	}
 	resetProviderDatabaseCache();
 	resetGsmConnections();
 	resetGsmAutoconfigProbe();
@@ -71,6 +94,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	for (const name of STORES) {
+		const previous = previousStores.get(name);
+		if (previous === undefined) delete process.env[name];
+		else process.env[name] = previous;
+	}
 	spyOn(runner, "run").mockRestore();
 	if (previousPath === undefined)
 		delete process.env.CERALIVE_PROVIDER_DATABASE_PATH;
@@ -82,32 +110,49 @@ afterEach(async () => {
 	await rm(dir, { recursive: true, force: true });
 });
 
-/** Script mmcli and nmcli for one modem; returns the fields of each `connection add`. */
-function scriptBoard(opts: {
+type ScriptedModem = {
 	simHome: string;
 	serving: string;
 	model?: string;
 	firmware?: string;
-	profiles?: Record<string, Record<string, string>>;
-}): Array<Record<string, string>> {
-	const saved: Record<string, Record<string, string>> = {
-		...(opts.profiles ?? {}),
-	};
+	deviceId?: string;
+	iccid?: string;
+};
+
+/** Every profile the scripted NetworkManager holds, by uuid. */
+let saved: Record<string, Record<string, string>> = {};
+
+/**
+ * Script mmcli and nmcli for modems 0, 1, ... (one SIM each); returns the
+ * fields of each `connection add`. `connection add` honours `connection.uuid`
+ * as nmcli does, unless `ignoreUuid` makes it pick its own.
+ */
+function scriptBoard(
+	opts: ScriptedModem & {
+		profiles?: Record<string, Record<string, string>>;
+		more?: ScriptedModem[];
+		ignoreUuid?: boolean;
+	},
+): Array<Record<string, string>> {
+	saved = { ...(opts.profiles ?? {}) };
+	const modems = [opts, ...(opts.more ?? [])];
 	const added: Array<Record<string, string>> = [];
 	spyOn(runner, "run").mockImplementation(async (binary, args) => {
-		if (binary === "mmcli" && args[0] === "-K" && args[2] === "0") {
+		const modem = modems[Number(args[2])];
+		if (binary === "mmcli" && args[0] === "-K" && modem) {
+			const index = args[2];
 			if (args[1] === "-i")
-				return `sim.properties.iccid : sim-new
-sim.properties.operator-code : ${opts.simHome}`;
+				return `sim.properties.iccid : ${modem.iccid ?? "sim-new"}
+sim.properties.operator-code : ${modem.simHome}`;
 			if (args[1] === "-m")
-				return `modem.generic.model : ${opts.model ?? "Example modem"}
-modem.generic.revision : ${opts.firmware ?? "1.0"}
+				return `modem.generic.model : ${modem.model ?? "Example modem"}
+modem.generic.revision : ${modem.firmware ?? "1.0"}
 modem.generic.state : registered
-modem.generic.device-identifier : ${DEVICE_ID}
-modem.generic.sim : /org/freedesktop/ModemManager1/SIM/0
-modem.3gpp.operator-code : ${opts.serving}
+modem.generic.device-identifier : ${modem.deviceId ?? DEVICE_ID}
+modem.generic.sim : /org/freedesktop/ModemManager1/SIM/${index}
+modem.3gpp.operator-code : ${modem.serving}
 modem.generic.ports.length : 1
-modem.generic.ports.value[1] : wwan0 (net)`;
+modem.generic.ports.value[1] : wwan${index} (net)`;
 		}
 		if (binary === "nmcli") {
 			if (args.join(" ") === "--terse --fields uuid,type,state connection show")
@@ -122,7 +167,10 @@ modem.generic.ports.value[1] : wwan0 (net)`;
 					if (field !== undefined && value !== undefined) fields[field] = value;
 				}
 				added.push(fields);
-				saved[NEW_UUID] = {
+				const uuid =
+					(!opts.ignoreUuid && fields["connection.uuid"]) ||
+					(added.length === 1 ? NEW_UUID : `${NEW_UUID}-${added.length}`);
+				saved[uuid] = {
 					"gsm.sim-operator-id": "",
 					"gsm.username": "",
 					"gsm.password": "",
@@ -133,7 +181,19 @@ modem.generic.ports.value[1] : wwan0 (net)`;
 					"connection.timestamp": "0",
 					...fields,
 				};
-				return `Connection 'gsm' (${NEW_UUID}) successfully added.`;
+				return `Connection 'gsm' (${uuid}) successfully added.`;
+			}
+			if (args[0] === "con" && args[1] === "modify") {
+				const profile = args[2] === undefined ? undefined : saved[args[2]];
+				if (profile) {
+					for (let i = 3; i < args.length; i += 2) {
+						const field = args[i];
+						const value = args[i + 1];
+						if (field !== undefined && value !== undefined)
+							profile[field] = value;
+					}
+					return "";
+				}
 			}
 			const uuid = args.at(-1);
 			const profile = uuid === undefined ? undefined : saved[uuid];
@@ -152,7 +212,17 @@ modem.generic.ports.value[1] : wwan0 (net)`;
 	return added;
 }
 
-test("a roaming SIM's new profile gets its home APN, and the wire says so", async () => {
+/** The carrier intent and provenance CeraUI holds for a profile. */
+async function records(uuid: string, deviceId = DEVICE_ID, simId = "sim-new") {
+	const identity = { uuid, deviceId, simId };
+	const intent = await readCarrierIntent(identity);
+	const provenance = await readApnProvenance(identity);
+	return { intent, provenance };
+}
+
+const RM520 = { model: "RM520N-GL", firmware: "RM520NGLAAR01A08M4G" };
+
+test("a roaming SIM's new profile gets its home APN, recorded as the database's", async () => {
 	const added = scriptBoard({ simHome: "23217", serving: "26202" });
 
 	await registerModemSafe(0);
@@ -164,9 +234,36 @@ test("a roaming SIM's new profile gets its home APN, and the wire says so", asyn
 		"gsm.sim-operator-id": "23217",
 	});
 	const modem = getModem(0);
-	expect(modem?.config).toMatchObject({ autoconfig: false, apn: "web" });
+	// Automatic to CeraUI, with the APN CeraUI applied.
+	expect(modem?.config).toMatchObject({ autoconfig: true, apn: "web" });
+	const uuid = modem?.config?.conn ?? "";
+	expect(added[0]?.["connection.uuid"]).toBe(uuid);
+	const { intent, provenance } = await records(uuid);
+	expect(intent).toMatchObject({
+		mode: "automatic",
+		phase: "applied",
+		appliedApn: "web",
+	});
+	expect(provenance).toMatchObject({
+		origin: "provider-database",
+		apn: "web",
+		network: "23217",
+	});
+	expect(effectiveCarrierAutomatic(intent, false, "web")).toBe(true);
 	const source = modem && fromMmcliModem(0, modem).config;
-	expect(source && resolveWireConfig(source, true).apn_source).toBe(
+	expect(source && resolveWireConfig(source, true)).toMatchObject({
+		autoconfig: true,
+		apn_source: "provider-database",
+	});
+	// A restart reads the same story back from the records.
+	resetGsmConnections();
+	removeModem(0);
+	await registerModemSafe(0);
+	expect(added).toHaveLength(1);
+	const again = getModem(0);
+	expect(again?.config).toMatchObject({ conn: uuid, autoconfig: true });
+	const reread = again && fromMmcliModem(0, again).config;
+	expect(reread && resolveWireConfig(reread, true).apn_source).toBe(
 		"provider-database",
 	);
 });
@@ -294,19 +391,232 @@ test("a template pinned to another network is judged by that network", async () 
 	expect(added[0]).toMatchObject({ "gsm.apn": "web", "gsm.auto-config": "no" });
 });
 
-test("a modem admitted for transport preparation keeps its automatic profile", async () => {
-	// Preparation (QMAP, raw-IP) runs only for automatic profiles on these.
-	const added = scriptBoard({
-		simHome: "23217",
-		serving: "26202",
-		model: "RM520N-GL",
-		firmware: "RM520NGLAAR01A08M4G",
-	});
+test("a modem admitted for transport preparation gets the home APN and stays automatic", async () => {
+	const added = scriptBoard({ simHome: "23217", serving: "26202", ...RM520 });
 
 	await registerModemSafe(0);
 
 	expect(added).toHaveLength(1);
-	// The previous default (on this unprobed board, "internet"), not "web".
-	expect(added[0]?.["gsm.apn"]).toBe("internet");
-	expect(getModem(0)?.config?.apn).toBe("internet");
+	expect(added[0]).toMatchObject({ "gsm.apn": "web", "gsm.auto-config": "no" });
+	const uuid = getModem(0)?.config?.conn ?? "";
+	// Preparation runs for profiles automatic to CeraUI (`cellular-preparation.ts`
+	// reads exactly these two records), so this one keeps it.
+	expect(getModem(0)?.config?.autoconfig).toBe(true);
+	const { intent, provenance } = await records(uuid);
+	expect(effectiveCarrierAutomatic(intent, false, "web")).toBe(true);
+	expect(resolveApnOrigin(intent, provenance, false, "web")).toEqual({
+		origin: "provider-database",
+		network: "23217",
+	});
+});
+
+describe("a second SIM of the same operator", () => {
+	const first = { simHome: "23217", serving: "26202", iccid: "sim-first" };
+	const second = {
+		simHome: "23217",
+		deviceId: "synthetic-second-device",
+		iccid: "sim-second",
+		...RM520,
+	};
+
+	test("roaming on an admitted modem gets its own lookup, not a copy", async () => {
+		// Sol r4 P1: the first SIM's database APN on a generic modem, then a
+		// second SIM of the same operator on an RM520N-GL in QMI mode.
+		const added = scriptBoard({
+			...first,
+			more: [{ ...second, serving: "26202" }],
+		});
+		await registerModemSafe(0);
+		resetGsmConnections();
+		await registerModemSafe(1);
+
+		expect(added).toHaveLength(2);
+		// The base and r4 copied a manual profile here, which preparation skips.
+		const config = getModem(1)?.config;
+		expect(config?.autoconfig).toBe(true);
+		const secondUuid = config?.conn ?? "";
+		expect(secondUuid).not.toBe(getModem(0)?.config?.conn);
+		expect(added[1]).toMatchObject({
+			"gsm.apn": "web",
+			"gsm.auto-config": "no",
+		});
+		const own = await records(secondUuid, second.deviceId, second.iccid);
+		expect(own.intent).toMatchObject({ mode: "automatic", appliedApn: "web" });
+		expect(resolveApnOrigin(own.intent, own.provenance, false, "web")).toEqual({
+			origin: "provider-database",
+			network: "23217",
+		});
+	});
+
+	test("on its home network gets Automatic APN, not the first SIM's APN", async () => {
+		const added = scriptBoard({
+			...first,
+			more: [{ ...second, serving: "23217" }],
+		});
+		await registerModemSafe(0);
+		resetGsmConnections();
+		await registerModemSafe(1);
+
+		expect(added).toHaveLength(2);
+		// NetworkManager's own pick is right at home, so nothing is written for it.
+		expect(added[1]).toMatchObject({ "gsm.auto-config": "yes", "gsm.apn": "" });
+		expect(getModem(1)?.config?.autoconfig).toBe(true);
+		const own = await records(
+			getModem(1)?.config?.conn ?? "",
+			second.deviceId,
+			second.iccid,
+		);
+		expect(own.intent).toBeUndefined();
+	});
+
+	test("copies an APN the operator saved, even one equal to the database's", async () => {
+		const added = scriptBoard({
+			...first,
+			more: [{ ...second, serving: "23217" }],
+		});
+		await registerModemSafe(0);
+		const uuid = getModem(0)?.config?.conn ?? "";
+		resetGsmConnections();
+		// The operator turns Automatic APN off and keeps "web".
+		expect(
+			await defaultModemApplyDeps.writeConnection(uuid, {
+				autoconfig: false,
+				apn: "web",
+				username: "",
+				password: "",
+				roaming: true,
+				network: "",
+			}),
+		).toBe(true);
+		const mine = await records(uuid, DEVICE_ID, first.iccid);
+		expect(mine.intent?.mode).toBe("manual");
+		expect(mine.provenance).toBeUndefined();
+		resetGsmConnections();
+		await registerModemSafe(1);
+
+		expect(added[1]).toMatchObject({
+			"gsm.apn": "web",
+			"gsm.auto-config": "no",
+		});
+		expect(getModem(1)?.config?.autoconfig).toBe(false);
+		const modem = getModem(1);
+		const source = modem && fromMmcliModem(1, modem).config;
+		// Typed by someone: no claim that the database chose it.
+		expect(source && "apn_source" in resolveWireConfig(source, true)).toBe(
+			false,
+		);
+	});
+
+	test("copies an APN the carrier table applied as an automatic profile", async () => {
+		const template = {
+			"gsm.device-id": "another-device",
+			"gsm.sim-id": "sim-old",
+			"gsm.sim-operator-id": "23217",
+			"gsm.apn": "carrier.example",
+			"gsm.username": "",
+			"gsm.password": "",
+			"gsm.home-only": "no",
+			"gsm.network-id": "",
+			"gsm.auto-config": "no",
+			"connection.autoconnect": "yes",
+			"connection.timestamp": "0",
+		};
+		const identity = {
+			uuid: TEMPLATE_UUID,
+			deviceId: "another-device",
+			simId: "sim-old",
+		};
+		await writeCarrierIntent(
+			identity,
+			newCarrierIntent(identity, "automatic", "carrier.example"),
+		);
+		await writeApnProvenance(
+			identity,
+			newApnProvenance(identity, "carrier-table", "carrier.example"),
+		);
+		const added = scriptBoard({
+			...second,
+			serving: "23217",
+			profiles: { [TEMPLATE_UUID]: template },
+		});
+		await registerModemSafe(0);
+
+		// As before #266: an automatic copy, for the carrier table to apply again.
+		expect(added[0]).toMatchObject({ "gsm.auto-config": "yes", "gsm.apn": "" });
+		expect(getModem(0)?.config?.autoconfig).toBe(true);
+	});
+});
+
+describe("saving the dialog", () => {
+	test("with Automatic APN on keeps the database APN and its record", async () => {
+		scriptBoard({ simHome: "23217", serving: "26202" });
+		await registerModemSafe(0);
+		const uuid = getModem(0)?.config?.conn ?? "";
+		const before = await records(uuid);
+		resetGsmConnections();
+		const config = {
+			autoconfig: true,
+			apn: "",
+			username: "",
+			password: "",
+			roaming: false,
+			network: "",
+		};
+		expect(await defaultModemApplyDeps.writeConnection(uuid, config)).toBe(
+			true,
+		);
+
+		expect(saved[uuid]).toMatchObject({
+			"gsm.apn": "web",
+			"gsm.auto-config": "no",
+			"gsm.home-only": "yes",
+		});
+		expect(await records(uuid)).toEqual(before);
+		// What the caller keeps in memory is the APN in effect, with its note.
+		expect(config).toMatchObject({
+			apn: "web",
+			apn_hint: { source: "provider-database", homeNetwork: "23217" },
+		});
+	});
+
+	test("with Automatic APN off records the operator's APN as theirs", async () => {
+		scriptBoard({ simHome: "23217", serving: "26202" });
+		await registerModemSafe(0);
+		const uuid = getModem(0)?.config?.conn ?? "";
+		resetGsmConnections();
+		expect(
+			await defaultModemApplyDeps.writeConnection(uuid, {
+				autoconfig: false,
+				apn: "web",
+				username: "",
+				password: "",
+				roaming: true,
+				network: "",
+			}),
+		).toBe(true);
+		const after = await records(uuid);
+		expect(
+			resolveApnOrigin(after.intent, after.provenance, false, "web"),
+		).toEqual({ origin: "user" });
+		expect(after.provenance).toBeUndefined();
+	});
+});
+
+test("a profile nmcli files under another uuid keeps its record", async () => {
+	const added = scriptBoard({
+		simHome: "23217",
+		serving: "26202",
+		ignoreUuid: true,
+	});
+	await registerModemSafe(0);
+	const planned = added[0]?.["connection.uuid"] ?? "";
+	expect(getModem(0)?.config?.conn).toBe(NEW_UUID);
+	expect(await records(NEW_UUID)).toMatchObject({
+		intent: { appliedApn: "web" },
+		provenance: { origin: "provider-database" },
+	});
+	expect(await records(planned)).toEqual({
+		intent: undefined,
+		provenance: undefined,
+	});
 });

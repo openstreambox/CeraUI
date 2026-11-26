@@ -22,6 +22,12 @@ import {
 	nmcliParseSep,
 } from "../network/network-manager.ts";
 import {
+	type ApnProvenance,
+	type ResolvedApnOrigin,
+	readApnProvenance,
+	resolveApnOrigin,
+} from "./apn-provenance.ts";
+import {
 	type CarrierIntent,
 	effectiveCarrierAutomatic,
 	readCarrierIntent,
@@ -43,6 +49,8 @@ type GsmConnection = {
 	roaming: boolean;
 	network: string;
 	autoconfig?: boolean;
+	/** Who chose the APN CeraUI wrote (`apn-provenance.ts`); absent: none. */
+	apnOrigin?: ResolvedApnOrigin;
 };
 
 export type GsmConnections = {
@@ -149,13 +157,17 @@ async function readGsmConnections(): Promise<GsmConnections | undefined> {
 			return undefined;
 
 		let intent: CarrierIntent | undefined;
+		let provenance: ApnProvenance | undefined;
 		try {
-			if (connInfo[0] && connInfo[1])
-				intent = await readCarrierIntent({
+			if (connInfo[0] && connInfo[1]) {
+				const identity = {
 					uuid,
 					deviceId: connInfo[0],
 					simId: connInfo[1],
-				});
+				};
+				intent = await readCarrierIntent(identity);
+				if (intent) provenance = await readApnProvenance(identity);
+			}
 		} catch {
 			logger.warn("automatic carrier intent is unreadable", {
 				module: "modems",
@@ -183,6 +195,13 @@ async function readGsmConnections(): Promise<GsmConnections | undefined> {
 					}
 				: {}),
 		};
+		const apnOrigin = resolveApnOrigin(
+			intent,
+			provenance,
+			withAutoconfig && connInfo[8] === "yes",
+			connInfo[3],
+		);
+		if (apnOrigin) conn.apnOrigin = apnOrigin;
 
 		byUuid[uuid] = conn;
 

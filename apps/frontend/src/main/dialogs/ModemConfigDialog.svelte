@@ -451,15 +451,30 @@ const primaryDisabled = $derived(noSim || apnError || thresholdInvalid);
 // stays offered exactly as before.
 const autoApnUnsupported = $derived(modem.config?.autoconfig_supported === false);
 
-// Where the stored APN came from (backend `provider-apn.ts`). Each note shows
+// Where the stored APN came from (backend `apn-provenance.ts`). Each note shows
 // only while the form still matches what the backend described, so editing the
-// APN or flipping the switch hides it instead of leaving a stale claim.
+// APN or flipping the switch hides it instead of leaving a stale claim. With
+// Automatic APN on, the device applies the database's APN itself; the note
+// beside the switch names it, as no APN field is shown then.
+const apnAutomaticFromProviderDatabase = $derived(
+	modem.config?.apn_source === 'provider-database' &&
+		modem.config.autoconfig &&
+		formData.autoconfig &&
+		modem.config.apn !== '',
+);
 const apnFromProviderDatabase = $derived(
 	modem.config?.apn_source === 'provider-database' &&
 		!formData.autoconfig &&
 		formData.apn === modem.config.apn,
 );
 const apnNotListed = $derived(modem.config?.apn_source === 'not-listed' && formData.autoconfig);
+const autoApnNoteId = $derived(
+	apnNotListed
+		? 'modem-apn-not-listed'
+		: apnAutomaticFromProviderDatabase
+			? 'modem-apn-automatic-from-provider-database'
+			: undefined,
+);
 
 // Which connect-time values the pending edit would change, by the SAME rule the
 // device applies (`@ceraui/rpc`) — a second copy here would let the dialog
@@ -1762,11 +1777,20 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 								{m["network.modem.apnNotListed"]()}
 							</p>
 						{/if}
+						{#if apnAutomaticFromProviderDatabase}
+							<p
+								id="modem-apn-automatic-from-provider-database"
+								class="text-muted-foreground mt-1 text-xs"
+								data-testid="modem-apn-automatic-from-provider-database"
+							>
+								{m["network.modem.apnAutomaticFromProviderDatabase"]({ apn: modem.config?.apn ?? '' })}
+							</p>
+						{/if}
 					</div>
 				</div>
 				<LabeledSwitch
 					checked={formData.autoconfig}
-					describedBy={apnNotListed ? 'modem-apn-not-listed' : undefined}
+					describedBy={autoApnNoteId}
 					disabled={noSim || autoApnUnsupported}
 					label={m["network.modem.autoapn"]()}
 					onCheckedChange={(checked) => (formData.autoconfig = checked)}

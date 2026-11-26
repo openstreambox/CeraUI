@@ -49,6 +49,7 @@ import {
 	nmConnSetFields,
 	nmDisconnect,
 } from "../network/network-manager.ts";
+import { readApnProvenance, writeApnProvenance } from "./apn-provenance.ts";
 import {
 	newCarrierIntent,
 	newPendingCarrierIntent,
@@ -134,6 +135,47 @@ async function updateModemConnection(
 				}
 			: undefined;
 	const before = identity ? await readCarrierIntent(identity) : undefined;
+	const provenance =
+		identity && before ? await readApnProvenance(identity) : undefined;
+	// Automatic APN on a profile whose APN the provider database chose keeps
+	// that choice: NetworkManager's own lookup is what the APN was written to
+	// avoid, so a save of roaming or the network leaves it in place.
+	if (
+		identity &&
+		config.autoconfig &&
+		selected.apnOrigin?.origin === "provider-database" &&
+		before?.mode === "automatic" &&
+		before.phase === "applied" &&
+		before.appliedApn !== undefined &&
+		provenance?.origin === "provider-database" &&
+		provenance.network !== undefined &&
+		provenance.apn === before.appliedApn
+	) {
+		const {
+			"gsm.apn": _apn,
+			"gsm.username": _username,
+			"gsm.password": _password,
+			"gsm.password-flags": _passwordFlags,
+			...fields
+		} = sanitizeModemConfigForNetworkManager(config);
+		Object.assign(config, {
+			apn: before.appliedApn,
+			username: selected.username,
+			password: selected.password,
+			apn_hint: {
+				source: "provider-database",
+				homeNetwork: provenance.network,
+				apn: before.appliedApn,
+				username: selected.username,
+				password: selected.password,
+			},
+		} satisfies Partial<ModemConfig>);
+		return nmConnSetFields(connectionUuid, {
+			...fields,
+			"gsm.auto-config": "no",
+			...(await automaticProfileConnectionFlags(identity, true)),
+		});
+	}
 	const nmConfig = {
 		...sanitizeModemConfigForNetworkManager(config),
 		...(identity
@@ -150,6 +192,14 @@ async function updateModemConnection(
 	try {
 		const written = await nmConnSetFields(connectionUuid, nmConfig);
 		if (!written && identity) await writeCarrierIntent(identity, before);
+		// The new intent no longer carries the recorded APN, so neither may its
+		// provenance; a record left by a failed removal no longer matches it.
+		if (written && identity && provenance)
+			await writeApnProvenance(identity, undefined).catch(() =>
+				logger.warn("APN provenance could not be removed", {
+					module: "modems",
+				}),
+			);
 		return written;
 	} catch (error) {
 		if (identity) await writeCarrierIntent(identity, before);
@@ -404,6 +454,13 @@ async function applyModemConfigClaimed(
 		password: msg.password,
 		roaming: msg.roaming,
 		network: msg.network,
+		// The database lists nothing for this SIM whatever is saved; that note
+		// stays while NetworkManager picks the APN. A database APN's note is put
+		// back by the write only when the save keeps that APN.
+		apn_hint:
+			msg.autoconfig && modemConfig.apn_hint?.source === "not-listed"
+				? modemConfig.apn_hint
+				: undefined,
 	};
 	const nextFields = normalizeModemConnectionFields(
 		updatedConfig,

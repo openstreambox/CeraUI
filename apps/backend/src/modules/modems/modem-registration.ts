@@ -30,6 +30,7 @@
   loop publishes snapshots and broadcasts — none of that lives here.
 */
 
+import { randomUUID } from "node:crypto";
 import { readdir, readFile, readlink, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
@@ -47,6 +48,17 @@ import {
 	nmConnSetFields,
 } from "../network/network-manager.ts";
 import { modemTac } from "../system/support-export.ts";
+import {
+	newApnProvenance,
+	type ResolvedApnOrigin,
+	recordableApn,
+	writeApnProvenance,
+} from "./apn-provenance.ts";
+import {
+	type CarrierIntentIdentity,
+	newCarrierIntent,
+	writeCarrierIntent,
+} from "./automatic-carrier-intent.ts";
 import {
 	type BearerIpFamilyDecision,
 	bearerIpFamilyFields,
@@ -101,7 +113,6 @@ import {
 	getRadioRegistrationObservation,
 	recordRadioRegistration,
 } from "./state/radio-registration.ts";
-import { resolveTransportQuirk } from "./transport-policy.ts";
 
 export type { ModemId } from "./mmcli.ts";
 export { getRadioRegistrationObservation };
@@ -152,22 +163,12 @@ async function getModemConfig(
 	const gsmConnections = await getGsmConnections();
 	if (gsmConnections === undefined) return undefined;
 
-	// What the provider database says about the SIM's own network. Attached to
-	// every profile so the dialog's note survives a restart; it only shows while
-	// the profile's values match it (see `deriveApnSource`).
+	// What the provider database says about the SIM's own network, for a
+	// profile created now and for the dialog's "not listed" note.
 	const providerDb = await loadProviderDatabase();
 	const apnHint = describeHomeApn(providerDb, operatorId);
-	// An admitted transport (`transport-policy.ts`) is prepared only while its
-	// profile stays automatic, so such a modem keeps the automatic profile.
-	const preparedTransport = hasAdmittedTransport(modemInfo);
-	const writeHomeApn =
-		!preparedTransport &&
-		shouldWriteHomeApn(
-			providerDb,
-			apnHint,
-			modemInfo["modem.3gpp.operator-code"],
-		);
-	const withHint = apnHint !== undefined ? { apn_hint: apnHint } : {};
+	const notListed =
+		apnHint?.source === "not-listed" ? { apn_hint: apnHint } : {};
 
 	if (gsmConnections.byDevice[modemId]?.[simId]) {
 		const ci = gsmConnections.byDevice[modemId][simId];
@@ -180,7 +181,7 @@ async function getModemConfig(
 			password: ci.password,
 			roaming: ci.roaming,
 			network: ci.network,
-			...withHint,
+			...storedApnHint(ci, notListed),
 		};
 	}
 
@@ -188,18 +189,21 @@ async function getModemConfig(
 		// Copy the settings from an existing config for the same operator
 		const ci = gsmConnections.byOperator[operatorId];
 		// The template's own pinned network is what NetworkManager will look up.
-		const writeForTemplate =
-			!preparedTransport &&
-			shouldWriteHomeApn(
-				providerDb,
-				apnHint,
-				modemInfo["modem.3gpp.operator-code"],
-				ci.roaming ? ci.network : undefined,
-			);
-		// An automatic template would hand this SIM the same wrong automatic
-		// choice. A manual template carries an APN someone may have chosen on
-		// purpose, so it is copied as it always was.
-		if (ci.autoconfig === true && writeForTemplate) {
+		const writeForTemplate = shouldWriteHomeApn(
+			providerDb,
+			apnHint,
+			modemInfo["modem.3gpp.operator-code"],
+			ci.roaming ? ci.network : undefined,
+		);
+		// A database APN was looked up for the template's SIM, so this SIM gets
+		// its own lookup instead of a copy. An automatic template would hand this
+		// SIM the same wrong automatic choice. Any other template carries an APN
+		// someone chose (the operator, or the carrier table for its own SIM) and
+		// is copied as it always was.
+		if (
+			ci.apnOrigin?.origin === "provider-database" ||
+			(ci.autoconfig === true && writeForTemplate)
+		) {
 			return {
 				...newProfileConfig(apnHint, writeForTemplate),
 				roaming: ci.roaming,
@@ -213,41 +217,70 @@ async function getModemConfig(
 			password: ci.password,
 			roaming: ci.roaming,
 			network: ci.network,
-			...withHint,
+			...(ci.autoconfig === true ? notListed : {}),
 		};
 	}
 
 	// New connection profile
-	return newProfileConfig(apnHint, writeHomeApn);
+	return newProfileConfig(
+		apnHint,
+		shouldWriteHomeApn(
+			providerDb,
+			apnHint,
+			modemInfo["modem.3gpp.operator-code"],
+		),
+	);
 }
 
 /**
- * Whether this modem's model and firmware are admitted for transport
- * preparation in any USB mode. Deliberately mode-blind: reading the mode needs
- * sysfs, and erring towards "admitted" only keeps the previous behaviour.
+ * The dialog's note for an existing profile, from CeraUI's own records: the
+ * database note only while the provenance says the database chose the APN,
+ * the "not listed" note only while NetworkManager picks the APN itself.
  */
-function hasAdmittedTransport(modemInfo: ModemInfo): boolean {
-	const model = modemInfo["modem.generic.model"];
-	const firmware = modemInfo["modem.generic.revision"] ?? "";
-	return (["qmi", "mbim", "rndis"] as const).some(
-		(mode) => resolveTransportQuirk({ model, firmware, mode }) !== undefined,
-	);
+function storedApnHint(
+	ci: {
+		readonly autoconfig?: boolean;
+		readonly apn: string;
+		readonly username: string;
+		readonly password: string;
+		readonly apnOrigin?: ResolvedApnOrigin;
+	},
+	notListed: { apn_hint?: ApnHint },
+): { apn_hint?: ApnHint } {
+	if (ci.apnOrigin?.origin === "provider-database")
+		return {
+			apn_hint: {
+				source: "provider-database",
+				homeNetwork: ci.apnOrigin.network,
+				apn: ci.apn,
+				username: ci.username,
+				password: ci.password,
+			},
+		};
+	return ci.autoconfig === true && ci.apnOrigin === undefined ? notListed : {};
 }
 
 /**
  * A new profile keeps Automatic APN unless NetworkManager's automatic choice is
  * known to differ from the APN listed for the SIM's own network (see
- * `provider-apn.ts`). Then that APN is written, with the hint the UI shows.
+ * `provider-apn.ts`). Then CeraUI applies that APN itself: the profile stays
+ * automatic to CeraUI (`autoconfig`), NetworkManager gets the APN with its own
+ * lookup off, and `addConnectionForModem` records the choice as the provider
+ * database's in the carrier intent store.
  */
 export function newProfileConfig(
 	hint: ApnHint | undefined,
 	writeHomeApn: boolean,
 ): ModemConfig {
 	const base = { roaming: true, network: "" };
-	if (writeHomeApn && hint?.source === "provider-database") {
+	if (
+		writeHomeApn &&
+		hint?.source === "provider-database" &&
+		recordableApn(hint.apn)
+	) {
 		return {
 			...base,
-			autoconfig: false,
+			autoconfig: true,
 			apn: hint.apn,
 			username: hint.username,
 			password: hint.password,
@@ -260,7 +293,7 @@ export function newProfileConfig(
 		apn: "internet",
 		username: "",
 		password: "",
-		...(hint !== undefined ? { apn_hint: hint } : {}),
+		...(hint?.source === "not-listed" ? { apn_hint: hint } : {}),
 	};
 }
 
@@ -399,6 +432,31 @@ async function addConnectionForModem(
 	const simId = simInfo["sim.properties.iccid"];
 	const operatorId = simInfo["sim.properties.operator-code"];
 
+	// A database APN is applied by CeraUI, not looked up by NetworkManager, and
+	// recorded before the profile exists so it is never seen without its record.
+	const hint = config.apn_hint;
+	const fromDatabase =
+		config.autoconfig && hint?.source === "provider-database";
+	const planned = fromDatabase ? randomUUID() : undefined;
+	if (planned !== undefined && hint?.source === "provider-database") {
+		const recorded = await recordDatabaseApn(
+			{ uuid: planned, deviceId: modemId, simId },
+			hint,
+		);
+		if (!recorded) {
+			// Without the record the profile would read as manual: create the
+			// automatic profile it would have had before.
+			Object.assign(config, {
+				autoconfig: true,
+				apn: "internet",
+				username: "",
+				password: "",
+			});
+			delete config.apn_hint;
+		}
+	}
+	const written = planned !== undefined && config.apn_hint !== undefined;
+
 	// The NM connection doesn't exist yet, create it
 	//const autoconnect = (modemInfo['modem.3gpp.registration-state'] != 'idle') ? 'yes' : 'no';
 	const nmConfig: NetworkManagerConnection = {
@@ -409,16 +467,78 @@ async function addConnectionForModem(
 		...bearerIpFamilyFields(decideBearerIpFamily(modemInfo, simInfo).family),
 		"gsm.device-id": modemId,
 		"gsm.sim-id": simId,
-		...sanitizeModemConfigForNetworkManager(config),
+		...(written
+			? {
+					"connection.uuid": planned,
+					...sanitizeModemConfigForNetworkManager({
+						...config,
+						autoconfig: false,
+					}),
+				}
+			: sanitizeModemConfigForNetworkManager(config)),
 	};
 	if (operatorId) {
 		nmConfig["gsm.sim-operator-id"] = operatorId;
 	}
 
 	const uuid = await nmConnAdd(nmConfig);
+	if (written && hint?.source === "provider-database") {
+		const identity = { uuid: planned, deviceId: modemId, simId };
+		if (uuid !== planned) {
+			// No profile under the planned uuid: its record must not outlive it.
+			await forgetDatabaseApn(identity);
+			if (uuid !== undefined)
+				await recordDatabaseApn({ uuid, deviceId: modemId, simId }, hint);
+		}
+	}
 	if (uuid) {
 		config.conn = uuid;
 		logger.debug(`Created NM connection ${uuid} for ${modemId}`, config);
+	}
+}
+
+/**
+ * The carrier intent and provenance of a database APN for a profile about to
+ * be created. The uuid is new, so no other writer can hold this key yet.
+ */
+async function recordDatabaseApn(
+	identity: CarrierIntentIdentity,
+	hint: Extract<ApnHint, { source: "provider-database" }>,
+): Promise<boolean> {
+	try {
+		await writeApnProvenance(
+			identity,
+			newApnProvenance(
+				identity,
+				"provider-database",
+				hint.apn,
+				hint.homeNetwork,
+			),
+		);
+		await writeCarrierIntent(
+			identity,
+			newCarrierIntent(identity, "automatic", hint.apn),
+		);
+		return true;
+	} catch (error) {
+		logger.warn("provider database APN could not be recorded", {
+			module: "modems",
+			error,
+		});
+		await forgetDatabaseApn(identity);
+		return false;
+	}
+}
+
+async function forgetDatabaseApn(identity: CarrierIntentIdentity) {
+	try {
+		await writeCarrierIntent(identity, undefined);
+		await writeApnProvenance(identity, undefined);
+	} catch (error) {
+		logger.warn("provider database APN record could not be removed", {
+			module: "modems",
+			error,
+		});
 	}
 }
 

@@ -36,9 +36,11 @@
  *
  * So this module answers one narrow question for a profile that does not exist
  * yet: would NetworkManager's automatic choice differ from the APN the database
- * lists for the SIM's OWN network? Only then is that APN written explicitly,
- * with Automatic APN off, and the UI says where the value comes from so it can
- * be corrected. In every other case the profile is created exactly as before.
+ * lists for the SIM's OWN network? Only then does CeraUI apply that APN itself
+ * (NetworkManager's lookup off, the profile still automatic to CeraUI, the
+ * choice recorded in `apn-provenance.ts`), and the UI says where the value
+ * comes from so it can be corrected. In every other case the profile is
+ * created exactly as before.
  * A SIM whose home network the database does not list keeps Automatic APN too:
  * there is nothing better to write (an empty APN is not reliably the network's
  * default on every modem), but the UI says so instead of failing silently.
@@ -327,27 +329,18 @@ export function shouldWriteHomeApn(
 /**
  * Whether the dialog should say where the APN came from.
  *
- * Derived from the CURRENT values rather than stored as a flag: once the APN is
- * changed it stops matching the hint and the note disappears, and a manual
- * entry that happens to equal the database value is still truthfully described.
+ * The profile's hint is set from CeraUI's records (`apn-provenance.ts`), not
+ * from comparing values: `provider-database` while the provenance says the
+ * database chose the APN in use, `not-listed` while NetworkManager picks the
+ * APN and the database lists nothing for the SIM's network. That note only
+ * makes sense while Automatic APN is shown on.
  */
 export function deriveApnSource(
 	hint: ApnHint | undefined,
-	config: {
-		readonly autoconfig: boolean;
-		readonly apn: string;
-		readonly username: string;
-		readonly password: string;
-	},
+	config: { readonly autoconfig: boolean },
 ): ApnSource | undefined {
 	if (hint === undefined) return undefined;
-	if (hint.source === "not-listed") {
+	if (hint.source === "not-listed")
 		return config.autoconfig ? "not-listed" : undefined;
-	}
-	return !config.autoconfig &&
-		config.apn === hint.apn &&
-		config.username === hint.username &&
-		config.password === hint.password
-		? "provider-database"
-		: undefined;
+	return "provider-database";
 }

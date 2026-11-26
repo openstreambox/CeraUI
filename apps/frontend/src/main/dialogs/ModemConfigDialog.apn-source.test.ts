@@ -2,10 +2,12 @@
 /**
  * ModemConfigDialog: a chosen APN says where it came from.
  *
- * When the backend fills a new profile's APN from the mobile provider database
- * (because Automatic APN would have used another network's APN), or leaves
- * Automatic APN on for a SIM the database does not list, the dialog states it
- * on screen so the operator knows the value can be wrong and can correct it.
+ * When the backend applies a new profile's APN from the mobile provider
+ * database (because NetworkManager's own lookup would have used another
+ * network's APN), or leaves Automatic APN on for a SIM the database does not
+ * list, the dialog states it on screen so the operator knows the value can be
+ * wrong and can correct it. A database APN stays under Automatic APN, so the
+ * note names it beside the switch; with the switch off it sits under the field.
  * Each note disappears as soon as the form no longer matches what the backend
  * described, and a backend that sends no `apn_source` renders exactly as before.
  */
@@ -147,6 +149,44 @@ describe("an APN filled in from the provider database", () => {
 			expect(document.querySelector("#modem-apn")).toBeTruthy(),
 		);
 		expect(screen.queryByTestId("modem-apn-from-provider-database")).toBeNull();
+	});
+});
+
+describe("an APN Automatic APN takes from the provider database", () => {
+	it("is named beside Automatic APN", async () => {
+		mount(
+			modemWithConfig({
+				autoconfig: true,
+				apn: "web",
+				apn_source: "provider-database",
+			}),
+		);
+
+		const note = await screen.findByTestId(
+			"modem-apn-automatic-from-provider-database",
+		);
+		expect(note.textContent).toContain("web");
+		expect(note.textContent).toMatch(/provider database/i);
+		expect(autoApnSwitch().getAttribute("aria-describedby")).toBe(note.id);
+		expect(screen.queryByTestId("modem-apn-from-provider-database")).toBeNull();
+	});
+
+	it("moves under the APN field when Automatic APN is switched off", async () => {
+		mount(
+			modemWithConfig({
+				autoconfig: true,
+				apn: "web",
+				apn_source: "provider-database",
+			}),
+		);
+		await screen.findByTestId("modem-apn-automatic-from-provider-database");
+
+		await fireEvent.click(autoApnSwitch());
+
+		await screen.findByTestId("modem-apn-from-provider-database");
+		expect(
+			screen.queryByTestId("modem-apn-automatic-from-provider-database"),
+		).toBeNull();
 	});
 });
 

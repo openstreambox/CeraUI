@@ -73,6 +73,11 @@ process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = join(
 	runtimeRoot,
 	"carrier-intent",
 );
+const previousApnProvenanceDir = process.env.CERALIVE_APN_PROVENANCE_STATE_DIR;
+process.env.CERALIVE_APN_PROVENANCE_STATE_DIR = join(
+	runtimeRoot,
+	"apn-provenance",
+);
 process.env.CERALIVE_STREAMING_MARKER = join(runtimeRoot, "streaming");
 const previousCarryingBootClaim = process.env.CERALIVE_CARRYING_BOOT_CLAIM;
 process.env.CERALIVE_CARRYING_BOOT_CLAIM = join(
@@ -171,6 +176,9 @@ afterAll(async () => {
 		delete process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR;
 	else
 		process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = previousCarrierIntentDir;
+	if (previousApnProvenanceDir === undefined)
+		delete process.env.CERALIVE_APN_PROVENANCE_STATE_DIR;
+	else process.env.CERALIVE_APN_PROVENANCE_STATE_DIR = previousApnProvenanceDir;
 	if (previousSimParkDir === undefined)
 		delete process.env.CERALIVE_GSM_SIM_PARK_DIR;
 	else process.env.CERALIVE_GSM_SIM_PARK_DIR = previousSimParkDir;

@@ -4,6 +4,7 @@ import {
 	nmConnSetFields,
 } from "../network/network-manager.ts";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
+import { readApnProvenance, resolveApnOrigin } from "./apn-provenance.ts";
 import {
 	type CarrierIntentIdentity,
 	effectiveCarrierAutomatic,
@@ -76,6 +77,7 @@ export interface CellularPreparationDeps {
 	readonly fields: typeof nmConnGetFields;
 	readonly setFields: typeof nmConnSetFields;
 	readonly intent: typeof readCarrierIntent;
+	readonly provenance: typeof readApnProvenance;
 	readonly journal: typeof withJournaledModemMutation;
 	readonly now: () => number;
 	readonly busy?: () => boolean;
@@ -94,6 +96,7 @@ export const defaultCellularPreparationDeps: CellularPreparationDeps = {
 	fields: nmConnGetFields,
 	setFields: nmConnSetFields,
 	intent: readCarrierIntent,
+	provenance: readApnProvenance,
 	journal: withJournaledModemMutation,
 	now: Date.now,
 	busy: () => getStreamLifecycleState() !== "idle",
@@ -173,7 +176,19 @@ async function takeProfile(
 		await deps.write(record);
 	}
 	if (!(await current())) return "preserved";
-	if (policy === undefined && selected.intent?.appliedApn !== undefined)
+	// An APN a carrier table row applied, with that row no longer selected, is
+	// left alone. A provider database APN never had a row: that profile is
+	// prepared like any other automatic one.
+	if (
+		policy === undefined &&
+		selected.intent?.appliedApn !== undefined &&
+		resolveApnOrigin(
+			selected.intent,
+			await deps.provenance(selected.identity),
+			selected.values[2] === "yes",
+			selected.values[3] ?? "",
+		)?.origin !== "provider-database"
+	)
 		return "preserved";
 	if (
 		selected.values[4] !== "no" &&

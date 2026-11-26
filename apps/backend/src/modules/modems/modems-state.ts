@@ -41,11 +41,13 @@ export type ModemConfig = {
 	roaming: boolean;
 	network: string;
 	/**
-	 * Where a new profile's APN came from, when CeraUI chose it instead of
-	 * Automatic APN (see `provider-apn.ts`). Not written to NetworkManager; the
-	 * wire derives `apn_source` from it and the current values.
+	 * What the dialog may say about the APN, from CeraUI's records: the provider
+	 * database chose the APN in use (`apn-provenance.ts`), or it lists nothing
+	 * for the SIM's network while NetworkManager picks the APN. Not written to
+	 * NetworkManager; the wire derives `apn_source` from it. `undefined` clears
+	 * it on a save that no longer applies.
 	 */
-	apn_hint?: ApnHint;
+	apn_hint?: ApnHint | undefined;
 };
 
 export type AvailableNetwork = {
