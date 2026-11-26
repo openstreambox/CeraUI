@@ -1501,12 +1501,15 @@ strictly. With a valid record:
 - Where an install's work fans out (probes per uplink, per address family),
   every branch that was started is waited for before the updater is free
   again, also when one of them is refused first.
-- A probe's private curl config that cannot be removed is logged as a
-  security line, whoever the probe was for, and the next install starts by
-  removing it.
+- A probe's private curl config is written only in the service's own
+  directory (`/run/ceralive/curl-private`, 0700) and removed by its exact
+  path when the probe ends. A removal that fails is logged as a security
+  line, whoever the probe was for. That one directory is wiped when the
+  backend starts.
 - While a stream is live a scheduled package check waits on these images
   instead of being refused as busy: no failed check is counted, and the
-  image check that is due runs on that tick.
+  image check that is due runs on that tick. The stream is looked at once
+  more after the check's own waits, right before it is dispatched.
 - A failure before launch is published when it is known: a failed download
   under the pin before its routing is taken down, and before any archive
   cleanup, which the next install's preflight does. A start that is refused

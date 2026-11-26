@@ -485,16 +485,22 @@ until one serialized section either submits its unit or ends it:
     the routing rule and the routes of the update tables that a pinned run
     installed, strike them from the routing journal, and remove a private
     file made for one command. A handle that is open is closed. Nothing else,
-    reads included.
+    reads included. That covers what its own run set up, not what an earlier
+    run left in the routing journal: recovering those entries needs a live
+    owner before each deletion. Its last fetch failure does not put the
+    uplink on the pin controller's shared cooldown either.
   - Code that catches errors to log them lets an owner-ended refusal pass,
     and stays silent for an owner that has ended meanwhile. A teardown that
     failed is still reported, whoever asked: a routing teardown left a rule
     behind, and a private curl config that could not be removed still holds
-    the source's access token. That one is logged as a security line
-    (`curl-private-url.ts`), without the token or the directory's name, the
-    probe's result stands, and every install starts by sweeping such
-    directories: the one whose removal failed and any an earlier process
-    left.
+    the source's access token. Those configs are written only in the
+    service's own directory (`/run/ceralive/curl-private`, 0700, never a
+    shared temp directory) and removed by their exact path when their probe
+    ends. A removal that fails is logged as a security line
+    (`curl-private-url.ts`), without the token or the file's name, and the
+    probe's result stands. That one directory is wiped when the backend
+    starts, before anything can probe; nothing is listed, matched by name or
+    age, or removed anywhere else.
 - Updates turned off and a stream are looked at by the owner itself, right
   before each effect (`effectOwner` in `software-updates.ts`): the install
   ends there (`discovery_failed`, `streaming`) instead of starting the next
@@ -545,7 +551,8 @@ until one serialized section either submits its unit or ends it:
 | Install-time discovery simulation fails (also when update routing refuses it) | `failed`, `discovery_failed` (the offer is not shown first) | `failed` / `package_install_refused` | discovery simulation fails |
 | Install-time hold query fails | `failed`, `discovery_failed` | `failed` / `package_install_refused` | hold query fails |
 | Install-time source or package policy fails | `failed`, `discovery_failed` | `failed` / `package_install_refused` | package policy read fails |
-| Install network unreachable, captive, probe or certificate refused | `failed`, its reason | `failed` / `package_install_refused` | install's network unreachable |
+| Install network unreachable (the preparation's fresh probe) | `failed`, `repos_unreachable`, on the probe's verdict, before any install-time simulation | `failed` / `package_install_refused` | install's network unreachable |
+| Install network captive, probe or certificate refused | `failed`, its reason | `failed` / `package_install_refused` | install's network unreachable (same step) |
 | Nothing installable any more | `failed`, its reason | `failed` / `package_install_refused` | nothing is installable |
 | Pinned recheck fails, or a standing refusal | `failed`, `discovery_failed` | `failed` / `package_install_refused` | pinned recheck refuses |
 | Pinned recheck would remove a package | `failed`, `removals_required` | `failed` / `package_install_refused` | the pinned recheck would remove a package |
@@ -556,8 +563,10 @@ until one serialized section either submits its unit or ends it:
 | An install on a board that elects its default route (no pinned transport) | never asks for the gateway election, before or after it ends; it goes by a fresh unbound probe and is refused with `repos_unreachable` when that fails | `failed` / `package_install_refused` when refused | `image-apt-source-ended-install.test.ts`: the host's gateway election is the network module's; the `elected route` install of both harness files |
 | An install ends with several of its commands in flight (the per-uplink lookups, the unbound probe) | as it ended | a new install stays refused (`already_updating`) until the last of them has returned, also when one is refused or fails first | `image-apt-source-ended-install.test.ts`: an install ended while several of its commands are in flight; every sequence of `image-apt-source-sequences.test.ts` |
 | A stream ends the install during the launcher's first look, and a unit exists | `failed`, `streaming`; the unit's fragment is not read | `failed` / `package_install_refused` | `image-apt-source-ended-install.test.ts`: the launcher's first look for a unit |
-| A probe's private curl config cannot be removed | unchanged; a security line is logged, also for an ended install, without the token or the directory's name | unchanged; the next install starts by removing it | `curl-private-url.test.ts`; `image-apt-source-ended-install.test.ts`: a private curl config that could not be removed |
-| A stream is live when the retry after a refused install is due | unchanged (`failed`) | no package check is dispatched: none fails, no event, no backoff; the due image check runs on that tick, and the retry runs once the stream is over | while a stream is live the scheduled retry waits |
+| A probe's private curl config cannot be removed | unchanged; a security line is logged, also for an ended install, without the token or the file's name | unchanged; the file stays in the service's own directory until the backend next starts, which wipes that directory | `curl-private-url.test.ts`; `image-apt-source-ended-install.test.ts`: a private curl config that could not be removed |
+| A stream is live when the retry after a refused install is due, or starts while that retry clears the pending list or reads the capabilities | unchanged (`failed`) | no package check is dispatched: none fails, no event, no backoff; the due image check runs on that tick, and the retry runs once the stream is over | while a stream is live the scheduled retry waits; a stream that starts while the retry clears the pending list defers it too |
+| The install ends while it reads a routing journal that holds an earlier run's rule | as it ended; that rule is not deleted and its entry stays recorded for the next live run to recover | as it ended | `image-apt-source-ended-install.test.ts`: routing rules an earlier pinned run left in the journal |
+| The last fetch of an install that has ended fails | as it ended | as it ended; the uplink is not put on the pin controller's cooldown | `effect-owner.test.ts`: the uplink cooldown of the pin controller |
 | A launch cancelled after the download under the pin | `failed`, `streaming`; none of the fetched output is logged | `failed` / `package_install_refused` | `image-apt-source-ended-install.test.ts`: a launch cancelled after the download under the pin |
 | A retry refused (clock gate shut) after an install ended | unchanged: the ended install's `failed`, not the old offer | unchanged | `image-apt-source-ended-install.test.ts`: a retry that is refused |
 | Stream before launch, seen by preparation | `failed`, `streaming` | `failed` / `package_install_refused` | stream starts before launch |
