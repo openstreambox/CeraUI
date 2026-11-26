@@ -37,6 +37,7 @@ import {
 	resetBondOptOut,
 	setBondOptOut,
 } from "../modules/network/network-interfaces.ts";
+import { getUsbPhysicalDescriptor } from "../modules/network/router-cellular-scan.ts";
 import { renderIpsFile } from "../modules/streaming/bind-map.ts";
 import {
 	defaultBindMapWriterDeps,
@@ -107,6 +108,8 @@ describe("two RM520s on the module's own 464XLAT address", () => {
 				netmask: XLAT_MASK,
 				usb: true,
 			});
+			// A modem by its control interface (the fixture gives it QMI), not by bus alone.
+			expect(getUsbPhysicalDescriptor(name)?.deviceClass).toBe("mm-managed");
 		}
 	});
 

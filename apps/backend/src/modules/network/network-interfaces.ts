@@ -283,6 +283,7 @@ export function resetNetifSnapshotForTest(): void {
 	usbObservedNames.clear();
 	publishedMacs.clear();
 	pendingReplacements.clear();
+	dupIpLoweredIfaces.clear();
 	resetNetdevLifetimesForTest();
 }
 
@@ -774,14 +775,17 @@ export async function wireDupIpNoticeDeps(): Promise<void> {
  */
 export function duplicateIpGroups(
 	interfaces: Record<string, NetworkInterface>,
+	includeSuppressed = false,
 ): DuplicateIpGroup[] {
 	const byIp = new Map<string, string[]>();
 	for (const name in interfaces) {
 		const int = interfaces[name];
 		if (!int?.ip) continue;
 		// A station<->hotspot transition transiently shares an address; that is a
-		// false alarm rather than a collision, so it is not a group member.
-		if (dupIpSuppressedIfaces.has(name)) continue;
+		// false alarm for the notice, so it is not a group member there. The flag
+		// itself follows the addresses (`includeSuppressed`): a suppressed
+		// collision is still a collision for anything that steers by address.
+		if (!includeSuppressed && dupIpSuppressedIfaces.has(name)) continue;
 		const seen = byIp.get(int.ip);
 		if (seen) seen.push(name);
 		else byIp.set(int.ip, [name]);
@@ -794,37 +798,64 @@ export function duplicateIpGroups(
 	return groups;
 }
 
+/*
+  RELEASING THE DUPLICATE FLAG UNDOES ONLY ITS OWN EFFECT.
+
+  Raising `NETIF_ERR_DUPIPV4` forces `enabled` false, yet a mapped duplicate
+  stays in the bond through its device-bound row the whole time. When its twin
+  leaves (two modems on one 464XLAT address, one unplugged), its address becomes
+  unique and the flag drops. Leaving `enabled` false then would push a link that
+  was carrying bonded traffic out of the bond with nothing on screen saying why.
+
+  So the flag remembers the links it took down itself: those still `enabled` when
+  it was raised. Release restores `enabled` for those only, and only while no
+  other gate has raised its own error on the link since. That keeps the SIM-less
+  hold (which deliberately leaves `enabled` false when its flag clears) and any
+  link that was already down for another reason exactly as before. The
+  operator's bond opt-out is still honoured.
+
+  It is reconciled on every pass, not only on a topology change: a row the
+  monitor or a USB retirement deleted first leaves the next poll with an
+  unchanged interface set, and the survivor would otherwise keep a stale flag.
+*/
+const dupIpLoweredIfaces = new Set<string>();
+
 /**
- * Raise/lower `NETIF_ERR_DUPIPV4` to match `groups`.
- *
- * Lowering the flag also undoes its own effect, as the shared-LAN gate does.
- * Raising it forced `enabled` false, but a mapped duplicate stayed in the bond
- * through its device-bound row the whole time. When its twin leaves (two modems
- * on the same 464XLAT address, one unplugged), the survivor must stay bonded
- * rather than drop out because its address became unique. The operator's bond
- * opt-out is still honoured, and any other error still standing keeps it down.
+ * Raise/lower `NETIF_ERR_DUPIPV4` to match `groups`. Returns whether any
+ * interface's flag or `enabled` changed.
  */
 function applyDuplicateIpFlags(
 	interfaces: Record<string, NetworkInterface>,
 	groups: readonly DuplicateIpGroup[],
-): void {
-	const stillDuplicate = new Set(groups.flatMap((group) => group.ifaces));
+): boolean {
+	const duplicate = new Set(groups.flatMap((group) => group.ifaces));
+	let changed = false;
+	for (const name of dupIpLoweredIfaces)
+		if (!interfaces[name]) dupIpLoweredIfaces.delete(name);
 	for (const name in interfaces) {
 		const int = interfaces[name];
-		if (!int?.ip) continue;
-		const wasDuplicate = (int.error & NETIF_ERR_DUPIPV4) !== 0;
+		if (!int) continue;
+		const flagged = (int.error & NETIF_ERR_DUPIPV4) !== 0;
+		// Another gate wants this link down too; release must not overrule it.
+		if ((int.error & ~NETIF_ERR_DUPIPV4) !== 0) dupIpLoweredIfaces.delete(name);
+		if (int.ip && duplicate.has(name)) {
+			if (flagged) continue;
+			if (int.enabled) dupIpLoweredIfaces.add(name);
+			setNetifDup(int);
+			changed = true;
+			continue;
+		}
+		if (!flagged) continue;
 		clearNetifDup(int);
+		changed = true;
 		if (
-			wasDuplicate &&
-			!stillDuplicate.has(name) &&
+			dupIpLoweredIfaces.delete(name) &&
 			int.error === 0 &&
 			!isBondOptedOut(name)
 		)
 			int.enabled = true;
 	}
-	for (const group of groups) {
-		for (const name of group.ifaces) setNetifDup(interfaces[name]);
-	}
+	return changed;
 }
 
 /**
@@ -1788,10 +1819,12 @@ function publishIfconfigEntries(
 	applySharedLanBondGate(newInterfaces);
 
 	const dupIpGroups = duplicateIpGroups(newInterfaces);
+	if (
+		applyDuplicateIpFlags(newInterfaces, duplicateIpGroups(newInterfaces, true))
+	)
+		intsChanged = true;
 
 	if (intsChanged) {
-		applyDuplicateIpFlags(newInterfaces, dupIpGroups);
-
 		// Same-subnet detection (informational). Runs AFTER dup-IP so a hard
 		// dup-IP pair (now flagged NETIF_ERR_DUPIPV4 → enabled=false) is skipped
 		// and never also tagged as a same-subnet group.
