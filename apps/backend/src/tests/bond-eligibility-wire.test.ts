@@ -25,7 +25,7 @@ beforeEach(() => {
 		tp: 0,
 		txb: 0,
 		rxb: 0,
-		enabled: false,
+		enabled: true,
 		error: NETIF_ERR_DUPIPV4,
 	};
 });
@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe("netif enabled is bond eligibility, not the internal enabled bit", () => {
-	test("a mappable duplicate-IP row publishes enabled:true despite its internal false", () => {
+	test("a mappable duplicate-IP row publishes enabled:true despite its error", () => {
 		const entry = netifEntrySchema.parse(netIfBuildMsg()[IFACE]);
 		expect(entry).toMatchObject({
 			enabled: true,
@@ -53,6 +53,20 @@ describe("netif enabled is bond eligibility, not the internal enabled bit", () =
 		setBondIdentityResolverForTest(() => {
 			throw new Error("unreadable descriptor");
 		});
+		const entry = netifEntrySchema.parse(netIfBuildMsg()[IFACE]);
+		expect(entry).toMatchObject({
+			enabled: false,
+			error: "duplicate IPv4 addr",
+		});
+		expect(genSrtlaBondEntries().some(({ iface }) => iface === IFACE)).toBe(
+			false,
+		);
+	});
+
+	test("a mappable duplicate held down by another gate publishes enabled:false", () => {
+		const internal = getNetworkInterfaces()[IFACE];
+		if (!internal) throw new Error("test interface missing");
+		internal.enabled = false;
 		const entry = netifEntrySchema.parse(netIfBuildMsg()[IFACE]);
 		expect(entry).toMatchObject({
 			enabled: false,

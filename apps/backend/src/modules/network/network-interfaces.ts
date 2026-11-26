@@ -416,9 +416,9 @@ export function setNetifDupIpSuppression(ifname: string, suppressed: boolean) {
 
   So the flag stays raised (the operator still sees the warning band, and the
   probe rules still refuse it), and bond membership asks a separate question.
-  `enabled` still governs membership — but a dup-IP interface's `enabled` is
-  forced false by the flag itself, so the operator's own choice is tracked apart
-  from it here rather than being read out of a bit the error path overwrites.
+  `enabled` still governs membership, and the flag leaves it alone (see "THE
+  DUPLICATE FLAG NEVER TOUCHES `enabled`" below), so the operator's choice and
+  the SIM-less hold apply to a duplicate exactly as to any other link.
 */
 export function resetBondOptOut(): void {
 	resetPersistentBondOptOutForTest();
@@ -527,10 +527,10 @@ export function isHeldOutByModemBlock(
 /**
  * May this interface be offered to the bond?
  *
- * A duplicate-IP interface is offered — the caller still has to prove it can
- * publish a mapping row for it, which is what actually makes it usable. Any
- * OTHER error (a hotspot radio) disqualifies it outright, and an operator who
- * toggled the link out of the bond is honoured in both cases.
+ * A duplicate-IP interface is offered only while `enabled`, and only when the
+ * caller can publish a mapping row for it, which is what actually makes it
+ * usable. Any OTHER error (a hotspot radio) disqualifies it outright, and an
+ * operator who toggled the link out of the bond is honoured in both cases.
  */
 export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 	return admitsBondLink(name, int, observedBondView);
@@ -578,8 +578,9 @@ function admitsBondLink(
 	if (isSharedLanPort(name)) return false;
 	if ((int.error & ~NETIF_ERR_DUPIPV4) !== 0) return false;
 	if (view.optedOut(name)) return false;
+	if (!int.enabled) return false;
 	if (isDupIpOnly(int)) return view.mappable(name, int.ip ?? int.ipv6 ?? "");
-	return int.enabled;
+	return true;
 }
 
 /*
@@ -619,7 +620,8 @@ export function applyConcurrentApBondGate(
 			setNetifError(int, NETIF_ERR_HOTSPOT);
 		} else if ((int.error & NETIF_ERR_HOTSPOT) !== 0) {
 			clearNetifError(int, NETIF_ERR_HOTSPOT);
-			if (int.error === 0 && !isBondOptedOut(name)) int.enabled = true;
+			if ((int.error & ~NETIF_ERR_DUPIPV4) === 0 && !isBondOptedOut(name))
+				int.enabled = true;
 		}
 	}
 }
@@ -675,7 +677,8 @@ export function applySharedLanBondGate(
 
 		if ((int.error & NETIF_ERR_SHAREDLAN) === 0) continue;
 		clearNetifError(int, NETIF_ERR_SHAREDLAN);
-		if (int.error === 0 && !isBondOptedOut(name)) int.enabled = true;
+		if ((int.error & ~NETIF_ERR_DUPIPV4) === 0 && !isBondOptedOut(name))
+			int.enabled = true;
 	}
 }
 
@@ -774,14 +777,17 @@ export async function wireDupIpNoticeDeps(): Promise<void> {
  */
 export function duplicateIpGroups(
 	interfaces: Record<string, NetworkInterface>,
+	includeSuppressed = false,
 ): DuplicateIpGroup[] {
 	const byIp = new Map<string, string[]>();
 	for (const name in interfaces) {
 		const int = interfaces[name];
 		if (!int?.ip) continue;
 		// A station<->hotspot transition transiently shares an address; that is a
-		// false alarm rather than a collision, so it is not a group member.
-		if (dupIpSuppressedIfaces.has(name)) continue;
+		// false alarm for the notice, so it is not a group member there. The flag
+		// itself follows the addresses (`includeSuppressed`): a suppressed
+		// collision is still a collision for anything that steers by address.
+		if (!includeSuppressed && dupIpSuppressedIfaces.has(name)) continue;
 		const seen = byIp.get(int.ip);
 		if (seen) seen.push(name);
 		else byIp.set(int.ip, [name]);
@@ -794,19 +800,47 @@ export function duplicateIpGroups(
 	return groups;
 }
 
-/** Raise/lower `NETIF_ERR_DUPIPV4` to match `groups`. Semantics unchanged. */
+/*
+  THE DUPLICATE FLAG NEVER TOUCHES `enabled`.
+
+  `enabled` is the link's bond intent, shared by the operator's toggle and the
+  gates that hold a link down (SIM-less, hotspot, shared-LAN). The duplicate
+  flag used to force it false as well, and then had no way to know, when the
+  collision ended, whether anything else still wanted the link down. Two modems
+  on one 464XLAT address, one unplugged, pushed the survivor out of the bond;
+  restoring `enabled` on release would instead override the SIM-less hold or an
+  operator choice made during the collision.
+
+  So the flag is only an error bit for address-steered uses. Bond admission of a
+  duplicate asks for `enabled` AND a mapping row (`admitsBondLink`), and the
+  release has nothing to undo.
+
+  It is reconciled on every pass, not only on a topology change: a row the
+  monitor or a USB retirement deleted first leaves the next poll with an
+  unchanged interface set, and the survivor would otherwise keep a stale flag.
+*/
+
+/**
+ * Raise/lower `NETIF_ERR_DUPIPV4` to match `groups`. Returns whether any
+ * interface's flag changed.
+ */
 function applyDuplicateIpFlags(
 	interfaces: Record<string, NetworkInterface>,
 	groups: readonly DuplicateIpGroup[],
-): void {
+): boolean {
+	const duplicate = new Set(groups.flatMap((group) => group.ifaces));
+	let changed = false;
 	for (const name in interfaces) {
 		const int = interfaces[name];
-		if (!int?.ip) continue;
-		clearNetifDup(int);
+		if (!int) continue;
+		const flagged = (int.error & NETIF_ERR_DUPIPV4) !== 0;
+		const shouldFlag = int.ip !== undefined && duplicate.has(name);
+		if (flagged === shouldFlag) continue;
+		if (shouldFlag) int.error |= NETIF_ERR_DUPIPV4;
+		else int.error &= ~NETIF_ERR_DUPIPV4;
+		changed = true;
 	}
-	for (const group of groups) {
-		for (const name of group.ifaces) setNetifDup(interfaces[name]);
-	}
+	return changed;
 }
 
 /**
@@ -1770,13 +1804,15 @@ function publishIfconfigEntries(
 	applySharedLanBondGate(newInterfaces);
 
 	const dupIpGroups = duplicateIpGroups(newInterfaces);
+	if (
+		applyDuplicateIpFlags(newInterfaces, duplicateIpGroups(newInterfaces, true))
+	)
+		intsChanged = true;
 
 	if (intsChanged) {
-		applyDuplicateIpFlags(newInterfaces, dupIpGroups);
-
 		// Same-subnet detection (informational). Runs AFTER dup-IP so a hard
-		// dup-IP pair (now flagged NETIF_ERR_DUPIPV4 → enabled=false) is skipped
-		// and never also tagged as a same-subnet group.
+		// dup-IP pair (now flagged NETIF_ERR_DUPIPV4) is skipped and never also
+		// tagged as a same-subnet group.
 		computeSameSubnetGroups(newInterfaces);
 	}
 
@@ -2023,14 +2059,6 @@ function setNetifError(int: NetworkInterface | undefined, err: number) {
 function clearNetifError(int: NetworkInterface | undefined, err: number) {
 	if (!int) return;
 	int.error &= ~err;
-}
-
-function setNetifDup(int: NetworkInterface | undefined) {
-	setNetifError(int, NETIF_ERR_DUPIPV4);
-}
-
-function clearNetifDup(int: NetworkInterface | undefined) {
-	clearNetifError(int, NETIF_ERR_DUPIPV4);
 }
 
 export function setNetifHotspot(int: NetworkInterface | undefined) {
@@ -2311,10 +2339,13 @@ function applyDongleProjection(m: NetworkInterfaceResponseMessage): void {
 	lastDongleMarked = marked;
 }
 
+// The legacy raw count. A duplicate is left out, as it was while the flag still
+// forced `enabled` false: an unmappable twin's intent alone carries no traffic.
 function countActiveNetif() {
 	let count = 0;
 	for (const int in netif) {
-		if (netif[int]?.enabled) count++;
+		const entry = netif[int];
+		if (entry?.enabled && (entry.error & NETIF_ERR_DUPIPV4) === 0) count++;
 	}
 	return count;
 }
@@ -2467,10 +2498,10 @@ export function handleNetif(
 	}
 
 	if (msg.enabled === true || msg.enabled === false) {
-		// A duplicate-IP link's `enabled` is forced false by the flag itself, so a
-		// toggle on it can only be recorded as the operator's bond choice. The flag
-		// (and its warning band) is deliberately left standing: the link is still
-		// unusable for a generic source-IP operation, which is a different claim.
+		// A toggle on a duplicate-IP link sets its bond intent like any other link,
+		// once a mapping row can tell it from its twin. The flag (and its warning
+		// band) is deliberately left standing: the link is still unusable for a
+		// generic source-IP operation, which is a different claim.
 		if (isDupIpOnly(int)) {
 			if (msg.enabled && !isBondLinkMappable(msg.name, int.ip)) {
 				return finishBondMutation(msg, {
@@ -2482,6 +2513,7 @@ export function handleNetif(
 				notifyDisableAll(conn);
 				return disableAllRefused;
 			}
+			int.enabled = msg.enabled;
 			setBondOptOut(msg.name, !msg.enabled);
 			triggerNetworkInterfacesChange();
 			conn.send(buildMsg("netif", netIfBuildMsg()));
