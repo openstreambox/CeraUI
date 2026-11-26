@@ -42,7 +42,10 @@ import {
 } from "../modules/system/software-updates.ts";
 import { setStreamLivenessSourceForTest } from "../modules/system/stream-liveness-source.ts";
 import { setCeraliveSourcesFileForTest } from "../modules/system/update-apt-channel.ts";
-import { setUpdateCapabilityPathForTest } from "../modules/system/update-capabilities.ts";
+import {
+	setUpdateCapabilityPathForTest,
+	UpdateCapabilityReadError,
+} from "../modules/system/update-capabilities.ts";
 import type { UpdateQuarantine } from "../modules/system/update-orchestrator/quarantine.ts";
 import {
 	admitAndPrepareStreamStart,
@@ -396,6 +399,8 @@ function orchestrator(
 		readonly allowPackagesOverCellular?: boolean;
 		readonly onlyMetered?: () => boolean;
 		readonly streamLive?: () => boolean;
+		/** Runs when the orchestrator reads the capabilities (it may throw). */
+		readonly onCapabilityRead?: () => void;
 	} = {},
 ) {
 	const counts = { osChecks: 0, pendingCleared: 0 };
@@ -408,10 +413,13 @@ function orchestrator(
 	setOrchestratorRuntimeDepsForTest(
 		fakeDeps({
 			quarantine,
-			loadCapabilities: async () => ({
-				mode: "capable",
-				features: ["apt-all-packages", "rauc-verity-streaming"],
-			}),
+			loadCapabilities: async () => {
+				options.onCapabilityRead?.();
+				return {
+					mode: "capable",
+					features: ["apt-all-packages", "rauc-verity-streaming"],
+				};
+			},
 			loadSettings: async () => ({
 				packagesAuto: true,
 				systemAuto: true,
@@ -1308,6 +1316,63 @@ describe("the refused install is never stranded", () => {
 			phase: "available",
 			packageCheck: { consecutiveFailures: 0 },
 		});
+	});
+
+	it("a retry that defers says nothing of a capability read that failed meanwhile", async () => {
+		await box("simulation");
+		let live = false;
+		// Armed for the retry's own read, the second of a tick (the tick reads
+		// the capabilities once for itself): the file is unreadable then, and
+		// (the first time) a stream starts while it is read.
+		let failing = false;
+		let reads = 0;
+		let streamStarts = true;
+		const { counts } = orchestrator({
+			streamLive: () => live,
+			onCapabilityRead: () => {
+				if (!failing || ++reads < 2) return;
+				failing = false;
+				if (streamStarts) {
+					live = true;
+					setStreamLivenessSourceForTest(() => "streaming");
+				}
+				throw new UpdateCapabilityReadError(new Error("unreadable"));
+			},
+		});
+		const said: { code: string; params: unknown }[] = [];
+		await attempt();
+		expect(getOrchestratorState().failureReason).toBe(PACKAGE_INSTALL_REFUSED);
+		spies.push(
+			spyOn(events, "emitEvent").mockImplementation((code, params) => {
+				said.push({ code, params });
+			}),
+		);
+		setOrchestratorStateForTest({
+			...getOrchestratorState(),
+			osCheck: { ...getOrchestratorState().osCheck, nextAttemptAt: 0 },
+		});
+		const before = getOrchestratorState().packageCheck;
+		const os = counts.osChecks;
+		failing = true;
+		await runOrchestratorTick();
+		expect(failing).toBe(false);
+		// The check was deferred for the stream: nobody is told it was refused,
+		// for the capabilities or anything else, and the image check ran.
+		expect(said.filter(({ code }) => code === "update_refused")).toEqual([]);
+		expect(getOrchestratorState().packageCheck).toEqual(before);
+		expect(counts.osChecks).toBe(os + 1);
+		// The same failure with no stream is reported: that check runs.
+		live = false;
+		setStreamLivenessSourceForTest(null);
+		streamStarts = false;
+		reads = 0;
+		failing = true;
+		await runOrchestratorTick();
+		expect(failing).toBe(false);
+		expect(said.filter(({ code }) => code === "update_refused")).toHaveLength(
+			1,
+		);
+		expect(JSON.stringify(said)).toContain("package-capabilities");
 	});
 
 	it("on cellular only, the scheduled check waits and Check now still runs it", async () => {

@@ -139,6 +139,14 @@ function sourceUrl(uri: string, suite: string): string | undefined {
 	}
 }
 
+/**
+ * A source's `Signed-By` value as its validator (image-apt-source.ts) and
+ * this parser both read it: whitespace around the path is not part of it.
+ */
+export function signedByValue(value: string | undefined): string {
+	return (value ?? "").trim();
+}
+
 export function parseDebianSources(
 	text: string,
 	// An image with its own apt source: whatever host it names is a repository
@@ -165,7 +173,11 @@ export function parseDebianSources(
 			fields.get("enabled") !== "no" &&
 			(fields.get("types") ?? "deb").split(/\s+/).includes("deb")
 		) {
-			const keyring = fields.get("signed-by");
+			// The image's own source is read as its validator read it; every
+			// other source's value is taken as it always was.
+			const keyring = imageSource
+				? signedByValue(fields.get("signed-by"))
+				: fields.get("signed-by");
 			if (fields.has("uris") && fields.has("suites")) {
 				for (const uri of (fields.get("uris") ?? "").split(/\s+/))
 					for (const suite of (fields.get("suites") ?? "").split(/\s+/)) {

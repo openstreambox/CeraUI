@@ -93,8 +93,14 @@ export async function runCurlWithPrivateUrl<Result>(
 /**
  * Backend start, before anything can probe: whatever an earlier process left
  * in that one directory is removed with it. No other time and no other place.
+ * `soleBackend`: this process holds the backend's single-instance lock. Only
+ * then is nothing in flight; an instance started beside the service (source
+ * development) removes nothing.
  */
-export async function wipePrivateCurlConfigs(): Promise<void> {
+export async function wipePrivateCurlConfigs(
+	soleBackend: boolean,
+): Promise<void> {
+	if (!soleBackend) return;
 	try {
 		await ownedFiles(undefined).removeTree("private-file:remove", directory);
 	} catch (error) {

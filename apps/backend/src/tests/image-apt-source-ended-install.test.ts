@@ -26,6 +26,7 @@ import {
 	getOrchestratorState,
 	installUpdatesNow,
 	runOrchestratorTick,
+	setOrchestratorStateForTest,
 } from "../modules/system/update-orchestrator/runtime.ts";
 import { PACKAGE_INSTALL_REFUSED } from "../modules/system/update-orchestrator/types.ts";
 import {
@@ -229,6 +230,79 @@ describe("a retry that is refused", () => {
 	);
 });
 
+describe("the scheduled retry and an install that still drains", () => {
+	it(
+		"waits: no check is dispatched behind the drain, and the due image check runs",
+		async () => {
+			const { box } = await standingAt("orchestrated", REFRESH_COMMAND);
+			const { sequencer, counts } = box;
+			// A stream ends the install; its refresh is still out.
+			expect(await admitStream(box)).toEqual({ allowed: true });
+			expect(installDraining()).toBe(true);
+			// The tick comes: the retry is due at once, and so is an image check.
+			setOrchestratorStateForTest({
+				...getOrchestratorState(),
+				osCheck: { ...getOrchestratorState().osCheck, nextAttemptAt: 0 },
+			});
+			const before = getOrchestratorState().packageCheck;
+			const os = counts.osChecks;
+			const said = box.emitted.length;
+			let returned = false;
+			const tick = sequencer
+				.outside(() => runOrchestratorTick())
+				.finally(() => {
+					returned = true;
+				});
+			await settleEventLoop(10);
+			// It did not wait for the drain: it deferred the package check and
+			// ran the image check.
+			expect(returned).toBe(true);
+			await tick;
+			expect(installDraining()).toBe(true);
+			expect(getOrchestratorState().phase).not.toBe("checking");
+			expect(getOrchestratorState().packageCheck).toEqual(before);
+			expect(counts.osChecks).toBe(os + 1);
+			expect(
+				box.emitted.slice(said).filter(({ code }) => code === "update_refused"),
+			).toEqual([]);
+			// Drained, the next tick runs the retry and finds the offer.
+			await sequencer.drain();
+			expect(installDraining()).toBe(false);
+			sequencer.disarm();
+			await sequencer.outside(() => runOrchestratorTick());
+			expect(getUpdateState().kind).toBe("available");
+			expect(getOrchestratorState()).toMatchObject({
+				phase: "available",
+				packageCheck: { consecutiveFailures: 0 },
+			});
+		},
+		TIMEOUT_MS,
+	);
+});
+
+describe("updates are turned off during the install's refresh", () => {
+	it(
+		"and the refresh then fails: the install ends as turned off, not as a failed refresh",
+		async () => {
+			const { box } = await standingAt("orchestrated", REFRESH_COMMAND);
+			const { sequencer } = box;
+			setup.apt_update_enabled = false;
+			sequencer.step("fail");
+			await sequencer.drain();
+			expect(getUpdateState()).toMatchObject({
+				kind: "failed",
+				reason: "discovery_failed",
+			});
+			expect(failedFrames(box.frames)).toEqual([
+				{ kind: "failed", reason: "discovery_failed" },
+			]);
+			await sequencer.outside(() => runOrchestratorTick());
+			await expectEndedBeforeLaunch(box, "discovery_failed", false);
+		},
+		TIMEOUT_MS,
+	);
+});
+
 describe("the host's gateway election is the network module's", () => {
 	it(
 		"an install on a board that elects its route never asks for it, and goes by a fresh probe instead",
@@ -390,6 +464,7 @@ describe("an install ended while several of its commands are in flight", () => {
 });
 
 describe("routing rules an earlier pinned run left in the journal", () => {
+	// Two rules of an earlier run; recovery deletes the last recorded first.
 	const RECOVERED = [
 		{
 			family: 4 as const,
@@ -397,7 +472,15 @@ describe("routing rules an earlier pinned run left in the journal", () => {
 				" ",
 			),
 		},
+		{
+			family: 6 as const,
+			args: "rule add priority 120 uidrange 42042-42042 prohibit".split(" "),
+		},
 	];
+	const FIRST_DELETION =
+		"ip -6 rule del priority 120 uidrange 42042-42042 prohibit";
+	const SECOND_DELETION =
+		"ip rule del priority 120 uidrange 42042-42042 lookup 100000";
 	const READ = "routing journal: read";
 	const routing = (
 		box: Awaited<ReturnType<typeof acceptedInstall>>,
@@ -426,20 +509,44 @@ describe("routing rules an earlier pinned run left in the journal", () => {
 	);
 
 	it(
+		"an install that ends between two deletions finishes the one it began and leaves the other",
+		async () => {
+			const { box } = await standingAt("pinned", READ);
+			const { sequencer } = box;
+			box.journal.entries = RECOVERED;
+			const from = sequencer.calls().length;
+			// Alive when the journal is read: recovery begins with the last rule.
+			sequencer.step();
+			await settleMicrotasks();
+			expect(sequencer.next()).toBe(FIRST_DELETION);
+			// It ends while that deletion is in flight.
+			expect(await admitStream(box)).toEqual({ allowed: true });
+			const mark = box.mark();
+			await sequencer.drain(() => expectNoStaleEffect(box, mark));
+			// The deletion it had begun is finished and struck from the journal;
+			// the other rule is not its to delete any more.
+			expect(routing(box, from)).toEqual([FIRST_DELETION]);
+			expect(routing(box, from)).not.toContain(SECOND_DELETION);
+			expect(box.journal.entries).toEqual([RECOVERED[0]]);
+			expect(getUpdateState()).toMatchObject(STREAMING);
+		},
+		TIMEOUT_MS,
+	);
+
+	it(
 		"are recovered by an install that is still alive",
 		async () => {
 			const { box } = await standingAt("pinned", READ);
 			box.journal.entries = RECOVERED;
 			const from = box.sequencer.calls().length;
 			await box.sequencer.drain();
-			expect(routing(box, from)).toContain(
-				"ip rule del priority 120 uidrange 42042-42042 lookup 100000",
-			);
-			expect(
-				box.journal.entries.filter(
-					(entry) => entry.args.join(" ") === RECOVERED[0]?.args.join(" "),
-				),
-			).toEqual([]);
+			expect(routing(box, from).slice(0, 2)).toEqual([
+				FIRST_DELETION,
+				SECOND_DELETION,
+			]);
+			const left = box.journal.entries.map((entry) => entry.args.join(" "));
+			for (const { args } of RECOVERED)
+				expect(left).not.toContain(args.join(" "));
 		},
 		TIMEOUT_MS,
 	);
@@ -501,7 +608,7 @@ describe("a private curl config that could not be removed", () => {
 			await expectOfferAtNextCheck(box);
 			expect(box.privateFiles.has(left)).toBe(true);
 			// The backend's next start removes that one directory.
-			await wipePrivateCurlConfigs();
+			await wipePrivateCurlConfigs(true);
 			expect([...box.privateFiles]).toEqual([]);
 		},
 		TIMEOUT_MS,

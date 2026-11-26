@@ -1654,6 +1654,9 @@ function checkForSoftwareUpdates(
 					admission?.owner,
 				),
 			);
+			// Updates turned off, or a stream, during the refresh end the install
+			// as that, whatever the refresh itself returned.
+			admission?.owner?.ended();
 			if (abandoned()) return;
 			const stdout = res.stdout;
 			const stderr = res.stderr;

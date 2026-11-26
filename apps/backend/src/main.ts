@@ -384,7 +384,9 @@ if (!configAvailableAtBind) {
 
 // Before anything can probe: private curl configs an earlier process left
 // (each holds the image apt source's access token) go with their directory.
-await guardNonCritical("private-curl-configs", wipePrivateCurlConfigs);
+await guardNonCritical("private-curl-configs", () =>
+	wipePrivateCurlConfigs(backendSingletonApplies()),
+);
 
 // Recovery must finish before an update may install any new UID routing rule.
 const deviceAtBoot = observeRealDeviceAtBoot(bondDisableSimulationSelected());

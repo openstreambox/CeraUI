@@ -1,6 +1,7 @@
 /// <reference types="bun" />
 
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { inspect } from "node:util";
 import {
@@ -173,7 +174,7 @@ describe("the backend's start", () => {
 		});
 		files.files.set("/run/ceralive/clock-gate-open", { data: "", mode: 0o644 });
 		files.files.set("/tmp/ceraui-curl-abc/url", { data: URL, mode: 0o600 });
-		await wipePrivateCurlConfigs();
+		await wipePrivateCurlConfigs(true);
 		expect(files.steps).toEqual([`rm -r ${PRIVATE_CURL_DIRECTORY}`]);
 		expect([...files.files.keys()].sort()).toEqual([
 			"/run/ceralive/clock-gate-open",
@@ -183,11 +184,35 @@ describe("the backend's start", () => {
 		logged.restore();
 	});
 
+	it("removes nothing when this process is not the sole backend", async () => {
+		const files = privateFiles();
+		// A second instance beside the running service (source development):
+		// the service's probes may be in flight.
+		files.files.set(`${PRIVATE_CURL_DIRECTORY}/in-flight.conf`, {
+			data: URL,
+			mode: 0o600,
+		});
+		await wipePrivateCurlConfigs(false);
+		expect(files.steps).toEqual([]);
+		expect([...files.files.keys()]).toEqual([
+			`${PRIVATE_CURL_DIRECTORY}/in-flight.conf`,
+		]);
+	});
+
+	it("is asked for at boot with the single-instance rule, nothing else", () => {
+		const main = readFileSync(
+			path.join(import.meta.dir, "..", "main.ts"),
+			"utf8",
+		);
+		expect(main.match(/wipePrivateCurlConfigs\(/g)).toHaveLength(1);
+		expect(main).toContain("wipePrivateCurlConfigs(backendSingletonApplies())");
+	});
+
 	it("reports a wipe that fails, and goes on", async () => {
 		const files = privateFiles();
 		const logged = errors();
 		files.stuck = true;
-		await wipePrivateCurlConfigs();
+		await wipePrivateCurlConfigs(true);
 		expect(logged.lines).toHaveLength(1);
 		expect(logged.lines[0]).toStartWith(PRIVATE_FILE_LEFT_BEHIND);
 		logged.restore();

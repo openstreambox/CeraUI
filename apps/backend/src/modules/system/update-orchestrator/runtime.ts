@@ -57,6 +57,7 @@ import {
 	imageSourceClockWaits,
 	isAptAllDiscovery,
 	packageFailedBeforeLaunch,
+	packageInstallDraining,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
 	type SoftwareUpdateError,
@@ -293,6 +294,8 @@ export interface OrchestratorRuntimeDeps {
 	readonly getPackageInstallWireState: () => UpdateState;
 	/** Image apt source: the current install ended before its unit launched. */
 	readonly packageFailedBeforeLaunch: () => boolean;
+	/** Image apt source: an install that ended still has a wait in flight. */
+	readonly packageInstallDraining: () => boolean;
 	/**
 	 * Image apt source: a stream start meets the package install's launch
 	 * fence. It ends an install whose unit is not submitted yet, and says how
@@ -435,6 +438,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
 	getPackageInstallWireState: getUpdateState,
 	packageFailedBeforeLaunch,
+	packageInstallDraining,
 	admitStreamAtPackageLaunch,
 	stopPackageInstallUnit: stopPackageInstallUnitForStream,
 	killAndRestartRaucForStream,
@@ -1332,12 +1336,13 @@ async function runPackageCheckCycle(waitsOutStream = false): Promise<boolean> {
 			return false;
 	}
 	// Waiting out a stream: everything that waits comes first (the cleanup
-	// above, the capability read), so the look at the stream is the last
-	// thing before the dispatch and apt's own admission. A stream that
-	// started during either wait defers the check like one that was live
-	// from the start.
+	// above, the capability read), so the one look below is the last thing
+	// before the dispatch and apt's own admission. A stream that is live, or
+	// became live during either wait, defers the check. So does an install
+	// that ended and still drains: apt's admission would wait for it, and a
+	// stream starting in that wait would refuse the check as busy.
 	const phase = state.phase;
-	const regime = waitsOutStream ? await readCapabilityRegime() : undefined;
+	const regime = waitsOutStream ? await stageCapabilityRegime() : undefined;
 	if (waitsOutStream) {
 		if (
 			!admitted() ||
@@ -1345,14 +1350,17 @@ async function runPackageCheckCycle(waitsOutStream = false): Promise<boolean> {
 			before !== packageCheckGeneration
 		)
 			return false;
-		if (deps.isStreamLive()) return true;
+		if (deps.isStreamLive() || deps.packageInstallDraining()) return true;
 	}
 	const generation = ++packageCheckGeneration;
 	packageCheckDeferral = null;
 	const now = deps.now();
 	dispatch({ type: "PACKAGE_CHECK_STARTED", now });
+	// A capability read made before the look above reports its failure only
+	// now that the check really runs.
+	regime?.report();
 	const error =
-		(waitsOutStream ? regime : await readCapabilityRegime()) !== null
+		(regime ? regime.capabilities : await readCapabilityRegime()) !== null
 			? await deps.runPackageCheck()
 			: "discovery_failed";
 	const outcomeNow = deps.now();
@@ -1461,16 +1469,29 @@ function isRateLimitedError(error: SoftwareUpdateError): boolean {
 // ─── package install (awaiting-idle -> downloading -> committing) ─────────
 
 async function readCapabilityRegime(): Promise<UpdateCapabilities | null> {
+	const regime = await stageCapabilityRegime();
+	regime.report();
+	return regime.capabilities;
+}
+
+/** The same read, with the refusal it would announce held for the caller. */
+async function stageCapabilityRegime(): Promise<{
+	readonly capabilities: UpdateCapabilities | null;
+	readonly report: () => void;
+}> {
 	try {
-		return await deps.loadCapabilities();
+		return {
+			capabilities: await deps.loadCapabilities(),
+			report: () => undefined,
+		};
 	} catch (error) {
 		if (!(error instanceof UpdateCapabilityReadError)) throw error;
-		notifyUpdate({
-			kind: "refused",
-			id: "package-capabilities",
-			reason: error.reason,
-		});
-		return null;
+		const reason = error.reason;
+		return {
+			capabilities: null,
+			report: () =>
+				notifyUpdate({ kind: "refused", id: "package-capabilities", reason }),
+		};
 	}
 }
 
@@ -3218,13 +3239,12 @@ async function runPackageCheckAfterCellularGate(
 	// The image check still runs on this tick.
 	if (imageSourceClockWaits()) return "deferred";
 	// On an image with its own apt source a scheduled package check waits out
-	// a live stream: apt would refuse it as busy, and a check that could not
-	// run is not a failed one. That is the retry after an install a stream
-	// ended, on this tick and on those after the image check moved the plan
-	// on. No dispatch, no event, no backoff; the image check that is due runs
-	// on this tick.
-	if (imageAptSourceInUse() && deps.isStreamLive()) return "deferred";
-	// The same look is taken once more inside, after the check's own waits.
+	// a live stream, and an ended install that still drains: apt would refuse
+	// it as busy, and a check that could not run is not a failed one. That is
+	// the retry after an install a stream ended, on this tick and on those
+	// after the image check moved the plan on. The one look is taken inside,
+	// after the check's own waits. No dispatch, no event, no backoff; the
+	// image check that is due runs on this tick.
 	return (await runPackageCheckCycle(imageAptSourceInUse()))
 		? "deferred"
 		: "ran";

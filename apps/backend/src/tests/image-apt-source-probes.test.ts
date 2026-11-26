@@ -29,6 +29,7 @@ import {
 	setPrivateCurlDirectoryForTest,
 } from "../modules/system/curl-private-url.ts";
 import {
+	activeImageAptSource,
 	IMAGE_APT_SOURCE_POLICY,
 	setImageAptSourceReaderForTest,
 } from "../modules/system/image-apt-source.ts";
@@ -152,6 +153,35 @@ describe("the image source's URL never reaches curl's command line", () => {
 		expect(curls.map(({ privateUrl }) => privateUrl).sort()).toEqual(
 			[...urls].sort(),
 		);
+	});
+
+	it("whitespace after Signed-By is not part of the keyring's path, for the validator and the probe alike", async () => {
+		const { sources } = imageSource("updates.example.org");
+		const spaced = sources.replace(
+			`Signed-By: ${KEYRING}\n`,
+			`Signed-By: ${KEYRING} \t\n`,
+		);
+		expect(spaced).not.toBe(sources);
+		const files: Record<string, string> = {
+			[IMAGE_APT_SOURCE_POLICY]: `{"schema":1,"sourcesFile":"${SOURCES_FILE}","host":"updates.example.org","origin":"OpenStreamBox","label":"OpenStreamBox","suites":["${SUITE}","${EMERGENCY}"]}`,
+			[SOURCES_FILE]: spaced,
+		};
+		setImageAptSourceReaderForTest((file) => files[file] ?? null);
+		// The record validates with it,
+		expect(activeImageAptSource()?.host).toBe("updates.example.org");
+		// and the transport parser reads the same keyring for both suites,
+		expect(
+			parseDebianSources(spaced, true).map(({ keyring }) => keyring),
+		).toEqual([KEYRING, KEYRING]);
+		// so the per-uplink probe takes neither suite for tampered.
+		const { selection, calls } = await transportProbe(spaced);
+		expect(calls.filter(({ argv }) => argv[0] === "curl").length).toBe(2);
+		expect(JSON.stringify(selection)).not.toContain("tampered");
+		// A source that is not the image's own is read as it always was.
+		expect(parseDebianSources(spaced).map(({ keyring }) => keyring)).toEqual([
+			"",
+			"",
+		]);
 	});
 
 	it("without the record, the URL stays where it was", async () => {

@@ -34,6 +34,7 @@ import {
 	AuthorityJsonError,
 	parseAuthorityJson,
 } from "./update-orchestrator/strict-authority-json.ts";
+import { signedByValue } from "./update-transport/core.ts";
 
 export const IMAGE_APT_SOURCE_POLICY =
 	"/usr/lib/ceralive/image-apt-source.json";
@@ -178,7 +179,7 @@ export function parseImageAptSource(
 			!parsed.suites.every((suite) => suites.includes(suite))
 		)
 			throw new SourceInvalid("suites differ from the record");
-		const signedBy = fields.get("signed-by") ?? "";
+		const signedBy = signedByValue(fields.get("signed-by"));
 		if (!SIGNED_BY_RE.test(signedBy) || signedBy.includes(".."))
 			throw new SourceInvalid("signed-by not a keyring path");
 		const architectures = fields.get("architectures");
