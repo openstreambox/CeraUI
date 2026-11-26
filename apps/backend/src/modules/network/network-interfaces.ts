@@ -794,15 +794,33 @@ export function duplicateIpGroups(
 	return groups;
 }
 
-/** Raise/lower `NETIF_ERR_DUPIPV4` to match `groups`. Semantics unchanged. */
+/**
+ * Raise/lower `NETIF_ERR_DUPIPV4` to match `groups`.
+ *
+ * Lowering the flag also undoes its own effect, as the shared-LAN gate does.
+ * Raising it forced `enabled` false, but a mapped duplicate stayed in the bond
+ * through its device-bound row the whole time. When its twin leaves (two modems
+ * on the same 464XLAT address, one unplugged), the survivor must stay bonded
+ * rather than drop out because its address became unique. The operator's bond
+ * opt-out is still honoured, and any other error still standing keeps it down.
+ */
 function applyDuplicateIpFlags(
 	interfaces: Record<string, NetworkInterface>,
 	groups: readonly DuplicateIpGroup[],
 ): void {
+	const stillDuplicate = new Set(groups.flatMap((group) => group.ifaces));
 	for (const name in interfaces) {
 		const int = interfaces[name];
 		if (!int?.ip) continue;
+		const wasDuplicate = (int.error & NETIF_ERR_DUPIPV4) !== 0;
 		clearNetifDup(int);
+		if (
+			wasDuplicate &&
+			!stillDuplicate.has(name) &&
+			int.error === 0 &&
+			!isBondOptedOut(name)
+		)
+			int.enabled = true;
 	}
 	for (const group of groups) {
 		for (const name of group.ifaces) setNetifDup(interfaces[name]);

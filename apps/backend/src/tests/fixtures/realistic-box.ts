@@ -51,6 +51,13 @@ export interface BoxLink {
 	readonly vid?: string;
 	readonly pid?: string;
 	readonly kind?: "modem" | "ethernet" | "wifi" | "unknown";
+	/** Dotted IPv4 netmask; a /24 when absent. */
+	readonly netmask?: string;
+	/**
+	 * A raw-IP point-to-point modem netdev (`qmi_wwan`): no MAC, no ARP, bound to
+	 * the vendor-class QMI interface. An MBIM modem when absent.
+	 */
+	readonly qmi?: boolean;
 }
 
 export const ETHERNET: BoxLink = { ifname: "eth0", ip: "192.0.2.10" };
@@ -105,10 +112,19 @@ function macOf(link: BoxLink): string {
 }
 
 function stanza(link: BoxLink): string {
+	if (link.qmi) {
+		return [
+			`${link.ifname}: flags=4305<UP,POINTOPOINT,RUNNING,NOARP,MULTICAST>  mtu 1500`,
+			`        inet ${link.ip}  netmask ${link.netmask ?? "255.255.255.0"}  destination ${link.ip}`,
+			"        unspec 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00  txqueuelen 1000  (UNSPEC)",
+			"        RX packets 200  bytes 20000 (20.0 KB)",
+			"        TX packets 100  bytes 1000 (1.0 KB)",
+		].join("\n");
+	}
 	const mac = macOf(link);
 	return [
 		`${link.ifname}: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500`,
-		`        inet ${link.ip}  netmask 255.255.255.0  broadcast ${link.ip.replace(/\.\d+$/, ".255")}`,
+		`        inet ${link.ip}  netmask ${link.netmask ?? "255.255.255.0"}  broadcast ${link.ip.replace(/\.\d+$/, ".255")}`,
 		`        ether ${mac}  txqueuelen 1000  (Ethernet)`,
 		"        RX packets 200  bytes 20000 (20.0 KB)",
 		"        TX packets 100  bytes 1000 (1.0 KB)",
@@ -275,17 +291,28 @@ function boxScanDeps(links: readonly BoxLink[]): RouterCellularScanDeps {
 		// Unknown devices deliberately have neither a control port nor a path.
 		attrs.set(
 			`${iface}/bInterfaceClass`,
-			kind === "modem" ? "02" : kind === "ethernet" ? "02" : "ff",
+			link.qmi
+				? "ff"
+				: kind === "modem"
+					? "02"
+					: kind === "ethernet"
+						? "02"
+						: "ff",
 		);
-		attrs.set(`${iface}/bInterfaceSubClass`, kind === "modem" ? "0e" : "06");
-		attrs.set(`${iface}/bInterfaceProtocol`, "00");
+		attrs.set(
+			`${iface}/bInterfaceSubClass`,
+			link.qmi ? "ff" : kind === "modem" ? "0e" : "06",
+		);
+		attrs.set(`${iface}/bInterfaceProtocol`, link.qmi ? "ff" : "00");
 		drivers.set(
 			`${iface}/driver`,
-			kind === "modem"
-				? "cdc_mbim"
-				: kind === "ethernet"
-					? "cdc_ether"
-					: "rtl8xxxu",
+			link.qmi
+				? "qmi_wwan"
+				: kind === "modem"
+					? "cdc_mbim"
+					: kind === "ethernet"
+						? "cdc_ether"
+						: "rtl8xxxu",
 		);
 		if (link.serial) attrs.set(`${parent}/serial`, link.serial);
 		if (link.idPath)
