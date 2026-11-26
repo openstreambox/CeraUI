@@ -619,7 +619,6 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 		" ms — reporting the live view",
 	],
 	["capture-degraded: sources re-publish failed"],
-	["carrier table APN provenance not recorded"],
 	["cellular audit: refused D-Bus call ", " (", ")"],
 	["cellular authority migration incomplete; records preserved"],
 	["cellular dbus backend: start resolved after abort; discarding"],

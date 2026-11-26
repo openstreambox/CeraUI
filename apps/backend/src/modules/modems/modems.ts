@@ -49,7 +49,11 @@ import {
 	nmConnSetFields,
 	nmDisconnect,
 } from "../network/network-manager.ts";
-import { readApnProvenance, writeApnProvenance } from "./apn-provenance.ts";
+import {
+	readApnProvenance,
+	resolveApnOrigin,
+	writeApnProvenance,
+} from "./apn-provenance.ts";
 import {
 	newCarrierIntent,
 	newPendingCarrierIntent,
@@ -140,16 +144,15 @@ async function updateModemConnection(
 	// Automatic APN on a profile whose APN the provider database chose keeps
 	// that choice: NetworkManager's own lookup is what the APN was written to
 	// avoid, so a save of roaming or the network leaves it in place.
+	const databaseApn =
+		identity && config.autoconfig && before?.pendingApn
+			? resolveApnOrigin(before, provenance, false, selected.apn)
+			: undefined;
 	if (
 		identity &&
-		config.autoconfig &&
+		before?.pendingApn &&
 		selected.apnOrigin?.origin === "provider-database" &&
-		before?.mode === "automatic" &&
-		before.phase === "applied" &&
-		before.appliedApn !== undefined &&
-		provenance?.origin === "provider-database" &&
-		provenance.network !== undefined &&
-		provenance.apn === before.appliedApn
+		databaseApn?.origin === "provider-database"
 	) {
 		const {
 			"gsm.apn": _apn,
@@ -159,22 +162,24 @@ async function updateModemConnection(
 			...fields
 		} = sanitizeModemConfigForNetworkManager(config);
 		Object.assign(config, {
-			apn: before.appliedApn,
+			apn: before.pendingApn,
 			username: selected.username,
 			password: selected.password,
 			apn_hint: {
 				source: "provider-database",
-				homeNetwork: provenance.network,
-				apn: before.appliedApn,
+				homeNetwork: databaseApn.network,
+				apn: before.pendingApn,
 				username: selected.username,
 				password: selected.password,
 			},
 		} satisfies Partial<ModemConfig>);
-		return nmConnSetFields(connectionUuid, {
+		const kept = await nmConnSetFields(connectionUuid, {
 			...fields,
 			"gsm.auto-config": "no",
 			...(await automaticProfileConnectionFlags(identity, true)),
 		});
+		if (kept) resetGsmConnections();
+		return kept;
 	}
 	const nmConfig = {
 		...sanitizeModemConfigForNetworkManager(config),
@@ -200,6 +205,9 @@ async function updateModemConnection(
 					module: "modems",
 				}),
 			);
+		// The cached index carries each profile's origin, which this write
+		// changed; a template read from it must not still say "database".
+		if (written) resetGsmConnections();
 		return written;
 	} catch (error) {
 		if (identity) await writeCarrierIntent(identity, before);

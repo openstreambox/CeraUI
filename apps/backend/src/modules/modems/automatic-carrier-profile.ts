@@ -4,7 +4,6 @@ import {
 	nmConnGetFields,
 	nmConnSetFields,
 } from "../network/network-manager.ts";
-import { newApnProvenance, writeApnProvenance } from "./apn-provenance.ts";
 import { automaticBearerFamilyEligible } from "./automatic-bearer-family.ts";
 import {
 	type CarrierIntent,
@@ -58,7 +57,6 @@ export interface CarrierProfileDeps {
 	) => Promise<boolean>;
 	readonly readIntent: typeof readCarrierIntent;
 	readonly writeIntent: typeof writeCarrierIntent;
-	readonly writeProvenance: typeof writeApnProvenance;
 	readonly journal: typeof withJournaledModemMutation;
 }
 export const defaultCarrierProfileDeps: CarrierProfileDeps = {
@@ -67,7 +65,6 @@ export const defaultCarrierProfileDeps: CarrierProfileDeps = {
 	pairPresent: isModemPairAtStableKey,
 	readIntent: readCarrierIntent,
 	writeIntent: writeCarrierIntent,
-	writeProvenance: writeApnProvenance,
 	journal: withJournaledModemMutation,
 };
 const matches = (
@@ -243,21 +240,8 @@ export async function reconcileAutomaticCarrierProfile(
 					(await deps.pairPresent(key, identity))
 				) {
 					await deps.writeIntent(identity, applied);
-					if (sameCarrierIntent(await deps.readIntent(identity), applied)) {
-						// Replaces a provider database record for this profile. Without
-						// it the applied intent still reads as the carrier table's.
-						await deps
-							.writeProvenance(
-								identity,
-								newApnProvenance(identity, "carrier-table", policy.apn),
-							)
-							.catch(() =>
-								logger.warn("carrier table APN provenance not recorded", {
-									module: "modems",
-								}),
-							);
+					if (sameCarrierIntent(await deps.readIntent(identity), applied))
 						return { confirmed: true, value: "updated" as const };
-					}
 				}
 				const restored = await restoreAutomaticCarrierProfile(
 					key,
@@ -333,7 +317,11 @@ export async function runAutomaticCarrierProfiles(
 			if (result === "updated") {
 				const modem = getModem(id);
 				if (modem?.config === config) {
-					setModem(id, { ...modem, config: { ...config, apn: policy.apn } });
+					// The carrier table's APN now: no note about another source.
+					setModem(id, {
+						...modem,
+						config: { ...config, apn: policy.apn, apn_hint: undefined },
+					});
 					changed.push(id);
 				}
 				resetGsmConnections();

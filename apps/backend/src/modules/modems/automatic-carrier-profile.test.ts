@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { type ApnProvenance, resolveApnOrigin } from "./apn-provenance.ts";
 import {
 	type CarrierIntent,
 	effectiveCarrierAutomatic,
@@ -32,7 +31,6 @@ function fixture() {
 	};
 	let fields = { ...original };
 	let intent: CarrierIntent | undefined;
-	let provenance: ApnProvenance | undefined;
 	let pair = { ...identity };
 	let present = true;
 	let live = true;
@@ -68,9 +66,6 @@ function fixture() {
 			calls.push(next ? `intent-${next.mode}-${next.phase}` : "intent-absent");
 			intent = next;
 		},
-		writeProvenance: async (_identity, next) => {
-			provenance = next;
-		},
 		journal: async (_key, _kind, before, work) => {
 			inverse = before;
 			calls.push("armed");
@@ -92,7 +87,6 @@ function fixture() {
 		calls,
 		fields: () => fields,
 		intent: () => intent,
-		provenance: () => provenance,
 		inverse: () => inverse,
 		current: async () => live,
 		setIntent: (v: CarrierIntent | undefined) => {
@@ -152,15 +146,6 @@ test("subscription-derived APN is journaled and intent survives NM auto-config=n
 		"ipv6.method": "ignore",
 	});
 	expect(effectiveCarrierAutomatic(f.intent(), false, "ereseller")).toBe(true);
-	// The applied APN is recorded as the carrier table's, replacing any record
-	// a provider database lookup left for this profile.
-	expect(f.provenance()).toMatchObject({
-		origin: "carrier-table",
-		apn: "ereseller",
-	});
-	expect(
-		resolveApnOrigin(f.intent(), f.provenance(), false, "ereseller"),
-	).toEqual({ origin: "carrier-table" });
 	expect(
 		await reconcileAutomaticCarrierProfile(
 			"key",

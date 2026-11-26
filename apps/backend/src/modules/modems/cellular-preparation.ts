@@ -176,39 +176,29 @@ async function takeProfile(
 		await deps.write(record);
 	}
 	if (!(await current())) return "preserved";
-	// An APN a carrier table row applied, with that row no longer selected, is
-	// left alone. A provider database APN never had a row: that profile is
-	// prepared like any other automatic one.
-	if (
-		policy === undefined &&
-		selected.intent?.appliedApn !== undefined &&
-		resolveApnOrigin(
-			selected.intent,
-			await deps.provenance(selected.identity),
-			selected.values[2] === "yes",
-			selected.values[3] ?? "",
-		)?.origin !== "provider-database"
-	)
+	if (policy === undefined && selected.intent?.appliedApn !== undefined)
 		return "preserved";
 	if (
 		selected.values[4] !== "no" &&
 		!(await deps.setFields(uuid, { "connection.autoconnect": "no" }))
 	)
 		return "blocked";
-	if (
+	// A pending intent can carry the provider database's APN for this SIM
+	// (`apn-provenance.ts`): that APN is the choice, never a placeholder to hand
+	// back to NetworkManager's own lookup.
+	const generic =
 		!policy &&
 		record.birth &&
 		selected.intent?.phase === "pending" &&
 		selected.values[2] !== "yes" &&
-		!deps.autoConfigSupported()
-	)
-		return "preserved";
-	const enableGeneric =
-		!policy &&
-		record.birth &&
-		selected.intent?.phase === "pending" &&
-		selected.values[2] !== "yes" &&
-		deps.autoConfigSupported();
+		resolveApnOrigin(
+			selected.intent,
+			await deps.provenance(selected.identity),
+			false,
+			selected.values[3] ?? "",
+		)?.origin !== "provider-database";
+	if (generic && !deps.autoConfigSupported()) return "preserved";
+	const enableGeneric = generic && deps.autoConfigSupported();
 	if (
 		enableGeneric &&
 		!(await deps.setFields(uuid, { "gsm.auto-config": "yes", "gsm.apn": "" }))

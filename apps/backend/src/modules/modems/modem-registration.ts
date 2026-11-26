@@ -49,6 +49,7 @@ import {
 } from "../network/network-manager.ts";
 import { modemTac } from "../system/support-export.ts";
 import {
+	databaseApnIntent,
 	newApnProvenance,
 	type ResolvedApnOrigin,
 	recordableApn,
@@ -56,7 +57,6 @@ import {
 } from "./apn-provenance.ts";
 import {
 	type CarrierIntentIdentity,
-	newCarrierIntent,
 	writeCarrierIntent,
 } from "./automatic-carrier-intent.ts";
 import {
@@ -482,13 +482,35 @@ async function addConnectionForModem(
 	}
 
 	const uuid = await nmConnAdd(nmConfig);
-	if (written && hint?.source === "provider-database") {
-		const identity = { uuid: planned, deviceId: modemId, simId };
+	// No reply proves no profile: nmcli can commit it and still time out. The
+	// records stay, keyed by a uuid nothing else will ever hold, so a profile
+	// that does exist under it is still read as the database's.
+	if (written && hint?.source === "provider-database" && uuid !== undefined) {
 		if (uuid !== planned) {
-			// No profile under the planned uuid: its record must not outlive it.
-			await forgetDatabaseApn(identity);
-			if (uuid !== undefined)
-				await recordDatabaseApn({ uuid, deviceId: modemId, simId }, hint);
+			// nmcli filed it under another uuid (it honours `connection.uuid`, so
+			// only a stand-in does this): record it there, or hand the lookup back
+			// to NetworkManager so the profile never reads as someone's manual APN.
+			const recorded = await recordDatabaseApn(
+				{ uuid, deviceId: modemId, simId },
+				hint,
+			);
+			if (recorded)
+				await forgetDatabaseApn({ uuid: planned, deviceId: modemId, simId });
+			else {
+				await nmConnSetFields(uuid, {
+					"gsm.auto-config": "yes",
+					"gsm.apn": "",
+					"gsm.username": "",
+					"gsm.password": "",
+				});
+				Object.assign(config, {
+					autoconfig: true,
+					apn: "internet",
+					username: "",
+					password: "",
+				});
+				delete config.apn_hint;
+			}
 		}
 	}
 	if (uuid) {
@@ -506,19 +528,13 @@ async function recordDatabaseApn(
 	hint: Extract<ApnHint, { source: "provider-database" }>,
 ): Promise<boolean> {
 	try {
+		// Provenance first: an intent never exists without the record that says
+		// whose its APN is.
 		await writeApnProvenance(
 			identity,
-			newApnProvenance(
-				identity,
-				"provider-database",
-				hint.apn,
-				hint.homeNetwork,
-			),
+			newApnProvenance(identity, hint.apn, hint.homeNetwork),
 		);
-		await writeCarrierIntent(
-			identity,
-			newCarrierIntent(identity, "automatic", hint.apn),
-		);
+		await writeCarrierIntent(identity, databaseApnIntent(identity, hint.apn));
 		return true;
 	} catch (error) {
 		logger.warn("provider database APN could not be recorded", {
@@ -574,6 +590,10 @@ async function resolveModemProfile(
 				);
 			}
 		}
+		// Duplicates of a profile holding a database APN get Automatic APN, not
+		// that APN: they have no record of their own, so the APN would read as
+		// someone's manual choice and be copied to the next SIM. They are
+		// disarmed below; the selected profile keeps the APN.
 		const enforced = {
 			...sanitizeModemConfigForNetworkManager({ ...config }),
 			...ipFields,

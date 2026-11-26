@@ -12,10 +12,8 @@ import path from "node:path";
 
 import * as runner from "../helpers/run.ts";
 import {
-	newApnProvenance,
 	readApnProvenance,
 	resolveApnOrigin,
-	writeApnProvenance,
 } from "../modules/modems/apn-provenance.ts";
 import {
 	effectiveCarrierAutomatic,
@@ -121,6 +119,8 @@ type ScriptedModem = {
 
 /** Every profile the scripted NetworkManager holds, by uuid. */
 let saved: Record<string, Record<string, string>> = {};
+/** The records CeraUI held for a planned uuid when nmcli was asked to add it. */
+let atAdd: Array<{ intent: unknown; provenance: unknown }> = [];
 
 /**
  * Script mmcli and nmcli for modems 0, 1, ... (one SIM each); returns the
@@ -132,9 +132,12 @@ function scriptBoard(
 		profiles?: Record<string, Record<string, string>>;
 		more?: ScriptedModem[];
 		ignoreUuid?: boolean;
+		/** nmcli commits the profile but its reply is lost. */
+		lostReply?: boolean;
 	},
 ): Array<Record<string, string>> {
 	saved = { ...(opts.profiles ?? {}) };
+	atAdd = [];
 	const modems = [opts, ...(opts.more ?? [])];
 	const added: Array<Record<string, string>> = [];
 	spyOn(runner, "run").mockImplementation(async (binary, args) => {
@@ -167,6 +170,15 @@ modem.generic.ports.value[1] : wwan${index} (net)`;
 					if (field !== undefined && value !== undefined) fields[field] = value;
 				}
 				added.push(fields);
+				const planned = fields["connection.uuid"];
+				if (planned)
+					atAdd.push(
+						await records(
+							planned,
+							fields["gsm.device-id"],
+							fields["gsm.sim-id"],
+						),
+					);
 				const uuid =
 					(!opts.ignoreUuid && fields["connection.uuid"]) ||
 					(added.length === 1 ? NEW_UUID : `${NEW_UUID}-${added.length}`);
@@ -181,6 +193,7 @@ modem.generic.ports.value[1] : wwan${index} (net)`;
 					"connection.timestamp": "0",
 					...fields,
 				};
+				if (opts.lostReply) throw new Error("nmcli timed out");
 				return `Connection 'gsm' (${uuid}) successfully added.`;
 			}
 			if (args[0] === "con" && args[1] === "modify") {
@@ -239,16 +252,19 @@ test("a roaming SIM's new profile gets its home APN, recorded as the database's"
 	const uuid = modem?.config?.conn ?? "";
 	expect(added[0]?.["connection.uuid"]).toBe(uuid);
 	const { intent, provenance } = await records(uuid);
+	// Automatic, nothing applied by a carrier row, NetworkManager holding "web".
 	expect(intent).toMatchObject({
 		mode: "automatic",
-		phase: "applied",
-		appliedApn: "web",
+		phase: "pending",
+		pendingApn: "web",
 	});
 	expect(provenance).toMatchObject({
 		origin: "provider-database",
 		apn: "web",
 		network: "23217",
 	});
+	// Both were on disk before NetworkManager had the profile.
+	expect(atAdd).toEqual([{ intent, provenance }]);
 	expect(effectiveCarrierAutomatic(intent, false, "web")).toBe(true);
 	const source = modem && fromMmcliModem(0, modem).config;
 	expect(source && resolveWireConfig(source, true)).toMatchObject({
@@ -441,7 +457,7 @@ describe("a second SIM of the same operator", () => {
 			"gsm.auto-config": "no",
 		});
 		const own = await records(secondUuid, second.deviceId, second.iccid);
-		expect(own.intent).toMatchObject({ mode: "automatic", appliedApn: "web" });
+		expect(own.intent).toMatchObject({ mode: "automatic", pendingApn: "web" });
 		expect(resolveApnOrigin(own.intent, own.provenance, false, "web")).toEqual({
 			origin: "provider-database",
 			network: "23217",
@@ -491,7 +507,7 @@ describe("a second SIM of the same operator", () => {
 		const mine = await records(uuid, DEVICE_ID, first.iccid);
 		expect(mine.intent?.mode).toBe("manual");
 		expect(mine.provenance).toBeUndefined();
-		resetGsmConnections();
+		// No cache reset here: the save itself must drop the stale origin.
 		await registerModemSafe(1);
 
 		expect(added[1]).toMatchObject({
@@ -529,10 +545,6 @@ describe("a second SIM of the same operator", () => {
 		await writeCarrierIntent(
 			identity,
 			newCarrierIntent(identity, "automatic", "carrier.example"),
-		);
-		await writeApnProvenance(
-			identity,
-			newApnProvenance(identity, "carrier-table", "carrier.example"),
 		);
 		const added = scriptBoard({
 			...second,
@@ -612,11 +624,42 @@ test("a profile nmcli files under another uuid keeps its record", async () => {
 	const planned = added[0]?.["connection.uuid"] ?? "";
 	expect(getModem(0)?.config?.conn).toBe(NEW_UUID);
 	expect(await records(NEW_UUID)).toMatchObject({
-		intent: { appliedApn: "web" },
+		intent: { pendingApn: "web" },
 		provenance: { origin: "provider-database" },
 	});
 	expect(await records(planned)).toEqual({
 		intent: undefined,
 		provenance: undefined,
 	});
+});
+
+test("a lost nmcli reply keeps the records of a profile it may have created", async () => {
+	const added = scriptBoard({
+		simHome: "23217",
+		serving: "26202",
+		lostReply: true,
+	});
+	await registerModemSafe(0);
+	const planned = added[0]?.["connection.uuid"] ?? "";
+	expect(saved[planned]).toBeDefined();
+	expect(getModem(0)?.config?.conn).toBeUndefined();
+	expect(await records(planned)).toMatchObject({
+		intent: { pendingApn: "web" },
+		provenance: { origin: "provider-database" },
+	});
+	// The next registration finds the committed profile, still the database's.
+	resetGsmConnections();
+	removeModem(0);
+	scriptBoard({
+		simHome: "23217",
+		serving: "26202",
+		profiles: { ...saved },
+	});
+	await registerModemSafe(0);
+	const modem = getModem(0);
+	expect(modem?.config).toMatchObject({ conn: planned, autoconfig: true });
+	const source = modem && fromMmcliModem(0, modem).config;
+	expect(source && resolveWireConfig(source, true).apn_source).toBe(
+		"provider-database",
+	);
 });
