@@ -314,6 +314,8 @@ describe("buildDetachedAptUpgradeCommand() — service-cgroup isolation", () => 
 			"--setenv=LC_ALL=C",
 			"--property=StandardOutput=append:/run/ceralive/software-update.stdout",
 			"--property=StandardError=append:/run/ceralive/software-update.stderr",
+			// A shutdown's write drain waits for it, without keeping it loaded.
+			"--property=Before=ceralive-write-drain.service",
 			"--",
 			"/usr/bin/apt-get",
 			...DETACHED_APT_ARGS,

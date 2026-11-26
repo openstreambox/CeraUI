@@ -865,7 +865,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		},
 		status: "enforced",
 		mechanism:
-			"spawnWithTimeout bounds each local state read; adoption verifies the exact unit id, no-hook transient-service posture, and canonical apt-get upgrade argv, while an unreadable or unknown state stays fail-closed behind a coalesced recovery retry",
+			"spawnWithTimeout bounds each local state read; adoption verifies the exact unit id, no-hook transient-service posture, and canonical apt-get upgrade argv, a stopped unit kept loaded by another unit's reference (inactive/dead, no queued job) reads as absent, while an unreadable or unknown state stays fail-closed behind a coalesced recovery retry",
 	},
 	{
 		id: "softwareUpdates.outcomeVersions",
