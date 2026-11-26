@@ -115,10 +115,11 @@ export function parseDetachedAptServiceState(
 	// systemd would have unloaded it, and that absence is what recovery reads.
 	// It needs a Job row that names no job: a queued job may still start it,
 	// and a probe that never asked can't tell, so both stay unrecognized.
+	// Its own rows, never the defaults above: a reply without them proves nothing.
 	const job = properties.get("Job");
 	if (
-		activeState === "inactive" &&
-		subState === "dead" &&
+		properties.get("ActiveState") === "inactive" &&
+		properties.get("SubState") === "dead" &&
 		(job === "" || job === "0")
 	)
 		return { kind: "absent", loaded: true };

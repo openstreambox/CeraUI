@@ -1943,12 +1943,18 @@ cleanup `systemctl stop`, so it reads loaded and `inactive/dead` instead of
 `not-found`. CeraUI exits after a finished package install, and the next
 start's recovery probe used to throw on that state and retry every 3 s until
 the next boot, which kept update checks off and power actions busy with
-`update-recovery`. The probe now reads a loaded `inactive/dead` unit with an
-empty `Job` row as absent (`loaded: true`), after the same identity check as
-any loaded unit; with a queued job it still fails closed and retries. A new
-install refuses that state with `DetachedAptServicePinnedError` instead of a
+`update-recovery`. The probe now reads a loaded `inactive/dead` unit (its own
+`ActiveState` and `SubState` rows) with an empty `Job` row as absent
+(`loaded: true`), after the same identity check as any loaded unit; with a
+queued job, or without those rows, it still fails closed and retries. On such
+an image the next install needs a restart. Recovery, and the observer after
+its cleanup (three reads, a failed install stays in the same process), report
+the pin; from then on `startSoftwareUpdate` refuses with `check_unavailable`
+before the orchestrator records an attempt, so it stays `available` or
+`awaiting-idle` instead of a sticky `failed`. A start that still finds the
+unit pinned throws `DetachedAptServicePinnedError` instead of running a
 `systemd-run` that systemd would refuse ("already loaded or has a fragment
-file"); on such an image the next install needs a restart. The unit also orders
+file"). The unit also orders
 itself `Before=ceralive-write-drain.service`, so an image can drop the name from
 the drain and keep the shutdown waiting for a running transaction. That
 property is sent first: systemd writes the transient file one property at a

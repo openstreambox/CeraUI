@@ -20,6 +20,7 @@ import { parseDetachedAptServiceProbe } from "../modules/system/software-update-
 import {
 	getLastInstallUnitVerdict,
 	recoverSoftwareUpdateIfRunning,
+	startSoftwareUpdate,
 } from "../modules/system/software-updates.ts";
 import { updateHarness } from "./software-updates-preflight-harness.ts";
 
@@ -39,8 +40,8 @@ const install = buildAptAllInstallArgs(
 	[{ name: "ceralive-device", version: "2026.11.6" }],
 	"any",
 );
-const execStart = (status: "running" | "exited") =>
-	`ExecStart={ path=/usr/bin/flock ; argv[]=/usr/bin/flock -x /run/lock/ceralive-update.lock /bin/sh -ec /usr/bin/apt-get -d -y upgrade --with-new-pkgs && /usr/bin/apt-get ${install.join(" ")} ; ignore_errors=no ; start_time=[Wed 2026-11-26 07:20:01 UTC] ; stop_time=[${status === "running" ? "n/a" : "Wed 2026-11-26 07:21:12 UTC"}] ; pid=4242 ; code=${status === "running" ? "(null)" : "exited"} ; status=${status === "running" ? "0/0" : "0/SUCCESS"} }`;
+const execStart = (exit: number | null) =>
+	`ExecStart={ path=/usr/bin/flock ; argv[]=/usr/bin/flock -x /run/lock/ceralive-update.lock /bin/sh -ec /usr/bin/apt-get -d -y upgrade --with-new-pkgs && /usr/bin/apt-get ${install.join(" ")} ; ignore_errors=no ; start_time=[Wed 2026-11-26 07:20:01 UTC] ; stop_time=[${exit === null ? "n/a" : "Wed 2026-11-26 07:21:12 UTC"}] ; pid=4242 ; code=${exit === null ? "(null)" : "exited"} ; status=${exit === null ? "0/0" : exit} }`;
 
 // The transient file systemd 257 writes for a systemd-run request: one write
 // per property in the order systemd-run sends them (Description, each
@@ -91,10 +92,11 @@ function transientFragment(argv: readonly string[]): string {
 }
 
 type UnitState = {
-	active: "active" | "inactive";
-	sub: "running" | "exited" | "dead";
+	active: "active" | "inactive" | "failed";
+	sub: "running" | "exited" | "dead" | "failed";
 	job: string;
-	exited: boolean;
+	/** apt's exit status once it has exited. */
+	exit: number | null;
 };
 
 function render(unit: UnitState | null): string {
@@ -112,16 +114,16 @@ function render(unit: UnitState | null): string {
 		"Type=exec",
 		"RemainAfterExit=yes",
 		"User=",
-		`ExecMainCode=${unit.exited ? 1 : 0}`,
-		"ExecMainStatus=0",
-		execStart(unit.exited ? "exited" : "running"),
+		`ExecMainCode=${unit.exit === null ? 0 : 1}`,
+		`ExecMainStatus=${unit.exit ?? 0}`,
+		execStart(unit.exit),
 		"StandardOutput=append",
 		"StandardError=append",
 		"",
 	].join("\n");
 }
 
-function modelledSystemd(drainAfter: readonly string[]) {
+function modelledSystemd(drainAfter: readonly string[], aptExit = 0) {
 	let unit: UnitState | null = null;
 	let fragment = "";
 	let polls = 0;
@@ -141,7 +143,7 @@ function modelledSystemd(drainAfter: readonly string[]) {
 				);
 			launches.push(argv);
 			fragment = transientFragment(argv);
-			unit = { active: "active", sub: "running", job: "", exited: false };
+			unit = { active: "active", sub: "running", job: "", exit: null };
 		},
 		// As inspectService: a loaded unit's transient file is checked too.
 		inspect: async () => {
@@ -169,9 +171,13 @@ function modelledSystemd(drainAfter: readonly string[]) {
 			// A unit CeraUI can't read (a refused transient file) keeps the
 			// observer retrying; on a box that never ends.
 			if (++polls > 50) throw new Error("observer kept polling");
-			// apt-get finishes on the observer's first poll.
+			// apt-get finishes on the observer's first poll; a failure fails the
+			// unit, a success leaves it active (RemainAfterExit).
 			if (unit?.sub === "running")
-				unit = { ...unit, sub: "exited", exited: true };
+				unit =
+					aptExit === 0
+						? { ...unit, sub: "exited", exit: 0 }
+						: { ...unit, active: "failed", sub: "failed", exit: aptExit };
 		},
 	};
 	return {
@@ -218,6 +224,37 @@ test("the restart after an install finds the pinned stopped unit settled, with n
 	expect(retries).toHaveLength(0);
 	expect(isSoftwareUpdateRecoveryInconclusive()).toBe(false);
 	expect(getLastInstallUnitVerdict()).toBe("absent");
+	// And a new install is refused before any attempt is recorded, so the
+	// orchestrator stays where it was and tries again after the restart.
+	expect(startSoftwareUpdate()).toEqual({
+		started: false,
+		reason: "check_unavailable",
+	});
+	expect(systemd.launches).toHaveLength(1);
+});
+
+test("a failed install that leaves the unit pinned refuses the next start up front", async () => {
+	await using _h = await updateHarness();
+	// Given an install whose apt-get fails on an image whose drain names the unit.
+	const systemd = modelledSystemd(pinningDrain, 100);
+	const pinned: string[] = [];
+	const watched = { ...handlers, onUnitPinned: () => pinned.push("pinned") };
+	// When it settles and its unit is reset.
+	expect(await runDetachedAptAll(install, "any", watched, systemd.deps)).toBe(
+		100,
+	);
+	// Then the pin is reported once, and only while systemd keeps the unit.
+	expect(systemd.stops).toEqual(["reset-failed"]);
+	expect(pinned).toEqual(["pinned"]);
+	const unpinned = modelledSystemd(fixedDrain, 100);
+	const none: string[] = [];
+	await runDetachedAptAll(
+		install,
+		"any",
+		{ ...handlers, onUnitPinned: () => none.push("pinned") },
+		unpinned.deps,
+	);
+	expect(none).toEqual([]);
 });
 
 test("a second install in that boot is refused by name, without a systemd-run", async () => {
@@ -319,3 +356,26 @@ test("the transient file of either command form passes CeraUI's own fragment che
 		expect(() => validateDetachedAptServiceFragment(file)).not.toThrow();
 	}
 });
+
+test.each(["ActiveState", "SubState"])(
+	"a stopped-looking reply without its %s row is not settled",
+	(row) => {
+		// Given a loaded unit's reply that names no job but omits a state row.
+		const stopped = render({
+			active: "inactive",
+			sub: "dead",
+			job: "",
+			exit: 0,
+		})
+			.split("\n")
+			.filter((line) => !line.startsWith(`${row}=`))
+			.join("\n");
+		// Then it is not read as stopped.
+		expect(() =>
+			parseDetachedAptServiceProbe(
+				{ exitCode: 0, stdout: stopped, stderr: "" },
+				["systemctl", "show", SOFTWARE_UPDATE_UNIT],
+			),
+		).toThrow(/unrecognized/);
+	},
+);
