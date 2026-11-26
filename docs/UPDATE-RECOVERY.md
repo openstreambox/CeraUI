@@ -1950,7 +1950,12 @@ install refuses that state with `DetachedAptServicePinnedError` instead of a
 `systemd-run` that systemd would refuse ("already loaded or has a fragment
 file"); on such an image the next install needs a restart. The unit also orders
 itself `Before=ceralive-write-drain.service`, so an image can drop the name from
-the drain and keep the shutdown waiting for a running transaction.
+the drain and keep the shutdown waiting for a running transaction. That
+property is sent first: systemd writes the transient file one property at a
+time and starts a new section header on each change, so a `[Unit]` property
+after the output paths gives the file two `[Service]` sections, which the
+fragment check refuses (seen on a board: the observer then never adopted its
+own unit).
 
 **A consumed staged receipt is retired [PARTIAL — host-proven, board re-drill owed].**
 `os-staged.json` records version, channel, `stagedAt` and the producer boot.

@@ -41,8 +41,19 @@ import {
 } from "./update-orchestrator/stored-state-file.ts";
 
 const SYSTEMD_COMMAND_TIMEOUT_MS = 10_000;
-/** The image's shutdown drain; its stop waits for writers ordered before it. */
-const WRITE_DRAIN_UNIT = "ceralive-write-drain.service";
+/**
+ * A shutdown waits for a running transaction: the image's write drain
+ * (ceralive-write-drain.service) stops first. Ordering from this side never
+ * keeps the stopped unit loaded; the drain naming this unit in After= would.
+ *
+ * It is the first --property on purpose. systemd writes the transient file one
+ * property at a time, in the order systemd-run sends them (Description, each
+ * --property, then the service settings), and starts a new section header
+ * whenever the section changes. A [Unit] property between the output paths and
+ * the rest would give the file two [Service] sections, which
+ * validateDetachedAptServiceFragment refuses as foreign.
+ */
+const DRAIN_ORDER = ["--property=Before=ceralive-write-drain.service"] as const;
 
 export type {
 	SoftwareUpdateOutputPaths,
@@ -111,6 +122,7 @@ export function buildDetachedAptUpgradeCommand(
 		"systemd-run",
 		`--unit=${SOFTWARE_UPDATE_UNIT}`,
 		`--description=${SOFTWARE_UPDATE_DESCRIPTION}`,
+		...DRAIN_ORDER,
 		"--remain-after-exit",
 		"--quiet",
 		"--service-type=exec",
@@ -119,10 +131,6 @@ export function buildDetachedAptUpgradeCommand(
 		"--setenv=LC_ALL=C",
 		`--property=StandardOutput=append:${outputPaths.stdout}`,
 		`--property=StandardError=append:${outputPaths.stderr}`,
-		// A shutdown waits for a running transaction: the image's write drain
-		// stops first. Ordering from this side never keeps the stopped unit
-		// loaded; the drain naming this unit in After= would.
-		`--property=Before=${WRITE_DRAIN_UNIT}`,
 		"--",
 		"/usr/bin/apt-get",
 		...aptArgs,
@@ -152,6 +160,7 @@ export function buildDetachedAptAllCommand(
 		"systemd-run",
 		`--unit=${SOFTWARE_UPDATE_UNIT}`,
 		`--description=${SOFTWARE_UPDATE_DESCRIPTION}`,
+		...DRAIN_ORDER,
 		"--remain-after-exit",
 		"--quiet",
 		"--service-type=exec",
@@ -160,10 +169,6 @@ export function buildDetachedAptAllCommand(
 		"--setenv=LC_ALL=C",
 		`--property=StandardOutput=append:${outputPaths.stdout}`,
 		`--property=StandardError=append:${outputPaths.stderr}`,
-		// A shutdown waits for a running transaction: the image's write drain
-		// stops first. Ordering from this side never keeps the stopped unit
-		// loaded; the drain naming this unit in After= would.
-		`--property=Before=${WRITE_DRAIN_UNIT}`,
 		"--",
 		"/usr/bin/flock",
 		"-x",
