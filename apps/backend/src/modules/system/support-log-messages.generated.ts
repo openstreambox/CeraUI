@@ -1851,6 +1851,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["failed"],
 	["fcc policy unreadable"],
 	["fetch ", " failed: HTTP ", ""],
+	["file too large"],
 	["first_party_held_back"],
 	["flock wrapper does not match"],
 	["foreign-rule"],

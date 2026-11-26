@@ -17,7 +17,7 @@ import {
 } from "../network/network-interfaces.ts";
 import { getEngineBitrateStatus } from "../streaming/engine-bitrate-status.ts";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import { getDeviceStatsSnapshot } from "../system/device-stats-snapshot.ts";
 import {
 	type RootSlotStatus,
@@ -112,7 +112,7 @@ export type Screened<T> = T extends string | number | boolean
 export type BundleStateRecord = Screened<BundleDeviceState>;
 
 export interface BundleStateDeps {
-	/** Only a real device reads RAUC and the device files; dev hosts and CI never do. */
+	/** Only an image with OS updates reads RAUC and the device files; dev hosts and CI never do. */
 	readonly device: () => Promise<boolean>;
 	readonly readText: (path: string, maxBytes: number) => Promise<string>;
 	readonly readSlots: () => Promise<RootSlotStatus[]>;
@@ -121,7 +121,7 @@ export interface BundleStateDeps {
 }
 
 export const defaultBundleStateDeps: BundleStateDeps = {
-	device: async () => !shouldUseMocks() && (await isRealDevice()),
+	device: async () => !shouldUseMocks() && (await hasCapability("os-updates")),
 	async readText(path, maxBytes) {
 		const file = Bun.file(path);
 		if (file.size > maxBytes) throw new Error("file too large");

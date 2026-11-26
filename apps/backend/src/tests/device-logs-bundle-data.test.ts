@@ -236,7 +236,7 @@ test("the device state is collected for the bundle's own boots and events", asyn
 		bootId: prev,
 		at: 1,
 		code: "shutdown_requested",
-		family: "system" as const,
+		family: "device" as const,
 		severity: "info" as const,
 		params: {},
 	};

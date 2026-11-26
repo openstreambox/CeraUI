@@ -64,9 +64,9 @@ own redactor and the held secrets. A value it would act on becomes `null`
 `bundle-body.ts` runs the record through the final inspection before admitting
 it and leaves it out on a collision, so the optional record can neither leak
 such a value nor make preparation refuse. Each source is optional: a failed
-read leaves its field null or empty. Only a real device (`isRealDevice`,
-outside mock mode) runs `rauc` or reads the boot-state file; a dev host or CI
-never does.
+read leaves its field null or empty. Only an image with the `os-updates`
+capability (`hasCapability`, outside mock mode) runs `rauc` or reads the
+boot-state file; a dev host or CI never does.
 
 Held config, relay, hotspot, APN and router credentials are inputs to redaction
 only. `getStoredModemCredentials()` returns copies of the username/password
