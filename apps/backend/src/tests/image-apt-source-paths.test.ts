@@ -790,14 +790,17 @@ describe("each way an install ends before its unit launches", () => {
 		await expectRefused(counts, { reason: "streaming" }, quarantine);
 	});
 
-	it("the standalone start: a stream admitted and over during its preflight", async () => {
+	it("the start RPC as the Packages card calls it: a stream ends it, and the next check reconciles", async () => {
 		const fixture = await box("preflight-admission");
-		const { counts, quarantine } = orchestrator();
-		expect(await checkUpdatesNow()).toEqual({ started: true });
-		// The start RPC: the orchestrator does not start this install.
+		const { quarantine } = orchestrator();
+		// The card's own check finds the offer; the orchestrator takes no part.
+		expect(triggerManualUpdateCheck()).toBe(true);
+		await settle(() => getUpdateState().kind === "available");
+		expect(getOrchestratorState().phase).toBe("idle");
+		// With the orchestrator not holding the offer, the card installs through
+		// the start RPC: an install the orchestrator does not start.
 		expect(startSoftwareUpdate()).toEqual({ started: true });
 		await fixture.downloading.promise;
-		expect(getOrchestratorState().phase).toBe("available");
 		expect(await admitAndPrepareStreamStart()).toEqual({ allowed: true });
 		expect(getUpdateState()).toMatchObject({
 			kind: "failed",
@@ -807,17 +810,21 @@ describe("each way an install ends before its unit launches", () => {
 		await Bun.sleep(50);
 		// Its preparation resumed and launched nothing.
 		expect(launches()).toBe(0);
+		// The wire says `failed`; the orchestrator recorded nothing and is idle
+		// still. The two disagree until the next package check.
 		expect(getUpdateState()).toMatchObject({
 			kind: "failed",
 			reason: "streaming",
 		});
-		// The orchestrator keeps its offer and recorded no pending packages.
-		expect(getOrchestratorState().phase).toBe("available");
+		expect(getOrchestratorState()).toMatchObject({
+			phase: "idle",
+			failureReason: null,
+		});
 		expect(await quarantine.readPending()).toEqual([]);
-		const os = counts.osChecks;
-		expect(await checkUpdatesNow()).toEqual({ started: true });
+		// That check, here the scheduled one, brings them back in line.
+		await runOrchestratorTick();
 		expect(getUpdateState().kind).toBe("available");
-		expect(counts.osChecks).toBe(os + 1);
+		expect(getOrchestratorState().phase).toBe("available");
 	});
 
 	it("stream admission after systemd refused the unit, before the orchestrator looked", async () => {

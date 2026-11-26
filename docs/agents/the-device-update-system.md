@@ -486,7 +486,7 @@ until one serialized section either submits its unit or ends it:
 | The pinned transfer aborts on a live stream nobody admitted (liveness only) | `failed`, `streaming` | `failed` / `package_install_refused` (Check now is not left busy) | the pinned download aborts on a live stream nobody admitted |
 | Stream admitted, and over, while preparation waits (space preflight) | `failed`, `streaming`; the unit never launches | `failed` / `package_install_refused` | a stream admitted and over while preparation waits |
 | Stream admission while the launcher sets up its unit (looking for a unit, preparing the output files) | `failed`, `streaming`; nothing is submitted and nothing stopped | `failed` / `package_install_refused` at once | stream admission while the launcher sets up its unit |
-| The start RPC (not the orchestrator's install), a stream admitted and over during its preparation | `failed`, `streaming`; nothing is submitted | unchanged: it did not start this install and keeps its offer; Check now clears the failure | the standalone start: a stream admitted and over during its preflight |
+| An install started through the start RPC (`system.startUpdate`) ends before launch, by a stream or any row above | `failed`, its reason, once; nothing is submitted | unchanged: it did not start this install, so it records nothing and keeps its phase. The wire and the orchestrator disagree until the next package check (Check now, or the scheduled one when due), which clears the wire's failure and lands both on the offer | the start RPC as the Packages card calls it: a stream ends it, and the next check reconciles |
 | Stream admission after the wire already showed the refusal | `failed`, its reason | `failed` / `package_install_refused`, never `available` | stream admission after the wire already settled |
 | Stream admission after systemd refused the unit, before the orchestrator looked | `failed`, the error | `failed` / `package_install_refused`, never `available`; the failure keeps the wire's id | stream admission after systemd refused the unit, before the orchestrator looked |
 | Stream admission after the download under the pin failed, before the orchestrator looked | `failed`, apt's error | `failed` / `package_install_refused`; the failure keeps the wire's id | stream admission after the download under the pin failed keeps the failure's id |
@@ -503,12 +503,14 @@ until one serialized section either submits its unit or ends it:
 The table lists paths; `image-apt-source-interleavings.test.ts` tests the
 class. It records every wait the real install passes between "start
 accepted" and "`systemd-run` returned" (each fake parks on a sequencer; a
-wait on anything else fails the recording) for four installs: through the
+wait on anything else fails the recording) for five installs: through the
 orchestrator, on an image that routes apt (the download under the pin), the
-start RPC, and a start delayed behind a running check. At each recorded wait
-it lets one of three things happen (a stream is admitted and never seen
-live, updates are turned off, a second start arrives) and allows one
-outcome: before `systemd-run` is called the install ends as above with
+start RPC beside an offer the orchestrator holds, the start RPC as the
+Packages card calls it (the card's own check found the offer, the
+orchestrator is idle), and a start delayed behind a running check. At each
+recorded wait it lets one of three things happen (a stream is admitted and
+never seen live, updates are turned off, a second start arrives) and allows
+one outcome: before `systemd-run` is called the install ends as above with
 exactly one `failed` frame, nothing submitted and the pending list kept
 until the next check; with `systemd-run` in flight the unit counts as
 launched; a second start is refused, or is the same attempt while the
@@ -529,6 +531,16 @@ orchestrator follows at its next check. The scheduled tick decides on the
 phase it finds after its own waits, with only `package_install_refused`
 counted as `idle`, so it never starts a check over an install that began
 meanwhile.
+
+The start RPC is still in use on these images: the Packages card calls it
+whenever the orchestrator is not holding the package offer (`installPackages`
+in `update-surface.svelte.ts`: any phase but `available` and `awaiting-idle`),
+which is the ordinary case after the card's own check
+(`system.checkForUpdates`), since that check does not go through the
+orchestrator. Such an install passes the same launch fence, and its end
+before launch shows on the wire like any other. The orchestrator did not
+start it and has no transition for it, so it keeps its phase; the next
+package check reconciles the two.
 
 Images without the record keep their behaviour throughout: the fence is not
 consulted, a stream during the download returns the plan to the offer

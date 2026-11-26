@@ -1468,7 +1468,12 @@ strictly. With a valid record:
   is submitted afterwards, a stream that arrives while `systemd-run` is in
   flight waits for its result and then meets a launched unit, and updates
   turned off before the submission end the install too. Nothing sees an
-  install between "can still be cancelled" and "submitted".
+  install between "can still be cancelled" and "submitted". An install the
+  Packages card starts through the start RPC (it does so whenever the
+  orchestrator is not holding the package offer, as after the card's own
+  check) is not one the orchestrator started: when it ends before launch the
+  card shows the failure and the orchestrator keeps its phase, until the next
+  package check clears the failure and brings the two back in line.
 
 A record that is present but does not validate refuses package checks and
 installs (`discovery_failed`), and never falls back to the first-party

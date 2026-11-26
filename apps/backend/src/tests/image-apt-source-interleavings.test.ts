@@ -149,11 +149,25 @@ const TIMEOUT_MS = 240_000;
  * - `orchestrated`: Install now through the orchestrator, apt unbound.
  * - `pinned`: the same on an image that routes apt (the download runs under
  *   the pin before the unit exists).
- * - `standalone`: the start RPC, which the orchestrator never sees.
+ * - `start RPC`: the standalone start, which the orchestrator does not start
+ *   and never records, beside an offer the orchestrator holds.
+ * - `start RPC from the Packages card`: the same as the shipped dialog calls
+ *   it. The card's own check found the offer, the orchestrator is idle.
  * - `delayed`: Install now while another check runs, so the start waits.
  */
-const VARIANTS = ["orchestrated", "pinned", "standalone", "delayed"] as const;
+const VARIANTS = [
+	"orchestrated",
+	"pinned",
+	"start RPC",
+	"start RPC from the Packages card",
+	"delayed",
+] as const;
 type Variant = (typeof VARIANTS)[number];
+// The orchestrator's phase beside a standalone start: it never changes it.
+const BESIDE_START_RPC: Partial<Record<Variant, "available" | "idle">> = {
+	"start RPC": "available",
+	"start RPC from the Packages card": "idle",
+};
 const EVENTS = ["stream admission", "updates off", "second start"] as const;
 type Event = (typeof EVENTS)[number];
 
@@ -475,14 +489,27 @@ async function acceptedInstall(variant: Variant) {
 	setOrchestratorStateForTest(initialOrchestratorState(0));
 
 	// The offer, found by a check before anything is asked for.
-	expect(await sequencer.outside(() => checkUpdatesNow())).toEqual({
-		started: true,
-	});
-	expect(getOrchestratorState().phase).toBe("available");
+	if (variant === "start RPC from the Packages card") {
+		// The card's own check: the orchestrator takes no part and stays idle.
+		expect(triggerManualUpdateCheck()).toBe(true);
+		for (let turn = 0; turn < 200; turn++) {
+			if (getUpdateState().kind === "available") break;
+			await settleEventLoop(1);
+		}
+		// The offer shows before the check has quite ended: let it end, or the
+		// start below would wait behind it.
+		await settleEventLoop(3);
+		expect(getOrchestratorState().phase).toBe("idle");
+	} else {
+		expect(await sequencer.outside(() => checkUpdatesNow())).toEqual({
+			started: true,
+		});
+		expect(getOrchestratorState().phase).toBe("available");
+	}
 	expect(getUpdateState().kind).toBe("available");
 	frames.length = 0;
 
-	if (variant === "standalone") {
+	if (BESIDE_START_RPC[variant] !== undefined) {
 		sequencer.arm();
 		expect(startSoftwareUpdate()).toEqual({ started: true });
 	} else {
@@ -526,9 +553,15 @@ async function expectEndedBeforeLaunch(
 	expect(getUpdateState()).toMatchObject(
 		superseded ? { kind: "available" } : { kind: "failed", reason },
 	);
-	if (variant === "standalone") {
-		// The orchestrator never started this install: it keeps its offer.
-		expect(getOrchestratorState().phase).toBe("available");
+	const beside = BESIDE_START_RPC[variant];
+	if (beside !== undefined) {
+		// The orchestrator did not start this install: it records nothing and
+		// keeps its phase. The wire says `failed` and the orchestrator does
+		// not, until the next check below brings the two back in line.
+		expect(getOrchestratorState()).toMatchObject({
+			phase: beside,
+			failureReason: null,
+		});
 		expect(await quarantine.readPending()).toEqual([]);
 	} else {
 		expect(getOrchestratorState()).toMatchObject({
@@ -559,7 +592,8 @@ async function expectLaunched(variant: Variant, box: Accepted) {
 	expect(unit.unit.state).toBe("running");
 	expect(failedFrames(frames)).toEqual([]);
 	expect(getUpdateState().kind).toBe("downloading");
-	if (variant === "standalone") return;
+	// Beside a standalone start the orchestrator's phase is its own business.
+	if (BESIDE_START_RPC[variant] !== undefined) return;
 	expect(getOrchestratorState().phase).toBe("downloading");
 	expect(await quarantine.readPending()).toEqual(PENDING);
 }
@@ -581,6 +615,7 @@ async function run(
 	// The delayed start has not run yet: the other check is still in flight.
 	const delayedAt = steps.indexOf(DELAY);
 	const waiting = variant === "delayed" && step <= delayedAt;
+	const beside = BESIDE_START_RPC[variant];
 
 	if (event === "stream admission") {
 		// Admitted, and never seen live: only the fence can stop the launch.
@@ -592,7 +627,7 @@ async function run(
 				kind: "failed",
 				reason: "streaming",
 			});
-			if (variant !== "standalone")
+			if (beside === undefined)
 				expect(getOrchestratorState()).toMatchObject({
 					phase: "failed",
 					failureReason: PACKAGE_INSTALL_REFUSED,
@@ -613,7 +648,7 @@ async function run(
 		sequencer.step();
 		expect(await admission).toEqual({ allowed: true });
 		expect(unit.unit.submissions).toBe(1);
-		if (variant === "standalone") {
+		if (beside !== undefined) {
 			// The orchestrator did not start it: the unit runs on, as today.
 			expect(unit.unit.stops).toBe(0);
 			expect(getUpdateState().kind).toBe("downloading");
@@ -642,7 +677,7 @@ async function run(
 			reason: "discovery_failed",
 		});
 		// The orchestrator learns of it when it next looks.
-		if (variant !== "standalone")
+		if (beside === undefined)
 			await sequencer.outside(() => runOrchestratorTick());
 		await expectEndedBeforeLaunch(variant, box, "discovery_failed", false);
 		return;
@@ -652,11 +687,16 @@ async function run(
 	const before = getOrchestratorState().phase;
 	expect(
 		await sequencer.outside(() => installUpdatesNow({ scope: "packages" })),
-	).toEqual({ started: false, reason: "busy" });
-	// Through the orchestrator it changes nothing; beside the start RPC's
-	// install the request stays queued, as any request that cannot start yet.
+	).toEqual({
+		started: false,
+		// An idle orchestrator has no package offer of its own to install.
+		reason: beside === "idle" ? "not_available" : "busy",
+	});
+	// Through the orchestrator it changes nothing. Beside the start RPC's
+	// install, a request for the offer the orchestrator holds stays queued,
+	// as any request that cannot start yet.
 	expect(getOrchestratorState().phase).toBe(
-		variant === "standalone" ? "awaiting-idle" : before,
+		beside === "available" ? "awaiting-idle" : before,
 	);
 	// While the start still waits behind the other check, a second start is
 	// that same install; afterwards it is refused. Never a second install.
@@ -706,7 +746,8 @@ describe("the launch fence: every wait before the unit is submitted", () => {
 			expect(steps).toContain("unit: prepare its output files");
 			if (variant === "pinned")
 				expect(steps).toContain("apt-get -d (download under the pin)");
-			if (variant === "delayed") expect(steps).toContain(DELAY);
+			// Only the start behind a running check waits on the timer.
+			expect(steps.includes(DELAY)).toBe(variant === "delayed");
 		},
 		TIMEOUT_MS,
 	);
