@@ -1395,8 +1395,14 @@ under `/etc/apt/sources.list.d/`, its `host`, `origin` and `label`
 `-emergency`). `image-apt-source.ts` reads the record and that one file
 strictly. With a valid record:
 
-- CeraUI never writes `ceralive.sources`. Reachability and transport read only
-  that file, and the first-party archive's own probe (the client certificate,
+- CeraUI never writes `ceralive.sources`. The source file is parsed once, by
+  the record's validator (`image-apt-source.ts`), and everything that probes
+  the source uses that parsed result: the unbound reachability probe, the
+  per-uplink transport probe and selection, and the pinned transport built
+  on it. No second parser reads the file in this mode, so a shape the
+  validator accepts (folded values, comment lines, trailing whitespace)
+  cannot be read differently by a probe. Images without the record parse
+  their sources as before. The first-party archive's own probe (the client certificate,
   `/__tls-probe`) is never used, also when the image's source lives on
   `apt.ceralive.tv`: its host is probed at its `InRelease` like any image
   host. A repository HTTP error from that host over verified TLS reads as
@@ -1412,13 +1418,16 @@ strictly. With a valid record:
   only what the image's maker put there. From anywhere else they stay withheld.
 - The CeraLive update notice stays silent. A stored offer is withdrawn at
   startup and on every check, whether or not discovery can run.
-- The URI's first path segment is an access token. Transport findings, the
+- The URI's first path segment is an access token of at least 20 characters;
+  a source with a shorter one is refused as invalid, since a short token
+  could not be told from ordinary text when apt echoes it. Every bare copy
+  of the token is removed wherever apt's text is published. Transport findings, the
   update state, the `updating.result` status frame, refusal diagnostics and
   logged apt output show the source by host only. The reachability and
   transport probes never put the URL on curl's command line, where any local
   process could read it: curl reads it from a config file only the backend's
-  user can read (mode 0600, in a directory of its own), removed as soon as
-  curl has exited. The detached unit's output is
+  user can read (mode 0600, in the service's own 0700 directory), removed by
+  its exact path as soon as curl has exited. The detached unit's output is
   redacted line by line as the backend reads it; apt itself still writes it to
   the root-only `/run/ceralive/software-update.{stdout,stderr}` spool. That
   spool outlasts the unit's cleanup (a restarted backend re-reads it to
@@ -1505,7 +1514,8 @@ strictly. With a valid record:
   directory (`/run/ceralive/curl-private`, 0700) and removed by its exact
   path when the probe ends. A removal that fails is logged as a security
   line, whoever the probe was for. That one directory is wiped when the
-  backend starts, by the process that holds the single-instance lock.
+  backend starts, by the process that actually holds the single-instance
+  lock at that moment.
 - While a stream is live a scheduled package check waits on these images
   instead of being refused as busy: no failed check is counted, and the
   image check that is due runs on that tick. One look decides, after the
