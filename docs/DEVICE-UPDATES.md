@@ -1505,11 +1505,12 @@ strictly. With a valid record:
   directory (`/run/ceralive/curl-private`, 0700) and removed by its exact
   path when the probe ends. A removal that fails is logged as a security
   line, whoever the probe was for. That one directory is wiped when the
-  backend starts.
+  backend starts, by the process that holds the single-instance lock.
 - While a stream is live a scheduled package check waits on these images
   instead of being refused as busy: no failed check is counted, and the
-  image check that is due runs on that tick. The stream is looked at once
-  more after the check's own waits, right before it is dispatched.
+  image check that is due runs on that tick. One look decides, after the
+  check's own waits and right before it is dispatched, and it defers for
+  an ended install that still drains as it does for a stream.
 - A failure before launch is published when it is known: a failed download
   under the pin before its routing is taken down, and before any archive
   cleanup, which the next install's preflight does. A start that is refused
