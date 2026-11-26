@@ -212,12 +212,8 @@ describe("installUpdatesNow — bypasses idle, NEVER bypasses the stream-live ch
 		expect(launches).toBe(0);
 		expect(getOrchestratorState().phase).toBe("awaiting-idle");
 		expect(await quarantine.readPending()).toEqual([]);
-		// And once the name is free, the same pending install launches.
+		// And once the name is free, the retry from awaiting-idle launches.
 		free = true;
-		setOrchestratorStateForTest({
-			...getOrchestratorState(),
-			phase: "available",
-		});
 		expect(await installUpdatesNow()).toEqual({ started: true });
 		expect(launches).toBe(1);
 		expect(getOrchestratorState().phase).toBe("downloading");

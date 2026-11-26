@@ -380,6 +380,7 @@ export function resetSoftwareUpdateState(): void {
 	lastInstallUnitVerdict = "not-probed";
 	installUnitPinned = false;
 	installUnitProof = undefined;
+	installUnitProofFailing = false;
 	aptDiscoveryRunning = false;
 	softUpdateStatus = null;
 	currentUpdateIdentity = null;
@@ -2276,16 +2277,26 @@ export function proveInstallUnitFree(): Promise<boolean> {
 	return installUnitProof;
 }
 
+let installUnitProofFailing = false;
+
 async function readInstallUnitFree(): Promise<boolean> {
 	try {
 		const unit = await defaultDetachedAptServiceDeps().inspect();
+		installUnitProofFailing = false;
 		if (unit.kind === "absent" && !unit.loaded) {
 			installUnitPinned = false;
 			return true;
 		}
 		if (unit.kind === "absent") noteInstallUnitPinned();
 		return false;
-	} catch {
+	} catch (error) {
+		// Fail closed, but say why installs wait: once per run of failures.
+		if (!installUnitProofFailing)
+			logger.warn(
+				"Software update: the install unit could not be read; installs wait until it can",
+				{ error },
+			);
+		installUnitProofFailing = true;
 		return false;
 	}
 }
