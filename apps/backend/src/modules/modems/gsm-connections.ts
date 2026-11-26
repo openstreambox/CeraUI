@@ -103,10 +103,12 @@ function nmUsageRank(state: string): number {
  *
  * The profile NetworkManager is USING therefore always wins ({@link nmUsageRank}):
  * it is the one carrying the device's data right now, and it is the only choice
- * that can be shown to be right rather than merely plausible. With no candidate
- * in use at all the tie is broken on the lowest uuid — arbitrary, but STABLE,
- * where nmcli's listing order is not, so two reads of an unchanged system
- * cannot disagree.
+ * that can be shown to be right rather than merely plausible. Among profiles in
+ * equal use, one holding an APN the provider database chose (`apn-provenance.ts`)
+ * wins: its duplicates were disarmed with Automatic APN and no record, and
+ * picking one of them would copy that over the database APN. Otherwise the tie
+ * is broken on the lowest uuid — arbitrary, but STABLE, where nmcli's listing
+ * order is not, so two reads of an unchanged system cannot disagree.
  */
 export function preferGsmConnection(
 	current: GsmConnection,
@@ -116,6 +118,11 @@ export function preferGsmConnection(
 	const candidateRank = nmUsageRank(candidate.state);
 	if (currentRank !== candidateRank) {
 		return candidateRank > currentRank ? candidate : current;
+	}
+	const currentRecorded = current.apnOrigin?.origin === "provider-database";
+	const candidateRecorded = candidate.apnOrigin?.origin === "provider-database";
+	if (currentRecorded !== candidateRecorded) {
+		return candidateRecorded ? candidate : current;
 	}
 	return candidate.uuid < current.uuid ? candidate : current;
 }

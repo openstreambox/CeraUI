@@ -507,7 +507,8 @@ async function databaseProfile(opts: {
 	};
 	let autoconnect = "yes",
 		nmAuto = "no",
-		apn = "web";
+		apn = "web",
+		readsRecord = opts.provenance;
 	const deps: CellularPreparationDeps = {
 		...f.deps,
 		fields: async () =>
@@ -533,9 +534,17 @@ async function databaseProfile(opts: {
 				? databaseApnIntent(identity, "web")
 				: newCarrierIntent(identity, "automatic", "web"),
 		provenance: async () =>
-			opts.provenance ? newApnProvenance(identity, "web", "23217") : undefined,
+			readsRecord ? newApnProvenance(identity, "web", "23217") : undefined,
 	};
-	return { f, deps, apn: () => apn };
+	return {
+		f,
+		deps,
+		apn: () => apn,
+		autoconnect: () => autoconnect,
+		olderBuild: () => {
+			readsRecord = false;
+		},
+	};
 }
 
 test("a provider database APN keeps QMAP and raw-IP preparation with no carrier row", async () => {
@@ -558,23 +567,26 @@ test("a provider database APN keeps QMAP and raw-IP preparation with no carrier 
 	expect(apn()).toBe("web");
 });
 
-test("a backend that never reads the record prepares the same profile", async () => {
-	// The other OS slot's older backend sees only the pending intent: it must
-	// prepare (and so re-grant) the profile this one disarmed, not strand it.
-	const { f, deps } = await databaseProfile({
+test("a backend that never reads the record finishes the preparation this one began", async () => {
+	// This build disarms the profile and persists its baseline, then the other
+	// OS slot's older backend boots: it sees only the pending intent and must
+	// take the persisted, disarmed profile on to readiness rather than strand it.
+	const { f, deps, autoconnect, olderBuild } = await databaseProfile({
 		intent: "database",
-		provenance: false,
+		provenance: true,
 	});
+	const run = () =>
+		prepareCellularActivation(UUID, f.target(), undefined, f.current, deps);
+	expect(await run()).toBe("waiting-usb");
+	expect(autoconnect()).toBe("no");
 	expect(
-		await prepareCellularActivation(
-			UUID,
-			f.target(),
-			undefined,
-			f.current,
-			deps,
-		),
-	).toBe("waiting-usb");
-	expect(f.calls).toContain("qmap-fix");
+		[...f.records.values()].some((record) => record.kind === "profile"),
+	).toBe(true);
+	olderBuild();
+	expect(await run()).toBe("pending");
+	expect(await run()).toBe("ready");
+	expect(f.raw()).toBe("Y");
+	expect(autoconnect()).toBe("no");
 });
 
 test("a carrier table APN whose row is no longer selected stays preserved", async () => {

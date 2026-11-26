@@ -46,6 +46,7 @@ import {
 	nmConnAdd,
 	nmConnGetFields,
 	nmConnSetFields,
+	nmConnsGet,
 } from "../network/network-manager.ts";
 import { modemTac } from "../system/support-export.ts";
 import {
@@ -437,7 +438,13 @@ async function addConnectionForModem(
 	const hint = config.apn_hint;
 	const fromDatabase =
 		config.autoconfig && hint?.source === "provider-database";
-	const planned = fromDatabase ? randomUUID() : undefined;
+	// One planned uuid per modem and SIM for this process: an add whose outcome
+	// stayed unknown is retried under the same uuid and records, not new ones.
+	const pairKey = JSON.stringify([modemId, simId]);
+	const planned = fromDatabase
+		? (plannedDatabaseUuids.get(pairKey) ?? randomUUID())
+		: undefined;
+	if (planned !== undefined) plannedDatabaseUuids.set(pairKey, planned);
 	if (planned !== undefined && hint?.source === "provider-database") {
 		const recorded = await recordDatabaseApn(
 			{ uuid: planned, deviceId: modemId, simId },
@@ -481,28 +488,29 @@ async function addConnectionForModem(
 		nmConfig["gsm.sim-operator-id"] = operatorId;
 	}
 
-	const uuid = await nmConnAdd(nmConfig);
-	// No reply proves no profile: nmcli can commit it and still time out. The
-	// records stay, keyed by a uuid nothing else will ever hold, so a profile
-	// that does exist under it is still read as the database's.
-	if (written && hint?.source === "provider-database" && uuid !== undefined) {
-		if (uuid !== planned) {
+	let uuid = await nmConnAdd(nmConfig);
+	if (written && hint?.source === "provider-database" && planned) {
+		const identity = { uuid: planned, deviceId: modemId, simId };
+		if (uuid === undefined) {
+			// No reply proves no profile: nmcli can commit it and still time out,
+			// even after a listing without it. A committed one is adopted; else
+			// the records stay with the planned uuid, which the next attempt for
+			// this modem and SIM reuses, so retries add no further records.
+			if (await plannedProfilePresent(identity)) uuid = planned;
+		} else if (uuid !== planned) {
 			// nmcli filed it under another uuid (it honours `connection.uuid`, so
 			// only a stand-in does this): record it there, or hand the lookup back
 			// to NetworkManager so the profile never reads as someone's manual APN.
-			const recorded = await recordDatabaseApn(
-				{ uuid, deviceId: modemId, simId },
-				hint,
-			);
-			if (recorded)
-				await forgetDatabaseApn({ uuid: planned, deviceId: modemId, simId });
-			else {
+			const recorded = await recordDatabaseApn({ ...identity, uuid }, hint);
+			if (recorded) await forgetDatabaseApn(identity);
+			else if (
 				await nmConnSetFields(uuid, {
 					"gsm.auto-config": "yes",
 					"gsm.apn": "",
 					"gsm.username": "",
 					"gsm.password": "",
-				});
+				})
+			) {
 				Object.assign(config, {
 					autoconfig: true,
 					apn: "internet",
@@ -510,8 +518,15 @@ async function addConnectionForModem(
 					password: "",
 				});
 				delete config.apn_hint;
+			} else {
+				// Neither recorded nor handed back: not a profile to adopt.
+				logger.warn("new gsm profile left without its APN record", {
+					module: "modems",
+				});
+				uuid = undefined;
 			}
 		}
+		if (uuid !== undefined) plannedDatabaseUuids.delete(pairKey);
 	}
 	if (uuid) {
 		config.conn = uuid;
@@ -544,6 +559,21 @@ async function recordDatabaseApn(
 		await forgetDatabaseApn(identity);
 		return false;
 	}
+}
+
+const plannedDatabaseUuids = new Map<string, string>();
+
+/** Whether NetworkManager holds the planned profile, on its own fields. */
+async function plannedProfilePresent(
+	identity: CarrierIntentIdentity,
+): Promise<boolean> {
+	const rows = await nmConnsGet("uuid");
+	if (!rows?.includes(identity.uuid)) return false;
+	const fields = await nmConnGetFields(identity.uuid, [
+		"gsm.device-id",
+		"gsm.sim-id",
+	] as const);
+	return fields?.[0] === identity.deviceId && fields[1] === identity.simId;
 }
 
 async function forgetDatabaseApn(identity: CarrierIntentIdentity) {

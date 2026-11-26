@@ -973,6 +973,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["network change safety: tick failed: ", ""],
 	["network-ingest: mediamtx.yml read failed"],
 	["network-ingest: refresh degraded"],
+	["new gsm profile left without its APN record"],
 	["nmApConnAdd: connection add failed"],
 	["nmApConnAdd: profile creation receipt could not be verified"],
 	["nmConnGetFields: profile read failed"],

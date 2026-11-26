@@ -17,6 +17,7 @@ import {
 	reconcileAutomaticCarrierProfile,
 	restoreAutomaticCarrierProfile,
 } from "./automatic-carrier-profile.ts";
+import { preferGsmConnection } from "./gsm-connections.ts";
 import { selectSubscription } from "./subscription-policy.ts";
 
 const identity = {
@@ -159,4 +160,33 @@ test("a carrier row overrides a database APN, and its rollback gives it back", a
 		origin: "provider-database",
 		network: "23217",
 	});
+});
+
+test("among idle profiles for one SIM, the one with the database's record wins", () => {
+	const profile = (uuid: string) => ({
+		state: "",
+		uuid,
+		deviceId: identity.deviceId,
+		simId: identity.simId,
+		operatorId: "23217",
+		apn: "",
+		username: "",
+		password: "",
+		roaming: true,
+		network: "",
+		autoconfig: true,
+	});
+	// A disarmed duplicate with the lower uuid would otherwise win and have its
+	// Automatic APN copied over the database APN.
+	const duplicate = profile("00000000-0000-4000-8000-000000000001");
+	const recorded = {
+		...profile("00000000-0000-4000-8000-000000000002"),
+		apn: "web",
+		apnOrigin: { origin: "provider-database", network: "23217" } as const,
+	};
+	expect(preferGsmConnection(duplicate, recorded)).toBe(recorded);
+	expect(preferGsmConnection(recorded, duplicate)).toBe(recorded);
+	// The profile NetworkManager uses still wins over both.
+	const active = { ...duplicate, state: "activated" };
+	expect(preferGsmConnection(recorded, active)).toBe(active);
 });

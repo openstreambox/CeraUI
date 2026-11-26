@@ -132,8 +132,8 @@ function scriptBoard(
 		profiles?: Record<string, Record<string, string>>;
 		more?: ScriptedModem[];
 		ignoreUuid?: boolean;
-		/** nmcli commits the profile but its reply is lost. */
-		lostReply?: boolean;
+		/** nmcli's reply is lost, after committing the profile or before. */
+		lostReply?: "committed" | "not-committed";
 	},
 ): Array<Record<string, string>> {
 	saved = { ...(opts.profiles ?? {}) };
@@ -162,6 +162,8 @@ modem.generic.ports.value[1] : wwan${index} (net)`;
 				return Object.keys(saved)
 					.map((uuid) => `${uuid}:gsm:`)
 					.join("\n");
+			if (args.join(" ") === "--terse --fields uuid connection show")
+				return Object.keys(saved).join("\n");
 			if (args[0] === "connection" && args[1] === "add") {
 				const fields: Record<string, string> = {};
 				for (let i = 2; i < args.length; i += 2) {
@@ -170,6 +172,8 @@ modem.generic.ports.value[1] : wwan${index} (net)`;
 					if (field !== undefined && value !== undefined) fields[field] = value;
 				}
 				added.push(fields);
+				if (opts.lostReply === "not-committed")
+					throw new Error("nmcli timed out");
 				const planned = fields["connection.uuid"];
 				if (planned)
 					atAdd.push(
@@ -193,7 +197,7 @@ modem.generic.ports.value[1] : wwan${index} (net)`;
 					"connection.timestamp": "0",
 					...fields,
 				};
-				if (opts.lostReply) throw new Error("nmcli timed out");
+				if (opts.lostReply === "committed") throw new Error("nmcli timed out");
 				return `Connection 'gsm' (${uuid}) successfully added.`;
 			}
 			if (args[0] === "con" && args[1] === "modify") {
@@ -633,33 +637,43 @@ test("a profile nmcli files under another uuid keeps its record", async () => {
 	});
 });
 
-test("a lost nmcli reply keeps the records of a profile it may have created", async () => {
+test("a lost nmcli reply adopts the profile it committed", async () => {
 	const added = scriptBoard({
 		simHome: "23217",
 		serving: "26202",
-		lostReply: true,
+		lostReply: "committed",
 	});
 	await registerModemSafe(0);
 	const planned = added[0]?.["connection.uuid"] ?? "";
 	expect(saved[planned]).toBeDefined();
-	expect(getModem(0)?.config?.conn).toBeUndefined();
+	const modem = getModem(0);
+	expect(modem?.config).toMatchObject({ conn: planned, autoconfig: true });
 	expect(await records(planned)).toMatchObject({
 		intent: { pendingApn: "web" },
 		provenance: { origin: "provider-database" },
 	});
-	// The next registration finds the committed profile, still the database's.
-	resetGsmConnections();
-	removeModem(0);
-	scriptBoard({
-		simHome: "23217",
-		serving: "26202",
-		profiles: { ...saved },
-	});
-	await registerModemSafe(0);
-	const modem = getModem(0);
-	expect(modem?.config).toMatchObject({ conn: planned, autoconfig: true });
 	const source = modem && fromMmcliModem(0, modem).config;
 	expect(source && resolveWireConfig(source, true).apn_source).toBe(
 		"provider-database",
 	);
+});
+
+test("an add that never committed is retried under the same uuid and records", async () => {
+	const added = scriptBoard({
+		simHome: "23217",
+		serving: "26202",
+		lostReply: "not-committed",
+	});
+	await registerModemSafe(0);
+	expect(getModem(0)?.config?.conn).toBeUndefined();
+	resetGsmConnections();
+	removeModem(0);
+	await registerModemSafe(0);
+	expect(added).toHaveLength(2);
+	const planned = added[0]?.["connection.uuid"] ?? "";
+	expect(added[1]?.["connection.uuid"]).toBe(planned);
+	expect(await records(planned)).toMatchObject({
+		intent: { pendingApn: "web" },
+		provenance: { origin: "provider-database" },
+	});
 });
