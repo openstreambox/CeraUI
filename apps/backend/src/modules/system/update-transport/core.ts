@@ -139,20 +139,7 @@ function sourceUrl(uri: string, suite: string): string | undefined {
 	}
 }
 
-/**
- * A source's `Signed-By` value as its validator (image-apt-source.ts) and
- * this parser both read it: whitespace around the path is not part of it.
- */
-export function signedByValue(value: string | undefined): string {
-	return (value ?? "").trim();
-}
-
-export function parseDebianSources(
-	text: string,
-	// An image with its own apt source: whatever host it names is a repository
-	// to probe like any other, the first-party archive's host included.
-	imageSource = false,
-): DebianSource[] {
+export function parseDebianSources(text: string): DebianSource[] {
 	const sources: DebianSource[] = [];
 	for (const stanza of text.split(/\r?\n\s*\r?\n/)) {
 		const fields = new Map<string, string>();
@@ -173,19 +160,12 @@ export function parseDebianSources(
 			fields.get("enabled") !== "no" &&
 			(fields.get("types") ?? "deb").split(/\s+/).includes("deb")
 		) {
-			// The image's own source is read as its validator read it; every
-			// other source's value is taken as it always was.
-			const keyring = imageSource
-				? signedByValue(fields.get("signed-by"))
-				: fields.get("signed-by");
+			const keyring = fields.get("signed-by");
 			if (fields.has("uris") && fields.has("suites")) {
 				for (const uri of (fields.get("uris") ?? "").split(/\s+/))
 					for (const suite of (fields.get("suites") ?? "").split(/\s+/)) {
 						const url = sourceUrl(uri, suite);
-						if (
-							url &&
-							(imageSource || new URL(url).hostname !== "apt.ceralive.tv")
-						)
+						if (url && new URL(url).hostname !== "apt.ceralive.tv")
 							sources.push({
 								url,
 								keyring: keyring && /^\/[\w./-]+$/.test(keyring) ? keyring : "",
@@ -200,7 +180,7 @@ export function parseDebianSources(
 			if (!match) continue;
 			const keyring = match[1]?.match(/(?:^|\s)signed-by=(\/[^\s]+)/i)?.[1];
 			const url = sourceUrl(match[2] ?? "", match[3] ?? "");
-			if (url && (imageSource || new URL(url).hostname !== "apt.ceralive.tv"))
+			if (url && new URL(url).hostname !== "apt.ceralive.tv")
 				sources.push({
 					url,
 					keyring: keyring && /^\/[\w./-]+$/.test(keyring) ? keyring : "",

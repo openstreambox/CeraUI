@@ -62,7 +62,7 @@ useSessionOwnerForFile();
 useInstallHarness();
 
 const STREAMING = { kind: "failed", reason: "streaming" } as const;
-const TOKEN = "k7Qm2xV9pL4sT8wZ";
+const TOKEN = "k7Qm2xV9pL4sT8wZb3Nc";
 
 /** The install standing at the first `label` among its waits. */
 async function standingAt(variant: Variant, label: string) {
@@ -285,6 +285,79 @@ describe("updates are turned off during the install's refresh", () => {
 		"and the refresh then fails: the install ends as turned off, not as a failed refresh",
 		async () => {
 			const { box } = await standingAt("orchestrated", REFRESH_COMMAND);
+			const { sequencer } = box;
+			setup.apt_update_enabled = false;
+			sequencer.step("fail");
+			await sequencer.drain();
+			expect(getUpdateState()).toMatchObject({
+				kind: "failed",
+				reason: "discovery_failed",
+			});
+			expect(failedFrames(box.frames)).toEqual([
+				{ kind: "failed", reason: "discovery_failed" },
+			]);
+			await sequencer.outside(() => runOrchestratorTick());
+			await expectEndedBeforeLaunch(box, "discovery_failed", false);
+		},
+		TIMEOUT_MS,
+	);
+});
+
+describe("the Packages card rechecks before the orchestrator has looked", () => {
+	it(
+		"the refused install still reaches the orchestrator, which does not stay in downloading",
+		async () => {
+			// The install's own discovery fails: refused, with nobody admitting
+			// a stream, so the orchestrator learns of it at its next tick.
+			const { box } = await standingAt(
+				"orchestrated",
+				"apt-get -s (discovery)",
+			);
+			const { sequencer } = box;
+			sequencer.step("fail");
+			await sequencer.drain();
+			expect(getUpdateState().kind).toBe("failed");
+			expect(installDraining()).toBe(false);
+			expect(getOrchestratorState().phase).toBe("downloading");
+			// Before that tick the card rechecks: the failure is cleared and the
+			// offer found again.
+			sequencer.disarm();
+			expect(sequencer.outside(() => triggerManualUpdateCheck())).toBe(true);
+			for (let turn = 0; turn < 200; turn++) {
+				if (getUpdateState().kind === "available") break;
+				await settleEventLoop(1);
+			}
+			await settleEventLoop(5);
+			expect(getUpdateState().kind).toBe("available");
+			expect(getOrchestratorState().phase).toBe("downloading");
+			// The tick: the refusal is recorded from what the install kept for
+			// it, though the wire no longer shows it.
+			await sequencer.outside(() => runOrchestratorTick());
+			await settleEventLoop(5);
+			expect(getOrchestratorState().phase).not.toBe("downloading");
+			const failed = () =>
+				box.emitted.filter(({ code }) => code === "update_failed");
+			expect(failed()).toEqual([
+				{
+					code: "update_failed",
+					params: { stage: "download", reason: PACKAGE_INSTALL_REFUSED },
+				},
+			]);
+			// It was taken once: a further tick records nothing again.
+			await sequencer.outside(() => runOrchestratorTick());
+			expect(failed()).toHaveLength(1);
+			await expectOfferAtNextCheck(box);
+			expect(box.unit.unit.submissions).toBe(0);
+		},
+		TIMEOUT_MS,
+	);
+});
+
+describe("updates are turned off during the final download under the pin", () => {
+	it(
+		"and the download then fails: the install ends as turned off, not with apt's error",
+		async () => {
+			const { box } = await standingAt("pinned", DOWNLOAD);
 			const { sequencer } = box;
 			setup.apt_update_enabled = false;
 			sequencer.step("fail");

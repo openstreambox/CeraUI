@@ -38,6 +38,7 @@ import {
 	setAptCommandRunnerForTest,
 	setAptReachabilityProbeForTest,
 	startSoftwareUpdate,
+	takePackageAttemptEnd,
 	triggerManualUpdateCheck,
 } from "../modules/system/software-updates.ts";
 import { setStreamLivenessSourceForTest } from "../modules/system/stream-liveness-source.ts";
@@ -76,7 +77,7 @@ import { armedMarkerFixture } from "./software-updates-marker-harness.ts";
 useSessionOwnerForFile();
 
 const HOST = "updates.example.org";
-const TOKEN = "k7Qm2xV9pL4sT8wZ";
+const TOKEN = "k7Qm2xV9pL4sT8wZb3Nc";
 const URI = `https://${HOST}/${TOKEN}/apt`;
 const SUITE = "rock-5b-plus-2026.11.6";
 const EMERGENCY = `${SUITE}-emergency`;
@@ -433,7 +434,7 @@ function orchestrator(
 			runPackageCheck: runSoftwareUpdateCheck,
 			startPackageInstall: () => startSoftwareUpdate(),
 			getPackageInstallWireState: getUpdateState,
-			packageFailedBeforeLaunch,
+			takePackageAttemptEnd,
 			stopPackageInstallUnit: async () => {
 				stops.count++;
 				abortAptTransferForStream();
@@ -1374,6 +1375,93 @@ describe("the refused install is never stranded", () => {
 		);
 		expect(JSON.stringify(said)).toContain("package-capabilities");
 	});
+
+	it("a retry whose pending-list cleanup fails during a stream waits, and the due image check runs", async () => {
+		await box("simulation");
+		let live = false;
+		const { counts, quarantine } = orchestrator({ streamLive: () => live });
+		await attempt();
+		expect(getOrchestratorState().failureReason).toBe(PACKAGE_INSTALL_REFUSED);
+		// A stream is live, and the pending list cannot be cleared just now.
+		live = true;
+		setStreamLivenessSourceForTest(() => "streaming");
+		const clear = quarantine.clearPending.bind(quarantine);
+		let faults = 1;
+		quarantine.clearPending = async () => {
+			if (faults-- > 0) throw new Error("EIO: the pending list");
+			return clear();
+		};
+		setOrchestratorStateForTest({
+			...getOrchestratorState(),
+			osCheck: { ...getOrchestratorState().osCheck, nextAttemptAt: 0 },
+		});
+		const before = getOrchestratorState().packageCheck;
+		const os = counts.osChecks;
+		// The tick is not rejected: the package side's fault is logged, its
+		// check waits, and the image check that was due runs.
+		await runOrchestratorTick();
+		expect(
+			(spies[1]?.mock.calls ?? []).map(([message]) => String(message)),
+		).toContain(
+			"update-orchestrator: clearing a refused install's pending list failed; the package check waits",
+		);
+		expect(getOrchestratorState().packageCheck).toEqual(before);
+		expect(counts.osChecks).toBe(os + 1);
+		quarantine.clearPending = clear;
+		live = false;
+		setStreamLivenessSourceForTest(null);
+		await runOrchestratorTick();
+		expect(getUpdateState().kind).toBe("available");
+	});
+
+	it.each([
+		"the pending list is cleared",
+		"the capabilities are read",
+	] as const)(
+		"updates turned off while %s: no check ran, so the due image check runs on that tick",
+		async (during) => {
+			await box("simulation");
+			const previous = setup.apt_update_enabled;
+			let armed = false;
+			let reads = 0;
+			const { counts, quarantine } = orchestrator({
+				onCapabilityRead: () => {
+					// The retry's own read is the second of a tick.
+					if (armed && during === "the capabilities are read" && ++reads === 2)
+						setup.apt_update_enabled = false;
+				},
+			});
+			await attempt();
+			expect(getOrchestratorState().failureReason).toBe(
+				PACKAGE_INSTALL_REFUSED,
+			);
+			const clear = quarantine.clearPending.bind(quarantine);
+			quarantine.clearPending = async () => {
+				await clear();
+				if (armed && during === "the pending list is cleared")
+					setup.apt_update_enabled = false;
+			};
+			setOrchestratorStateForTest({
+				...getOrchestratorState(),
+				osCheck: { ...getOrchestratorState().osCheck, nextAttemptAt: 0 },
+			});
+			const before = getOrchestratorState().packageCheck;
+			const os = counts.osChecks;
+			armed = true;
+			try {
+				await runOrchestratorTick();
+				expect(setup.apt_update_enabled).toBe(false);
+				// Nothing was dispatched for packages, and the image check did
+				// not slip to the next tick.
+				expect(getOrchestratorState().packageCheck).toEqual(before);
+				expect(getOrchestratorState().phase).not.toBe("checking");
+				expect(counts.osChecks).toBe(os + 1);
+			} finally {
+				setup.apt_update_enabled = previous;
+				quarantine.clearPending = clear;
+			}
+		},
+	);
 
 	it("on cellular only, the scheduled check waits and Check now still runs it", async () => {
 		await box("simulation");

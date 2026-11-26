@@ -17,7 +17,7 @@ import {
 	wipePrivateCurlConfigs,
 } from "../modules/system/curl-private-url.ts";
 
-const TOKEN = "k7Qm2xV9pL4sT8wZ";
+const TOKEN = "k7Qm2xV9pL4sT8wZb3Nc";
 const URL = `https://updates.example.org/${TOKEN}/apt/dists/suite/InRelease`;
 
 /** Files as an object: every file step is recorded, removals can fail. */
@@ -199,13 +199,17 @@ describe("the backend's start", () => {
 		]);
 	});
 
-	it("is asked for at boot with the single-instance rule, nothing else", () => {
+	it("is asked for at boot with the lock this process actually holds", () => {
 		const main = readFileSync(
 			path.join(import.meta.dir, "..", "main.ts"),
 			"utf8",
 		);
 		expect(main.match(/wipePrivateCurlConfigs\(/g)).toHaveLength(1);
-		expect(main).toContain("wipePrivateCurlConfigs(backendSingletonApplies())");
+		// Not the policy that a lock applies: boot goes on without one when its
+		// directory is unavailable, and then nothing is wiped.
+		expect(main).toContain(
+			"wipePrivateCurlConfigs(holdsBackendSingletonLease())",
+		);
 	});
 
 	it("reports a wipe that fails, and goes on", async () => {

@@ -54,7 +54,7 @@ import {
 } from "./helpers/orchestrator-runtime-harness.ts";
 
 const HOST = "updates.example.org";
-const TOKEN = "k7Qm2xV9pL4sT8wZ";
+const TOKEN = "k7Qm2xV9pL4sT8wZb3Nc";
 const URI = `https://${HOST}/${TOKEN}/apt`;
 const SUITE = "rock-5b-plus-2026.11.6";
 const SOURCES_FILE = "/etc/apt/sources.list.d/openstreambox.sources";
@@ -279,7 +279,7 @@ function orchestrator(wire: () => UpdateState, beforeLaunch = false) {
 	setOrchestratorRuntimeDepsForTest(
 		fakeDeps({
 			quarantine: testQuarantine(),
-			packageFailedBeforeLaunch: () => beforeLaunch,
+			takePackageAttemptEnd: () => (beforeLaunch ? wire() : null),
 			stopPackageInstallUnit: async () => {},
 			loadCapabilities: async () => ({
 				mode: "capable",

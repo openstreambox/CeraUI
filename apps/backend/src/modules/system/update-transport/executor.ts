@@ -34,8 +34,8 @@ import { runCurlWithPrivateUrl } from "../curl-private-url.ts";
 import {
 	activeImageAptSource,
 	carriesImageAptSecret,
+	imageAptSourceIndexes,
 	imageAptSourceInUse,
-	imageAptSourcesText,
 } from "../image-apt-source.ts";
 import { updateChannelUrl } from "../update-channel-url.ts";
 import { parseAuthorityJson } from "../update-orchestrator/strict-authority-json.ts";
@@ -88,10 +88,16 @@ export type UpdateTransportDeps = {
 	dongleIfnames: () => string[];
 };
 
+/**
+ * The image's own source, from what its validator parsed: its two signed
+ * indexes and the keyring that signs them. Undefined on any other image.
+ */
+function imageDebianSources(): DebianSource[] | undefined {
+	const keyring = activeImageAptSource()?.keyring ?? "";
+	return imageAptSourceIndexes()?.map(({ url }) => ({ url, keyring }));
+}
+
 async function readSources(): Promise<string> {
-	// An image with its own apt source: only that file, whatever else is on disk.
-	const only = imageAptSourcesText();
-	if (only !== undefined) return only;
 	const names = (await readdir(SOURCE_DIR))
 		.filter((name) => /\.(?:sources|list)$/.test(name))
 		.sort();
@@ -543,7 +549,7 @@ async function probeUpdateTransport(
 	);
 	const sources =
 		profile.profile === "apt"
-			? parseDebianSources(await deps.readSources(), imageAptSourceInUse())
+			? (imageDebianSources() ?? parseDebianSources(await deps.readSources()))
 			: [];
 	if (profile.profile === "apt" && sources.length === 0)
 		return rankTransports([]);

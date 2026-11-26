@@ -56,12 +56,12 @@ import {
 	type InstallUnitVerdict,
 	imageSourceClockWaits,
 	isAptAllDiscovery,
-	packageFailedBeforeLaunch,
 	packageInstallDraining,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
 	type SoftwareUpdateError,
 	startSoftwareUpdate,
+	takePackageAttemptEnd,
 	type UpdateStartOutcome,
 } from "../software-updates.ts";
 import { isStreamConfirmedIdle } from "../stream-liveness-source.ts";
@@ -292,8 +292,12 @@ export interface OrchestratorRuntimeDeps {
 	readonly runPackageCheck: () => Promise<SoftwareUpdateError>;
 	readonly startPackageInstall: () => UpdateStartOutcome;
 	readonly getPackageInstallWireState: () => UpdateState;
-	/** Image apt source: the current install ended before its unit launched. */
-	readonly packageFailedBeforeLaunch: () => boolean;
+	/**
+	 * Image apt source: the terminal state of the current install if it ended
+	 * before its unit launched, kept until taken here (once). A recheck by the
+	 * Packages card may have cleared what the wire shows meanwhile.
+	 */
+	readonly takePackageAttemptEnd: () => UpdateState | null;
 	/** Image apt source: an install that ended still has a wait in flight. */
 	readonly packageInstallDraining: () => boolean;
 	/**
@@ -437,7 +441,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	runPackageCheck: runSoftwareUpdateCheck,
 	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
 	getPackageInstallWireState: getUpdateState,
-	packageFailedBeforeLaunch,
+	takePackageAttemptEnd,
 	packageInstallDraining,
 	admitStreamAtPackageLaunch,
 	stopPackageInstallUnit: stopPackageInstallUnitForStream,
@@ -1311,8 +1315,9 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 
 /**
  * `waitsOutStream`: the scheduled check on an image with its own apt source.
- * Resolves true when it did not run because a stream is live: nothing was
- * dispatched, and the caller treats the check as deferred.
+ * Resolves true when no check ran for it: nothing was dispatched (a stream is
+ * live, an ended install drains, admission closed or the cleanup failed
+ * during its waits), and the caller treats the check as deferred.
  */
 async function runPackageCheckCycle(waitsOutStream = false): Promise<boolean> {
 	// Whether a package check may start at all, on what is there right now.
@@ -1321,10 +1326,20 @@ async function runPackageCheckCycle(waitsOutStream = false): Promise<boolean> {
 		aptUpdatesEnabled() &&
 		// Not checked yet, not a failure: the image's own source needs a usable clock.
 		!imageSourceClockWaits();
-	if (!admitted()) return false;
+	if (!admitted()) return waitsOutStream;
 	const before = packageCheckGeneration;
 	if (refusedInstallPending()) {
-		await deps.quarantine.clearPending();
+		try {
+			await deps.quarantine.clearPending();
+		} catch (error) {
+			if (!waitsOutStream) throw error;
+			// The package side's own fault: this check waits, the tick goes on.
+			logger.warn(
+				"update-orchestrator: clearing a refused install's pending list failed; the package check waits",
+				{ error },
+			);
+			return true;
+		}
 		// That was a wait. Updates turned off, another check or anything else
 		// that moved the phase during it means this check does not start: no
 		// dispatch, no event and no backoff for a check that never ran.
@@ -1333,7 +1348,7 @@ async function runPackageCheckCycle(waitsOutStream = false): Promise<boolean> {
 			!refusedInstallPending() ||
 			before !== packageCheckGeneration
 		)
-			return false;
+			return waitsOutStream;
 	}
 	// Waiting out a stream: everything that waits comes first (the cleanup
 	// above, the capability read), so the one look below is the last thing
@@ -1349,7 +1364,7 @@ async function runPackageCheckCycle(waitsOutStream = false): Promise<boolean> {
 			state.phase !== phase ||
 			before !== packageCheckGeneration
 		)
-			return false;
+			return true;
 		if (deps.isStreamLive() || deps.packageInstallDraining()) return true;
 	}
 	const generation = ++packageCheckGeneration;
@@ -1593,19 +1608,20 @@ async function pollPackageInstallProgress(): Promise<void> {
 	const now = deps.now();
 	// Image apt source: an install that ended before its unit launched is one
 	// failure origin. Nothing reached dpkg, so nothing is quarantined, and the
-	// next package or image check leaves it.
-	if (
-		state.phase === "downloading" &&
-		(wire.kind === "failed" || wire.kind === "update_preflight_failed") &&
-		imageAptSourceInUse() &&
-		deps.packageFailedBeforeLaunch()
-	) {
+	// next package or image check leaves it. Its terminal state is read from
+	// where the package code keeps it for this poll, not from the wire: the
+	// Packages card's own recheck may have cleared the wire's failure already.
+	const ended =
+		state.phase === "downloading" && imageAptSourceInUse()
+			? deps.takePackageAttemptEnd()
+			: null;
+	if (ended !== null) {
 		dispatch({
 			type: "DOWNLOAD_FAILED",
 			now,
 			reason: PACKAGE_INSTALL_REFUSED,
-			...(wire.kind === "failed" && wire.failure_id !== undefined
-				? { failureId: wire.failure_id }
+			...(ended.kind === "failed" && ended.failure_id !== undefined
+				? { failureId: ended.failure_id }
 				: {}),
 		});
 		return;

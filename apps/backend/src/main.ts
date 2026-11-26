@@ -26,6 +26,7 @@ import pkg from "../package.json" with { type: "json" };
 import {
 	backendSingletonApplies,
 	enforceBackendSingleton,
+	holdsBackendSingletonLease,
 } from "./helpers/backend-singleton.ts";
 import {
 	APP_NAME,
@@ -385,7 +386,7 @@ if (!configAvailableAtBind) {
 // Before anything can probe: private curl configs an earlier process left
 // (each holds the image apt source's access token) go with their directory.
 await guardNonCritical("private-curl-configs", () =>
-	wipePrivateCurlConfigs(backendSingletonApplies()),
+	wipePrivateCurlConfigs(holdsBackendSingletonLease()),
 );
 
 // Recovery must finish before an update may install any new UID routing rule.

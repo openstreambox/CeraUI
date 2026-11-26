@@ -34,7 +34,6 @@ import {
 	AuthorityJsonError,
 	parseAuthorityJson,
 } from "./update-orchestrator/strict-authority-json.ts";
-import { signedByValue } from "./update-transport/core.ts";
 
 export const IMAGE_APT_SOURCE_POLICY =
 	"/usr/lib/ceralive/image-apt-source.json";
@@ -60,8 +59,18 @@ export type ImageAptSource = {
 	/** The URI's first path segment. */
 	readonly token: string;
 	readonly suites: readonly [string, string];
+	/** The keyring its `Signed-By` names. */
+	readonly keyring: string;
 	readonly sourcesFile: string;
-	readonly sourcesText: string;
+};
+
+/** One signed index of the image's source: what a probe fetches and verifies. */
+export type ImageAptSourceIndex = {
+	readonly suite: string;
+	/** The repository, as apt and the probes write it: no trailing slash. */
+	readonly repository: string;
+	/** `<repository>/dists/<suite>/InRelease`. Carries the token. */
+	readonly url: string;
 };
 
 export type ImageAptSourceMode =
@@ -78,8 +87,12 @@ const URI_RE =
 	/^https:\/\/([a-z0-9.-]+)(?::(\d{1,5}))?((?:\/[A-Za-z0-9._~-]+)+)\/?$/;
 const SIGNED_BY_RE = /^\/[\w./-]+$/;
 const ARCHITECTURES_RE = /^[a-z0-9-]+(?: [a-z0-9-]+)*$/;
-// Shorter segments are not secret-like; their URL form is still replaced.
-const BARE_TOKEN_MIN = 8;
+/**
+ * The shortest access token a source may carry. The images' own check allows
+ * none shorter, and a shorter one could not be told from ordinary text when
+ * apt echoes it: such a source is refused, not half redacted.
+ */
+export const IMAGE_APT_TOKEN_MIN = 20;
 
 const policySchema = z
 	.object({
@@ -179,7 +192,7 @@ export function parseImageAptSource(
 			!parsed.suites.every((suite) => suites.includes(suite))
 		)
 			throw new SourceInvalid("suites differ from the record");
-		const signedBy = signedByValue(fields.get("signed-by"));
+		const signedBy = fields.get("signed-by") ?? "";
 		if (!SIGNED_BY_RE.test(signedBy) || signedBy.includes(".."))
 			throw new SourceInvalid("signed-by not a keyring path");
 		const architectures = fields.get("architectures");
@@ -207,6 +220,8 @@ export function parseImageAptSource(
 			url.pathname.replace(/\/+$/, "") !== match[3]
 		)
 			throw new SourceInvalid("URI does not name the recorded host");
+		if ((segments[0] ?? "").length < IMAGE_APT_TOKEN_MIN)
+			throw new SourceInvalid("access token too short");
 		return {
 			kind: "active",
 			source: {
@@ -214,8 +229,8 @@ export function parseImageAptSource(
 				uri: raw.replace(/\/+$/, ""),
 				token: segments[0] ?? "",
 				suites: parsed.suites,
+				keyring: signedBy,
 				sourcesFile: parsed.sourcesFile,
-				sourcesText: sources,
 			},
 		};
 	} catch (error) {
@@ -315,14 +330,24 @@ export function isImageAptSourcePair(pair: readonly string[]): boolean {
 }
 
 /**
- * The apt source text reachability and transport probes read: the image's one
- * file, nothing when its record is invalid, or undefined (read the directory)
- * on any other image.
+ * The image's source as its validator read it, for everything that probes
+ * it: one signed index per suite. Nobody reads the source file a second
+ * time, so what validated and what is probed cannot differ. Undefined on any
+ * other image (its sources are read from disk as always); empty when the
+ * record is invalid, so nothing is probed.
  */
-export function imageAptSourcesText(): string | undefined {
+export function imageAptSourceIndexes():
+	| readonly ImageAptSourceIndex[]
+	| undefined {
 	const mode = imageAptSourceMode();
 	if (mode.kind === "absent") return undefined;
-	return mode.kind === "active" ? mode.source.sourcesText : "";
+	if (mode.kind !== "active") return [];
+	const repository = new URL(mode.source.uri).href.replace(/\/+$/, "");
+	return mode.source.suites.map((suite) => ({
+		suite,
+		repository,
+		url: `${repository}/dists/${suite}/InRelease`,
+	}));
 }
 
 /** Whether the image's clock gate says the wall clock is usable. */
@@ -363,9 +388,8 @@ export function redactImageAptSecret(text: string): string {
 	let out = text;
 	for (const uri of new Set([source.uri, `https://${source.host}${path}`]))
 		out = out.split(uri).join(`https://${source.host}`);
-	if (source.token.length >= BARE_TOKEN_MIN)
-		out = out.split(source.token).join("[redacted]");
-	return out;
+	// Every bare copy too, whatever the token's length.
+	return out.split(source.token).join("[redacted]");
 }
 
 /** Whether `text` holds the image source's URI or its token. */

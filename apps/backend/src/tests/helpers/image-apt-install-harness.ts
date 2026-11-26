@@ -83,7 +83,6 @@ import {
 	getAvailableUpdates,
 	getUpdateState,
 	installAttemptStateForTest,
-	packageFailedBeforeLaunch,
 	packageInstallDraining,
 	resetAptReachabilityProbeForTest,
 	resetSoftwareUpdateCheckRunner,
@@ -92,6 +91,7 @@ import {
 	setAptCommandRunnerForTest,
 	setDelayedStartTimerForTest,
 	startSoftwareUpdate,
+	takePackageAttemptEnd,
 	triggerManualUpdateCheck,
 } from "../../modules/system/software-updates.ts";
 import { setStreamLivenessSourceForTest } from "../../modules/system/stream-liveness-source.ts";
@@ -132,7 +132,7 @@ import {
 } from "./orchestrator-runtime-harness.ts";
 
 const HOST = "updates.example.org";
-const TOKEN = "k7Qm2xV9pL4sT8wZ";
+const TOKEN = "k7Qm2xV9pL4sT8wZb3Nc";
 const URI = `https://${HOST}/${TOKEN}/apt`;
 const SUITE = "rock-5b-plus-2026.11.6";
 const EMERGENCY = `${SUITE}-emergency`;
@@ -871,7 +871,7 @@ export async function acceptedInstall(variant: Variant) {
 				return outcome;
 			},
 			getPackageInstallWireState: getUpdateState,
-			packageFailedBeforeLaunch,
+			takePackageAttemptEnd,
 			// The real stop: its `systemctl stop` is answered by the unit above.
 			stopPackageInstallUnit: stopPackageInstallUnitForStream,
 			checkOsManifest: async () => {

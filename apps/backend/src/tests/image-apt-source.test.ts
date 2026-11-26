@@ -9,7 +9,11 @@ import { setSpawnOverrideForTest } from "../helpers/effect-owner.ts";
 import { logger } from "../helpers/logger.ts";
 import { discoverAptAllPackages } from "../modules/system/apt-all-packages.ts";
 import { policySources } from "../modules/system/apt-all-source-policy.ts";
-import { readAptSources } from "../modules/system/apt-reachability.ts";
+import {
+	probeAptReachability,
+	readAptSources,
+	resetAptReachabilityCacheForTest,
+} from "../modules/system/apt-reachability.ts";
 import {
 	initCeraliveUpdateNotice,
 	retireCeraliveUpdateOffer,
@@ -19,8 +23,9 @@ import {
 	activeImageAptSource,
 	dpkgJournalPending,
 	IMAGE_APT_SOURCE_POLICY,
+	IMAGE_APT_TOKEN_MIN,
+	imageAptSourceIndexes,
 	imageAptSourceMode,
-	imageAptSourcesText,
 	imageClockUsable,
 	parseImageAptSource,
 	redactImageAptSecret,
@@ -53,10 +58,7 @@ import {
 } from "../modules/system/update-apt-channel.ts";
 import { setUpdateCapabilityPathForTest } from "../modules/system/update-capabilities.ts";
 import { StoredStateReadError } from "../modules/system/update-orchestrator/stored-state-file.ts";
-import {
-	defaultUpdateTransportDeps,
-	selectUpdateTransport,
-} from "../modules/system/update-transport/executor.ts";
+import { selectUpdateTransport } from "../modules/system/update-transport/executor.ts";
 import { getLastTransportSelectionForProfile } from "../modules/system/update-transport/last-selection.ts";
 import { notificationRemove } from "../modules/ui/notifications.ts";
 import * as compat from "../rpc/compat.ts";
@@ -67,7 +69,7 @@ useSessionOwnerForFile();
 // The two files an image with its own source ships (image-building-pipeline
 // mkosi/runtime/image-apt-source.sh), with a neutral host and a token-shaped segment.
 const HOST = "updates.example.org";
-const TOKEN = "k7Qm2xV9pL4sT8wZ";
+const TOKEN = "k7Qm2xV9pL4sT8wZb3Nc";
 const URI = `https://${HOST}/${TOKEN}/apt`;
 const SUITE = "rock-5b-plus-2026.11.6";
 const EMERGENCY = `${SUITE}-emergency`;
@@ -201,8 +203,8 @@ describe("the image's apt source record", () => {
 				uri: URI,
 				token: TOKEN,
 				suites: [SUITE, EMERGENCY],
+				keyring: "/usr/share/keyrings/openstreambox-archive-keyring.pgp",
 				sourcesFile: SOURCES_FILE,
-				sourcesText: SOURCES,
 			},
 		});
 	});
@@ -210,7 +212,7 @@ describe("the image's apt source record", () => {
 	it("is absent on an image without the record", () => {
 		useImageFiles({});
 		expect(imageAptSourceMode()).toEqual({ kind: "absent" });
-		expect(imageAptSourcesText()).toBeUndefined();
+		expect(imageAptSourceIndexes()).toBeUndefined();
 		expect(redactImageAptSecret(`Hit:1 ${URI} ${SUITE} InRelease`)).toBe(
 			`Hit:1 ${URI} ${SUITE} InRelease`,
 		);
@@ -319,8 +321,8 @@ describe("the image's apt source record", () => {
 		const warn = spyOn(logger, "warn").mockImplementation(() => logger);
 		try {
 			expect(imageAptSourceMode().kind).toBe("invalid");
-			// Probes read nothing from disk; redaction has nothing to show by host.
-			expect(imageAptSourcesText()).toBe("");
+			// Nothing is probed; redaction has nothing to show by host.
+			expect(imageAptSourceIndexes()).toEqual([]);
 			expect(activeImageAptSource()).toBeUndefined();
 		} finally {
 			warn.mockRestore();
@@ -393,18 +395,37 @@ token was ${TOKEN}
 		);
 	});
 
-	it("leaves a short path segment alone outside the URI", () => {
-		const shortPolicy = POLICY;
-		useImageFiles({
-			[IMAGE_APT_SOURCE_POLICY]: shortPolicy,
-			[SOURCES_FILE]: SOURCES.replace(`${URI}/`, `https://${HOST}/apt/`),
-		});
-		expect(activeImageAptSource()?.token).toBe("apt");
+	it.each([
+		["no token at all", `https://${HOST}/apt/`],
+		["seven characters", `https://${HOST}/Ab3dE7g/apt/`],
+		["one short of the minimum", `https://${HOST}/${TOKEN.slice(1)}/apt/`],
+	])(
+		"refuses a source whose access token is too short to redact safely: %s",
+		(_name, uri) => {
+			// A token that short could not be told from ordinary text when apt
+			// echoes it. The source is refused, so no apt run ever carries it.
+			expect(TOKEN.length).toBe(IMAGE_APT_TOKEN_MIN);
+			expect(
+				parseImageAptSource(POLICY, (file) =>
+					file === SOURCES_FILE ? SOURCES.replace(`${URI}/`, uri) : null,
+				),
+			).toEqual({
+				kind: "invalid",
+				problem: "sources: access token too short",
+			});
+		},
+	);
+
+	it("removes every bare copy of the shortest token a source may carry", () => {
+		useImageSource();
+		expect(activeImageAptSource()?.token).toBe(TOKEN);
 		expect(
 			redactImageAptSecret(
-				`Hit:1 https://${HOST}/apt ${SUITE} InRelease (apt)`,
+				`E: 403 Forbidden for ${TOKEN} (token=${TOKEN}) at ${URI}/pool`,
 			),
-		).toBe(`Hit:1 https://${HOST} ${SUITE} InRelease (apt)`);
+		).toBe(
+			`E: 403 Forbidden for [redacted] (token=[redacted]) at https://${HOST}/pool`,
+		);
 	});
 
 	it("logs a finished install's apt output by host only", async () => {
@@ -615,8 +636,43 @@ describe("reachability and transport read only the image's file", () => {
 			buildCeraliveSources("arm64"),
 		);
 		useImageSource();
-		expect(await readAptSources(dir)).toBe(SOURCES);
-		expect(await defaultUpdateTransportDeps.readSources()).toBe(SOURCES);
+		// What the validator parsed is what gets probed,
+		expect(imageAptSourceIndexes()).toEqual([
+			{
+				suite: SUITE,
+				repository: URI,
+				url: `${URI}/dists/${SUITE}/InRelease`,
+			},
+			{
+				suite: EMERGENCY,
+				repository: URI,
+				url: `${URI}/dists/${EMERGENCY}/InRelease`,
+			},
+		]);
+		// and no source file is read for it, whatever else is on disk.
+		let read = 0;
+		const probed: (string | undefined)[] = [];
+		resetAptReachabilityCacheForTest();
+		await probeAptReachability({
+			readSources: async () => {
+				read++;
+				return readAptSources(dir);
+			},
+			runProbe: async (_argv, privateUrl) => {
+				probed.push(privateUrl);
+				return { exitCode: 0, stdout: "200 " };
+			},
+			maxAgeMs: 0,
+		});
+		resetAptReachabilityCacheForTest();
+		expect(read).toBe(0);
+		expect([...new Set(probed)].sort()).toEqual(
+			[
+				`${URI}/dists/${EMERGENCY}/InRelease`,
+				`${URI}/dists/${SUITE}/InRelease`,
+			].sort(),
+		);
+		// Any other image reads its sources from the directory as always.
 		useImageFiles({});
 		expect(await readAptSources(dir)).toBe(buildCeraliveSources("arm64"));
 	});

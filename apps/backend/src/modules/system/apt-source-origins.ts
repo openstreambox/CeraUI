@@ -1,4 +1,7 @@
-import { activeImageAptSource } from "./image-apt-source.ts";
+import {
+	activeImageAptSource,
+	imageAptSourceIndexes,
+} from "./image-apt-source.ts";
 
 export type AptOrigin = {
 	readonly url: string;
@@ -51,13 +54,24 @@ function fieldValue(stanza: string, field: string): string | undefined {
 }
 
 function aptProbeUrl(uri: URL, suite: string): string {
-	if (
-		uri.host.toLowerCase() === FIRST_PARTY_APT_HOST &&
-		!isImageAptSourceHost(uri.host)
-	)
+	if (uri.host.toLowerCase() === FIRST_PARTY_APT_HOST)
 		return `${uri.origin}/__tls-probe`;
 	const base = uri.href.replace(/\/+$/, "");
 	return `${base}/dists/${suite.replace(/^\/+|\/+$/g, "")}/InRelease`;
+}
+
+/**
+ * The image's own source as origins, from what its validator parsed
+ * (image-apt-source.ts), never from a second read of its file. Undefined on
+ * any other image; empty when its record is invalid.
+ */
+export function imageAptSourceOrigins(): AptOrigin[] | undefined {
+	return imageAptSourceIndexes()?.map(({ repository, url }) => ({
+		url: repository,
+		host: new URL(repository).host,
+		scheme: "https" as const,
+		probeUrl: url,
+	}));
 }
 
 export function parseAptSourceOrigins(text: string): AptOrigin[] {

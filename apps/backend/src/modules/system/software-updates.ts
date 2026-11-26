@@ -466,6 +466,7 @@ export function resetSoftwareUpdateState(): void {
 	discoveredPackages = [];
 	launchFence.reset();
 	publishedAttemptEnd = null;
+	attemptEndForOrchestrator = null;
 }
 
 export type SoftwareUpdateRecoveryDeps = {
@@ -1326,6 +1327,30 @@ function publishAttemptEnd(reason: string, end: AttemptEnd = {}): void {
 	end.notify?.();
 	broadcastMsg("status", { updating: null, update_state: getUpdateState() });
 	publishedAttemptEnd = JSON.stringify(getUpdateState());
+	const attempt = launchFence.current();
+	if (attempt !== null)
+		attemptEndForOrchestrator = { attempt, state: getUpdateState() };
+}
+
+// Image apt source: how the install in progress ended before its unit
+// launched, kept for the orchestrator until it has taken it. What the wire
+// shows may change first (the Packages card's own recheck clears a failure
+// and finds the offer again); this does not.
+let attemptEndForOrchestrator: {
+	readonly attempt: InstallAttempt;
+	readonly state: UpdateState;
+} | null = null;
+
+/**
+ * Image apt source: the terminal state of the current install, if it ended
+ * before its unit launched and nobody has taken that yet. Taken once: the
+ * orchestrator records the refusal from it.
+ */
+export function takePackageAttemptEnd(): UpdateState | null {
+	const kept = attemptEndForOrchestrator;
+	if (kept === null || kept.attempt !== launchFence.current()) return null;
+	attemptEndForOrchestrator = null;
+	return kept.state;
 }
 
 /**
@@ -2858,6 +2883,9 @@ async function prepareSoftwareUpdate(
 					signal,
 					effects,
 				);
+				// Updates turned off, or a stream, during the download end the
+				// install as that, whatever the download itself returned.
+				effects?.ended();
 				// Image apt source: a download failure no other transport will be
 				// tried after is settled here, when it is known. The routing
 				// teardown that follows is a wait, and a stream admitted during it

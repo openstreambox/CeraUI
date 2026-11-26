@@ -30,14 +30,12 @@ import {
 import { deviceBindingArgs } from "../network/device-bound-probe.ts";
 import {
 	type AptOrigin,
+	imageAptSourceOrigins,
 	isImageAptSourceHost,
 	parseAptSourceOrigins,
 } from "./apt-source-origins.ts";
 import { runCurlWithPrivateUrl } from "./curl-private-url.ts";
-import {
-	carriesImageAptSecret,
-	imageAptSourcesText,
-} from "./image-apt-source.ts";
+import { carriesImageAptSecret } from "./image-apt-source.ts";
 import { parseAuthorityJson } from "./update-orchestrator/strict-authority-json.ts";
 
 export { type AptOrigin, parseAptSourceOrigins } from "./apt-source-origins.ts";
@@ -261,9 +259,6 @@ export function deriveVerdict(
 export async function readAptSources(
 	dir: string = APT_SOURCE_DIR,
 ): Promise<string> {
-	// An image with its own apt source: only that file, whatever else is on disk.
-	const only = imageAptSourcesText();
-	if (only !== undefined) return only;
 	const names = (await readdir(dir))
 		.filter((name) => name.endsWith(".sources") || name.endsWith(".list"))
 		.sort();
@@ -311,7 +306,11 @@ export async function probeAptReachability(
 
 	let origins: AptOrigin[];
 	try {
-		origins = parseAptSourceOrigins(await deps.readSources());
+		// An image with its own apt source is probed at what its validator
+		// parsed, whatever else is on disk; any other image reads its sources.
+		origins =
+			imageAptSourceOrigins() ??
+			parseAptSourceOrigins(await deps.readSources());
 	} catch {
 		const value = deriveVerdict([]);
 		if (deps.ifname === undefined)

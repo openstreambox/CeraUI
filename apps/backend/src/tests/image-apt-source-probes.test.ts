@@ -22,7 +22,10 @@ import {
 	probeAptReachability,
 	resetAptReachabilityCacheForTest,
 } from "../modules/system/apt-reachability.ts";
-import { parseAptSourceOrigins } from "../modules/system/apt-source-origins.ts";
+import {
+	imageAptSourceOrigins,
+	parseAptSourceOrigins,
+} from "../modules/system/apt-source-origins.ts";
 import {
 	curlUrlConfig,
 	runCurlWithPrivateUrl,
@@ -31,12 +34,13 @@ import {
 import {
 	activeImageAptSource,
 	IMAGE_APT_SOURCE_POLICY,
+	imageAptSourceIndexes,
 	setImageAptSourceReaderForTest,
 } from "../modules/system/image-apt-source.ts";
 import { parseDebianSources } from "../modules/system/update-transport/core.ts";
 import { selectUpdateTransport } from "../modules/system/update-transport/executor.ts";
 
-const TOKEN = "k7Qm2xV9pL4sT8wZ";
+const TOKEN = "k7Qm2xV9pL4sT8wZb3Nc";
 const SUITE = "rock-5b-plus-2026.11.6";
 const EMERGENCY = `${SUITE}-emergency`;
 const SOURCES_FILE = "/etc/apt/sources.list.d/openstreambox.sources";
@@ -155,35 +159,6 @@ describe("the image source's URL never reaches curl's command line", () => {
 		);
 	});
 
-	it("whitespace after Signed-By is not part of the keyring's path, for the validator and the probe alike", async () => {
-		const { sources } = imageSource("updates.example.org");
-		const spaced = sources.replace(
-			`Signed-By: ${KEYRING}\n`,
-			`Signed-By: ${KEYRING} \t\n`,
-		);
-		expect(spaced).not.toBe(sources);
-		const files: Record<string, string> = {
-			[IMAGE_APT_SOURCE_POLICY]: `{"schema":1,"sourcesFile":"${SOURCES_FILE}","host":"updates.example.org","origin":"OpenStreamBox","label":"OpenStreamBox","suites":["${SUITE}","${EMERGENCY}"]}`,
-			[SOURCES_FILE]: spaced,
-		};
-		setImageAptSourceReaderForTest((file) => files[file] ?? null);
-		// The record validates with it,
-		expect(activeImageAptSource()?.host).toBe("updates.example.org");
-		// and the transport parser reads the same keyring for both suites,
-		expect(
-			parseDebianSources(spaced, true).map(({ keyring }) => keyring),
-		).toEqual([KEYRING, KEYRING]);
-		// so the per-uplink probe takes neither suite for tampered.
-		const { selection, calls } = await transportProbe(spaced);
-		expect(calls.filter(({ argv }) => argv[0] === "curl").length).toBe(2);
-		expect(JSON.stringify(selection)).not.toContain("tampered");
-		// A source that is not the image's own is read as it always was.
-		expect(parseDebianSources(spaced).map(({ keyring }) => keyring)).toEqual([
-			"",
-			"",
-		]);
-	});
-
 	it("without the record, the URL stays where it was", async () => {
 		setImageAptSourceReaderForTest(() => null);
 		const { calls } = await unboundProbe(
@@ -243,14 +218,129 @@ describe("the image source's URL never reaches curl's command line", () => {
 	});
 });
 
+// Every shape of the source file the validator accepts. Whatever it accepted
+// is what gets probed: no consumer reads the file a second time, so none can
+// read it differently.
+const ACCEPTED_SHAPES: Record<string, (uri: string) => string> = {
+	"as the image writes it": (uri) =>
+		`Types: deb\nURIs: ${uri}/\nSuites: ${SUITE} ${EMERGENCY}\nComponents: main\nSigned-By: ${KEYRING}\n`,
+	"a folded URI with a comment line between": (uri) =>
+		`Types: deb\nURIs:\n# the image's own repository\n ${uri}/\nSuites: ${SUITE} ${EMERGENCY}\nComponents: main\nSigned-By: ${KEYRING}\n`,
+	"trailing whitespace on every value": (uri) =>
+		`Types: deb \t\nURIs: ${uri}/ \nSuites: ${SUITE} ${EMERGENCY}\t\nComponents: main \nSigned-By: ${KEYRING} \t\n`,
+	"suites folded one per line, with a comment": (uri) =>
+		`Types: deb\nURIs: ${uri}/\nSuites:\n ${SUITE}\n# and the emergency suite\n ${EMERGENCY}\nComponents: main\nSigned-By: ${KEYRING}\n`,
+	"the suites in the other order": (uri) =>
+		`Types: deb\nURIs: ${uri}/\nSuites: ${EMERGENCY} ${SUITE}\nComponents: main\nSigned-By: ${KEYRING}\n`,
+	"lower-case field names and tabs": (uri) =>
+		`types:\tdeb\nuris:\t${uri}/\nsuites:\t${SUITE}\t${EMERGENCY}\ncomponents:\tmain\nsigned-by:\t${KEYRING}\n`,
+	"comments around the stanza, an architecture, no trailing slash": (uri) =>
+		`# written by the image build\nTypes: deb\nURIs: ${uri}\nSuites: ${SUITE} ${EMERGENCY}\nComponents: main\nArchitectures: arm64\nSigned-By: ${KEYRING}\n# end\n`,
+	"a folded keyring path": (uri) =>
+		`Types: deb\nURIs: ${uri}/\nSuites: ${SUITE} ${EMERGENCY}\nComponents: main\nSigned-By:\n ${KEYRING}\n`,
+	"the default port spelled out": (uri) =>
+		`Types: deb\nURIs: ${uri.replace("updates.example.org", "updates.example.org:443")}/\nSuites: ${SUITE} ${EMERGENCY}\nComponents: main\nSigned-By: ${KEYRING}\n`,
+};
+
+describe("one parse of the image's source for everything that probes it", () => {
+	const HOST = "updates.example.org";
+	const uri = `https://${HOST}/${TOKEN}/apt`;
+	const urls = [
+		`${uri}/dists/${SUITE}/InRelease`,
+		`${uri}/dists/${EMERGENCY}/InRelease`,
+	].sort();
+	const never = async (): Promise<string> => {
+		throw new Error("the source file is not read a second time");
+	};
+
+	it.each(Object.keys(ACCEPTED_SHAPES))(
+		"%s: the validator, the unbound probe and the per-uplink probe agree",
+		async (shape) => {
+			const files: Record<string, string> = {
+				[IMAGE_APT_SOURCE_POLICY]: `{"schema":1,"sourcesFile":"${SOURCES_FILE}","host":"${HOST}","origin":"OpenStreamBox","label":"OpenStreamBox","suites":["${SUITE}","${EMERGENCY}"]}`,
+				[SOURCES_FILE]: (ACCEPTED_SHAPES[shape] as (uri: string) => string)(
+					uri,
+				),
+			};
+			setImageAptSourceReaderForTest((file) => files[file] ?? null);
+			// The validator accepts it and holds the parsed source.
+			expect(activeImageAptSource()).toMatchObject({
+				host: HOST,
+				token: TOKEN,
+				keyring: KEYRING,
+			});
+			expect(
+				imageAptSourceIndexes()
+					?.map(({ url }) => url)
+					.sort(),
+			).toEqual(urls);
+
+			// The unbound probe asks for exactly those, and finds the route.
+			const unbound: (string | undefined)[] = [];
+			const reachability = await probeAptReachability({
+				readSources: never,
+				runProbe: async (_argv, privateUrl) => {
+					unbound.push(privateUrl);
+					return { exitCode: 0, stdout: "200 " };
+				},
+				maxAgeMs: 0,
+			});
+			expect([...new Set(unbound)].sort()).toEqual(urls);
+			expect(reachability.verdict).not.toBe("unreachable");
+
+			// The per-uplink probe fetches the same two and verifies each with
+			// the keyring the source names.
+			const fetched: (string | undefined)[] = [];
+			const keyrings: (string | undefined)[] = [];
+			const selection = await selectUpdateTransport(
+				{ profile: "apt", board: "apt", channel: "stable" },
+				{
+					listIfnames: () => ["eth0"],
+					readSources: never,
+					credentials: async () => undefined,
+					mmIfnames: () => [],
+					routerIfnames: () => [],
+					dongleIfnames: () => [],
+					run: async (argv, privateUrl) => {
+						const ok = (stdout: string) => ({
+							exitCode: 0,
+							stdout,
+							stderr: "",
+						});
+						if (argv[0] === "nmcli")
+							return ok(
+								"GENERAL.DEVICE:eth0\nGENERAL.IP-IFACE:eth0\nGENERAL.TYPE:ethernet\nGENERAL.STATE:100 (connected)\nGENERAL.METERED:no",
+							);
+						if (argv[0] === "resolvectl")
+							return argv.includes("-6")
+								? { exitCode: 1, stdout: "", stderr: "" }
+								: ok(`${argv.at(-1)}: 192.0.2.10`);
+						if (argv[0] === "gpgv") {
+							keyrings.push(argv[argv.indexOf("--keyring") + 1]);
+							return ok("");
+						}
+						fetched.push(privateUrl);
+						return ok("Origin: OpenStreamBox\n\n<<<update-probe>>>200 0.05");
+					},
+				},
+			);
+			expect(fetched.sort()).toEqual(urls);
+			expect(keyrings).toEqual([KEYRING, KEYRING]);
+			expect(selection.status).not.toBe("none");
+			expect(JSON.stringify(selection)).not.toContain("tampered");
+		},
+	);
+});
+
 describe("an image source on the first-party archive's host", () => {
 	const FIRST_PARTY = "apt.ceralive.tv";
 
 	it("is probed at its own InRelease, without the client certificate", async () => {
 		const { sources, urls } = imageSource(FIRST_PARTY);
-		expect(
-			parseAptSourceOrigins(sources).map(({ probeUrl }) => probeUrl),
-		).toEqual(urls);
+		void sources;
+		expect(imageAptSourceOrigins()?.map(({ probeUrl }) => probeUrl)).toEqual(
+			urls,
+		);
 		const argv = buildProbeArgv(4, urls[0] as string, undefined, {
 			cert: "/tmp/client.crt",
 			key: "/tmp/client.key",
@@ -280,9 +370,7 @@ describe("an image source on the first-party archive's host", () => {
 
 	it("stays a source for the per-uplink probe", async () => {
 		const { sources, urls } = imageSource(FIRST_PARTY);
-		expect(parseDebianSources(sources, true).map(({ url }) => url)).toEqual(
-			urls,
-		);
+		expect(imageAptSourceIndexes()?.map(({ url }) => url)).toEqual(urls);
 		const { calls, selection } = await transportProbe(sources);
 		// Its InRelease is asked for, and never the first-party probe.
 		expect(

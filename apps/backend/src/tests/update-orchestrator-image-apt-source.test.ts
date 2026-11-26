@@ -31,7 +31,7 @@ const SOURCES_FILE = "/etc/apt/sources.list.d/openstreambox.sources";
 const SUITE = "rock-5b-plus-2026.11.6";
 const FILES = {
 	[IMAGE_APT_SOURCE_POLICY]: `{"schema":1,"sourcesFile":"${SOURCES_FILE}","host":"${HOST}","origin":"OpenStreamBox","label":"OpenStreamBox","suites":["${SUITE}","${SUITE}-emergency"]}`,
-	[SOURCES_FILE]: `Types: deb\nURIs: https://${HOST}/k7Qm2xV9pL4sT8wZ/apt/\nSuites: ${SUITE} ${SUITE}-emergency\nComponents: main\nSigned-By: /usr/share/keyrings/openstreambox-archive-keyring.pgp\n`,
+	[SOURCES_FILE]: `Types: deb\nURIs: https://${HOST}/k7Qm2xV9pL4sT8wZb3Nc/apt/\nSuites: ${SUITE} ${SUITE}-emergency\nComponents: main\nSigned-By: /usr/share/keyrings/openstreambox-archive-keyring.pgp\n`,
 };
 
 let dir: string;
