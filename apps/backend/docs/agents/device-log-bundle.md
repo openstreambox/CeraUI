@@ -66,7 +66,9 @@ it and leaves it out on a collision, so the optional record can neither leak
 such a value nor make preparation refuse. Each source is optional: a failed
 read leaves its field null or empty. Only an image with the `os-updates`
 capability (`hasCapability`, outside mock mode) runs `rauc` or reads the
-boot-state file; a dev host or CI never does.
+boot-state file. An image without a capability record falls back to the
+legacy device detection, and `CERALIVE_DEVICE_TYPE` overrides both, so an
+ordinary dev host or CI never reads them unless forced to `real`.
 
 Held config, relay, hotspot, APN and router credentials are inputs to redaction
 only. `getStoredModemCredentials()` returns copies of the username/password

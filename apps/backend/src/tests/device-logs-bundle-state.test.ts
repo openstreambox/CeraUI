@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import type { LogBootInfo } from "@ceraui/rpc/schemas";
+import * as mockService from "../mocks/mock-service.ts";
 import { MOCK_DEVICE_STATS } from "../mocks/providers/device-stats.ts";
 import {
 	abortLogBundles,
@@ -20,6 +21,7 @@ import * as modemState from "../modules/modems/modems-state.ts";
 import * as netif from "../modules/network/network-interfaces.ts";
 import * as bitrate from "../modules/streaming/engine-bitrate-status.ts";
 import * as lifecycle from "../modules/streaming/stream-lifecycle-status.ts";
+import { defaultDeviceDetectionDeps } from "../modules/system/device-detection.ts";
 import * as stats from "../modules/system/device-stats-snapshot.ts";
 import { bootId, journal, queryFixture } from "./helpers/device-query.ts";
 
@@ -472,6 +474,73 @@ test("a host that is not a device reads no device files", async () => {
 	expect(state.slots).toBeNull();
 	expect(state.bootAttempts).toBeNull();
 });
+
+const GRANT =
+	'ID=ceralive\nBOARD=example-board\nFAMILY=rk3588\nCAPABILITIES="os-updates"\n';
+const DENY =
+	'ID=ceralive\nBOARD=example-board\nFAMILY=rk3588\nCAPABILITIES="system-control"\n';
+
+for (const [name, image, expected] of [
+	["an image granting os-updates", { release: GRANT }, true],
+	["an image without os-updates", { release: DENY }, false],
+	[
+		"a legacy RK3588 image without a record",
+		{ compatible: "rockchip,rk3588" },
+		true,
+	],
+	["a legacy unknown host without a record", {}, false],
+	["mock mode on a granting image", { release: GRANT, mocks: true }, false],
+] as const) {
+	test(`the default gate on ${name} ${expected ? "reads" : "skips"} the device files`, async () => {
+		const setup: { release?: string; compatible?: string; mocks?: boolean } =
+			image;
+		const spies = [
+			spyOn(
+				defaultDeviceDetectionDeps,
+				"getDeviceTypeOverride",
+			).mockReturnValue(undefined),
+			spyOn(defaultDeviceDetectionDeps, "isDevelopment").mockReturnValue(false),
+			spyOn(
+				defaultDeviceDetectionDeps,
+				"readCeraliveRelease",
+			).mockResolvedValue(setup.release ?? ""),
+			spyOn(
+				defaultDeviceDetectionDeps,
+				"readDeviceTreeCompatible",
+			).mockResolvedValue(setup.compatible ?? ""),
+			spyOn(
+				defaultDeviceDetectionDeps,
+				"readDeviceTreeModel",
+			).mockResolvedValue(""),
+			spyOn(defaultDeviceDetectionDeps, "readDmiProductName").mockResolvedValue(
+				"",
+			),
+			spyOn(defaultDeviceDetectionDeps, "readDmiBoardName").mockResolvedValue(
+				"",
+			),
+			spyOn(mockService, "shouldUseMocks").mockReturnValue(
+				setup.mocks ?? false,
+			),
+		];
+		restores.push(...spies.map((spy) => () => spy.mockRestore()));
+		const reads: string[] = [];
+		const { device: _device, ...rest } = deps({
+			readText: async (path) => {
+				reads.push(path);
+				return BOOT_STATE;
+			},
+			readSlots: async () => {
+				reads.push("rauc");
+				return RAUC_SLOTS;
+			},
+		});
+		const state = await collectBundleState(input, rest);
+		expect(reads.sort()).toEqual(
+			expected ? ["/boot/boot_state.txt", "rauc"] : [],
+		);
+		expect(state?.slots === null).toBe(!expected);
+	});
+}
 
 test("the CRC matches POSIX cksum", () => {
 	expect(posixCksum("")).toBe(4_294_967_295);
