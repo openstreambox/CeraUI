@@ -123,6 +123,10 @@ async function drainEnded(
 			mark,
 			options.stateToo && (!options.whileDraining || installDraining()),
 		);
+		// Whatever it started and has not seen return keeps the updater: the
+		// hold lasts while any of its waits is parked, not only the first.
+		if (box.sequencer.parkedOfFlow().length > 0)
+			expect(installDraining()).toBe(true);
 		if (!installDraining()) options.whenDrained?.();
 	};
 	if (options.first === "fail" && box.sequencer.step("fail")) {

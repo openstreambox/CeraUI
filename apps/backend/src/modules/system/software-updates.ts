@@ -36,7 +36,6 @@ import {
 	assertOwnerMayRead,
 	type EffectOwner,
 	isOwnerEnded,
-	OwnerEndedError,
 } from "../../helpers/effect-owner.ts";
 import { invariant } from "../../helpers/invariant.ts";
 import { logger } from "../../helpers/logger.ts";
@@ -125,6 +124,7 @@ import {
 	parseFail,
 	parseOk,
 } from "./cli-parse.ts";
+import { sweepPrivateCurlFiles } from "./curl-private-url.ts";
 import {
 	requestCompletionReboot,
 	resetCompletionRebootForTest,
@@ -295,22 +295,20 @@ async function prepareAptNetwork(
 		return owner
 			? aptReachabilityProbe({ ...options, owner })
 			: aptReachabilityProbe(options);
-	// The host's own default-route election, shared with the network module.
-	// An install only asks for it: the election writes its route unless every
-	// requester is an install that has ended (gateways.ts).
-	const repaired = owner
-		? await updateGwWrapper(true, undefined, owner)
-		: await updateGwWrapper(true);
+	// An install on an image with its own apt source never asks for the host's
+	// default-route election. The election is the network module's: it changes
+	// the route of the whole device, and an install that a stream ends must
+	// not have set one in motion. Its unbound apt runs go by what a fresh probe
+	// of the route as it is finds, and the install is refused if that is
+	// unreachable. (Its pinned runs use their own routing table.)
+	if (owner) return aptReachabilityProbe({ maxAgeMs: 0, owner });
+	const repaired = await updateGwWrapper(true);
 	if (!repaired) {
-		// An install that ended meanwhile reports nothing.
-		if (owner?.ended()) throw new OwnerEndedError("the apt network");
 		logger.warn("Apt preflight refused: host default-route repair failed");
 		return deriveVerdict([]);
 	}
 	// A bound NIC probe is not evidence for apt's unbound sockets after a route change.
-	return owner
-		? aptReachabilityProbe({ maxAgeMs: 0, owner })
-		: aptReachabilityProbe({ maxAgeMs: 0 });
+	return aptReachabilityProbe({ maxAgeMs: 0 });
 }
 
 // An image that routes `apt_uid` gets the OS transfers' per-transaction selector and pin.
@@ -1604,6 +1602,10 @@ function checkForSoftwareUpdates(
 
 	void runLegacyPackageEffects(
 		async () => {
+			// An install starts by removing what an earlier probe could not: a
+			// private curl config still on disk holds the source's access token.
+			if (owner !== null) await sweepPrivateCurlFiles(effectOwner(owner));
+			if (abandoned()) return;
 			const capabilities = await readPackageCapabilities(owner);
 			if (abandoned()) return;
 			if (capabilities === null) {
@@ -2949,11 +2951,12 @@ function ownedAptSpaceDeps(
 		owner,
 		run: (argv, options) =>
 			pendingAwareAptSpaceDeps.run(argv, { ...options, owner }),
-		stat: (file) => {
+		// Refused as a rejection, not a throw: both looks of a pair are joined.
+		stat: async (file) => {
 			assertOwnerMayRead(owner, "the archive directory");
 			return pendingAwareAptSpaceDeps.stat(file);
 		},
-		statfs: (file) => {
+		statfs: async (file) => {
 			assertOwnerMayRead(owner, "the archive directory's free space");
 			return pendingAwareAptSpaceDeps.statfs(file);
 		},

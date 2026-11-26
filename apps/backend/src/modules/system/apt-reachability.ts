@@ -16,6 +16,7 @@ import type {
 import {
 	type EffectOwner,
 	isOwnerEnded,
+	ownedAll,
 	ownedWrite,
 } from "../../helpers/effect-owner.ts";
 import {
@@ -320,7 +321,9 @@ export async function probeAptReachability(
 		return value;
 	}
 
-	const byOrigin = await Promise.all(
+	// Every probe that was started is waited for, also when one is refused.
+	const byOrigin = await ownedAll(
+		deps.owner,
 		origins.map(async (origin): Promise<AptOriginProbe> => {
 			const credentials = isFirstPartyProbe(origin.host)
 				? await aptClientPaths()
@@ -353,7 +356,7 @@ export async function probeAptReachability(
 						: "unknown";
 				}
 			};
-			const [ipv4, ipv6] = await Promise.all([probe(4), probe(6)]);
+			const [ipv4, ipv6] = await ownedAll(deps.owner, [probe(4), probe(6)]);
 			return { origin, ipv4, ipv6 };
 		}),
 	);

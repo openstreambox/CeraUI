@@ -43,11 +43,11 @@ import {
 	expectLaunched,
 	PENDING,
 	REINSPECT,
-	ROUTE_WRITE,
 	recordWaits,
 	restoreUpdatesSetting,
 	SPOOL,
 	SUBMIT,
+	SWEEP,
 	TIMEOUT_MS,
 	useInstallHarness,
 	VARIANTS,
@@ -93,11 +93,7 @@ async function run(
 					phase: "failed",
 					failureReason: PACKAGE_INSTALL_REFUSED,
 				});
-			// The host's election may still be running for it: from here on it
-			// starts no route write that only this install asked for.
-			const routes = box.routeWrites.length;
 			await sequencer.drain();
-			expect(box.routeWrites.length).toBe(routes);
 			await expectEndedBeforeLaunch(
 				box,
 				"streaming",
@@ -138,14 +134,12 @@ async function run(
 			return;
 		}
 		// From here on the install does nothing more: no command, no file
-		// step, no owned write, and no route written for it. It ends where it
-		// would have done the next one.
+		// step and no owned write. It ends where it would have done the next
+		// one.
 		const mark = box.mark();
-		const routes = box.routeWrites.length;
 		await sequencer.drain(() => {
 			expect(box.effectsSince(mark)).toEqual([]);
 		});
-		expect(box.routeWrites.length).toBe(routes);
 		expect(getUpdateState()).toMatchObject({
 			kind: "failed",
 			reason: "discovery_failed",
@@ -200,9 +194,8 @@ describe("the launch fence: every wait before the unit is submitted", () => {
 				expect(steps).toContain("apt-get -d (download under the pin)");
 			// Only the start behind a running check waits on the timer.
 			expect(steps.includes(DELAY)).toBe(variant === "delayed");
-			// Where the backend elects the default route, apt waits for the
-			// election, which writes the route while the install lives.
-			expect(steps.includes(ROUTE_WRITE)).toBe(variant === "route repair");
+			// Every install starts by sweeping private curl configs.
+			expect(steps).toContain(SWEEP);
 		},
 		TIMEOUT_MS,
 	);

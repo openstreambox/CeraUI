@@ -35,6 +35,7 @@ import { afterEach, beforeEach, expect, spyOn } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { inspect } from "node:util";
 import {
 	type UpdateCapabilities,
 	updateCapabilityFileSchema,
@@ -53,10 +54,7 @@ import { logger } from "../../helpers/logger.ts";
 import * as events from "../../modules/events/emit.ts";
 import * as gateways from "../../modules/network/gateways.ts";
 import { setup } from "../../modules/setup.ts";
-import {
-	deriveVerdict,
-	resetAptReachabilityCacheForTest,
-} from "../../modules/system/apt-reachability.ts";
+import { resetAptReachabilityCacheForTest } from "../../modules/system/apt-reachability.ts";
 import type { AptRoutingEntry } from "../../modules/system/apt-routing-journal.ts";
 import {
 	AptRoutingRefusal,
@@ -65,6 +63,10 @@ import {
 import { defaultAptSpaceDeps } from "../../modules/system/apt-space-admission.ts";
 import { setAptTransportDepsForTest } from "../../modules/system/apt-transport.ts";
 import * as board from "../../modules/system/board-capabilities.ts";
+import {
+	PRIVATE_FILE_LEFT_BEHIND,
+	resetPrivateCurlFilesForTest,
+} from "../../modules/system/curl-private-url.ts";
 import {
 	IMAGE_APT_SOURCE_POLICY,
 	setDpkgUpdatesDirForTest,
@@ -178,8 +180,10 @@ export const REINSPECT = "unit: systemctl show";
 /** A unit that was found is then checked against its fragment. */
 export const FRAGMENT = "unit: read its fragment";
 export const DELAY = "delayed start: timer";
-/** The shared gateway election writes the host's default route. */
-export const ROUTE_WRITE = "election: write the default route";
+/** An install's first step: private curl configs left on disk are removed. */
+export const SWEEP = "file: private-file:remove (list the directory)";
+/** Recorded when an install asked for the host's gateway election. */
+export const ELECTION_REQUESTED = "asked for the host's gateway election";
 /** The first step of the unit's output files. */
 export const SPOOL = "file: spool:secure-directory (make the directory)";
 export const REFRESH_COMMAND = "apt-get update";
@@ -200,10 +204,10 @@ export const TIMEOUT_MS = 900_000;
  * - `start RPC from the Packages card`: the same as the shipped dialog calls
  *   it. The card's own check found the offer, the orchestrator is idle.
  * - `delayed`: Install now while another check runs, so the start waits.
- * - `route repair`: Install now on a board whose default route the backend
- *   elects: before it probes, apt asks the host's shared gateway election for
- *   a repaired route. The election is the host's own and runs on when the
- *   install ends; what it must not do then is write a route for it.
+ * - `elected route`: Install now on a board whose default route the backend
+ *   elects and whose image does not route apt. Its apt runs are unbound and
+ *   go by a fresh probe of the route as it is. The election is the network
+ *   module's: the install never asks for it.
  */
 export const VARIANTS = [
 	"orchestrated",
@@ -211,7 +215,7 @@ export const VARIANTS = [
 	"start RPC",
 	"start RPC from the Packages card",
 	"delayed",
-	"route repair",
+	"elected route",
 ] as const;
 export type Variant = (typeof VARIANTS)[number];
 /** The orchestrator's phase beside a standalone start: it never changes it. */
@@ -286,14 +290,6 @@ const NMCLI =
 const IN_RELEASE = `Origin: OpenStreamBox\nLabel: OpenStreamBox\nSuite: ${SUITE}\n`;
 /** What apt prints for the download under the pin. */
 export const DOWNLOADED = `Get:1 ${URI} ${EMERGENCY}/main arm64 modemmanager arm64 ${FIX} [1234 kB]\nFetched 1234 kB in 1s (1234 kB/s)\n`;
-const uplink = (ip: string) => ({
-	ip,
-	tp: 0,
-	txb: 0,
-	rxb: 0,
-	enabled: true,
-	error: 0,
-});
 
 // The detached unit, as systemd would know it: `systemd-run`, `systemctl
 // show` and the stop are commands like any other, answered from here.
@@ -431,15 +427,19 @@ const installSpies: ReturnType<typeof spyOn>[] = [];
 const cleanups: (() => void | Promise<void>)[] = [];
 const updatesEnabled = setup.apt_update_enabled;
 const hasBoardCapability = board.hasCapability;
-const updateGwWrapper = gateways.updateGwWrapper;
 const readStoredStateFile = storedState.readStoredStateFile;
 
 /** A line the device logged, and who logged it. */
 type Logged = {
 	readonly level: "debug" | "info" | "warn" | "error";
 	readonly message: string;
+	/** What was logged with it, as it would be printed. */
+	readonly detail: string;
 	readonly by: "flow" | "beside" | "outside";
-	/** It reports a routing teardown that failed: a rule or route was left. */
+	/**
+	 * It reports a teardown that failed: a routing rule or route was left, or
+	 * a private curl config is still on disk.
+	 */
 	readonly teardownFailed: boolean;
 };
 
@@ -491,6 +491,7 @@ export async function teardownInstall(): Promise<void> {
 	resetAptReachabilityCacheForTest();
 	resetSoftwareUpdateCheckRunner();
 	resetSoftwareUpdateState();
+	resetPrivateCurlFilesForTest();
 	setSpawnOverrideForTest(null);
 	setOwnedFileBackendForTest(null);
 	setOwnedWriteObserverForTest(null);
@@ -516,8 +517,10 @@ export function useInstallHarness(): void {
 					logged.push({
 						level,
 						message: String(message),
+						detail: meta === undefined ? "" : inspect(meta, { depth: 6 }),
 						by: logContext?.() ?? "outside",
-						teardownFailed: isTeardownFailure(meta),
+						teardownFailed:
+							isTeardownFailure(meta) || message === PRIVATE_FILE_LEFT_BEHIND,
 					});
 					return logger;
 				},
@@ -571,12 +574,17 @@ export async function acceptedInstall(variant: Variant) {
 		return (await sequencer.gate(label)) === "fail" ? failure() : answer();
 	};
 	const pinned = variant === "pinned";
-	const routed = variant === "route repair";
+	const routed = variant === "elected route";
 	const unit = fakeUnit();
 	// What kind of call a label stands for: something done, or a look.
 	const effects = new Set<string>();
-	/** The default routes the gateway election wrote. */
-	const routeWrites: string[] = [];
+	/** Who asked for the host's gateway election, in order, and how. */
+	const electionRequests: {
+		by: "flow" | "beside" | "outside";
+		args: unknown[];
+	}[] = [];
+	/** The private directories that exist: made and not removed. */
+	const privateDirectories = new Set<string>();
 
 	// Every command of both spawn primitives.
 	setSpawnOverrideForTest(async (argv) => {
@@ -616,11 +624,15 @@ export async function acceptedInstall(variant: Variant) {
 				isSymbolicLink: () => false,
 				uid: 0,
 				mode: 0o700,
+				mtimeMs: 0,
 			};
 		},
 		setMode: () => fileWrite("set its mode"),
 		removeFile: () => fileWrite("remove the file"),
-		removeTree: () => fileWrite("remove the directory"),
+		removeTree: async (directory) => {
+			await fileWrite("remove the directory");
+			privateDirectories.delete(directory);
+		},
 		createExclusive: async () => {
 			await fileWrite("create the file");
 			return {
@@ -637,7 +649,16 @@ export async function acceptedInstall(variant: Variant) {
 		},
 		makeTempDirectory: async (prefix) => {
 			await fileWrite("make a private directory");
-			return `${prefix}${++temporary}`;
+			const directory = `${prefix}${++temporary}`;
+			privateDirectories.add(directory);
+			return directory;
+		},
+		listDirectory: async (directory) => {
+			if ((await fileStep("list the directory")) === "fail")
+				throw new Error("the directory could not be listed");
+			return [...privateDirectories]
+				.filter((made) => path.dirname(made) === directory)
+				.map((made) => path.basename(made));
 		},
 		writeNew: () => fileWrite("write the file"),
 	};
@@ -671,7 +692,6 @@ export async function acceptedInstall(variant: Variant) {
 	};
 	const frames: { kind: string; reason?: string }[] = [];
 	const emitted: { code: string; params: unknown }[] = [];
-	let besideEvents = 0;
 	const outputs = softwareUpdateOutputPaths();
 	installSpies.push(
 		spyOn(capabilityFile, "readUpdateCapabilities").mockImplementation(() =>
@@ -732,9 +752,6 @@ export async function acceptedInstall(variant: Variant) {
 		// Every event the device would log, in order.
 		spyOn(events, "emitEvent").mockImplementation((code, params) => {
 			emitted.push({ code, params });
-			// What runs beside the install (the host's election) reports for
-			// itself: that it found the device offline is not the install's.
-			if (sequencer.context() === "beside") besideEvents++;
 		}),
 	);
 	// The real launcher, but for the unit's output and its poll interval: the
@@ -812,65 +829,18 @@ export async function acceptedInstall(variant: Variant) {
 		});
 	}
 
-	if (routed) {
-		// The real election and its requester bookkeeping, over an election
-		// that finds the better uplink. It is the host's, whoever asked for
-		// it: its waits park like the install's, and its calls and its log
-		// lines are its own.
-		const host = <T>(label: string, answer: () => T): Promise<T> =>
-			sequencer.beside(() => wait(label, answer));
-		const election: gateways.GatewayElectionDeps = {
-			canRouteClients: async () => true,
-			resolve: () =>
-				host("election: resolve", () => ({
-					addrs: ["203.0.113.10"],
-					fromCache: true,
-				})),
-			validateDns: () => undefined,
-			checkConnectivity: () =>
-				host("election: check the default route", () => true),
-			interfaces: () => ({
-				"uplink-a": uplink("192.0.2.2"),
-				"uplink-b": uplink("198.51.100.2"),
-			}),
-			eligible: () => true,
-			defaultInterface: async () => "uplink-a",
-			// A write counts from the moment it is started.
-			installRoute: (ifname, family) => {
-				routeWrites.push(`${ifname}/${family}`);
-				return host(ROUTE_WRITE, () => undefined);
-			},
-			releaseRoutes: () => {
-				routeWrites.push("released");
-				return host("election: release the default routes", () => undefined);
-			},
-			probes: {
-				probeRepository: (ifname) =>
-					host(`election: probe the repositories on ${ifname}`, () =>
-						deriveVerdict([
-							{
-								origin: {
-									url: `https://${HOST}`,
-									host: HOST,
-									scheme: "https",
-									probeUrl: `https://${HOST}/`,
-								},
-								ipv4: ifname === "uplink-b" ? "ok" : "unknown",
-								ipv6: "no_route",
-							},
-						]),
-					),
-				probeViaDevice: async () => true,
-				probeViaSourceIp: async () => true,
-			},
-		};
-		installSpies.push(
-			spyOn(gateways, "updateGwWrapper").mockImplementation(
-				(force, _deps, owner) =>
-					sequencer.beside(() => updateGwWrapper(force, election, owner)),
-			),
-		);
-	}
+	// The host's gateway election is the network module's. Whoever asks for
+	// it here is recorded; an install that does has failed the run. It
+	// answers at once that the route is in order.
+	installSpies.push(
+		spyOn(gateways, "updateGwWrapper").mockImplementation((...args) => {
+			const by = sequencer.context();
+			electionRequests.push({ by, args });
+			if (sequencer.armed() && by === "flow")
+				staleEffects.push(ELECTION_REQUESTED);
+			return Promise.resolve(true);
+		}),
+	);
 
 	// `parkChecks`: the orchestrator's package check parks on the sequencer
 	// like the install does (beside it), so a test can stand inside it.
@@ -969,7 +939,7 @@ export async function acceptedInstall(variant: Variant) {
 			wire: getUpdateState(),
 			inventory: getAvailableUpdates(),
 			frames: frames.length,
-			events: emitted.length - besideEvents,
+			events: emitted.length,
 			orchestrator: {
 				phase: orchestrator.phase,
 				failureReason: orchestrator.failureReason,
@@ -977,8 +947,8 @@ export async function acceptedInstall(variant: Variant) {
 				packageCheck: orchestrator.packageCheck,
 			},
 			unit: { submissions: unit.unit.submissions, stops: unit.unit.stops },
-			// How often the election started to write the host's default route.
-			routes: routeWrites.length,
+			// How often anybody asked for the host's gateway election.
+			elections: electionRequests.length,
 		};
 	};
 	const box = {
@@ -1014,10 +984,15 @@ export async function acceptedInstall(variant: Variant) {
 		 */
 		effectsSince: (mark: { calls: number }) =>
 			box.callsSince(mark).filter((label) => effects.has(label)),
-		routeWrites,
-		/** Every line anybody logged since `mark`. */
+		electionRequests,
+		privateDirectories,
+		/** Every line anybody logged since `mark`, with what was logged with it. */
 		everyLogSince: (mark: { logs: number }) =>
-			logged.slice(mark.logs).map(({ message }) => message),
+			logged
+				.slice(mark.logs)
+				.map(({ message, detail }) =>
+					detail ? `${message} ${detail}` : message,
+				),
 		/**
 		 * What the install itself logged since `mark`. Left out is only what
 		 * its teardown says: the line `run()` writes for a teardown command,
@@ -1163,6 +1138,7 @@ export async function recordWaits(variant: Variant): Promise<string[]> {
 		});
 	await box.sequencer.drain();
 	await expectLaunched(box);
+	expect(takeStaleEffects()).toEqual([]);
 	await teardownInstall();
 	recorded.set(variant, steps);
 	return steps;

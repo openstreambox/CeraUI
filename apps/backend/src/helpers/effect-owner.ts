@@ -141,6 +141,29 @@ export function assertOwnerMayRead(
 	if (owner?.ended()) throw new OwnerEndedError(what);
 }
 
+/**
+ * Branches started side by side for an owner, joined like `Promise.all`, but
+ * for this: a branch that fails does not end the wait while others are still
+ * running. A refusal travels on only once everything that was started has
+ * returned, so whoever keeps the owner's place until its work is over keeps
+ * it long enough. Without an owner it is `Promise.all`.
+ */
+export async function ownedAll<const Branches extends readonly unknown[]>(
+	owner: EffectOwner | undefined,
+	branches: Branches,
+): Promise<{ -readonly [Index in keyof Branches]: Awaited<Branches[Index]> }> {
+	type Joined = {
+		-readonly [Index in keyof Branches]: Awaited<Branches[Index]>;
+	};
+	if (owner === undefined) return (await Promise.all(branches)) as Joined;
+	const settled = await Promise.allSettled(branches);
+	for (const branch of settled)
+		if (branch.status === "rejected") throw branch.reason;
+	return settled.map(
+		(branch) => (branch as PromiseFulfilledResult<unknown>).value,
+	) as Joined;
+}
+
 let writeObserver: ((kind: OwnedWrite) => void) | undefined;
 
 /** Test seam: told of every owned write that is about to happen. */
@@ -180,6 +203,8 @@ export type OwnedFileBackend = {
 		isSymbolicLink(): boolean;
 		readonly uid: number;
 		readonly mode: number;
+		/** When it was last changed. */
+		readonly mtimeMs: number;
 	}>;
 	readonly setMode: (path: string, mode: number) => Promise<void>;
 	/** Removes one file, if it is there. */
@@ -192,6 +217,8 @@ export type OwnedFileBackend = {
 		mode: number,
 	) => Promise<OwnedFileHandle>;
 	readonly makeTempDirectory: (prefix: string) => Promise<string>;
+	/** The names in a directory. */
+	readonly listDirectory: (path: string) => Promise<string[]>;
 	/** Writes a file that must not exist yet. */
 	readonly writeNew: (
 		path: string,
@@ -224,6 +251,7 @@ const nodeFiles: OwnedFileBackend = {
 		};
 	},
 	makeTempDirectory: (prefix) => fs.mkdtemp(prefix),
+	listDirectory: (path) => fs.readdir(path),
 	writeNew: (path, data, mode) =>
 		fs.writeFile(path, data, { mode, flag: "wx" }),
 };
@@ -291,6 +319,11 @@ export function ownedFiles(owner: EffectOwner | undefined) {
 		makeTempDirectory(kind: OwnedWrite, prefix: string) {
 			may(kind);
 			return files.makeTempDirectory(prefix);
+		},
+		/** A look for what `kind` is about to change or remove. */
+		listDirectory(kind: OwnedWrite, path: string) {
+			may(kind);
+			return files.listDirectory(path);
 		},
 		writeNew(kind: OwnedWrite, path: string, data: string, mode: number) {
 			may(kind);

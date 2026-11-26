@@ -395,6 +395,7 @@ function orchestrator(
 	options: {
 		readonly allowPackagesOverCellular?: boolean;
 		readonly onlyMetered?: () => boolean;
+		readonly streamLive?: () => boolean;
 	} = {},
 ) {
 	const counts = { osChecks: 0, pendingCleared: 0 };
@@ -420,6 +421,7 @@ function orchestrator(
 				allowSystemOverCellular: true,
 			}),
 			onlyMeteredCandidateExists: async () => options.onlyMetered?.() ?? false,
+			isStreamLive: () => options.streamLive?.() ?? false,
 			runPackageCheck: runSoftwareUpdateCheck,
 			startPackageInstall: () => startSoftwareUpdate(),
 			getPackageInstallWireState: getUpdateState,
@@ -1206,6 +1208,55 @@ describe("the refused install is never stranded", () => {
 		const os = counts.osChecks;
 		expect(await checkUpdatesNow()).toEqual({ started: true });
 		expect(counts.osChecks).toBe(os + 1);
+	});
+
+	it("while a stream is live the scheduled retry waits: no failed check, and the due image check runs", async () => {
+		await box("simulation");
+		let live = false;
+		const { counts } = orchestrator({ streamLive: () => live });
+		const said: { code: string; params: unknown }[] = [];
+		await attempt();
+		expect(getOrchestratorState().failureReason).toBe(PACKAGE_INSTALL_REFUSED);
+		spies.push(
+			spyOn(events, "emitEvent").mockImplementation((code, params) => {
+				said.push({ code, params });
+			}),
+		);
+		// A stream is live when the tick comes, and an image check is due.
+		live = true;
+		setStreamLivenessSourceForTest(() => "streaming");
+		const due = () =>
+			setOrchestratorStateForTest({
+				...getOrchestratorState(),
+				osCheck: { ...getOrchestratorState().osCheck, nextAttemptAt: 0 },
+			});
+		due();
+		const before = getOrchestratorState().packageCheck;
+		const os = counts.osChecks;
+		await runOrchestratorTick();
+		// No package check was dispatched: none failed, no backoff, no event.
+		expect(getOrchestratorState().packageCheck).toEqual(before);
+		expect(said.filter(({ code }) => code === "update_refused")).toEqual([]);
+		expect(getOrchestratorState().phase).not.toBe("checking");
+		// The image check ran on that tick.
+		expect(counts.osChecks).toBe(os + 1);
+		// The stream goes on: the next tick waits likewise, wherever the image
+		// check left the plan.
+		due();
+		await runOrchestratorTick();
+		expect(getOrchestratorState().packageCheck).toEqual(before);
+		expect(said.filter(({ code }) => code === "update_refused")).toEqual([]);
+		expect(counts.osChecks).toBe(os + 2);
+		expect(getUpdateState().kind).toBe("failed");
+		// The stream over, the retry runs and finds the offer.
+		live = false;
+		setStreamLivenessSourceForTest(null);
+		await runOrchestratorTick();
+		expect(getUpdateState().kind).toBe("available");
+		expect(getOrchestratorState()).toMatchObject({
+			phase: "available",
+			packageCheck: { consecutiveFailures: 0 },
+		});
 	});
 
 	it("on cellular only, the scheduled check waits and Check now still runs it", async () => {

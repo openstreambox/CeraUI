@@ -15,7 +15,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import type { EffectOwner } from "../../helpers/effect-owner.ts";
 import { logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
 import { getms } from "../../helpers/time.ts";
@@ -72,29 +71,6 @@ function recordInternetConnectivity(reachable: boolean): void {
 }
 
 let updateGwInFlight: Promise<boolean> | undefined;
-// Who asked for the election in flight. The network module's own runs ask for
-// nobody in particular (`unowned`); a package install asks as itself.
-let updateGwRequesters: { unowned: boolean; owners: EffectOwner[] } = {
-	unowned: false,
-	owners: [],
-};
-
-function noteGwRequester(owner: EffectOwner | undefined): void {
-	if (owner) updateGwRequesters.owners.push(owner);
-	else updateGwRequesters.unowned = true;
-}
-
-/**
- * Whether anybody still wants the election's route write: false only when
- * every requester is an owner that has ended. One unowned requester, or one
- * owner still alive, keeps it wanted.
- */
-function gwRouteWriteWanted(): boolean {
-	return (
-		updateGwRequesters.unowned ||
-		updateGwRequesters.owners.some((owner) => !owner.ended())
-	);
-}
 let updateGwLastRun = 0;
 let updateGwQueue = true;
 
@@ -166,10 +142,6 @@ function candidateRosterIdentity(
 
 export async function updateGw(
 	deps: GatewayElectionDeps = defaultGatewayElectionDeps(),
-	// Asked right before a route is written or released. The election is the
-	// host's own and shared by its callers, so it is never refused for one of
-	// them: it only leaves the route alone when nobody is left who wanted it.
-	routeWriteWanted: () => boolean = () => true,
 ): Promise<boolean> {
 	if (!(await deps.canRouteClients())) return true;
 	let addrs: Array<string> = [];
@@ -276,11 +248,6 @@ export async function updateGw(
 
 	const goodIf = election.elected?.name;
 
-	// Every requester was an install that has ended: no route is written or
-	// released for it. A failed result queues the election again, so the
-	// network module's next pass does it for the host.
-	if (!routeWriteWanted()) return false;
-
 	if (goodIf) {
 		try {
 			const family = election.family ?? 4;
@@ -338,20 +305,11 @@ export async function updateGw(
 	return defaultReachable;
 }
 
-/**
- * `owner` is the caller the election is asked for (a package install on an
- * image with its own apt source); the network module passes none. The run in
- * flight is shared: joining it adds the caller to those who want its result.
- */
 export function updateGwWrapper(
 	force = false,
 	deps: GatewayElectionDeps = defaultGatewayElectionDeps(),
-	owner?: EffectOwner,
 ): Promise<boolean> {
-	if (updateGwInFlight) {
-		noteGwRequester(owner);
-		return updateGwInFlight;
-	}
+	if (updateGwInFlight) return updateGwInFlight;
 	// Do nothing if no request is queued
 	if (!force && !updateGwQueue) return Promise.resolve(false);
 
@@ -363,10 +321,8 @@ export function updateGwWrapper(
 	// Proceeding, update status
 	updateGwLastRun = ts;
 	updateGwQueue = false;
-	updateGwRequesters = { unowned: false, owners: [] };
-	noteGwRequester(owner);
 
-	updateGwInFlight = updateGw(deps, gwRouteWriteWanted)
+	updateGwInFlight = updateGw(deps)
 		.catch((error: unknown) => {
 			logger.warn("Gateway election failed", { error });
 			return false;

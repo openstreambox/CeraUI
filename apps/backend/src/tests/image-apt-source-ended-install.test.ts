@@ -8,12 +8,14 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import * as gateways from "../modules/network/gateways.ts";
+import path from "node:path";
 import { setup } from "../modules/setup.ts";
+import { PRIVATE_FILE_LEFT_BEHIND } from "../modules/system/curl-private-url.ts";
 import { setImageClockGateFlagForTest } from "../modules/system/image-apt-source.ts";
 import {
 	getUpdateState,
 	startSoftwareUpdate,
+	triggerManualUpdateCheck,
 } from "../modules/system/software-updates.ts";
 import {
 	admitAndPrepareStreamStart,
@@ -22,23 +24,30 @@ import {
 	runOrchestratorTick,
 } from "../modules/system/update-orchestrator/runtime.ts";
 import { PACKAGE_INSTALL_REFUSED } from "../modules/system/update-orchestrator/types.ts";
-import { settleMicrotasks } from "./helpers/await-sequencer.ts";
+import {
+	settleEventLoop,
+	settleMicrotasks,
+} from "./helpers/await-sequencer.ts";
 import { useSessionOwnerForFile } from "./helpers/bind-session-owner.ts";
 import {
 	acceptedInstall,
 	atEveryWait,
 	DOWNLOAD,
 	expectEndedBeforeLaunch,
+	expectLaunched,
 	expectNoStaleEffect,
 	expectOfferAtNextCheck,
+	FRAGMENT,
 	failedFrames,
 	installDraining,
 	REFRESH_COMMAND,
-	ROUTE_WRITE,
+	REINSPECT,
 	recordWaits,
 	SPOOL,
 	SUBMIT,
+	SWEEP,
 	TIMEOUT_MS,
+	teardownInstall,
 	useInstallHarness,
 	type Variant,
 } from "./helpers/image-apt-install-harness.ts";
@@ -215,66 +224,222 @@ describe("a retry that is refused", () => {
 	);
 });
 
-describe("the host's gateway election, asked for by an install", () => {
-	const ELECTION = "election: resolve";
-	const PROBE = "election: probe the repositories on uplink-b";
-
+describe("the host's gateway election is the network module's", () => {
 	it(
-		"while the install lives, the election writes the route it asked for",
+		"an install on a board that elects its route never asks for it, and goes by a fresh probe instead",
 		async () => {
-			const { box } = await standingAt("route repair", ROUTE_WRITE);
-			expect(box.routeWrites).toEqual(["uplink-b/4"]);
+			const steps = await recordWaits("elected route");
+			// Its own check and its preparation both probe the route as it is.
+			expect(steps.filter((label) => label === "curl -4").length).toBe(4);
+			const box = await acceptedInstall("elected route");
+			await box.sequencer.drain();
+			await expectLaunched(box);
+			expect(box.electionRequests).toEqual([]);
 		},
 		TIMEOUT_MS,
 	);
 
 	it(
-		"a stream ends the install during the election: it runs on for the host and writes no route",
+		"an install whose fresh probe finds the route dead is refused, and still asks for nothing",
 		async () => {
-			const { box } = await standingAt("route repair", ELECTION);
+			const { box } = await standingAt("elected route", "curl -4");
+			const { sequencer } = box;
+			// Every probe of this round fails: no route to the repository.
+			while (sequencer.parked().some((label) => label.startsWith("curl ")))
+				sequencer.release(
+					sequencer.parked().find((label) => label.startsWith("curl ")) ?? "",
+					"fail",
+				);
+			await sequencer.drain();
+			expect(getUpdateState()).toMatchObject({
+				kind: "failed",
+				reason: "repos_unreachable",
+			});
+			expect(box.electionRequests).toEqual([]);
+			expect(box.unit.unit.submissions).toBe(0);
+		},
+		TIMEOUT_MS,
+	);
+
+	it(
+		"a stream ends the install while it reads the board's capabilities: no election starts",
+		async () => {
+			const { box } = await standingAt(
+				"elected route",
+				"read the board capability os-updates",
+			);
 			const { sequencer } = box;
 			expect(await admitStream(box)).toEqual({ allowed: true });
-			expect(getUpdateState()).toMatchObject(STREAMING);
 			const mark = box.mark();
 			await sequencer.drain(() => expectNoStaleEffect(box, mark));
-			// The election went on (its probes were made) and left the route.
-			expect(
-				sequencer
-					.calls()
-					.slice(mark.calls)
-					.map(({ label }) => label),
-			).toContain(PROBE);
-			expect(box.routeWrites).toEqual([]);
-			expect(box.logsSince(mark)).toEqual([]);
-			// The host's next pass, which asks for nobody, writes the route.
-			sequencer.disarm();
-			expect(
-				await sequencer.outside(() => gateways.updateGwWrapper(true)),
-			).toBe(true);
-			expect(box.routeWrites).toEqual(["uplink-b/4"]);
+			expect(box.electionRequests).toEqual([]);
 			await expectEndedBeforeLaunch(box, "streaming", false);
 		},
 		TIMEOUT_MS,
 	);
 
 	it(
-		"the network module joins the same election: its route is written, and the install stays ended",
+		"a check with no install behind it asks for the repair as it always did",
 		async () => {
-			const { box } = await standingAt("route repair", ELECTION);
+			const { box } = await standingAt("elected route", SWEEP);
 			const { sequencer } = box;
 			expect(await admitStream(box)).toEqual({ allowed: true });
-			// The host's own pass asks for nobody in particular.
-			const joined = sequencer.outside(() => gateways.updateGwWrapper(true));
-			const mark = box.mark();
 			await sequencer.drain();
-			expect(await joined).toBe(true);
-			expect(box.routeWrites).toEqual(["uplink-b/4"]);
-			// The install did nothing with it: no probe, no apt run, no word.
-			expect(box.callsSince(mark)).toEqual([]);
-			expect(box.logsSince(mark)).toEqual([]);
-			expect(getUpdateState()).toMatchObject(STREAMING);
-			expect(failedFrames(box.frames)).toEqual([STREAMING]);
+			expect(box.electionRequests).toEqual([]);
+			// The Packages card's own check on the same board: no install, so
+			// the route is repaired first, exactly as on every image.
+			sequencer.disarm();
+			expect(sequencer.beside(() => triggerManualUpdateCheck())).toBe(true);
+			// Once before its refresh and once before its discovery.
+			for (let turn = 0; turn < 200; turn++) {
+				if (box.electionRequests.length >= 2) break;
+				await settleEventLoop(1);
+			}
+			await settleEventLoop(5);
+			expect(getUpdateState().kind).toBe("available");
+			expect(box.electionRequests).toEqual([
+				{ by: "beside", args: [true] },
+				{ by: "beside", args: [true] },
+			]);
+		},
+		TIMEOUT_MS,
+	);
+});
+
+describe("an install ended while several of its commands are in flight", () => {
+	const DNS = "resolvectl -4 -i eth0 query";
+
+	it.each(["ok", "fail"] as const)(
+		"keeps the updater until the last has returned, when the first returns %s and its next step is refused",
+		async (first) => {
+			const { box } = await standingAt("pinned", DNS);
+			const { sequencer } = box;
+			// Both sources are resolved for both address families at once.
+			const dns = () =>
+				sequencer
+					.parkedOfFlow()
+					.filter((label) => label.startsWith("resolvectl"));
+			expect(dns()).toHaveLength(4);
+			expect(await admitStream(box)).toEqual({ allowed: true });
+			const mark = box.mark();
+			// One lookup returns. What it would do next (the private curl
+			// config) is refused, while three lookups are still out.
+			sequencer.release(DNS, first);
+			for (let left = 3; left > 0; left--) {
+				await settleMicrotasks();
+				await settleEventLoop(1);
+				expectNoStaleEffect(box, mark);
+				expect(dns()).toHaveLength(left);
+				// The updater is the ended install's until they are back.
+				expect(installDraining()).toBe(true);
+				expect(sequencer.outside(() => startSoftwareUpdate())).toEqual({
+					started: false,
+					reason: "already_updating",
+				});
+				sequencer.release(dns()[0] as string);
+			}
+			await sequencer.drain(() => expectNoStaleEffect(box, mark));
+			expect(installDraining()).toBe(false);
 			expect(box.unit.unit.submissions).toBe(0);
+			await expectEndedBeforeLaunch(box, "streaming", false);
+		},
+		TIMEOUT_MS,
+	);
+
+	it(
+		"the unbound probe: four curl runs out, one fails first, the hold lasts until all are back",
+		async () => {
+			const { box } = await standingAt("orchestrated", "curl -4");
+			const { sequencer } = box;
+			const curls = () =>
+				sequencer.parkedOfFlow().filter((label) => label.startsWith("curl "));
+			expect(curls()).toHaveLength(4);
+			expect(await admitStream(box)).toEqual({ allowed: true });
+			const mark = box.mark();
+			sequencer.release("curl -4", "fail");
+			while (sequencer.parkedOfFlow().length > 0) {
+				await settleMicrotasks();
+				await settleEventLoop(1);
+				expectNoStaleEffect(box, mark);
+				if (sequencer.parkedOfFlow().length === 0) break;
+				expect(installDraining()).toBe(true);
+				expect(sequencer.outside(() => startSoftwareUpdate())).toEqual({
+					started: false,
+					reason: "already_updating",
+				});
+				sequencer.step();
+			}
+			await sequencer.drain(() => expectNoStaleEffect(box, mark));
+			expect(installDraining()).toBe(false);
+			await expectEndedBeforeLaunch(box, "streaming", false);
+		},
+		TIMEOUT_MS,
+	);
+});
+
+describe("the launcher's first look for a unit", () => {
+	it(
+		"a stream ends the install while it looks, and a unit is there: its fragment is not read",
+		async () => {
+			// A unit as an earlier install left it running.
+			const earlier = await acceptedInstall("orchestrated");
+			await earlier.sequencer.drain();
+			await expectLaunched(earlier);
+			const script = earlier.unit.unit.script;
+			await teardownInstall();
+			const { box } = await standingAt("orchestrated", REINSPECT);
+			box.unit.unit.script = script;
+			box.unit.unit.state = "running";
+			expect(await admitStream(box)).toEqual({ allowed: true });
+			const mark = box.mark();
+			await box.sequencer.drain(() => expectNoStaleEffect(box, mark));
+			expect(
+				box.sequencer
+					.calls()
+					.slice(mark.calls)
+					.map(({ label }) => label),
+			).not.toContain(FRAGMENT);
+			expect(box.unit.unit.submissions).toBe(0);
+			expect(getUpdateState()).toMatchObject(STREAMING);
+		},
+		TIMEOUT_MS,
+	);
+});
+
+describe("a private curl config that could not be removed", () => {
+	const REMOVAL = "file: private-file:remove (remove the directory)";
+
+	it(
+		"is reported although its install has ended, without the token, and removed when the next install starts",
+		async () => {
+			const { box } = await standingAt("orchestrated", REMOVAL);
+			const { sequencer } = box;
+			expect(await admitStream(box)).toEqual({ allowed: true });
+			const mark = box.mark();
+			// The first of the four removals fails.
+			sequencer.step("fail");
+			await sequencer.drain(() => expectNoStaleEffect(box, mark));
+			expect([...box.privateDirectories]).toHaveLength(1);
+			const [left] = [...box.privateDirectories] as [string];
+			const reports = box
+				.everyLogSince(mark)
+				.filter((line) => line.startsWith(PRIVATE_FILE_LEFT_BEHIND));
+			expect(reports).toHaveLength(1);
+			// Where such files live, never which one, and never the token.
+			expect(reports[0]).toContain("ceraui-curl-*");
+			expect(reports[0]).not.toContain(path.basename(left));
+			expect(reports[0]).not.toContain(TOKEN);
+			// The next install starts by removing it.
+			await expectOfferAtNextCheck(box);
+			expect(box.privateDirectories.has(left)).toBe(true);
+			expect(
+				await sequencer.outside(() => installUpdatesNow({ scope: "packages" })),
+			).toEqual({ started: true });
+			expect(sequencer.next()).toBe(SWEEP);
+			await sequencer.drain();
+			// (The first install's `failed` frame is still in the list.)
+			await expectLaunched(box, false);
+			expect([...box.privateDirectories]).toEqual([]);
 		},
 		TIMEOUT_MS,
 	);

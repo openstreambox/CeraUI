@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
 	type EffectOwner,
 	isOwnerEnded,
+	ownedAll,
 	ownedFiles,
 	ownedWrite,
 } from "../../../helpers/effect-owner.ts";
@@ -551,7 +552,9 @@ async function probeUpdateTransport(
 	const credentials = firstParty ? await deps.credentials() : undefined;
 	// Live verification against the Todo-12-deployed apt.ceralive.tv is deferred; fixture contracts are the current evidence.
 	const imageBase = profile.profile === "os" ? await updateChannelUrl() : "";
-	const samples: TransportSample[] = await Promise.all(
+	// Every probe that was started is waited for, also when one is refused.
+	const samples: TransportSample[] = await ownedAll(
+		deps.owner,
 		candidates.flatMap((candidate) =>
 			([4, 6] as const).map(async (family) => ({
 				candidate,
@@ -571,7 +574,8 @@ async function probeUpdateTransport(
 											),
 										]
 									: []),
-								...(await Promise.all(
+								...(await ownedAll(
+									deps.owner,
 									sources.map((source) =>
 										debian(source, candidate.ifname, family, deps),
 									),

@@ -8,7 +8,10 @@
 	(at your option) any later version.
 */
 
-import type { EffectOwner } from "../../helpers/effect-owner.ts";
+import {
+	assertOwnerMayRead,
+	type EffectOwner,
+} from "../../helpers/effect-owner.ts";
 import { spawnWithTimeout } from "../../helpers/spawn-policy.ts";
 import {
 	imageAptSourceInUse,
@@ -215,6 +218,10 @@ async function inspectService(
 	});
 	const state = parseDetachedAptServiceProbe(result, command);
 	if (state.kind !== "absent") {
+		// A look done for the install like the command before it: not made once
+		// the install has ended. (The second look after an uncertain
+		// `systemd-run` is never refused: the launch fence holds the decision.)
+		assertOwnerMayRead(owner, "the unit's fragment");
 		const fragment = await readStoredStateFile(
 			SOFTWARE_UPDATE_FRAGMENT_PATH,
 			STORED_STATE_LIMITS.intent,

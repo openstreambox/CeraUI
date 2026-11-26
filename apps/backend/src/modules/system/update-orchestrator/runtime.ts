@@ -3195,6 +3195,13 @@ async function runPackageCheckAfterCellularGate(
 	}
 	// The image check still runs on this tick.
 	if (imageSourceClockWaits()) return "deferred";
+	// On an image with its own apt source a scheduled package check waits out
+	// a live stream: apt would refuse it as busy, and a check that could not
+	// run is not a failed one. That is the retry after an install a stream
+	// ended, on this tick and on those after the image check moved the plan
+	// on. No dispatch, no event, no backoff; the image check that is due runs
+	// on this tick.
+	if (imageAptSourceInUse() && deps.isStreamLive()) return "deferred";
 	await runPackageCheckCycle();
 	return "ran";
 }

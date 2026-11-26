@@ -289,6 +289,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	[
 		"Persisted update settings rejected; update checks stop until the file is fixed",
 	],
+	["Private curl configs could not be looked for"],
 	["Production mode: Serving static files from ./public"],
 	["Proxy error: ", ""],
 	["RPC ", " err"],
@@ -332,6 +333,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["SRTLA reload signal result"],
 	[
 		"SRTLA starts on an unconfirmed IP list: the newest bond did not reach disk in time",
+	],
+	[
+		"Security: a private curl config holding the image source's access token could not be removed",
 	],
 	["Send error"],
 	["Server error: ", ""],
@@ -2016,7 +2020,6 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["tailscaled ", ": ", " ", ""],
 	["tc_apply_failed"],
 	["terminal unit probe failed"],
-	["the apt network"],
 	["the install's unit"],
 	["the mock BT mic seed is missing"],
 	["timeout"],

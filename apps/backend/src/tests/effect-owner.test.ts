@@ -14,6 +14,7 @@ import {
 	type OwnedFileBackend,
 	type OwnedWrite,
 	OwnerEndedError,
+	ownedAll,
 	ownedFiles,
 	ownedWrite,
 	setOwnedFileBackendForTest,
@@ -275,6 +276,7 @@ describe("owned writes and files", () => {
 					isSymbolicLink: () => false,
 					uid: 0,
 					mode: 0o700,
+					mtimeMs: 0,
 				};
 			},
 			setMode: async () => {
@@ -304,6 +306,10 @@ describe("owned writes and files", () => {
 			makeTempDirectory: async (prefix) => {
 				steps.push("makeTempDirectory");
 				return `${prefix}1`;
+			},
+			listDirectory: async () => {
+				steps.push("listDirectory");
+				return [];
 			},
 			writeNew: async () => {
 				steps.push("writeNew");
@@ -344,6 +350,43 @@ describe("owned writes and files", () => {
 		await handle.close();
 		await files.removeTree("private-file:remove", "/tmp/x-1");
 		expect(steps).toEqual(["createExclusive", "close", "removeTree"]);
+	});
+});
+
+describe("branches started side by side for an owner", () => {
+	it("are all waited for before a refusal travels on", async () => {
+		const slow = Promise.withResolvers<string>();
+		const { effects } = owner();
+		let settled = false;
+		const joined = ownedAll(effects, [
+			Promise.reject(new OwnerEndedError("the first")),
+			slow.promise,
+		]).finally(() => {
+			settled = true;
+		});
+		joined.catch(() => undefined);
+		await Bun.sleep(5);
+		// The first branch was refused long ago; the second is still out.
+		expect(settled).toBe(false);
+		slow.resolve("back");
+		await expect(joined).rejects.toBeInstanceOf(OwnerEndedError);
+	});
+
+	it("answer like Promise.all when none fails, in order", async () => {
+		const { effects } = owner();
+		expect(await ownedAll(effects, [Promise.resolve(1), "two", 3])).toEqual([
+			1,
+			"two",
+			3,
+		]);
+	});
+
+	it("without an owner it is Promise.all: the first failure ends the wait", async () => {
+		const slow = Promise.withResolvers<string>();
+		await expect(
+			ownedAll(undefined, [Promise.reject(new Error("first")), slow.promise]),
+		).rejects.toThrow("first");
+		slow.resolve("back");
 	});
 });
 

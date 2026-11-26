@@ -36,6 +36,7 @@ export type GateAnswer = "ok" | "fail";
 
 type Parked = {
 	readonly label: string;
+	readonly by: "flow" | "beside";
 	readonly timer: boolean;
 	readonly release: (answer: GateAnswer) => void;
 };
@@ -122,9 +123,15 @@ export function createAwaitSequencer() {
 				);
 			const by = context.getStore();
 			if (!armed || by === "outside") return Promise.resolve("ok");
-			calls.push({ label, by: by === "beside" ? "beside" : "flow" });
+			const who = by === "beside" ? "beside" : "flow";
+			calls.push({ label, by: who });
 			return new Promise<GateAnswer>((release) => {
-				parked.push({ label, timer: options.timer === true, release });
+				parked.push({
+					label,
+					by: who,
+					timer: options.timer === true,
+					release,
+				});
 			});
 		},
 		/** A parked timer was cancelled: it never fires. */
@@ -134,6 +141,23 @@ export function createAwaitSequencer() {
 		/** The wait `step()` would release next. */
 		next: (): string | undefined => next()?.label,
 		parked: (): string[] => parked.map((wait) => wait.label),
+		/** The flow's own waits that are parked now (not its timers). */
+		parkedOfFlow: (): string[] =>
+			parked
+				.filter((wait) => wait.by === "flow" && !wait.timer)
+				.map((wait) => wait.label),
+		/**
+		 * Releases the first parked wait with this label, whatever else is
+		 * parked before it. False when there is none.
+		 */
+		release(label: string, answer: GateAnswer = "ok"): boolean {
+			const wait = parked.find((other) => other.label === label);
+			if (wait === undefined) return false;
+			parked = parked.filter((other) => other !== wait);
+			released.push(wait.label);
+			wait.release(answer);
+			return true;
+		},
 		/** The labels released so far, in order. */
 		released: (): string[] => [...released],
 		/** Every call made while armed, in order (not those from `outside()`). */
