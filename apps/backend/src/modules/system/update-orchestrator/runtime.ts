@@ -61,6 +61,7 @@ import {
 	isAptAllDiscovery,
 	packageInstallAttempt,
 	packageInstallDraining,
+	proveInstallUnitFree,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
 	type SoftwareUpdateError,
@@ -298,6 +299,11 @@ export interface OrchestratorRuntimeDeps {
 	readonly onlyMeteredCandidateExists: () => Promise<boolean>;
 	readonly runPackageCheck: () => Promise<SoftwareUpdateError>;
 	readonly startPackageInstall: () => UpdateStartOutcome;
+	/**
+	 * Proves systemd holds no unit under the install unit's name right before a
+	 * launch. A refused launch then stays a retry instead of a recorded failure.
+	 */
+	readonly installUnitFree?: () => Promise<boolean>;
 	readonly getPackageInstallWireState: () => UpdateState;
 	/**
 	 * Image apt source: the install in progress right after a start was
@@ -455,6 +461,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	onlyMeteredCandidateExists: defaultOnlyMeteredCandidateExists,
 	runPackageCheck: runSoftwareUpdateCheck,
 	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
+	installUnitFree: proveInstallUnitFree,
 	getPackageInstallWireState: getUpdateState,
 	packageInstallAttempt,
 	takePackageAttemptEnd,
@@ -1595,6 +1602,12 @@ async function maybeStartPackageInstall(opts: {
 		}
 		const settings = await deps.loadSettings();
 		if (opts.isCurrent && !opts.isCurrent()) {
+			await deps.quarantine.clearPending();
+			return { started: false, reason: "check_unavailable" };
+		}
+		// A name systemd still holds (a stopped unit an image's drain keeps
+		// loaded) refuses the launch; it must never become DOWNLOAD_FAILED.
+		if (deps.installUnitFree && !(await deps.installUnitFree())) {
 			await deps.quarantine.clearPending();
 			return { started: false, reason: "check_unavailable" };
 		}

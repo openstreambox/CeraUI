@@ -10,6 +10,7 @@ import { isSoftwareUpdateRecoveryInconclusive } from "../modules/system/software
 import {
 	buildDetachedAptAllCommand,
 	buildDetachedAptUpgradeCommand,
+	setDetachedAptServiceDepsForTest,
 } from "../modules/system/software-update-service.ts";
 import {
 	DetachedAptServiceCommandError,
@@ -19,6 +20,8 @@ import {
 import { parseDetachedAptServiceProbe } from "../modules/system/software-update-service-state.ts";
 import {
 	getLastInstallUnitVerdict,
+	isInstallUnitPinned,
+	proveInstallUnitFree,
 	recoverSoftwareUpdateIfRunning,
 	startSoftwareUpdate,
 } from "../modules/system/software-updates.ts";
@@ -123,17 +126,25 @@ function render(unit: UnitState | null): string {
 	].join("\n");
 }
 
-function modelledSystemd(drainAfter: readonly string[], aptExit = 0) {
+function modelledSystemd(
+	drainAfter: readonly string[],
+	aptExit = 0,
+	options: { readonly readsFailAfterCleanup?: boolean } = {},
+) {
 	let unit: UnitState | null = null;
 	let fragment = "";
 	let polls = 0;
 	const launches: (readonly string[])[] = [];
+	// Every systemd-run, including ones systemd refuses.
+	const attempts: (readonly string[])[] = [];
 	const stops: string[] = [];
 	const command = ["systemctl", "show", SOFTWARE_UPDATE_UNIT];
+	let readsFail = false;
 	const deps: DetachedAptUpgradeDeps = {
 		outputPaths: softwareUpdateOutputPaths(),
 		prepareOutput: async () => {},
 		start: async (argv) => {
+			attempts.push(argv);
 			// systemd refuses a transient unit whose name is still loaded.
 			if (unit !== null)
 				throw new DetachedAptServiceCommandError(
@@ -147,6 +158,7 @@ function modelledSystemd(drainAfter: readonly string[], aptExit = 0) {
 		},
 		// As inspectService: a loaded unit's transient file is checked too.
 		inspect: async () => {
+			if (readsFail) throw new Error("systemctl show timed out");
 			const state = parseDetachedAptServiceProbe(
 				{ exitCode: 0, stdout: render(unit), stderr: "" },
 				command,
@@ -162,6 +174,7 @@ function modelledSystemd(drainAfter: readonly string[], aptExit = 0) {
 			// The transient unit's own Before= goes with it; another loaded unit's
 			// After= naming it keeps it loaded.
 			if (!drainAfter.includes(SOFTWARE_UPDATE_UNIT)) unit = null;
+			if (options.readsFailAfterCleanup) readsFail = true;
 		},
 		readOutput: async (_path, offset) => ({
 			bytes: new Uint8Array(),
@@ -183,9 +196,14 @@ function modelledSystemd(drainAfter: readonly string[], aptExit = 0) {
 	return {
 		deps,
 		launches,
+		attempts,
 		stops,
 		queueStartJob: () => {
 			if (unit) unit = { ...unit, job: "4711" };
+		},
+		// A reference that held the stopped unit goes away; systemd unloads it.
+		releaseReference: () => {
+			if (unit?.active === "inactive") unit = null;
 		},
 	};
 }
@@ -230,7 +248,7 @@ test("the restart after an install finds the pinned stopped unit settled, with n
 		started: false,
 		reason: "check_unavailable",
 	});
-	expect(systemd.launches).toHaveLength(1);
+	expect(systemd.attempts).toHaveLength(1);
 });
 
 test("a failed install that leaves the unit pinned refuses the next start up front", async () => {
@@ -267,7 +285,49 @@ test("a second install in that boot is refused by name, without a systemd-run", 
 	await expect(second).rejects.toMatchObject({
 		name: "DetachedAptServicePinnedError",
 	});
-	expect(systemd.launches).toHaveLength(1);
+	expect(systemd.attempts).toHaveLength(1);
+});
+
+test("a pin noted after a temporary reference clears once systemd unloads the unit", async () => {
+	await using _h = await updateHarness();
+	// Given a stopped unit some reference still holds when recovery looks.
+	const systemd = modelledSystemd(pinningDrain);
+	await runDetachedAptAll(install, "any", handlers, systemd.deps);
+	setDetachedAptServiceDepsForTest(systemd.deps);
+	try {
+		await recoverAfterRestart(systemd.deps).recovered;
+		expect(isInstallUnitPinned()).toBe(true);
+		// Then the start right before a launch is refused while it is loaded.
+		expect(await proveInstallUnitFree()).toBe(false);
+		expect(startSoftwareUpdate()).toEqual({
+			started: false,
+			reason: "check_unavailable",
+		});
+		// The refusal asked systemd again in the background: still loaded.
+		expect(await proveInstallUnitFree()).toBe(false);
+		// When the reference goes and systemd unloads the unit.
+		systemd.releaseReference();
+		// Then the next proof clears the pin, and no start was ever attempted.
+		expect(await proveInstallUnitFree()).toBe(true);
+		expect(isInstallUnitPinned()).toBe(false);
+		expect(systemd.attempts).toHaveLength(1);
+	} finally {
+		setDetachedAptServiceDepsForTest(null);
+	}
+});
+
+test("an unreadable unit after a failed install's cleanup counts as pinned until proven free", async () => {
+	// Given a failed install on a fixed drain whose unit can't be read once reset.
+	const systemd = modelledSystemd(fixedDrain, 100, {
+		readsFailAfterCleanup: true,
+	});
+	const pinned: string[] = [];
+	const watched = { ...handlers, onUnitPinned: () => pinned.push("pinned") };
+	// When it settles.
+	const exit = await runDetachedAptAll(install, "any", watched, systemd.deps);
+	// Then the exit status is still apt's, and the next start must ask first.
+	expect(exit).toBe(100);
+	expect(pinned).toEqual(["pinned"]);
 });
 
 test("with the drain no longer naming the unit, a second install in the same boot runs", async () => {
