@@ -651,6 +651,8 @@ describe("repository answers are not captive portals", () => {
 				routerIfnames: () => [],
 				dongleIfnames: () => [],
 				run: async (argv) => {
+					// The image's URL, token included, is never an argument.
+					expect(argv.join(" ")).not.toContain(TOKEN);
 					if (argv[0] === "nmcli")
 						return {
 							exitCode: 0,

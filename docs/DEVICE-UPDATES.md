@@ -1388,9 +1388,11 @@ under `/etc/apt/sources.list.d/`, its `host`, `origin` and `label`
 strictly. With a valid record:
 
 - CeraUI never writes `ceralive.sources`. Reachability and transport read only
-  that file, and `apt.ceralive.tv` is not probed (no client certificate). A
-  repository HTTP error from that host over verified TLS reads as unreachable,
-  never as a captive portal.
+  that file, and the first-party archive's own probe (the client certificate,
+  `/__tls-probe`) is never used, also when the image's source lives on
+  `apt.ceralive.tv`: its host is probed at its `InRelease` like any image
+  host. A repository HTTP error from that host over verified TLS reads as
+  unreachable, never as a captive portal.
 - Every package-update apt run (refresh, `apt-cache policy`, simulations, the
   space probe, the download and the detached unit's download and install
   stages) carries `-o Dir::Etc::SourceList=<sourcesFile> -o
@@ -1404,7 +1406,11 @@ strictly. With a valid record:
   startup and on every check, whether or not discovery can run.
 - The URI's first path segment is an access token. Transport findings, the
   update state, the `updating.result` status frame, refusal diagnostics and
-  logged apt output show the source by host only. The detached unit's output is
+  logged apt output show the source by host only. The reachability and
+  transport probes never put the URL on curl's command line, where any local
+  process could read it: curl reads it from a config file only the backend's
+  user can read (mode 0600, in a directory of its own), removed as soon as
+  curl has exited. The detached unit's output is
   redacted line by line as the backend reads it; apt itself still writes it to
   the root-only `/run/ceralive/software-update.{stdout,stderr}` spool. That
   spool outlasts the unit's cleanup (a restarted backend re-reads it to

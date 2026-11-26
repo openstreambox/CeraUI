@@ -1,3 +1,5 @@
+import { activeImageAptSource } from "./image-apt-source.ts";
+
 export type AptOrigin = {
 	readonly url: string;
 	readonly host: string;
@@ -6,6 +8,19 @@ export type AptOrigin = {
 };
 
 export const FIRST_PARTY_APT_HOST = "apt.ceralive.tv";
+
+/**
+ * Whether `host` (with or without a port) is where this image's own apt source
+ * lives. Such a host is the image's repository whatever its name: it is never
+ * probed as the first-party archive, even when it is `apt.ceralive.tv`.
+ */
+export function isImageAptSourceHost(host: string): boolean {
+	const image = activeImageAptSource();
+	return (
+		image !== undefined &&
+		host.toLowerCase().replace(/:\d+$/, "") === image.host
+	);
+}
 
 export class AptSourceReadError extends Error {
 	override readonly name = "AptSourceReadError";
@@ -36,7 +51,10 @@ function fieldValue(stanza: string, field: string): string | undefined {
 }
 
 function aptProbeUrl(uri: URL, suite: string): string {
-	if (uri.host.toLowerCase() === FIRST_PARTY_APT_HOST)
+	if (
+		uri.host.toLowerCase() === FIRST_PARTY_APT_HOST &&
+		!isImageAptSourceHost(uri.host)
+	)
 		return `${uri.origin}/__tls-probe`;
 	const base = uri.href.replace(/\/+$/, "");
 	return `${base}/dists/${suite.replace(/^\/+|\/+$/g, "")}/InRelease`;

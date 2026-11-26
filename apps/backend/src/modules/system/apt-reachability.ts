@@ -22,9 +22,14 @@ import {
 	aptClientPaths,
 } from "../addons/apt-client-tls.ts";
 import { deviceBindingArgs } from "../network/device-bound-probe.ts";
-import { type AptOrigin, parseAptSourceOrigins } from "./apt-source-origins.ts";
 import {
-	activeImageAptSource,
+	type AptOrigin,
+	isImageAptSourceHost,
+	parseAptSourceOrigins,
+} from "./apt-source-origins.ts";
+import { runCurlWithPrivateUrl } from "./curl-private-url.ts";
+import {
+	carriesImageAptSecret,
 	imageAptSourcesText,
 } from "./image-apt-source.ts";
 import { parseAuthorityJson } from "./update-orchestrator/strict-authority-json.ts";
@@ -62,13 +67,25 @@ export type AptReachability = AptReachabilityWire & {
 
 export type AptReachabilityDeps = {
 	readonly readSources: () => Promise<string>;
+	/**
+	 * Runs one curl probe. A URL that carries the image source's access token
+	 * comes as `privateUrl` and is left out of `argv`: it must reach curl
+	 * without appearing on its command line.
+	 */
 	readonly runProbe: (
 		argv: string[],
+		privateUrl?: string,
 	) => Promise<Pick<SpawnWithTimeoutResult, "exitCode" | "stdout">>;
 	readonly now?: () => number;
 	readonly maxAgeMs?: number;
 	readonly ifname?: string;
 };
+
+// The first-party archive's own probe (`/__tls-probe`, the client certificate)
+// applies to that host only where it is not this image's own apt source.
+function isFirstPartyProbe(host: string): boolean {
+	return host === "apt.ceralive.tv" && !isImageAptSourceHost(host);
+}
 
 export function buildProbeArgv(
 	family: 4 | 6,
@@ -76,7 +93,7 @@ export function buildProbeArgv(
 	ifname?: string,
 	credentials?: AptClientPaths,
 ): string[] {
-	const firstParty = new URL(url).hostname === "apt.ceralive.tv";
+	const firstParty = isFirstPartyProbe(new URL(url).hostname);
 	return [
 		"curl",
 		"-q",
@@ -108,7 +125,7 @@ export function classifyProbe(outcome: {
 	readonly scheme: AptOrigin["scheme"];
 }): AptFamilyProbe {
 	if (outcome.exitCode === 0) {
-		if (outcome.originHost === "apt.ceralive.tv") {
+		if (isFirstPartyProbe(outcome.originHost)) {
 			const parts = outcome.stdout.split("\n<<<apt-probe>>>");
 			const [body, status] = parts;
 			if (parts.length !== 2 || status !== "200") return "unknown";
@@ -132,11 +149,7 @@ export function classifyProbe(outcome: {
 		if (Number.isFinite(code)) {
 			// The image's own source is https only: an HTTP error came from the
 			// repository over verified TLS, so the host is not usable (unreachable).
-			if (
-				code >= 400 &&
-				outcome.originHost.toLowerCase().replace(/:\d+$/, "") ===
-					activeImageAptSource()?.host
-			)
+			if (code >= 400 && isImageAptSourceHost(outcome.originHost))
 				return "no_route";
 			const redirectUrl = redirectParts.join(" ");
 			if (outcome.scheme === "http" && code >= 300 && code < 400) {
@@ -164,7 +177,7 @@ export function classifyProbe(outcome: {
 		case 6:
 			return "dns_failed";
 		case 58:
-			return outcome.originHost === "apt.ceralive.tv"
+			return isFirstPartyProbe(outcome.originHost)
 				? "credentials_invalid"
 				: "unknown";
 		default:
@@ -249,7 +262,12 @@ export async function readAptSources(
 
 export const defaultAptReachabilityDeps: AptReachabilityDeps = {
 	readSources: () => readAptSources(),
-	runProbe: (argv) => spawnWithTimeout(argv, { timeoutMs: PROBE_TIMEOUT_MS }),
+	runProbe: (argv, privateUrl) =>
+		privateUrl === undefined
+			? spawnWithTimeout(argv, { timeoutMs: PROBE_TIMEOUT_MS })
+			: runCurlWithPrivateUrl(argv, privateUrl, (full) =>
+					spawnWithTimeout(full, { timeoutMs: PROBE_TIMEOUT_MS }),
+				),
 };
 
 let cache: { readonly at: number; readonly value: AptReachability } | undefined;
@@ -286,13 +304,22 @@ export async function probeAptReachability(
 
 	const byOrigin = await Promise.all(
 		origins.map(async (origin): Promise<AptOriginProbe> => {
-			const credentials =
-				origin.host === "apt.ceralive.tv" ? await aptClientPaths() : undefined;
+			const credentials = isFirstPartyProbe(origin.host)
+				? await aptClientPaths()
+				: undefined;
 			const probe = async (family: 4 | 6): Promise<AptFamilyProbe> => {
 				try {
-					const result = await deps.runProbe(
-						buildProbeArgv(family, origin.probeUrl, deps.ifname, credentials),
+					const argv = buildProbeArgv(
+						family,
+						origin.probeUrl,
+						deps.ifname,
+						credentials,
 					);
+					// The image source's URL carries its access token: curl gets it
+					// privately, never as an argument.
+					const result = carriesImageAptSecret(origin.probeUrl)
+						? await deps.runProbe(argv.slice(0, -1), argv.at(-1))
+						: await deps.runProbe(argv);
 					return classifyProbe({
 						exitCode: result.exitCode,
 						stdout: result.stdout,

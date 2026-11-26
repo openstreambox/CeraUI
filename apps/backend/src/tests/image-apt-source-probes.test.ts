@@ -1,0 +1,268 @@
+/// <reference types="bun" />
+
+/**
+ * The probes of an image's own apt source: its URL carries the access token,
+ * so it never reaches curl's command line, and its host is the image's
+ * repository whatever it is called.
+ */
+
+import { afterEach, describe, expect, it } from "bun:test";
+import { readFileSync, statSync } from "node:fs";
+import { dirname } from "node:path";
+import {
+	buildProbeArgv,
+	classifyProbe,
+	probeAptReachability,
+	resetAptReachabilityCacheForTest,
+} from "../modules/system/apt-reachability.ts";
+import { parseAptSourceOrigins } from "../modules/system/apt-source-origins.ts";
+import {
+	curlUrlConfig,
+	runCurlWithPrivateUrl,
+} from "../modules/system/curl-private-url.ts";
+import {
+	IMAGE_APT_SOURCE_POLICY,
+	setImageAptSourceReaderForTest,
+} from "../modules/system/image-apt-source.ts";
+import { parseDebianSources } from "../modules/system/update-transport/core.ts";
+import { selectUpdateTransport } from "../modules/system/update-transport/executor.ts";
+
+const TOKEN = "k7Qm2xV9pL4sT8wZ";
+const SUITE = "rock-5b-plus-2026.11.6";
+const EMERGENCY = `${SUITE}-emergency`;
+const SOURCES_FILE = "/etc/apt/sources.list.d/openstreambox.sources";
+const KEYRING = "/usr/share/keyrings/openstreambox-archive-keyring.pgp";
+
+// A box whose image names `host` as its one apt source.
+function imageSource(host: string) {
+	const uri = `https://${host}/${TOKEN}/apt`;
+	const sources = `Types: deb\nURIs: ${uri}/\nSuites: ${SUITE} ${EMERGENCY}\nComponents: main\nSigned-By: ${KEYRING}\n`;
+	const files: Record<string, string> = {
+		[IMAGE_APT_SOURCE_POLICY]: `{"schema":1,"sourcesFile":"${SOURCES_FILE}","host":"${host}","origin":"OpenStreamBox","label":"OpenStreamBox","suites":["${SUITE}","${EMERGENCY}"]}`,
+		[SOURCES_FILE]: sources,
+	};
+	setImageAptSourceReaderForTest((file) => files[file] ?? null);
+	return {
+		sources,
+		urls: [
+			`${uri}/dists/${SUITE}/InRelease`,
+			`${uri}/dists/${EMERGENCY}/InRelease`,
+		],
+	};
+}
+
+afterEach(() => {
+	setImageAptSourceReaderForTest(null);
+	resetAptReachabilityCacheForTest();
+});
+
+// The unbound probe, with every curl recorded as the runner received it.
+async function unboundProbe(sources: string, stdout = "200 ") {
+	const calls: { argv: string[]; privateUrl: string | undefined }[] = [];
+	const result = await probeAptReachability({
+		readSources: async () => sources,
+		runProbe: async (argv, privateUrl) => {
+			calls.push({ argv, privateUrl });
+			return { exitCode: 0, stdout };
+		},
+		maxAgeMs: 0,
+	});
+	return { calls, result };
+}
+
+// The per-uplink transport probe, with every command recorded likewise.
+async function transportProbe(sources: string) {
+	const calls: { argv: string[]; privateUrl: string | undefined }[] = [];
+	const selection = await selectUpdateTransport(
+		{ profile: "apt", board: "apt", channel: "stable" },
+		{
+			listIfnames: () => ["eth0"],
+			readSources: async () => sources,
+			credentials: async () => undefined,
+			mmIfnames: () => [],
+			routerIfnames: () => [],
+			dongleIfnames: () => [],
+			run: async (argv, privateUrl) => {
+				calls.push({ argv, privateUrl });
+				if (argv[0] === "nmcli")
+					return {
+						exitCode: 0,
+						stdout:
+							"GENERAL.DEVICE:eth0\nGENERAL.IP-IFACE:eth0\nGENERAL.TYPE:ethernet\nGENERAL.STATE:100 (connected)\nGENERAL.METERED:no",
+						stderr: "",
+					};
+				if (argv[0] === "resolvectl")
+					return argv.includes("-6")
+						? { exitCode: 1, stdout: "", stderr: "" }
+						: {
+								exitCode: 0,
+								stdout: `${argv.at(-1)}: 192.0.2.10`,
+								stderr: "",
+							};
+				return {
+					exitCode: 0,
+					stdout: "\n<<<update-probe>>>403 0.05",
+					stderr: "",
+				};
+			},
+		},
+	);
+	return { calls, selection };
+}
+
+describe("the image source's URL never reaches curl's command line", () => {
+	it("the unbound probe hands it to the runner privately", async () => {
+		const { sources, urls } = imageSource("updates.example.org");
+		const { calls } = await unboundProbe(sources);
+		expect(calls).toHaveLength(4);
+		for (const { argv } of calls) {
+			expect(argv[0]).toBe("curl");
+			expect(argv.join(" ")).not.toContain(TOKEN);
+			expect(argv.some((arg) => arg.startsWith("https://"))).toBe(false);
+		}
+		expect([...new Set(calls.map(({ privateUrl }) => privateUrl))]).toEqual(
+			urls,
+		);
+	});
+
+	it("the per-uplink probe hands it to the runner privately", async () => {
+		const { sources, urls } = imageSource("updates.example.org");
+		const { calls } = await transportProbe(sources);
+		const curls = calls.filter(({ argv }) => argv[0] === "curl");
+		expect(curls.length).toBeGreaterThan(0);
+		for (const { argv } of calls) expect(argv.join(" ")).not.toContain(TOKEN);
+		expect(curls.map(({ privateUrl }) => privateUrl).sort()).toEqual(
+			[...urls].sort(),
+		);
+	});
+
+	it("without the record, the URL stays where it was", async () => {
+		setImageAptSourceReaderForTest(() => null);
+		const { calls } = await unboundProbe(
+			"Types: deb\nURIs: https://deb.debian.org/debian\nSuites: trixie\n",
+		);
+		expect(calls.map(({ privateUrl }) => privateUrl)).toEqual([
+			undefined,
+			undefined,
+		]);
+		expect(calls[0]?.argv.at(-1)).toBe(
+			"https://deb.debian.org/debian/dists/trixie/InRelease",
+		);
+	});
+
+	it("curl reads it from a file only this user can read, gone afterwards", async () => {
+		const url = `https://updates.example.org/${TOKEN}/apt/dists/${SUITE}/InRelease`;
+		let file = "";
+		const result = await runCurlWithPrivateUrl(
+			["curl", "-q", "-sS"],
+			url,
+			async (argv) => {
+				expect(argv.slice(0, 4)).toEqual(["curl", "-q", "-sS", "-K"]);
+				expect(argv.join(" ")).not.toContain(TOKEN);
+				file = argv[4] as string;
+				expect(readFileSync(file, "utf8")).toBe(`url = "${url}"\n`);
+				expect(statSync(file).mode & 0o777).toBe(0o600);
+				expect(statSync(dirname(file)).mode & 0o777).toBe(0o700);
+				return "ran";
+			},
+		);
+		expect(result).toBe("ran");
+		expect(() => statSync(dirname(file))).toThrow();
+	});
+
+	it("the file goes even when curl could not run", async () => {
+		let file = "";
+		await expect(
+			runCurlWithPrivateUrl(["curl"], "https://example.org/", async (argv) => {
+				file = argv.at(-1) as string;
+				throw new Error("curl: not found");
+			}),
+		).rejects.toThrow("curl: not found");
+		expect(() => statSync(dirname(file))).toThrow();
+	});
+
+	it("quotes what a config line could otherwise end", () => {
+		expect(curlUrlConfig('https://example.org/a"b\\c')).toBe(
+			'url = "https://example.org/a\\"b\\\\c"\n',
+		);
+	});
+});
+
+describe("an image source on the first-party archive's host", () => {
+	const FIRST_PARTY = "apt.ceralive.tv";
+
+	it("is probed at its own InRelease, without the client certificate", async () => {
+		const { sources, urls } = imageSource(FIRST_PARTY);
+		expect(
+			parseAptSourceOrigins(sources).map(({ probeUrl }) => probeUrl),
+		).toEqual(urls);
+		const argv = buildProbeArgv(4, urls[0] as string, undefined, {
+			cert: "/tmp/client.crt",
+			key: "/tmp/client.key",
+		});
+		expect(argv).not.toContain("--cert");
+		expect(argv).toContain("-I");
+		const { calls } = await unboundProbe(sources);
+		expect(calls.map(({ privateUrl }) => privateUrl).slice(0, 2)).toEqual([
+			urls[0],
+			urls[0],
+		]);
+	});
+
+	it("reads an HTTP error from it as unreachable, like any image host", async () => {
+		const { sources } = imageSource(FIRST_PARTY);
+		expect(
+			classifyProbe({
+				exitCode: 0,
+				stdout: "403 ",
+				originHost: FIRST_PARTY,
+				scheme: "https",
+			}),
+		).toBe("no_route");
+		const { result } = await unboundProbe(sources, "403 ");
+		expect(result.verdict).toBe("unreachable");
+	});
+
+	it("stays a source for the per-uplink probe", async () => {
+		const { sources, urls } = imageSource(FIRST_PARTY);
+		expect(parseDebianSources(sources, true).map(({ url }) => url)).toEqual(
+			urls,
+		);
+		const { calls, selection } = await transportProbe(sources);
+		// Its InRelease is asked for, and never the first-party probe.
+		expect(
+			calls
+				.flatMap(({ privateUrl }) => (privateUrl ? [privateUrl] : []))
+				.sort(),
+		).toEqual([...urls].sort());
+		expect(calls.flatMap(({ argv }) => argv).join(" ")).not.toContain(
+			"__tls-probe",
+		);
+		expect(
+			selection.ranked.flatMap(({ hosts }) => hosts.map(({ host }) => host)),
+		).toContain(FIRST_PARTY);
+	});
+
+	it("without the record, that host is the first-party archive as before", () => {
+		setImageAptSourceReaderForTest(() => null);
+		const sources = `Types: deb\nURIs: https://${FIRST_PARTY}/dists/stable/binary-arm64/\nSuites: ./\n`;
+		expect(
+			parseAptSourceOrigins(sources).map(({ probeUrl }) => probeUrl),
+		).toEqual([`https://${FIRST_PARTY}/__tls-probe`]);
+		expect(parseDebianSources(sources)).toEqual([]);
+		expect(
+			buildProbeArgv(4, `https://${FIRST_PARTY}/__tls-probe`, undefined, {
+				cert: "/tmp/client.crt",
+				key: "/tmp/client.key",
+			}),
+		).toContain("--cert");
+		expect(
+			classifyProbe({
+				exitCode: 58,
+				stdout: "",
+				originHost: FIRST_PARTY,
+				scheme: "https",
+			}),
+		).toBe("credentials_invalid");
+	});
+});

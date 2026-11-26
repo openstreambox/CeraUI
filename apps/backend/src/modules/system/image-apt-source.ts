@@ -367,6 +367,11 @@ export function redactImageAptSecret(text: string): string {
 	return out;
 }
 
+/** Whether `text` holds the image source's URI or its token. */
+export function carriesImageAptSecret(text: string): boolean {
+	return redactImageAptSecret(text) !== text;
+}
+
 /**
  * The refresh fetched or hit the Release of both image suites and failed no
  * index: the lists an install reads are current and validly signed.

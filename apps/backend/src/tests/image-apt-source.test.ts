@@ -615,6 +615,8 @@ describe("reachability and transport read only the image's file", () => {
 	it("probes the image's host without the client certificate, and names it by host", async () => {
 		useImageSource();
 		const calls: string[][] = [];
+		// The image's URL reaches curl privately, never on its command line.
+		const privateUrls: string[] = [];
 		let credentialsRead = false;
 		await selectUpdateTransport(
 			{ profile: "apt", board: "apt", channel: "stable" },
@@ -628,8 +630,9 @@ describe("reachability and transport read only the image's file", () => {
 				mmIfnames: () => [],
 				routerIfnames: () => [],
 				dongleIfnames: () => [],
-				run: async (argv) => {
+				run: async (argv, privateUrl) => {
 					calls.push(argv);
+					if (privateUrl !== undefined) privateUrls.push(privateUrl);
 					if (argv[0] === "nmcli")
 						return {
 							exitCode: 0,
@@ -656,10 +659,12 @@ describe("reachability and transport read only the image's file", () => {
 		);
 		const curls = calls.filter(([command]) => command === "curl");
 		// IPv4 only: IPv6 has no route, so its curls never start.
-		expect(curls.map((argv) => argv.at(-1)).sort()).toEqual([
+		expect(curls).toHaveLength(2);
+		expect(privateUrls.sort()).toEqual([
 			`${URI}/dists/${EMERGENCY}/InRelease`,
 			`${URI}/dists/${SUITE}/InRelease`,
 		]);
+		expect(calls.flat().join(" ")).not.toContain(TOKEN);
 		expect(calls.flat()).not.toContain("--cert");
 		expect(calls.flat().some((arg) => arg.includes("apt.ceralive.tv"))).toBe(
 			false,

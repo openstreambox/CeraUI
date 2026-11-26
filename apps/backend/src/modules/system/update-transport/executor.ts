@@ -23,8 +23,10 @@ import {
 	getModemNetMarker,
 	getRouterCellularMarker,
 } from "../../network/router-cellular-scan.ts";
+import { runCurlWithPrivateUrl } from "../curl-private-url.ts";
 import {
 	activeImageAptSource,
+	carriesImageAptSecret,
 	imageAptSourceInUse,
 	imageAptSourcesText,
 } from "../image-apt-source.ts";
@@ -59,7 +61,12 @@ export type UpdateTransportDeps = {
 	listIfnames: () => string[];
 	readSources: () => Promise<string>;
 	credentials: () => Promise<AptClientPaths | undefined>;
-	run: (argv: string[]) => Promise<SpawnWithTimeoutResult>;
+	/**
+	 * Runs one bounded command. A curl URL that carries the image source's
+	 * access token comes as `privateUrl` and is left out of `argv`: it must
+	 * reach curl without appearing on its command line.
+	 */
+	run: (argv: string[], privateUrl?: string) => Promise<SpawnWithTimeoutResult>;
 	mmIfnames: () => string[];
 	routerIfnames: () => string[];
 	dongleIfnames: () => string[];
@@ -92,7 +99,12 @@ export const defaultUpdateTransportDeps: UpdateTransportDeps = {
 			.map(([ifname]) => ifname),
 	readSources,
 	credentials: aptClientPaths,
-	run: (argv) => spawnWithTimeout(argv, { timeoutMs: TIMEOUT_MS }),
+	run: (argv, privateUrl) =>
+		privateUrl === undefined
+			? spawnWithTimeout(argv, { timeoutMs: TIMEOUT_MS })
+			: runCurlWithPrivateUrl(argv, privateUrl, (full) =>
+					spawnWithTimeout(full, { timeoutMs: TIMEOUT_MS }),
+				),
 	mmIfnames: () =>
 		Object.values(getModems())
 			.map(({ ifname }) => ifname)
@@ -232,10 +244,13 @@ async function curl(
 		...(cert ? ["--cert", cert.cert, "--key", cert.key] : []),
 		"-w",
 		`${MARKER}%{http_code} %{time_total}`,
-		url,
 	];
 	try {
-		const result = await deps.run(argv);
+		// The image source's URL carries its access token: curl gets it
+		// privately, never as an argument.
+		const result = carriesImageAptSecret(url)
+			? await deps.run(argv, url)
+			: await deps.run([...argv, url]);
 		if (result.exitCode !== 0)
 			return {
 				state: failure(result),
@@ -480,7 +495,7 @@ async function probeUpdateTransport(
 	);
 	const sources =
 		profile.profile === "apt"
-			? parseDebianSources(await deps.readSources())
+			? parseDebianSources(await deps.readSources(), imageAptSourceInUse())
 			: [];
 	if (profile.profile === "apt" && sources.length === 0)
 		return rankTransports([]);

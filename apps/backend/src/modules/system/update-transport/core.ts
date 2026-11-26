@@ -139,7 +139,12 @@ function sourceUrl(uri: string, suite: string): string | undefined {
 	}
 }
 
-export function parseDebianSources(text: string): DebianSource[] {
+export function parseDebianSources(
+	text: string,
+	// An image with its own apt source: whatever host it names is a repository
+	// to probe like any other, the first-party archive's host included.
+	imageSource = false,
+): DebianSource[] {
 	const sources: DebianSource[] = [];
 	for (const stanza of text.split(/\r?\n\s*\r?\n/)) {
 		const fields = new Map<string, string>();
@@ -165,7 +170,10 @@ export function parseDebianSources(text: string): DebianSource[] {
 				for (const uri of (fields.get("uris") ?? "").split(/\s+/))
 					for (const suite of (fields.get("suites") ?? "").split(/\s+/)) {
 						const url = sourceUrl(uri, suite);
-						if (url && new URL(url).hostname !== "apt.ceralive.tv")
+						if (
+							url &&
+							(imageSource || new URL(url).hostname !== "apt.ceralive.tv")
+						)
 							sources.push({
 								url,
 								keyring: keyring && /^\/[\w./-]+$/.test(keyring) ? keyring : "",
@@ -180,7 +188,7 @@ export function parseDebianSources(text: string): DebianSource[] {
 			if (!match) continue;
 			const keyring = match[1]?.match(/(?:^|\s)signed-by=(\/[^\s]+)/i)?.[1];
 			const url = sourceUrl(match[2] ?? "", match[3] ?? "");
-			if (url && new URL(url).hostname !== "apt.ceralive.tv")
+			if (url && (imageSource || new URL(url).hostname !== "apt.ceralive.tv"))
 				sources.push({
 					url,
 					keyring: keyring && /^\/[\w./-]+$/.test(keyring) ? keyring : "",
