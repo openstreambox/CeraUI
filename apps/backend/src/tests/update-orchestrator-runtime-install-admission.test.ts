@@ -186,6 +186,43 @@ describe("installUpdatesNow — bypasses idle, NEVER bypasses the stream-live ch
 		expect(getOrchestratorState().phase).toBe("awaiting-idle");
 	});
 
+	test("an install unit name systemd still holds refuses the launch and stays a retry", async () => {
+		// Given an install unit name that is not free yet.
+		let free = false;
+		let launches = 0;
+		const quarantine = testQuarantine();
+		setOrchestratorRuntimeDepsForTest(
+			fakeDeps({
+				quarantine,
+				installUnitFree: async () => free,
+				startPackageInstall: () => {
+					launches++;
+					return { started: true };
+				},
+			}),
+		);
+		setOrchestratorStateForTest({
+			...initialOrchestratorState(0),
+			phase: "available",
+		});
+		// When the owner installs.
+		const refused = await installUpdatesNow();
+		// Then nothing launches, no failure is recorded and the plan is dropped.
+		expect(refused).toEqual({ started: false, reason: "not_available" });
+		expect(launches).toBe(0);
+		expect(getOrchestratorState().phase).toBe("awaiting-idle");
+		expect(await quarantine.readPending()).toEqual([]);
+		// And once the name is free, the same pending install launches.
+		free = true;
+		setOrchestratorStateForTest({
+			...getOrchestratorState(),
+			phase: "available",
+		});
+		expect(await installUpdatesNow()).toEqual({ started: true });
+		expect(launches).toBe(1);
+		expect(getOrchestratorState().phase).toBe("downloading");
+	});
+
 	test("refuses a live stream from awaiting-idle without launching or changing the pending phase", async () => {
 		let installs = 0;
 		setOrchestratorRuntimeDepsForTest(

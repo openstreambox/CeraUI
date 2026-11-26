@@ -379,6 +379,7 @@ export function resetSoftwareUpdateState(): void {
 	resetSoftwareUpdateRecovery();
 	lastInstallUnitVerdict = "not-probed";
 	installUnitPinned = false;
+	installUnitProof = undefined;
 	aptDiscoveryRunning = false;
 	softUpdateStatus = null;
 	currentUpdateIdentity = null;
@@ -1724,7 +1725,11 @@ export function startSoftwareUpdate(
 	if (isSoftwareUpdateRecoveryInconclusive()) {
 		return refuseUpdateStart("check_unavailable");
 	}
-	if (installUnitPinned) return refuseUpdateStart("check_unavailable");
+	if (installUnitPinned) {
+		// Asks systemd again, so a later start goes ahead once the name is free.
+		void proveInstallUnitFree();
+		return refuseUpdateStart("check_unavailable");
+	}
 
 	currentUpdateIdentity = availableIdentity;
 	lastUpdateFailure = null;
@@ -2244,6 +2249,45 @@ function noteInstallUnitPinned(): void {
 	logger.warn(
 		"Software update: the stopped install unit stays loaded until the next boot; installs wait for a restart",
 	);
+}
+
+/** Whether a start would be refused for a pinned install unit right now. */
+export function isInstallUnitPinned(): boolean {
+	return installUnitPinned;
+}
+
+let installUnitProof: Promise<boolean> | undefined;
+
+/**
+ * True only when systemd answers that no unit by the install unit's name is
+ * loaded; that also clears a pin noted earlier (a temporary reference, such as
+ * a D-Bus client's, has gone). A loaded unit, or no answer, is false: the
+ * caller retries later instead of launching into a refusal.
+ */
+export function proveInstallUnitFree(): Promise<boolean> {
+	if (!aptUpdatesEnabled() || shouldUseMocks()) return Promise.resolve(true);
+	if (!installUnitProof) {
+		const proof = readInstallUnitFree();
+		installUnitProof = proof;
+		void proof.then(() => {
+			if (installUnitProof === proof) installUnitProof = undefined;
+		});
+	}
+	return installUnitProof;
+}
+
+async function readInstallUnitFree(): Promise<boolean> {
+	try {
+		const unit = await defaultDetachedAptServiceDeps().inspect();
+		if (unit.kind === "absent" && !unit.loaded) {
+			installUnitPinned = false;
+			return true;
+		}
+		if (unit.kind === "absent") noteInstallUnitPinned();
+		return false;
+	} catch {
+		return false;
+	}
 }
 
 export function getLastInstallUnitVerdict(): InstallUnitVerdict {

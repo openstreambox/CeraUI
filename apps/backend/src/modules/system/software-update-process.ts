@@ -281,7 +281,7 @@ async function reportPinnedAfterCleanup(
 			await deps.sleep(OUTPUT_POLL_INTERVAL_MS);
 		}
 	} catch {
-		return;
+		// No answer is no proof that the name is free: the next start asks again.
 	}
 	handlers.onUnitPinned();
 }

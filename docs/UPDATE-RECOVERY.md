@@ -1949,12 +1949,17 @@ the next boot, which kept update checks off and power actions busy with
 queued job, or without those rows, it still fails closed and retries. On such
 an image the next install needs a restart. Recovery, and the observer after
 its cleanup (three reads, a failed install stays in the same process), report
-the pin; from then on `startSoftwareUpdate` refuses with `check_unavailable`
-before the orchestrator records an attempt, so it stays `available` or
-`awaiting-idle` instead of a sticky `failed`. A start that still finds the
-unit pinned throws `DetachedAptServicePinnedError` instead of running a
-`systemd-run` that systemd would refuse ("already loaded or has a fragment
-file"). The unit also orders
+the pin (an unreadable unit after cleanup counts too); from then on
+`startSoftwareUpdate` refuses with `check_unavailable` and asks systemd again in
+the background. The orchestrator also proves the name free
+(`proveInstallUnitFree`: `not-found`, nothing else) right before every package
+launch, so a pinned or unreadable unit leaves it in `awaiting-idle` for the next
+tick instead of a recorded `DOWNLOAD_FAILED`, whose `failed` phase would outlive
+the reboot that clears the pin. A proof that finds the unit gone clears the pin
+(a temporary reference, such as a D-Bus client's, can hold a stopped unit for a
+moment). A start that still finds the unit pinned throws
+`DetachedAptServicePinnedError` instead of running a `systemd-run` that systemd
+would refuse ("already loaded or has a fragment file"). The unit also orders
 itself `Before=ceralive-write-drain.service`, so an image can drop the name from
 the drain and keep the shutdown waiting for a running transaction. That
 property is sent first: systemd writes the transient file one property at a

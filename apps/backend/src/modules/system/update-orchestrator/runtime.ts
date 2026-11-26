@@ -52,6 +52,7 @@ import {
 	getUpdateState,
 	type InstallUnitVerdict,
 	isAptAllDiscovery,
+	proveInstallUnitFree,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
 	type SoftwareUpdateError,
@@ -287,6 +288,11 @@ export interface OrchestratorRuntimeDeps {
 	readonly onlyMeteredCandidateExists: () => Promise<boolean>;
 	readonly runPackageCheck: () => Promise<SoftwareUpdateError>;
 	readonly startPackageInstall: () => UpdateStartOutcome;
+	/**
+	 * Proves systemd holds no unit under the install unit's name right before a
+	 * launch. A refused launch then stays a retry instead of a recorded failure.
+	 */
+	readonly installUnitFree?: () => Promise<boolean>;
 	readonly getPackageInstallWireState: () => UpdateState;
 	readonly stopPackageInstallUnit: () => Promise<void>;
 	readonly killAndRestartRaucForStream: () => Promise<void>;
@@ -422,6 +428,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	onlyMeteredCandidateExists: defaultOnlyMeteredCandidateExists,
 	runPackageCheck: runSoftwareUpdateCheck,
 	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
+	installUnitFree: proveInstallUnitFree,
 	getPackageInstallWireState: getUpdateState,
 	stopPackageInstallUnit: stopPackageInstallUnitForStream,
 	killAndRestartRaucForStream,
@@ -1402,6 +1409,12 @@ async function maybeStartPackageInstall(opts: {
 		}
 		const settings = await deps.loadSettings();
 		if (opts.isCurrent && !opts.isCurrent()) {
+			await deps.quarantine.clearPending();
+			return { started: false, reason: "check_unavailable" };
+		}
+		// A name systemd still holds (a stopped unit an image's drain keeps
+		// loaded) refuses the launch; it must never become DOWNLOAD_FAILED.
+		if (deps.installUnitFree && !(await deps.installUnitFree())) {
 			await deps.quarantine.clearPending();
 			return { started: false, reason: "check_unavailable" };
 		}
