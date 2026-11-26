@@ -2337,6 +2337,7 @@ export function startSoftwareUpdate(
 				}
 			}, 3 * 1000);
 		}
+		if (attempt !== null) launchFence.admit(attempt);
 		return { started: true };
 	}
 
@@ -2361,7 +2362,7 @@ export function startSoftwareUpdate(
 		lastUpdateSucceeded = shown.succeeded;
 		lastPreflightFailure = shown.preflight;
 		lastCleanupWarning = shown.cleanup;
-	}
+	} else launchFence.admit(attempt);
 	// Started now: a delayed start still armed for this attempt has nothing
 	// left to do, and must not find "already updating" and fail it.
 	if (outcome.started && delayedSoftwareUpdateStart) {

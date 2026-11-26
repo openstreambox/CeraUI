@@ -9,6 +9,7 @@
 */
 
 import { randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type EffectOwner, ownedFiles } from "../../helpers/effect-owner.ts";
@@ -27,8 +28,20 @@ let directory = PRIVATE_CURL_DIRECTORY;
 let soleBackend = false;
 // Any other instance (source development, a boot without the lock) keeps its
 // configs in a directory of its own, made once for this process, where no
-// service start can remove one that is in flight.
+// service start can remove one that is in flight. It goes with the process:
+// removed at exit with whatever is still in it, so a config whose removal
+// failed does not outlast the process. (A process killed outright leaves it.)
 let ownDirectory: Promise<string> | undefined;
+type ExitHook = (remove: () => void) => void;
+const processExit: ExitHook = (remove) => {
+	process.once("exit", remove);
+};
+let atExit = processExit;
+
+/** Test seam: how a removal is registered for the process's exit. */
+export function setPrivateCurlExitHookForTest(hook: ExitHook | null): void {
+	atExit = hook ?? processExit;
+}
 
 /**
  * Test seam: `path` is the service's directory and this process its sole
@@ -54,6 +67,17 @@ async function privateDirectory(files: Files): Promise<string> {
 				"private-file:create",
 				join(tmpdir(), `ceraui-curl-${process.pid}-`),
 			)
+			.then((own) => {
+				// That one directory, by its exact path, and nothing outside it.
+				atExit(() => {
+					try {
+						rmSync(own, { recursive: true, force: true });
+					} catch {
+						// The process is going; there is nobody left to tell.
+					}
+				});
+				return own;
+			})
 			.catch((error: unknown) => {
 				if (ownDirectory === made) ownDirectory = undefined;
 				throw error;

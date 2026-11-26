@@ -1,7 +1,15 @@
 /// <reference types="bun" />
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { readFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { inspect } from "node:util";
@@ -17,6 +25,7 @@ import {
 	PRIVATE_FILE_LEFT_BEHIND,
 	runCurlWithPrivateUrl,
 	setPrivateCurlDirectoryForTest,
+	setPrivateCurlExitHookForTest,
 	wipePrivateCurlConfigs,
 } from "../modules/system/curl-private-url.ts";
 
@@ -215,6 +224,42 @@ describe("an instance that is not the sole backend", () => {
 			return curl(argv);
 		});
 		expect(survived).toBe(true);
+	});
+
+	it("its directory goes with the process, with a config that could not be removed", async () => {
+		// Real files this time, under the test's own temp directory.
+		setOwnedFileBackendForTest(null);
+		setPrivateCurlDirectoryForTest(null);
+		const atExit: (() => void)[] = [];
+		setPrivateCurlExitHookForTest((remove) => atExit.push(remove));
+		try {
+			let own = "";
+			const run = async (argv: string[]) => {
+				own = path.dirname(argv.at(-1) as string);
+				expect(readFileSync(argv.at(-1) as string, "utf8")).toContain(TOKEN);
+				return curl(argv);
+			};
+			await runCurlWithPrivateUrl(["curl"], URL, run);
+			await runCurlWithPrivateUrl(["curl"], URL, run);
+			expect(path.basename(own)).toStartWith(`ceraui-curl-${process.pid}-`);
+			expect(statSync(own).mode & 0o777).toBe(0o700);
+			// Each config was removed by its own path; the directory is the
+			// process's until it exits, and the exit removal is asked for once.
+			expect(readdirSync(own)).toEqual([]);
+			expect(atExit).toHaveLength(1);
+			// A config whose removal failed, or that a crash of a probe left:
+			writeFileSync(path.join(own, "left.conf"), `url = "${URL}"\n`, {
+				mode: 0o600,
+			});
+			// A neighbour in the same temp directory is nobody's business.
+			const neighbour = mkdtempSync(path.join(tmpdir(), "someone-elses-"));
+			for (const remove of atExit) remove();
+			expect(existsSync(own)).toBe(false);
+			expect(existsSync(neighbour)).toBe(true);
+			rmSync(neighbour, { recursive: true, force: true });
+		} finally {
+			setPrivateCurlExitHookForTest(null);
+		}
 	});
 
 	it("the process that holds the lease writes into the service's directory from its start on", async () => {

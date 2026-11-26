@@ -1384,7 +1384,8 @@ async function runPackageCheckCycle(waitsOutStream = false): Promise<boolean> {
 	// before the dispatch and apt's own admission. A stream that is live, or
 	// became live during either wait, defers the check. So does an install
 	// that ended and still drains: apt's admission would wait for it, and a
-	// stream starting in that wait would refuse the check as busy.
+	// stream starting in that wait would refuse the check as busy. And so
+	// does an install in progress, which apt would refuse the check for.
 	const phase = state.phase;
 	const regime = waitsOutStream ? await stageCapabilityRegime() : undefined;
 	if (waitsOutStream) {
@@ -1394,7 +1395,16 @@ async function runPackageCheckCycle(waitsOutStream = false): Promise<boolean> {
 			before !== packageCheckGeneration
 		)
 			return true;
-		if (deps.isStreamLive() || deps.packageInstallDraining()) return true;
+		// An install somebody else started (the Packages card's start) that
+		// is under way holds the updater too.
+		const wire = deps.getPackageInstallWireState().kind;
+		if (
+			deps.isStreamLive() ||
+			deps.packageInstallDraining() ||
+			wire === "downloading" ||
+			wire === "installing"
+		)
+			return true;
 	}
 	const generation = ++packageCheckGeneration;
 	packageCheckDeferral = null;
@@ -3439,8 +3449,9 @@ async function runOsCheckAfterCellularGate(
 		try {
 			await deps.quarantine.clearPending();
 		} catch (error) {
-			// Not a condition of reading the manifest: the list is cleared by
-			// the next check that can, and the image check goes on.
+			// Not a condition of reading the manifest: the fault is logged and
+			// the image check goes on. That check moves the plan out of the
+			// refused state, so this cleanup is not tried again on its account.
 			logger.warn(
 				"update-orchestrator: clearing a refused install's pending list failed; the image check goes on",
 				{ error },

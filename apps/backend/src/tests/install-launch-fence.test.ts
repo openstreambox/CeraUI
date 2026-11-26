@@ -159,6 +159,26 @@ describe("the install launch fence", () => {
 		expect(fence.owns(admitted)).toBe(true);
 	});
 
+	it("the attempt before it is kept only until the start is decided", () => {
+		const fence = createInstallLaunchFence();
+		const ended = fence.begin();
+		fence.end(ended);
+		// Admitted: the install before it is let go, so nothing can bring it
+		// back as the current one later.
+		const admitted = fence.begin();
+		fence.admit(admitted);
+		fence.drop(admitted);
+		expect(fence.current()).toBeNull();
+		// Declined: put back once, and not held on to by the declined start.
+		const again = fence.begin();
+		fence.end(again);
+		const declined = fence.begin();
+		fence.drop(declined);
+		expect(fence.current()).toBe(again);
+		fence.drop(declined);
+		expect(fence.current()).toBe(again);
+	});
+
 	it("only the pending current attempt owns the install", async () => {
 		const fence = createInstallLaunchFence();
 		const first = fence.begin();

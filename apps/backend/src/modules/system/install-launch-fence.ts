@@ -70,7 +70,11 @@ type Mutable = InstallAttempt & {
 	holds: number;
 	/** `systemd-run` has been asked for and its outcome is not known yet. */
 	submitting: boolean;
-	/** The attempt this one took the place of when its start was asked for. */
+	/**
+	 * The attempt this one took the place of, kept only while its start is
+	 * being decided: put back when the start is declined, let go when it is
+	 * admitted.
+	 */
 	replaced: Mutable | null;
 };
 
@@ -134,6 +138,14 @@ export function createInstallLaunchFence() {
 		drop(attempt: InstallAttempt): void {
 			if (current === attempt && attempt.pending())
 				current = (attempt as Mutable).replaced;
+			(attempt as Mutable).replaced = null;
+		},
+		/**
+		 * The start was accepted: `attempt` is the install in progress, and
+		 * the one it took the place of is let go.
+		 */
+		admit(attempt: InstallAttempt): void {
+			(attempt as Mutable).replaced = null;
 		},
 		/** A unit found running or finished (recovery): its result decides. */
 		adopt(): void {

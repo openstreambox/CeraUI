@@ -496,6 +496,57 @@ describe("an orchestrated install's failure, and what the Packages card does bef
 	);
 
 	it(
+		"a recheck and an install of the card's own under way: the tick records the refusal and dispatches no check over that install",
+		async () => {
+			const { box, id } = await failedDownload();
+			const { sequencer } = box;
+			await cardRechecks(box);
+			// The card's install is in progress: its refresh is out.
+			sequencer.arm();
+			expect(startSoftwareUpdate()).toEqual({ started: true });
+			for (let turn = 0; turn < 400; turn++) {
+				await settleMicrotasks();
+				if (sequencer.next() === REFRESH_COMMAND) break;
+				sequencer.step();
+			}
+			expect(sequencer.next()).toBe(REFRESH_COMMAND);
+			expect(getUpdateState().kind).toBe("downloading");
+			// The tick: the first install's refusal is recorded, which makes the
+			// package retry due at once. It waits: the updater is the card's.
+			let returned = false;
+			const tick = sequencer
+				.outside(() => runOrchestratorTick())
+				.finally(() => {
+					returned = true;
+				});
+			await settleEventLoop(10);
+			expect(returned).toBe(true);
+			await tick;
+			expect(failures(box)).toEqual([
+				{
+					code: "update_failed",
+					params: { stage: "download", reason: PACKAGE_INSTALL_REFUSED, id },
+				},
+			]);
+			expect(
+				box.emitted.filter(({ code }) => code === "update_refused"),
+			).toEqual([]);
+			expect(getOrchestratorState().phase).not.toBe("checking");
+			expect(getOrchestratorState().packageCheck.consecutiveFailures).toBe(0);
+			// A further tick waits likewise, and the card's install goes on to
+			// launch its unit.
+			await sequencer.outside(() => runOrchestratorTick());
+			expect(
+				box.emitted.filter(({ code }) => code === "update_refused"),
+			).toEqual([]);
+			await sequencer.drain();
+			expect(box.unit.unit.submissions).toBe(1);
+			expect(box.unit.unit.state).toBe("running");
+		},
+		TIMEOUT_MS,
+	);
+
+	it(
 		"a recheck and then a stream: the refusal the stream settles carries the failure's id",
 		async () => {
 			const { box, id } = await failedDownload();
