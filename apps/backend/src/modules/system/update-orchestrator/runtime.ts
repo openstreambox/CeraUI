@@ -49,12 +49,14 @@ import { getIdleStatus } from "../idle-activity.ts";
 import { imageAptSourceInUse } from "../image-apt-source.ts";
 import {
 	aptUpdatesEnabled,
+	cancelPendingPackageStart,
 	getLastInstallUnitVerdict,
 	getUpdateState,
 	type InstallUnitVerdict,
 	imageSourceClockWaits,
 	isAptAllDiscovery,
 	packageFailedBeforeLaunch,
+	packageInstallLaunched,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
 	type SoftwareUpdateError,
@@ -291,6 +293,10 @@ export interface OrchestratorRuntimeDeps {
 	readonly getPackageInstallWireState: () => UpdateState;
 	/** Image apt source: the current install ended before its unit launched. */
 	readonly packageFailedBeforeLaunch: () => boolean;
+	/** The current install reached its launch call (or reattached a unit). */
+	readonly packageInstallLaunched: () => boolean;
+	/** Image apt source: a stream before launch cancels the install's pending start. */
+	readonly cancelPendingPackageStart: () => void;
 	readonly stopPackageInstallUnit: () => Promise<void>;
 	readonly killAndRestartRaucForStream: () => Promise<void>;
 	readonly isCommitStageRunning: () => Promise<boolean>;
@@ -427,6 +433,8 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
 	getPackageInstallWireState: getUpdateState,
 	packageFailedBeforeLaunch,
+	packageInstallLaunched,
+	cancelPendingPackageStart,
 	stopPackageInstallUnit: stopPackageInstallUnitForStream,
 	killAndRestartRaucForStream,
 	isCommitStageRunning: async () =>
@@ -943,8 +951,14 @@ export async function checkUpdatesNow(): Promise<ManualCheckOutcome> {
 	if (!canStartManualCheck(state.phase, state.failureReason))
 		return { started: false, reason: "busy" };
 	await runPackageCheckCycle();
-	// Found packages must not hide a system image either.
-	if (state.phase === "idle" || state.phase === "available") {
+	// Found packages must not hide a system image either, and neither does an
+	// image-source install that never launched (the package check may not
+	// have run: clock gate shut, updates off).
+	if (
+		state.phase === "idle" ||
+		state.phase === "available" ||
+		refusedInstallPending()
+	) {
 		const capabilities = await deps.loadCapabilities();
 		if (
 			capabilities.mode === "capable" &&
@@ -1168,6 +1182,24 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 		return { allowed: true };
 	}
 
+	// Image apt source: a stream before the apt unit launched ends the install
+	// as a refusal. Pending work is stopped, a delayed start is cancelled, and
+	// no offer is restored: the next check brings it back. Only a stream after
+	// the unit launched takes the path below.
+	if (
+		state.phase === "downloading" &&
+		imageAptSourceInUse() &&
+		!deps.packageInstallLaunched()
+	) {
+		deps.cancelPendingPackageStart();
+		await deps.stopPackageInstallUnit();
+		dispatch({
+			type: "DOWNLOAD_FAILED",
+			now: deps.now(),
+			reason: PACKAGE_INSTALL_REFUSED,
+		});
+		return { allowed: true };
+	}
 	if (state.phase === "downloading") {
 		const freshWire = deps.getPackageInstallWireState();
 		packageHoldAttempt ??= packageDownloadAttempt(freshWire);

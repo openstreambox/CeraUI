@@ -352,10 +352,6 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Software update recovery probe will retry"],
 	["Software update recovery: broadcast failed"],
 	["Software update refresh failed unexpectedly"],
-	["Software update refused: A captive portal prevented the software update."],
-	[
-		"Software update refused: Failed to fetch the updated package list; aborting the update.",
-	],
 	["Software update refused: captive_portal"],
 	["Software update refused: discovery_failed"],
 	["Software update refused: dpkg_interrupted"],

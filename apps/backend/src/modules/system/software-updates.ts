@@ -408,7 +408,7 @@ export function resetSoftwareUpdateState(): void {
 	discoveredPackages = [];
 	installUnitLaunched = false;
 	installLaunchSubmitted = false;
-	installAbortedForStream = false;
+	installCancelledForStream = false;
 }
 
 export type SoftwareUpdateRecoveryDeps = {
@@ -1120,9 +1120,8 @@ let installUnitLaunched = false;
 // It reached the launch call: whatever happens next is the unit's or the
 // monitor's to settle, never "ended before launch".
 let installLaunchSubmitted = false;
-// A stream aborted its pinned transfer: the orchestrator's stream admission
-// returns it to the offer, as on every image.
-let installAbortedForStream = false;
+// Image apt source: stream admission cancelled this install before launch.
+let installCancelledForStream = false;
 
 /**
  * Image apt source: the current install ended before its unit launched, with
@@ -1141,12 +1140,7 @@ export function packageFailedBeforeLaunch(): boolean {
  * a check failure, some nothing). A later successful discovery supersedes it.
  */
 function failBeforeLaunch(reason: string): void {
-	if (
-		activeImageAptSource() === undefined ||
-		installLaunchSubmitted ||
-		installAbortedForStream
-	)
-		return;
+	if (activeImageAptSource() === undefined || installLaunchSubmitted) return;
 	let changed = false;
 	if (lastUpdateFailure === null && lastPreflightFailure === null) {
 		lastUpdateSucceeded = false;
@@ -1159,6 +1153,26 @@ function failBeforeLaunch(reason: string): void {
 	}
 	if (changed)
 		broadcastMsg("status", { updating: null, update_state: getUpdateState() });
+}
+
+/** The current install reached its launch call, or a unit was reattached. */
+export function packageInstallLaunched(): boolean {
+	return installLaunchSubmitted;
+}
+
+/**
+ * Image apt source: a stream started before this install's unit launched.
+ * The install ends as a refusal now (a delayed start is cancelled), and its
+ * preparation stops before launch. Never an offer restored.
+ */
+export function cancelPendingPackageStart(): void {
+	if (activeImageAptSource() === undefined || installLaunchSubmitted) return;
+	if (delayedSoftwareUpdateStart) {
+		clearTimeout(delayedSoftwareUpdateStart);
+		delayedSoftwareUpdateStart = undefined;
+	}
+	installCancelledForStream = true;
+	failBeforeLaunch("streaming");
 }
 
 let clockWaitLogged = false;
@@ -1668,6 +1682,8 @@ function periodicCheckReadiness(): "run" | "stop" | "armed" {
 		return "armed";
 	}
 	if (!aptUpdatesEnabled()) return "stop";
+	// Image apt source: the orchestrator alone schedules package checks.
+	if (imageAptSourceInUse()) return "stop";
 	// Protect the dev host from background APT effects.
 	if (shouldUseMocks()) return "stop";
 	if (isSoftwareUpdateRecoveryInconclusive()) return "stop";
@@ -1829,6 +1845,7 @@ const defaultSoftwareUpdateRunner: SoftwareUpdateRunner = (
 			}
 			return;
 		}
+		const imageSource = activeImageAptSource() !== undefined;
 		if (softUpdateStatus) {
 			const reason =
 				err === "discovery_failed"
@@ -1837,7 +1854,11 @@ const defaultSoftwareUpdateRunner: SoftwareUpdateRunner = (
 						? "refresh_failed"
 						: err === "dpkg_interrupted"
 							? "dpkg_interrupted"
-							: "Failed to fetch the updated package list; aborting the update.";
+							: imageSource && err === "repos_unreachable"
+								? "repos_unreachable"
+								: imageSource && err === "captive_portal"
+									? "captive_portal"
+									: "Failed to fetch the updated package list; aborting the update.";
 			lastUpdateSucceeded = false;
 			lastUpdateFailure = {
 				reason,
@@ -1867,13 +1888,22 @@ const defaultSoftwareUpdateRunner: SoftwareUpdateRunner = (
 					},
 				},
 			);
-			softUpdateStatus.result = reason;
-			broadcastMsg("status", {
-				updating: softUpdateStatus,
-				update_state: getUpdateState(),
-			});
-			softUpdateStatus = null;
-			broadcastUpdateState();
+			if (imageSource) {
+				// One terminal frame: the cleared progress and the failure together.
+				softUpdateStatus = null;
+				broadcastMsg("status", {
+					updating: null,
+					update_state: getUpdateState(),
+				});
+			} else {
+				softUpdateStatus.result = reason;
+				broadcastMsg("status", {
+					updating: softUpdateStatus,
+					update_state: getUpdateState(),
+				});
+				softUpdateStatus = null;
+				broadcastUpdateState();
+			}
 		}
 		failBeforeLaunch(typeof err === "string" ? err : "refresh_failed");
 	});
@@ -1961,7 +1991,7 @@ export function startSoftwareUpdate(
 
 	installUnitLaunched = false;
 	installLaunchSubmitted = false;
-	installAbortedForStream = false;
+	installCancelledForStream = false;
 	currentUpdateIdentity = availableIdentity;
 	lastUpdateFailure = null;
 	lastUpdateSucceeded = false;
@@ -2250,18 +2280,10 @@ async function prepareSoftwareUpdate(
 ): Promise<void> {
 	pendingPackageSuccess.assertEffectsAllowed();
 	if (!aptUpdatesEnabled()) return;
+	// Image apt source: any stream before the unit launched refuses the
+	// install; the next check offers it again. Other images: as before.
 	if (!isStreamConfirmedIdle()) {
-		// Stream admission already returned the plan to the offer; any other
-		// stream before launch is, on an image with its own source, a refusal.
-		if (!admission?.cancelled()) {
-			failBeforeLaunch("streaming");
-			return;
-		}
-		installAbortedForStream = true;
-		if (activeImageAptSource() !== undefined && softUpdateStatus) {
-			softUpdateStatus = null;
-			broadcastUpdateState();
-		}
+		failBeforeLaunch("streaming");
 		return;
 	}
 
@@ -2475,20 +2497,22 @@ async function prepareSoftwareUpdate(
 	assertDisruptiveActionFree();
 	if (network.aborted() || !isStreamConfirmedIdle()) {
 		refuseUpdateStart("streaming");
-		// A stream during the download: the orchestrator's stream admission
-		// aborted it and returned the plan to the offer. Anything else is a
-		// stream before launch, a plain refusal on an image with its own source.
-		const admitted = network.aborted() || admission?.cancelled() === true;
-		if (!admitted && activeImageAptSource() !== undefined) {
+		// Image apt source: stream admission, the pinned transfer's own abort
+		// and a liveness-only abort alike end the install as a refusal.
+		if (activeImageAptSource() !== undefined) {
 			failBeforeLaunch("streaming");
 			return;
 		}
-		installAbortedForStream = admitted;
 		softUpdateStatus = null;
 		broadcastUpdateState();
 		return;
 	}
 	pendingPackageSuccess.assertEffectsAllowed();
+	// Stream admission cancelled this install while it was being prepared.
+	if (installCancelledForStream) {
+		failBeforeLaunch("streaming");
+		return;
+	}
 	notePlannedShutdown("software_update");
 	const monitor = createSoftwareUpdateProcessMonitor(prefetched, {
 		run: softUpdateStatus?.run,

@@ -23,7 +23,10 @@ import {
 } from "../addons/apt-client-tls.ts";
 import { deviceBindingArgs } from "../network/device-bound-probe.ts";
 import { type AptOrigin, parseAptSourceOrigins } from "./apt-source-origins.ts";
-import { imageAptSourcesText } from "./image-apt-source.ts";
+import {
+	activeImageAptSource,
+	imageAptSourcesText,
+} from "./image-apt-source.ts";
 import { parseAuthorityJson } from "./update-orchestrator/strict-authority-json.ts";
 
 export { type AptOrigin, parseAptSourceOrigins } from "./apt-source-origins.ts";
@@ -127,6 +130,14 @@ export function classifyProbe(outcome: {
 				? Number(rawCode)
 				: Number.NaN;
 		if (Number.isFinite(code)) {
+			// The image's own source is https only: an HTTP error came from the
+			// repository over verified TLS, so the host is not usable (unreachable).
+			if (
+				code >= 400 &&
+				outcome.originHost.toLowerCase().replace(/:\d+$/, "") ===
+					activeImageAptSource()?.host
+			)
+				return "no_route";
 			const redirectUrl = redirectParts.join(" ");
 			if (outcome.scheme === "http" && code >= 300 && code < 400) {
 				try {

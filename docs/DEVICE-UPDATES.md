@@ -1428,7 +1428,7 @@ strictly. With a valid record:
   the source pair, and the legacy roster upgrade is refused.
 - An install that ends before its apt unit launched (clock, dpkg, refresh,
   unreachable or captive repository, discovery, nothing installable, pinned
-  recheck, space preflight, failed download, a stream before launch, a start
+  recheck, space preflight, failed download, any stream before launch, a start
   systemd refused outright) shows "Update failed" with its reason, once. The
   orchestrator records it as `failed` with `package_install_refused` and makes
   the package check due at once. The scheduled tick runs that check (still
@@ -1438,8 +1438,12 @@ strictly. With a valid record:
   pending package list stays until that check clears it (nothing reached
   dpkg; quarantine records only a failed commit). An uncertain `systemd-run`
   (client error or timeout) is not a refusal: the fixed unit is inspected and,
-  if it exists or cannot be read, observed as launched. A stream during the
-  download keeps the usual path back to the offer. The path table is in
+  if it exists or cannot be read, observed as launched. Any stream before the
+  unit launched (stream admission, the pinned transfer's own abort, a delayed
+  start) cancels the install the same way; only a stream after launch stops
+  the unit and returns to the offer as before. The legacy periodic loop does
+  not run on these images, and the unpinned reachability probe reads an HTTP
+  error from the image host as unreachable. The path table is in
   [the update-system contract](agents/the-device-update-system.md#image-apt-source-every-way-an-install-ends-before-launch).
 
 A record that is present but does not validate refuses package checks and

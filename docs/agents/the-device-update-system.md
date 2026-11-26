@@ -444,7 +444,7 @@ a failed commit, and nothing here reached dpkg.
 | Path (where it ends) | Wire | Orchestrator | Test (`image-apt-source-paths.test.ts` unless named) |
 |---|---|---|---|
 | Start refused synchronously (disruptive action, success fence, updates off, stream, busy, recovery unsettled, check not started) | unchanged | stays where it was; manual install answers busy or stream | existing start-refusal tests |
-| Install's own check: refresh, reachability, captive portal, `dpkg_interrupted` | `failed`, refresh reason | `failed` / `package_install_refused` | install's own check refused |
+| Install's own check: refresh, reachability, captive portal, `dpkg_interrupted` | `failed`, the check's own reason (`repos_unreachable`, `captive_portal`, …), one terminal frame | `failed` / `package_install_refused` | install's own check refused |
 | Record or capabilities refused at install | `failed`, `discovery_failed` | `failed` / `package_install_refused` | record stops validating |
 | Clock gate or dpkg journal at preparation | `failed`, `check_unavailable` or `dpkg_interrupted` | `failed` / `package_install_refused` | clock gate closes |
 | Install-time discovery simulation fails (also when update routing refuses it) | `failed`, `discovery_failed` (the offer is not shown first) | `failed` / `package_install_refused` | discovery simulation fails |
@@ -455,18 +455,38 @@ a failed commit, and nothing here reached dpkg.
 | Pinned recheck fails, or a standing refusal | `failed`, `discovery_failed` | `failed` / `package_install_refused` | pinned recheck refuses |
 | Space preflight: archive cleanup, `apt-config`, probe, `stat`, `statfs`, space | `update_preflight_failed` | `failed` / `package_install_refused` | space preflight refuses |
 | Download under the pin fails | `failed`, apt's error (by host) | `failed` / `package_install_refused` | download under the pin fails |
-| Stream before launch (not through stream admission) | `failed`, `streaming` | `failed` / `package_install_refused` | stream starts before launch |
-| Stream during the download (stream admission) | the offer | `DOWNLOAD_ABORTED_FOR_STREAM` → `available` | stream starts during the download |
+| Stream before launch, seen by preparation | `failed`, `streaming` | `failed` / `package_install_refused` | stream starts before launch |
+| Stream admission during the pre-launch (pinned) download | `failed`, `streaming` | `failed` / `package_install_refused` at once, never `available` | stream admission during the pre-launch download |
+| The pinned transfer aborts on a live stream nobody admitted (liveness only) | `failed`, `streaming` | `failed` / `package_install_refused` (Check now is not left busy) | the pinned download aborts on a live stream nobody admitted |
+| Stream admitted, and over, while preparation waits (space preflight) | `failed`, `streaming`; the unit never launches | `failed` / `package_install_refused` | a stream admitted and over while preparation waits |
+| Stream admission after the wire already showed the refusal | `failed`, its reason | `failed` / `package_install_refused`, never `available` | stream admission after the wire already settled |
+| Stream admission while the start waits behind a running check | `failed`, `streaming`; the delayed start is cancelled and never runs | `failed` / `package_install_refused` | stream admission cancels the delayed start |
 | systemd refuses the unit outright (unit exists, spool, command or source pair, or `systemd-run` fails and no unit is found) | `failed`, the error | `failed` / `package_install_refused` | systemd refuses the unit outright |
 | Uncertain `systemd-run` (unit found, or its state unreadable) | the unit's progress | follows the unit | `image-apt-source-transactions.test.ts`: an uncertain submission is a launch |
 | Updates turned off once the install started | `failed`, `discovery_failed` | `failed` / `package_install_refused` | updates are turned off once the install started |
 | A throw inside preparation | `failed`, `not_started` (the check logs the rejection) | `failed` / `package_install_refused` | preparation throws |
 | Delayed start (behind a running check) cannot start | `failed`, its reason | `failed` / `package_install_refused` | a start delayed behind a running check |
+| Stream admission after the unit launched | the unit is stopped, as today | `DOWNLOAD_ABORTED_FOR_STREAM` → `available` | once the unit launched, a stream takes today's path |
 | Launched | the unit's result | follows the wire (`DOWNLOAD_FAILED`, `COMMIT_*`) | once the unit launched |
 
 Leaving `package_install_refused`: "the scheduled tick runs the package check
-at once" and "on cellular only, the scheduled check waits and Check now still
-runs it". Every row's test also runs Check now afterwards and sees the offer
-again and an image check run. Package checks themselves (not installs) end
+at once", "on cellular only, the scheduled check waits and Check now still runs
+it", and "Check now still runs the image check" with the clock gate shut or
+updates turned off (the package check cannot run then). Every row's test also
+runs Check now afterwards and sees the offer again and an image check run;
+the stream rows also retry the install and see its pending package versions
+recorded. The legacy periodic loop does not run on these images, so no
+background discovery brings an offer back behind the orchestrator ("the legacy
+periodic loop does not run on such a box").
+
+Images without the record keep their behaviour throughout: a stream during
+the download returns the plan to the offer (`DOWNLOAD_ABORTED_FOR_STREAM`),
+install failures keep their own reasons and the shared `failed`, and the
+legacy loop runs as before.
+
+`dpkg_interrupted` reaches the wire as an install failure's reason. A package
+check that finds dpkg's journal reports `discovery_failed`: the check-failure
+field is a closed enum that already shipped frontends parse strictly, so a new
+value there needs a coordinated frontend and copy change. Package checks themselves (not installs) end
 through `CHECK_FAILED` or `CHECK_SUCCEEDED_*`; a closed clock gate dispatches
 nothing.

@@ -41,6 +41,7 @@ import {
 import { setStreamLivenessSourceForTest } from "../modules/system/stream-liveness-source.ts";
 import { setCeraliveSourcesFileForTest } from "../modules/system/update-apt-channel.ts";
 import { setUpdateCapabilityPathForTest } from "../modules/system/update-capabilities.ts";
+import type { UpdateQuarantine } from "../modules/system/update-orchestrator/quarantine.ts";
 import {
 	admitAndPrepareStreamStart,
 	checkUpdatesNow,
@@ -148,11 +149,19 @@ type Path =
 	| "pinned-recheck"
 	| "space-preflight"
 	| "download"
+	| "download-liveness"
+	| "download-admission"
+	| "preflight-admission"
 	| "start-rejected"
 	| "throw"
-	| "launched";
+	| "launched"
+	| "launched-running";
 
 const scratch: string[] = [];
+let launchCount = 0;
+const launches = () => launchCount;
+let unitRunning = Promise.withResolvers<number>();
+const stops = { count: 0 };
 let spies: ReturnType<typeof spyOn>[] = [];
 beforeEach(() => {
 	spies = [
@@ -162,6 +171,11 @@ beforeEach(() => {
 	];
 });
 afterEach(async () => {
+	unitRunning.resolve(100);
+	await Bun.sleep(10);
+	unitRunning = Promise.withResolvers<number>();
+	launchCount = 0;
+	stops.count = 0;
 	for (const spy of spies.splice(0)) spy.mockRestore();
 	resetOrchestratorRuntimeForTest();
 	setImageAptSourceReaderForTest(null);
@@ -188,7 +202,7 @@ afterEach(async () => {
 async function box(failing: Path) {
 	const dir = await mkdtemp(path.join(tmpdir(), "image-apt-paths-"));
 	scratch.push(dir);
-	const pinned = failing === "download";
+	const pinned = failing.startsWith("download");
 	await writeFile(
 		path.join(dir, "capabilities.json"),
 		JSON.stringify({
@@ -227,6 +241,8 @@ async function box(failing: Path) {
 	});
 	const ok = (stdout: string) => ({ exitCode: 0, stdout, stderr: "" });
 	const once = { pinned: true, download: true };
+	const downloading = Promise.withResolvers<void>();
+	const downloadGate = Promise.withResolvers<void>();
 	setAptCommandRunnerForTest(async (argv) => {
 		if (argv[1] === "update") {
 			seen.refresh++;
@@ -246,6 +262,9 @@ async function box(failing: Path) {
 			return ok(name === "zstd" ? POLICY_ZSTD : POLICY_MM);
 		}
 		if (argv.includes("-s") && argv.includes("install")) {
+			// A stream goes live just before the download; nothing admits it.
+			if (failing === "download-liveness")
+				setStreamLivenessSourceForTest(() => "streaming");
 			if (failing === "pinned-recheck" && once.pinned) {
 				once.pinned = false;
 				return {
@@ -266,7 +285,12 @@ async function box(failing: Path) {
 					: OFFER,
 			);
 		}
-		if (argv.includes("-d") && once.download) {
+		if (argv.includes("-d") && failing === "download-admission") {
+			downloading.resolve();
+			await downloadGate.promise;
+			return ok("");
+		}
+		if (argv.includes("-d") && once.download && failing === "download") {
 			once.download = false;
 			return {
 				exitCode: 100,
@@ -281,6 +305,12 @@ async function box(failing: Path) {
 	spies.push(
 		spyOn(defaultAptSpaceDeps, "run").mockImplementation(async (argv) => {
 			if (argv.includes("clean")) {
+				if (failing === "preflight-admission" && !cleaned) {
+					cleaned = true;
+					downloading.resolve();
+					await downloadGate.promise;
+					return { exitCode: 0, stdout: "", stderr: "" };
+				}
 				const fail = failing === "space-preflight" && !cleaned;
 				cleaned = true;
 				return { exitCode: fail ? 100 : 0, stdout: "", stderr: "" };
@@ -300,6 +330,12 @@ async function box(failing: Path) {
 		})),
 		spyOn(transaction, "runDetachedAptAll").mockImplementation(
 			(_args, _verdict, handlers) => {
+				launchCount++;
+				if (failing === "launched-running") {
+					handlers.onLaunched?.();
+					// The unit keeps running until the test ends.
+					return unitRunning.promise;
+				}
 				if (failing === "start-rejected")
 					return Promise.reject(new Error("systemd-run: unit refused"));
 				handlers.onLaunched?.();
@@ -318,7 +354,7 @@ async function box(failing: Path) {
 			ownership,
 		});
 	}
-	return { flag };
+	return { flag, downloading, downloadGate };
 }
 
 // The orchestrator over the real package code, counting image checks.
@@ -355,7 +391,10 @@ function orchestrator(
 			startPackageInstall: () => startSoftwareUpdate(),
 			getPackageInstallWireState: getUpdateState,
 			packageFailedBeforeLaunch,
-			stopPackageInstallUnit: async () => abortAptTransferForStream(),
+			stopPackageInstallUnit: async () => {
+				stops.count++;
+				abortAptTransferForStream();
+			},
 			checkOsManifest: async () => {
 				counts.osChecks++;
 				return {
@@ -377,7 +416,7 @@ const settle = async (done: () => boolean) => {
 };
 
 // Check, find the offer, ask to install, and let the attempt end.
-async function attempt(during?: () => void | Promise<void>) {
+async function attempt(during?: () => void | Promise<void>, tick = true) {
 	expect(await checkUpdatesNow()).toEqual({ started: true });
 	expect(getOrchestratorState().phase).toBe("available");
 	expect(getUpdateState().kind).toBe("available");
@@ -392,7 +431,9 @@ async function attempt(during?: () => void | Promise<void>) {
 			kind !== "checking" && kind !== "downloading" && kind !== "installing"
 		);
 	});
-	await runOrchestratorTick();
+	// A refusal admission already recorded needs no poll (a tick would run the
+	// due package check straight away).
+	if (tick) await runOrchestratorTick();
 }
 
 // The refused install: `failed` on the wire and in the orchestrator, then the
@@ -400,6 +441,7 @@ async function attempt(during?: () => void | Promise<void>) {
 async function expectRefused(
 	counts: { osChecks: number; pendingCleared: number },
 	wire: Partial<UpdateState>,
+	retry?: UpdateQuarantine,
 ) {
 	expect(getUpdateState()).toMatchObject({ kind: "failed", ...wire });
 	expect(JSON.stringify(getUpdateState())).not.toContain(TOKEN);
@@ -414,16 +456,49 @@ async function expectRefused(
 	expect(getUpdateState().kind).toBe("available");
 	expect(getOrchestratorState().phase).toBe("available");
 	expect(counts.osChecks).toBe(os + 1);
+	if (retry) {
+		// The retry records its pending package versions as any install does.
+		expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+			started: true,
+		});
+		expect(await retry.readPending()).toEqual([
+			{ name: "modemmanager", version: FIX },
+		]);
+		await settle(() => getUpdateState().kind === "failed");
+	}
 }
 
 describe("each way an install ends before its unit launches", () => {
 	it("the install's own check is refused (repository unreachable)", async () => {
 		await box("install-refresh");
 		const { counts } = orchestrator();
-		await attempt();
-		await expectRefused(counts, {
-			reason: "Failed to fetch the updated package list; aborting the update.",
+		// Terminal frames: cleared progress and the failure in one frame.
+		const terminal: unknown[] = [];
+		let watching = false;
+		spies.push(
+			spyOn(compat, "broadcastMsg").mockImplementation((type, data) => {
+				const frame = data as {
+					updating?: unknown;
+					update_state?: { kind?: string; reason?: string };
+				};
+				if (
+					watching &&
+					type === "status" &&
+					"updating" in frame &&
+					frame.update_state?.kind === "failed"
+				)
+					terminal.push({
+						updating: frame.updating,
+						reason: frame.update_state.reason,
+					});
+			}),
+		);
+		await attempt(() => {
+			watching = true;
 		});
+		expect(terminal).toEqual([{ updating: null, reason: "repos_unreachable" }]);
+		// The refresh's own classification, not a generic reason.
+		await expectRefused(counts, { reason: "repos_unreachable" });
 	});
 
 	it("the record stops validating", async () => {
@@ -568,20 +643,89 @@ describe("each way an install ends before its unit launches", () => {
 		await expectRefused(counts, { reason: "streaming" });
 	});
 
-	it("a stream starts during the download: the plan returns to the offer, as today", async () => {
-		await box("none");
-		const { counts } = orchestrator();
+	it("stream admission during the pre-launch download refuses the install", async () => {
+		const fixture = await box("download-admission");
+		const { counts, quarantine } = orchestrator();
+		const previous = process.env.CERALIVE_DEVICE_TYPE;
+		const restore = () => {
+			if (previous === undefined) delete process.env.CERALIVE_DEVICE_TYPE;
+			else process.env.CERALIVE_DEVICE_TYPE = previous;
+		};
+		try {
+			await attempt(async () => {
+				process.env.CERALIVE_DEVICE_TYPE = "real";
+				await fixture.downloading.promise;
+				restore();
+				setStreamLivenessSourceForTest(() => "streaming");
+				await admitAndPrepareStreamStart();
+				// Refused at once, never back to the offer.
+				expect(getOrchestratorState()).toMatchObject({
+					phase: "failed",
+					failureReason: PACKAGE_INSTALL_REFUSED,
+				});
+				fixture.downloadGate.resolve();
+			}, false);
+		} finally {
+			restore();
+		}
+		setStreamLivenessSourceForTest(null);
+		await expectRefused(counts, { reason: "streaming" }, quarantine);
+	});
+
+	it("a stream admitted and over while preparation waits still cancels it", async () => {
+		const fixture = await box("preflight-admission");
+		const { counts, quarantine } = orchestrator();
 		await attempt(async () => {
+			await fixture.downloading.promise;
 			setStreamLivenessSourceForTest(() => "streaming");
 			await admitAndPrepareStreamStart();
-		});
-		expect(getOrchestratorState().phase).toBe("available");
-		expect(getUpdateState().kind).toBe("available");
+			// The stream is over before preparation resumes.
+			setStreamLivenessSourceForTest(null);
+			fixture.downloadGate.resolve();
+		}, false);
+		await settle(() => false);
+		// The install was cancelled: its unit never launched.
+		expect(launches()).toBe(0);
+		await expectRefused(counts, { reason: "streaming" }, quarantine);
+	});
+
+	it("the pinned download aborts on a live stream nobody admitted", async () => {
+		await box("download-liveness");
+		const { counts, quarantine } = orchestrator();
+		const previous = process.env.CERALIVE_DEVICE_TYPE;
+		const restore = () => {
+			if (previous === undefined) delete process.env.CERALIVE_DEVICE_TYPE;
+			else process.env.CERALIVE_DEVICE_TYPE = previous;
+		};
+		try {
+			await attempt(async () => {
+				process.env.CERALIVE_DEVICE_TYPE = "real";
+				await settle(() => getUpdateState().kind === "failed");
+				restore();
+			});
+		} finally {
+			restore();
+		}
 		setStreamLivenessSourceForTest(null);
-		const os = counts.osChecks;
+		// Not stranded in `downloading`: Check now runs at once.
+		await expectRefused(counts, { reason: "streaming" }, quarantine);
+	});
+
+	it("stream admission after the wire already settled the refusal", async () => {
+		await box("simulation");
+		const { counts, quarantine } = orchestrator();
 		expect(await checkUpdatesNow()).toEqual({ started: true });
-		expect(getOrchestratorState().phase).toBe("available");
-		expect(counts.osChecks).toBe(os + 1);
+		expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+			started: true,
+		});
+		await settle(() => getUpdateState().kind === "failed");
+		// The orchestrator has not polled yet when a stream is admitted.
+		expect(getOrchestratorState().phase).toBe("downloading");
+		setStreamLivenessSourceForTest(() => "streaming");
+		await admitAndPrepareStreamStart();
+		setStreamLivenessSourceForTest(null);
+		// Settled as the refusal it is, not restored to the offer.
+		await expectRefused(counts, { reason: "discovery_failed" }, quarantine);
 	});
 
 	it("systemd refuses the unit outright", async () => {
@@ -654,7 +798,96 @@ describe("each way an install ends before its unit launches", () => {
 	});
 });
 
+describe("a delayed start and a stream", () => {
+	it("stream admission cancels the delayed start: it never launches", async () => {
+		await box("none");
+		const { counts } = orchestrator();
+		expect(await checkUpdatesNow()).toEqual({ started: true });
+		const gate = Promise.withResolvers<void>();
+		let refreshes = 0;
+		setAptCommandRunnerForTest(async (argv) => {
+			if (argv[1] === "update") {
+				refreshes++;
+				await gate.promise;
+			}
+			return {
+				exitCode: 0,
+				stdout: argv[1] === "update" ? REFRESH : "",
+				stderr: "",
+			};
+		});
+		// A dialog check is running: the install waits behind it.
+		expect(triggerManualUpdateCheck()).toBe(true);
+		expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+			started: true,
+		});
+		setStreamLivenessSourceForTest(() => "streaming");
+		await admitAndPrepareStreamStart();
+		expect(getOrchestratorState()).toMatchObject({
+			phase: "failed",
+			failureReason: PACKAGE_INSTALL_REFUSED,
+		});
+		expect(getUpdateState()).toMatchObject({
+			kind: "failed",
+			reason: "streaming",
+		});
+		setStreamLivenessSourceForTest(null);
+		gate.resolve();
+		// Past the delayed start's 3 s: it was cancelled. Only the dialog's own
+		// refresh ran; the install never started its check or its unit.
+		await Bun.sleep(3_300);
+		expect(refreshes).toBe(1);
+		expect(launches()).toBe(0);
+		await box("none");
+		const os = counts.osChecks;
+		expect(await checkUpdatesNow()).toEqual({ started: true });
+		expect(getUpdateState().kind).toBe("available");
+		expect(counts.osChecks).toBe(os + 1);
+	});
+});
+
+describe("once the unit launched, a stream takes today's path", () => {
+	it("stream admission stops the unit and returns to the offer", async () => {
+		await using _marker = await armedMarkerFixture();
+		await box("launched-running");
+		const { counts } = orchestrator();
+		await attempt();
+		setStreamLivenessSourceForTest(() => "streaming");
+		await admitAndPrepareStreamStart();
+		expect(getOrchestratorState().phase).toBe("available");
+		expect(stops.count).toBeGreaterThan(0);
+		setStreamLivenessSourceForTest(null);
+		expect(counts.osChecks).toBeGreaterThan(0);
+	});
+});
+
 describe("the refused install is never stranded", () => {
+	it.each(["clock gate shut", "updates turned off"] as const)(
+		"Check now still runs the image check with the %s",
+		async (cause) => {
+			const { flag } = await box("simulation");
+			const { counts } = orchestrator();
+			await attempt();
+			expect(getOrchestratorState().failureReason).toBe(
+				PACKAGE_INSTALL_REFUSED,
+			);
+			const previous = setup.apt_update_enabled;
+			if (cause === "clock gate shut")
+				setImageClockGateFlagForTest(`${flag}.gone`);
+			else setup.apt_update_enabled = false;
+			try {
+				const os = counts.osChecks;
+				expect(await checkUpdatesNow()).toEqual({ started: true });
+				// The package check could not run; the image check did.
+				expect(counts.osChecks).toBe(os + 1);
+				expect(getOrchestratorState().phase).not.toBe("downloading");
+			} finally {
+				setup.apt_update_enabled = previous;
+				setImageClockGateFlagForTest(flag);
+			}
+		},
+	);
+
 	it("the scheduled tick runs the package check at once, leaving failed", async () => {
 		await box("simulation");
 		const { counts } = orchestrator();

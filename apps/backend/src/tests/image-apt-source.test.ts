@@ -1272,62 +1272,25 @@ describe("the refresh's own verdict stands", () => {
 		},
 	);
 
-	it.each([
-		["unreachable", "repos_unreachable"],
-		["captive", "captive_portal"],
-	] as const)(
-		"a periodic check keeps %s, not refresh_failed",
-		async (kind, reason) => {
-			useImageSource();
-			const box = await capableBox(
-				kind === "captive"
-					? { refreshStderr: CAPTIVE_STDERR, nothing: true }
-					: { nothing: true },
-			);
-			// No offer left from earlier tests: it would hide the check's result.
-			await silently(() => runUpdateDiscoveryAndReport(REFRESH));
-			box.commands.length = 0;
-			if (kind === "unreachable")
-				setAptReachabilityProbeForTest(async () => UNREACHABLE);
-			// The loop schedules its next run: record that timer and clear it.
-			const original = globalThis.setTimeout;
-			const timers: ReturnType<typeof setTimeout>[] = [];
-			const schedule = spyOn(globalThis, "setTimeout").mockImplementation(((
-				handler: () => void,
-				delay?: number,
-			) => {
-				const timer = original(handler, delay);
-				timers.push(timer);
-				return timer;
-			}) as typeof setTimeout);
-			setPeriodicUplinkGateForTest(async () => true);
-			// Days on, so the loop is due whatever an earlier run scheduled.
-			const [seconds, nanoseconds] = process.hrtime();
-			const clock = spyOn(process, "hrtime").mockReturnValue([
-				seconds + 86_400 * ++periodicDay,
-				nanoseconds,
-			]);
-			const spies = quiet();
-			try {
-				periodicCheckForSoftwareUpdates();
-				for (let i = 0; i < 400 && box.commands.length === 0; i++)
-					await Bun.sleep(5);
-				await settled();
-				// The loop's discovery ran after the refresh failed.
-				await Bun.sleep(20);
-				expect(getUpdateState()).toMatchObject({
-					kind: "check_failed",
-					reason,
-				});
-				expect(box.commands.some((argv) => argv.includes("-s"))).toBe(false);
-			} finally {
-				for (const timer of timers) clearTimeout(timer);
-				schedule.mockRestore();
-				clock.mockRestore();
-				setPeriodicUplinkGateForTest(null);
-				for (const spy of spies) spy.mockRestore();
-				box.cleanup();
-			}
-		},
-	);
+	it("the legacy periodic loop does not run on such a box", async () => {
+		// The orchestrator alone schedules package checks here, so a background
+		// discovery cannot bring an offer back behind its back.
+		useImageSource();
+		const box = await capableBox({ nothing: true });
+		setPeriodicUplinkGateForTest(async () => true);
+		const [seconds, nanoseconds] = process.hrtime();
+		const clock = spyOn(process, "hrtime").mockReturnValue([
+			seconds + 86_400 * ++periodicDay,
+			nanoseconds,
+		]);
+		try {
+			periodicCheckForSoftwareUpdates();
+			await Bun.sleep(50);
+			expect(box.commands).toEqual([]);
+		} finally {
+			clock.mockRestore();
+			setPeriodicUplinkGateForTest(null);
+			box.cleanup();
+		}
+	});
 });

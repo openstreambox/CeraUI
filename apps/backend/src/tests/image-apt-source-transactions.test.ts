@@ -10,6 +10,7 @@ import {
 	buildAptAllDownloadArgs,
 	buildAptAllInstallArgs,
 } from "../modules/system/apt-all-packages.ts";
+import { classifyProbe } from "../modules/system/apt-reachability.ts";
 import {
 	IMAGE_APT_SOURCE_POLICY,
 	imageAptSourceArgs,
@@ -615,6 +616,26 @@ describe("a queued plan is not a request", () => {
 		});
 		await runOrchestratorTick();
 		expect(counts.installs).toBe(1);
+	});
+});
+
+describe("the unpinned reachability probe on the image's host", () => {
+	it("reads an HTTP error over verified TLS as unreachable", () => {
+		withImageSource();
+		const probe = (originHost: string, code: string) =>
+			classifyProbe({
+				exitCode: 0,
+				stdout: `${code} `,
+				originHost,
+				scheme: "https",
+			});
+		expect(probe(HOST, "403")).toBe("no_route");
+		expect(probe(`${HOST}:8443`, "503")).toBe("no_route");
+		expect(probe(HOST, "200")).toBe("ok");
+		// Any other host keeps today's reading.
+		expect(probe("deb.debian.org", "403")).toBe("ok");
+		withoutImageSource();
+		expect(probe(HOST, "403")).toBe("ok");
 	});
 });
 
