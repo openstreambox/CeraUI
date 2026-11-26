@@ -1,12 +1,14 @@
 /// <reference types="bun" />
 
-import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { inspect } from "node:util";
 import {
 	type EffectOwner,
 	type OwnedFileBackend,
+	ownedFiles,
 	setOwnedFileBackendForTest,
 } from "../helpers/effect-owner.ts";
 import { logger } from "../helpers/logger.ts";
@@ -14,6 +16,7 @@ import {
 	PRIVATE_CURL_DIRECTORY,
 	PRIVATE_FILE_LEFT_BEHIND,
 	runCurlWithPrivateUrl,
+	setPrivateCurlDirectoryForTest,
 	wipePrivateCurlConfigs,
 } from "../modules/system/curl-private-url.ts";
 
@@ -40,7 +43,10 @@ function privateFiles() {
 		inspect: never,
 		setMode: never,
 		createExclusive: never,
-		makeTempDirectory: never,
+		makeTempDirectory: async (prefix) => {
+			state.steps.push(`mkdtemp ${prefix}`);
+			return `${prefix}Xy12`;
+		},
 		makeDirectory: async (directory, mode) => {
 			state.steps.push(`mkdir ${mode.toString(8)} ${directory}`);
 		},
@@ -78,7 +84,14 @@ function errors() {
 
 const curl = async (argv: string[]) => ({ exitCode: 0, argv });
 
-afterEach(() => setOwnedFileBackendForTest(null));
+beforeEach(() => {
+	// The service's backend: it holds the single-instance lock.
+	setPrivateCurlDirectoryForTest(PRIVATE_CURL_DIRECTORY);
+});
+afterEach(() => {
+	setOwnedFileBackendForTest(null);
+	setPrivateCurlDirectoryForTest(null);
+});
 
 describe("a private curl config", () => {
 	it("is written only in the service's own directory and removed by its exact path", async () => {
@@ -160,6 +173,61 @@ describe("a private curl config", () => {
 			runCurlWithPrivateUrl(["curl"], URL, curl, owner),
 		).rejects.toThrow("not done for an owner that has ended");
 		expect(files.steps).toEqual([`mkdir 700 ${PRIVATE_CURL_DIRECTORY}`]);
+	});
+});
+
+describe("an instance that is not the sole backend", () => {
+	it("keeps its configs in a directory of its own, where the service's start removes nothing", async () => {
+		const files = privateFiles();
+		// No lease: source development, or a boot without the lock.
+		setPrivateCurlDirectoryForTest(null);
+		await wipePrivateCurlConfigs(false);
+		const prefix = path.join(tmpdir(), `ceraui-curl-${process.pid}-`);
+		const own = `${prefix}Xy12`;
+		let during: string[] = [];
+		const run = async (argv: string[]) => {
+			during = [...files.files.keys()];
+			return curl(argv);
+		};
+		await runCurlWithPrivateUrl(["curl"], URL, run);
+		const [first] = during as [string];
+		expect(path.dirname(first)).toBe(own);
+		expect(first.startsWith(PRIVATE_CURL_DIRECTORY)).toBe(false);
+		// Made once for the process, and each file removed by its own path.
+		await runCurlWithPrivateUrl(["curl"], URL, run);
+		expect(path.dirname(during[0] as string)).toBe(own);
+		expect(files.steps.filter((step) => step.startsWith("mkdtemp"))).toEqual([
+			`mkdtemp ${prefix}`,
+		]);
+		expect(files.steps.some((step) => step.startsWith("mkdir"))).toBe(false);
+		expect([...files.files]).toEqual([]);
+
+		// The service starts beside it while one of its probes is in flight:
+		// the wipe takes the service's directory, not this instance's file.
+		let survived = false;
+		await runCurlWithPrivateUrl(["curl"], URL, async (argv) => {
+			const [mine] = [...files.files.keys()] as [string];
+			await ownedFiles(undefined).removeTree(
+				"private-file:remove",
+				PRIVATE_CURL_DIRECTORY,
+			);
+			survived = files.files.has(mine);
+			return curl(argv);
+		});
+		expect(survived).toBe(true);
+	});
+
+	it("the process that holds the lease writes into the service's directory from its start on", async () => {
+		const files = privateFiles();
+		setPrivateCurlDirectoryForTest(null);
+		await wipePrivateCurlConfigs(true);
+		let during: string[] = [];
+		await runCurlWithPrivateUrl(["curl"], URL, async (argv) => {
+			during = [...files.files.keys()];
+			return curl(argv);
+		});
+		expect(path.dirname(during[0] as string)).toBe(PRIVATE_CURL_DIRECTORY);
+		expect(files.steps[0]).toBe(`rm -r ${PRIVATE_CURL_DIRECTORY}`);
 	});
 });
 

@@ -134,6 +134,31 @@ describe("the install launch fence", () => {
 		expect(await fence.admitStream(never)).toBe("submitted");
 	});
 
+	it("a start that is declined leaves the install before it as the current one", async () => {
+		const fence = createInstallLaunchFence();
+		// An install that ended before launch.
+		const ended = fence.begin();
+		fence.end(ended);
+		// A start is asked for and declined: it was never an attempt.
+		const declined = fence.begin();
+		expect(fence.current()).toBe(declined);
+		fence.drop(declined);
+		expect(fence.current()).toBe(ended);
+		expect(ended.state()).toBe("ended");
+		// A stream then meets the ended install, not a missing one.
+		expect(await fence.admitStream(never)).toBe("ended");
+		// The same over a launched unit.
+		fence.adopt();
+		const launched = fence.current();
+		fence.drop(fence.begin());
+		expect(fence.current()).toBe(launched);
+		expect(fence.launched()).toBe(true);
+		// A start that is admitted does take its place.
+		const admitted = fence.begin();
+		expect(fence.current()).toBe(admitted);
+		expect(fence.owns(admitted)).toBe(true);
+	});
+
 	it("only the pending current attempt owns the install", async () => {
 		const fence = createInstallLaunchFence();
 		const first = fence.begin();

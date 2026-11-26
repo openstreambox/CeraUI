@@ -63,7 +63,11 @@ import {
 import { defaultAptSpaceDeps } from "../../modules/system/apt-space-admission.ts";
 import { setAptTransportDepsForTest } from "../../modules/system/apt-transport.ts";
 import * as board from "../../modules/system/board-capabilities.ts";
-import { PRIVATE_FILE_LEFT_BEHIND } from "../../modules/system/curl-private-url.ts";
+import {
+	PRIVATE_CURL_DIRECTORY,
+	PRIVATE_FILE_LEFT_BEHIND,
+	setPrivateCurlDirectoryForTest,
+} from "../../modules/system/curl-private-url.ts";
 import {
 	IMAGE_APT_SOURCE_POLICY,
 	setDpkgUpdatesDirForTest,
@@ -491,6 +495,7 @@ export async function teardownInstall(): Promise<void> {
 	resetAptReachabilityCacheForTest();
 	resetSoftwareUpdateCheckRunner();
 	resetSoftwareUpdateState();
+	setPrivateCurlDirectoryForTest(null);
 	setSpawnOverrideForTest(null);
 	setOwnedFileBackendForTest(null);
 	setOwnedWriteObserverForTest(null);
@@ -661,6 +666,9 @@ export async function acceptedInstall(variant: Variant) {
 		},
 	};
 	setOwnedFileBackendForTest(files);
+	// The box's backend holds the single-instance lock: its probes' configs
+	// go to the service's own directory.
+	setPrivateCurlDirectoryForTest(PRIVATE_CURL_DIRECTORY);
 	setOwnedWriteObserverForTest((next) => {
 		kind = next;
 		if (next.startsWith("spool:") || next.startsWith("private-file:")) return;

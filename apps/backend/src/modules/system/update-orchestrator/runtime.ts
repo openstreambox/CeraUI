@@ -47,7 +47,10 @@ import {
 import { withServiceReservation } from "../disruptive-service-reservation.ts";
 import { getIdleStatus } from "../idle-activity.ts";
 import { imageAptSourceInUse } from "../image-apt-source.ts";
-import type { StreamFenceVerdict } from "../install-launch-fence.ts";
+import type {
+	InstallAttempt,
+	StreamFenceVerdict,
+} from "../install-launch-fence.ts";
 import {
 	admitStreamAtPackageLaunch,
 	aptUpdatesEnabled,
@@ -56,6 +59,7 @@ import {
 	type InstallUnitVerdict,
 	imageSourceClockWaits,
 	isAptAllDiscovery,
+	packageInstallAttempt,
 	packageInstallDraining,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
@@ -293,11 +297,19 @@ export interface OrchestratorRuntimeDeps {
 	readonly startPackageInstall: () => UpdateStartOutcome;
 	readonly getPackageInstallWireState: () => UpdateState;
 	/**
-	 * Image apt source: the terminal state of the current install if it ended
-	 * before its unit launched, kept until taken here (once). A recheck by the
-	 * Packages card may have cleared what the wire shows meanwhile.
+	 * Image apt source: the install in progress right after a start was
+	 * accepted. The orchestrator keeps the one it started.
 	 */
-	readonly takePackageAttemptEnd: () => UpdateState | null;
+	readonly packageInstallAttempt: () => InstallAttempt | null;
+	/**
+	 * Image apt source: the terminal state of that install if it ended before
+	 * its unit launched, kept with it until taken here (once). A recheck by
+	 * the Packages card may have cleared what the wire shows meanwhile, and a
+	 * later start may have taken its place as the install in progress.
+	 */
+	readonly takePackageAttemptEnd: (
+		attempt: InstallAttempt,
+	) => UpdateState | null;
 	/** Image apt source: an install that ended still has a wait in flight. */
 	readonly packageInstallDraining: () => boolean;
 	/**
@@ -441,6 +453,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	runPackageCheck: runSoftwareUpdateCheck,
 	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
 	getPackageInstallWireState: getUpdateState,
+	packageInstallAttempt,
 	takePackageAttemptEnd,
 	packageInstallDraining,
 	admitStreamAtPackageLaunch,
@@ -569,6 +582,13 @@ let activeOsStage:
 setOsStageLiveProducerProbe(() => activeOsStage?.attemptId ?? null);
 let raucStreamAbortInProcess = false;
 let packageInstallStarting = false;
+// Image apt source: the install this orchestrator started, to take its
+// terminal state from if it ends before launch.
+let startedPackageAttempt: InstallAttempt | null = null;
+const takeStartedPackageAttemptEnd = (): UpdateState | null =>
+	startedPackageAttempt === null
+		? null
+		: deps.takePackageAttemptEnd(startedPackageAttempt);
 // Image apt source: an install launches only for a request made in this
 // process (installUpdatesNow); a queued or persisted plan is not one.
 let manualPackageAdmission = false;
@@ -721,6 +741,7 @@ export function setOrchestratorRuntimeDepsForTest(
 export function resetOrchestratorRuntimeForTest(): void {
 	kernelRuntime.reset();
 	manualPackageAdmission = false;
+	startedPackageAttempt = null;
 	deps.downloadNotices?.dispose();
 	packageHoldAttempt = undefined;
 	resetDisruptiveActionReservationForTest();
@@ -1198,7 +1219,10 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 			(fenced === "cancelled" || fenced === "ended") &&
 			state.phase === "downloading"
 		) {
-			const wire = deps.getPackageInstallWireState();
+			// The install this orchestrator started: its own terminal state if
+			// it had ended already (the wire may show a later recheck's offer).
+			const wire =
+				takeStartedPackageAttemptEnd() ?? deps.getPackageInstallWireState();
 			dispatch({
 				type: "DOWNLOAD_FAILED",
 				now: deps.now(),
@@ -1577,6 +1601,9 @@ async function maybeStartPackageInstall(opts: {
 			return result; // stays awaiting-idle; retried next tick
 		}
 		manualPackageAdmission = false;
+		startedPackageAttempt = imageAptSourceInUse()
+			? deps.packageInstallAttempt()
+			: null;
 		const previousHold = packageHoldAttempt;
 		packageHoldAttempt = packageDownloadAttempt(available);
 		dispatch({
@@ -1613,7 +1640,7 @@ async function pollPackageInstallProgress(): Promise<void> {
 	// Packages card's own recheck may have cleared the wire's failure already.
 	const ended =
 		state.phase === "downloading" && imageAptSourceInUse()
-			? deps.takePackageAttemptEnd()
+			? takeStartedPackageAttemptEnd()
 			: null;
 	if (ended !== null) {
 		dispatch({
@@ -3236,8 +3263,18 @@ async function runScheduledChecks(): Promise<void> {
 async function runPackageCheckAfterCellularGate(
 	settings: UpdateSettings,
 ): Promise<"ran" | "deferred"> {
+	const phase = state.phase;
+	const generation = packageCheckGeneration;
 	const onlyMetered = await deps.onlyMeteredCandidateExists();
 	if (osSettlementPersistence.pending || !aptUpdatesEnabled())
+		return "deferred";
+	// Image apt source: that was a wait. A check or an install that began
+	// during it (Check now, then Install now) owns the plan: this scheduled
+	// check dispatches nothing over it.
+	if (
+		imageAptSourceInUse() &&
+		(state.phase !== phase || generation !== packageCheckGeneration)
+	)
 		return "deferred";
 	const gate = decideCellularGate({
 		onlyMeteredCandidateExists: onlyMetered,
@@ -3394,7 +3431,16 @@ async function runOsCheckAfterCellularGate(
 	});
 	if (!gate.allowed) return attempt;
 	if (refusedInstallPending()) {
-		await deps.quarantine.clearPending();
+		try {
+			await deps.quarantine.clearPending();
+		} catch (error) {
+			// Not a condition of reading the manifest: the list is cleared by
+			// the next check that can, and the image check goes on.
+			logger.warn(
+				"update-orchestrator: clearing a refused install's pending list failed; the image check goes on",
+				{ error },
+			);
+		}
 		// That was a wait: a check that started during it stands this one down.
 		if (getOrchestratorState().phase !== startPhase || superseded())
 			return attempt;

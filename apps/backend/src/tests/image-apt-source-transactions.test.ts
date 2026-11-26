@@ -273,13 +273,18 @@ describe("the record's URI goes through the URL parser too", () => {
 	});
 });
 
+const STARTED = { id: 1, state: () => "ended", pending: () => false } as const;
+
 // The orchestrator with an offer of one emergency fix.
 function orchestrator(wire: () => UpdateState, beforeLaunch = false) {
 	const counts = { installs: 0, osChecks: 0 };
 	setOrchestratorRuntimeDepsForTest(
 		fakeDeps({
 			quarantine: testQuarantine(),
-			takePackageAttemptEnd: () => (beforeLaunch ? wire() : null),
+			// The install the orchestrator started, and how it ended.
+			packageInstallAttempt: () => STARTED,
+			takePackageAttemptEnd: (attempt) =>
+				beforeLaunch && attempt === STARTED ? wire() : null,
 			stopPackageInstallUnit: async () => {},
 			loadCapabilities: async () => ({
 				mode: "capable",

@@ -398,7 +398,7 @@ async function box(failing: Path) {
 function orchestrator(
 	options: {
 		readonly allowPackagesOverCellular?: boolean;
-		readonly onlyMetered?: () => boolean;
+		readonly onlyMetered?: () => boolean | Promise<boolean>;
 		readonly streamLive?: () => boolean;
 		/** Runs when the orchestrator reads the capabilities (it may throw). */
 		readonly onCapabilityRead?: () => void;
@@ -1462,6 +1462,77 @@ describe("the refused install is never stranded", () => {
 			}
 		},
 	);
+
+	it("a pending list that cannot be cleared at all does not keep the image check from its manifest", async () => {
+		await box("simulation");
+		const { counts, quarantine } = orchestrator();
+		await attempt();
+		expect(getOrchestratorState().failureReason).toBe(PACKAGE_INSTALL_REFUSED);
+		// Every attempt to clear the list fails, the image check's own too.
+		const clear = quarantine.clearPending.bind(quarantine);
+		quarantine.clearPending = async () => {
+			throw new Error("EIO: the pending list");
+		};
+		setOrchestratorStateForTest({
+			...getOrchestratorState(),
+			osCheck: { ...getOrchestratorState().osCheck, nextAttemptAt: 0 },
+		});
+		const os = counts.osChecks;
+		// The tick is not rejected, and the manifest is read.
+		await runOrchestratorTick();
+		expect(counts.osChecks).toBe(os + 1);
+		const warned = (spies[1]?.mock.calls ?? []).map(([message]) =>
+			String(message),
+		);
+		expect(warned).toContain(
+			"update-orchestrator: clearing a refused install's pending list failed; the package check waits",
+		);
+		expect(warned).toContain(
+			"update-orchestrator: clearing a refused install's pending list failed; the image check goes on",
+		);
+		quarantine.clearPending = clear;
+	});
+
+	it("a scheduled check that waited for the uplinks dispatches nothing over a Check now and Install now made meanwhile", async () => {
+		await box("launched-running");
+		// While the scheduled check asks which uplinks exist, the user checks
+		// and installs.
+		let meanwhile: (() => Promise<void>) | null = null;
+		const { counts } = orchestrator({
+			onlyMetered: async () => {
+				const act = meanwhile;
+				meanwhile = null;
+				await act?.();
+				return false;
+			},
+		});
+		const said: { code: string; params: unknown }[] = [];
+		spies.push(
+			spyOn(events, "emitEvent").mockImplementation((code, params) => {
+				said.push({ code, params });
+			}),
+		);
+		meanwhile = async () => {
+			expect(await checkUpdatesNow()).toEqual({ started: true });
+			expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+				started: true,
+			});
+			expect(getOrchestratorState().phase).toBe("downloading");
+		};
+		// The first tick's scheduled check is due.
+		await runOrchestratorTick();
+		expect(meanwhile).toBeNull();
+		// The install is the plan now: no check was dispatched over it, and
+		// nobody was told one was refused.
+		expect(getOrchestratorState().phase).toBe("downloading");
+		expect(said.filter(({ code }) => code === "update_refused")).toEqual([]);
+		// The install goes on to launch its unit, undisturbed.
+		await settle(() => launches() === 1);
+		expect(launches()).toBe(1);
+		expect(getOrchestratorState().phase).toBe("downloading");
+		expect(said.filter(({ code }) => code === "update_refused")).toEqual([]);
+		void counts;
+	});
 
 	it("on cellular only, the scheduled check waits and Check now still runs it", async () => {
 		await box("simulation");

@@ -466,7 +466,7 @@ export function resetSoftwareUpdateState(): void {
 	discoveredPackages = [];
 	launchFence.reset();
 	publishedAttemptEnd = null;
-	attemptEndForOrchestrator = null;
+	attemptEnds = new WeakMap();
 }
 
 export type SoftwareUpdateRecoveryDeps = {
@@ -1328,29 +1328,32 @@ function publishAttemptEnd(reason: string, end: AttemptEnd = {}): void {
 	broadcastMsg("status", { updating: null, update_state: getUpdateState() });
 	publishedAttemptEnd = JSON.stringify(getUpdateState());
 	const attempt = launchFence.current();
-	if (attempt !== null)
-		attemptEndForOrchestrator = { attempt, state: getUpdateState() };
+	if (attempt !== null) attemptEnds.set(attempt, getUpdateState());
 }
 
-// Image apt source: how the install in progress ended before its unit
-// launched, kept for the orchestrator until it has taken it. What the wire
+// Image apt source: how each install ended before its unit launched, kept
+// with that install until whoever started it has taken it. What the wire
 // shows may change first (the Packages card's own recheck clears a failure
-// and finds the offer again); this does not.
-let attemptEndForOrchestrator: {
-	readonly attempt: InstallAttempt;
-	readonly state: UpdateState;
-} | null = null;
+// and finds the offer again, a later start replaces the install in
+// progress); what is kept for an attempt does not.
+let attemptEnds = new WeakMap<InstallAttempt, UpdateState>();
+
+/** Image apt source: the install in progress, as the launch fence knows it. */
+export function packageInstallAttempt(): InstallAttempt | null {
+	return launchFence.current();
+}
 
 /**
- * Image apt source: the terminal state of the current install, if it ended
- * before its unit launched and nobody has taken that yet. Taken once: the
- * orchestrator records the refusal from it.
+ * Image apt source: the terminal state of `attempt`, if it ended before its
+ * unit launched and that has not been taken yet. Taken once, by whoever
+ * started that attempt: the orchestrator records its refusal from it.
  */
-export function takePackageAttemptEnd(): UpdateState | null {
-	const kept = attemptEndForOrchestrator;
-	if (kept === null || kept.attempt !== launchFence.current()) return null;
-	attemptEndForOrchestrator = null;
-	return kept.state;
+export function takePackageAttemptEnd(
+	attempt: InstallAttempt,
+): UpdateState | null {
+	const state = attemptEnds.get(attempt) ?? null;
+	attemptEnds.delete(attempt);
+	return state;
 }
 
 /**

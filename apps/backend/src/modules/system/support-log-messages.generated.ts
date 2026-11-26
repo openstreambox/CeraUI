@@ -1251,6 +1251,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 		"update-orchestrator: cannot tell whether the interrupted download's install unit survived; re-checking each tick",
 	],
 	[
+		"update-orchestrator: clearing a refused install's pending list failed; the image check goes on",
+	],
+	[
 		"update-orchestrator: clearing a refused install's pending list failed; the package check waits",
 	],
 	[

@@ -353,6 +353,135 @@ describe("the Packages card rechecks before the orchestrator has looked", () => 
 	);
 });
 
+describe("an orchestrated install's failure, and what the Packages card does before the tick", () => {
+	type Box = Awaited<ReturnType<typeof acceptedInstall>>;
+	const failures = (box: Box) =>
+		box.emitted.filter(({ code }) => code === "update_failed");
+	const failureId = () => {
+		const wire = getUpdateState();
+		return wire.kind === "failed" ? wire.failure_id : undefined;
+	};
+
+	/** The orchestrator's install fails its download under the pin. */
+	async function failedDownload() {
+		const { box } = await standingAt("pinned", DOWNLOAD);
+		box.sequencer.step("fail");
+		await box.sequencer.drain();
+		const id = failureId();
+		expect(id).toBeString();
+		expect(getOrchestratorState().phase).toBe("downloading");
+		return { box, id };
+	}
+
+	/** The card's own recheck: the failure is cleared, the offer is back. */
+	async function cardRechecks(box: Box) {
+		box.sequencer.disarm();
+		expect(box.sequencer.outside(() => triggerManualUpdateCheck())).toBe(true);
+		for (let turn = 0; turn < 200; turn++) {
+			if (getUpdateState().kind === "available") break;
+			await settleEventLoop(1);
+		}
+		await settleEventLoop(5);
+		expect(getUpdateState().kind).toBe("available");
+	}
+
+	it(
+		"a recheck and a start the clock gate declines: the tick still records the refusal, once, with its id",
+		async () => {
+			const { box, id } = await failedDownload();
+			await cardRechecks(box);
+			// The card asks to install; the clock gate has closed, so the start
+			// is declined. It was never an install.
+			setImageClockGateFlagForTest(`${box.flag}.gone`);
+			expect(box.sequencer.outside(() => startSoftwareUpdate()).started).toBe(
+				false,
+			);
+			expect(getOrchestratorState().phase).toBe("downloading");
+			await box.sequencer.outside(() => runOrchestratorTick());
+			await settleEventLoop(5);
+			// Not stranded in downloading with no unit.
+			expect(getOrchestratorState()).toMatchObject({
+				phase: "failed",
+				failureReason: PACKAGE_INSTALL_REFUSED,
+			});
+			const expected = [
+				{
+					code: "update_failed",
+					params: { stage: "download", reason: PACKAGE_INSTALL_REFUSED, id },
+				},
+			];
+			expect(failures(box)).toEqual(expected);
+			await box.sequencer.outside(() => runOrchestratorTick());
+			expect(failures(box)).toEqual(expected);
+			expect(box.unit.unit.submissions).toBe(0);
+			setImageClockGateFlagForTest(box.flag);
+			await expectOfferAtNextCheck(box);
+		},
+		TIMEOUT_MS,
+	);
+
+	it(
+		"a recheck and an install of the card's own that fails too: each failure keeps its own id",
+		async () => {
+			const { box, id } = await failedDownload();
+			const { sequencer } = box;
+			await cardRechecks(box);
+			// The card installs through the start RPC: a second install, which
+			// fails its download as well.
+			sequencer.arm();
+			expect(startSoftwareUpdate()).toEqual({ started: true });
+			for (let turn = 0; turn < 400; turn++) {
+				await settleMicrotasks();
+				if (sequencer.next() === DOWNLOAD) break;
+				sequencer.step();
+			}
+			expect(sequencer.next()).toBe(DOWNLOAD);
+			sequencer.step("fail");
+			await sequencer.drain();
+			const second = failureId();
+			expect(second).toBeString();
+			expect(second).not.toBe(id);
+			// The orchestrator records the install it started, by that
+			// install's id; the card's failure is the card's.
+			await sequencer.outside(() => runOrchestratorTick());
+			await settleEventLoop(5);
+			expect(failures(box)).toEqual([
+				{
+					code: "update_failed",
+					params: { stage: "download", reason: PACKAGE_INSTALL_REFUSED, id },
+				},
+			]);
+			expect(getOrchestratorState().phase).not.toBe("downloading");
+			expect(box.unit.unit.submissions).toBe(0);
+		},
+		TIMEOUT_MS,
+	);
+
+	it(
+		"a recheck and then a stream: the refusal the stream settles carries the failure's id",
+		async () => {
+			const { box, id } = await failedDownload();
+			await cardRechecks(box);
+			expect(await admitStream(box)).toEqual({ allowed: true });
+			expect(getOrchestratorState()).toMatchObject({
+				phase: "failed",
+				failureReason: PACKAGE_INSTALL_REFUSED,
+			});
+			expect(failures(box)).toEqual([
+				{
+					code: "update_failed",
+					params: { stage: "download", reason: PACKAGE_INSTALL_REFUSED, id },
+				},
+			]);
+			// Taken once: the tick adds nothing.
+			await box.sequencer.outside(() => runOrchestratorTick());
+			expect(failures(box)).toHaveLength(1);
+			expect(box.unit.unit.stops).toBe(0);
+		},
+		TIMEOUT_MS,
+	);
+});
+
 describe("updates are turned off during the final download under the pin", () => {
 	it(
 		"and the download then fails: the install ends as turned off, not with apt's error",

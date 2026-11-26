@@ -9,6 +9,7 @@
 */
 
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type EffectOwner, ownedFiles } from "../../helpers/effect-owner.ts";
 import { logger } from "../../helpers/logger.ts";
@@ -20,10 +21,46 @@ import { logger } from "../../helpers/logger.ts";
  */
 export const PRIVATE_CURL_DIRECTORY = "/run/ceralive/curl-private";
 let directory = PRIVATE_CURL_DIRECTORY;
+// Whether this process is the sole backend: it holds the single-instance
+// lock lease (told at boot, by `wipePrivateCurlConfigs`). Only the sole
+// backend writes into the service's directory, which its start wipes.
+let soleBackend = false;
+// Any other instance (source development, a boot without the lock) keeps its
+// configs in a directory of its own, made once for this process, where no
+// service start can remove one that is in flight.
+let ownDirectory: Promise<string> | undefined;
 
-/** Test seam: where the private curl configs go (null restores it). */
+/**
+ * Test seam: `path` is the service's directory and this process its sole
+ * backend; null restores a process that holds no lease.
+ */
 export function setPrivateCurlDirectoryForTest(path: string | null): void {
 	directory = path ?? PRIVATE_CURL_DIRECTORY;
+	soleBackend = path !== null;
+	ownDirectory = undefined;
+}
+
+type Files = ReturnType<typeof ownedFiles>;
+
+// The directory this process's configs go to, made sure of: 0700 either way.
+async function privateDirectory(files: Files): Promise<string> {
+	if (soleBackend) {
+		await files.makeDirectory("private-file:create", directory, 0o700);
+		return directory;
+	}
+	if (ownDirectory === undefined) {
+		const made = files
+			.makeTempDirectory(
+				"private-file:create",
+				join(tmpdir(), `ceraui-curl-${process.pid}-`),
+			)
+			.catch((error: unknown) => {
+				if (ownDirectory === made) ownDirectory = undefined;
+				throw error;
+			});
+		ownDirectory = made;
+	}
+	return ownDirectory;
 }
 
 /** Logged whenever a private curl config could not be removed. */
@@ -33,11 +70,11 @@ export const PRIVATE_FILE_LEFT_BEHIND =
 // Reported whoever the run was for, an owner that has ended included: a file
 // with the access token is still on disk. Neither the token nor the file's
 // name is logged.
-function reportLeftBehind(error: unknown): void {
+function reportLeftBehind(error: unknown, where: string): void {
 	const code: unknown =
 		error instanceof Error && "code" in error ? error.code : undefined;
 	logger.error(PRIVATE_FILE_LEFT_BEHIND, {
-		directory,
+		directory: where,
 		...(typeof code === "string" ? { code } : {}),
 	});
 }
@@ -66,8 +103,8 @@ export async function runCurlWithPrivateUrl<Result>(
 ): Promise<Result> {
 	const files = ownedFiles(owner);
 	// The directory is 0700; the file is created 0600 and must be new.
-	await files.makeDirectory("private-file:create", directory, 0o700);
-	const file = join(directory, `${randomUUID()}.conf`);
+	const where = await privateDirectory(files);
+	const file = join(where, `${randomUUID()}.conf`);
 	let made = false;
 	try {
 		// Refused for an ended owner before anything is written.
@@ -85,25 +122,27 @@ export async function runCurlWithPrivateUrl<Result>(
 			try {
 				await files.removeFile("private-file:remove", file);
 			} catch (error) {
-				reportLeftBehind(error);
+				reportLeftBehind(error, where);
 			}
 	}
 }
 
 /**
- * Backend start, before anything can probe: whatever an earlier process left
- * in that one directory is removed with it. No other time and no other place.
- * `soleBackend`: this process holds the backend's single-instance lock. Only
- * then is nothing in flight; an instance started beside the service (source
- * development) removes nothing.
+ * Backend start, before anything can probe. `holdsLease`: this process holds
+ * the backend's single-instance lock lease, so it is the sole backend. Then
+ * nothing is in flight: whatever an earlier process left in the service's one
+ * directory is removed with it, and this process's own configs go there. No
+ * other time and no other place. Without the lease nothing is removed, and
+ * this process keeps its configs in a directory of its own.
  */
 export async function wipePrivateCurlConfigs(
-	soleBackend: boolean,
+	holdsLease: boolean,
 ): Promise<void> {
-	if (!soleBackend) return;
+	soleBackend = holdsLease;
+	if (!holdsLease) return;
 	try {
 		await ownedFiles(undefined).removeTree("private-file:remove", directory);
 	} catch (error) {
-		reportLeftBehind(error);
+		reportLeftBehind(error, directory);
 	}
 }

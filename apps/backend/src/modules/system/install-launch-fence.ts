@@ -70,6 +70,8 @@ type Mutable = InstallAttempt & {
 	holds: number;
 	/** `systemd-run` has been asked for and its outcome is not known yet. */
 	submitting: boolean;
+	/** The attempt this one took the place of when its start was asked for. */
+	replaced: Mutable | null;
 };
 
 export type InstallLaunchFence = ReturnType<typeof createInstallLaunchFence>;
@@ -104,6 +106,7 @@ export function createInstallLaunchFence() {
 			value,
 			holds: 0,
 			submitting: false,
+			replaced: null,
 			state: () => attempt.value,
 			pending: () => attempt.value === "pending",
 		};
@@ -116,12 +119,21 @@ export function createInstallLaunchFence() {
 		 * to run (the delayed start) is that same attempt, never a second one.
 		 */
 		begin(): InstallAttempt {
-			if (current?.value !== "pending") current = create("pending");
+			if (current?.value !== "pending") {
+				const next = create("pending");
+				next.replaced = current;
+				current = next;
+			}
 			return current;
 		},
-		/** The start was not accepted after all: there is no attempt. */
+		/**
+		 * The start was not accepted after all: it was never an attempt, and
+		 * the one before it (an install that ended, a launched unit) is the
+		 * current one again, as if the start had not been asked for.
+		 */
 		drop(attempt: InstallAttempt): void {
-			if (current === attempt && attempt.pending()) current = null;
+			if (current === attempt && attempt.pending())
+				current = (attempt as Mutable).replaced;
 		},
 		/** A unit found running or finished (recovery): its result decides. */
 		adopt(): void {
