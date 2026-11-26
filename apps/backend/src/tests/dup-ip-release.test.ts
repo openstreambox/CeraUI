@@ -1,12 +1,13 @@
 /**
- * Releasing the duplicate-IP flag undoes only what the flag itself did.
+ * The duplicate-IP flag is an error bit only; it never touches `enabled`.
  *
- * Raising `NETIF_ERR_DUPIPV4` forces `enabled` false. When the collision ends,
- * the release restores `enabled` only for a link the flag took down itself, and
- * only while no other gate has wanted it down since. These cases pin the edges
- * around that rule: the SIM-less hold, a row the monitor removed before the
- * poll saw it, the hotspot transition's notice suppression, and a duplicate that
- * could not be mapped while it collided.
+ * `enabled` is the bond intent the operator's toggle and the holding gates
+ * (SIM-less, shared-LAN, hotspot) share. These cases pin the edges a flag that
+ * also wrote `enabled` got wrong: a survivor whose twin leaves, the SIM-less
+ * hold during and after a collision, a shared-LAN role released while the
+ * address still collides, an operator enable during a collision, a row the
+ * monitor removed before the poll saw it, the hotspot transition's notice
+ * suppression, and a duplicate that couldn't be mapped while it collided.
  *
  * Driven through the real `processIfconfigOutput` and the real router admin
  * cache, with two tethers on one address beside a unique Ethernet uplink.
@@ -16,7 +17,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { resolveModemPhysicalIdentity } from "../modules/modems/physical-identity-source.ts";
 import { probeExclusionReason } from "../modules/network/connectivity-candidates.ts";
 import {
+	applySharedLanBondGate,
 	getNetworkInterfaces,
+	handleNetif,
 	NETIF_ERR_DUPIPV4,
 	NETIF_ERR_NOSIM,
 	processIfconfigOutput,
@@ -35,6 +38,7 @@ import {
 	genSrtlaIpList,
 	setBondIdentityResolverForTest,
 } from "../modules/streaming/srtla.ts";
+import { makeRpcContext } from "./helpers/bond-toggle-fixture.ts";
 
 const SHARED_IP = "192.168.0.169";
 const DONGLE = "enx344b50000000";
@@ -118,6 +122,10 @@ describe("the duplicate-IP release", () => {
 
 		await seedSim(WITH_SIM);
 		scan(DONGLE, TWIN, UPLINK);
+		// Still colliding: the mapping row alone does not lift the hold.
+		expect(getNetworkInterfaces()[DONGLE]?.error).toBe(NETIF_ERR_DUPIPV4);
+		expect(genSrtlaIpList().filter((ip) => ip === SHARED_IP)).toHaveLength(1);
+
 		scan(DONGLE, UPLINK);
 
 		expect(getNetworkInterfaces()[DONGLE]).toMatchObject({
@@ -159,10 +167,8 @@ describe("the duplicate-IP release", () => {
 
 		// A topology change while the transition is suppressed.
 		scan(DONGLE, TWIN, UPLINK, "eth2");
-		for (const name of [DONGLE, TWIN]) {
+		for (const name of [DONGLE, TWIN])
 			expect(getNetworkInterfaces()[name]?.error).toBe(NETIF_ERR_DUPIPV4);
-			expect(getNetworkInterfaces()[name]?.enabled).toBe(false);
-		}
 
 		// Rolled back, on an unchanged poll: still a collision.
 		setNetifDupIpSuppression(TWIN, false);
@@ -182,6 +188,54 @@ describe("the duplicate-IP release", () => {
 		scan(TWIN, UPLINK);
 
 		expect(getNetworkInterfaces()[TWIN]).toMatchObject({
+			error: 0,
+			enabled: true,
+		});
+		expect(genSrtlaIpList().sort()).toEqual([SHARED_IP, UPLINK_IP]);
+	});
+
+	for (const seen of ["between polls", "by a poll"] as const) {
+		test(`a shared-LAN role released ${seen} during a collision rejoins`, () => {
+			scan(DONGLE, TWIN, UPLINK);
+			const netif = getNetworkInterfaces();
+			applySharedLanBondGate(netif, (name) => name === DONGLE);
+			expect(netif[DONGLE]?.enabled).toBe(false);
+			if (seen === "by a poll") scan(DONGLE, TWIN, UPLINK);
+			applySharedLanBondGate(netif, () => false);
+			scan(DONGLE, TWIN, UPLINK);
+			expect(netif[DONGLE]).toMatchObject({
+				error: NETIF_ERR_DUPIPV4,
+				enabled: true,
+			});
+
+			scan(DONGLE, UPLINK);
+
+			expect(getNetworkInterfaces()[DONGLE]).toMatchObject({
+				error: 0,
+				enabled: true,
+			});
+			expect(genSrtlaIpList().sort()).toEqual([SHARED_IP, UPLINK_IP]);
+		});
+	}
+
+	test("an operator enable during a collision survives the twin leaving", () => {
+		scan(DONGLE, UPLINK);
+		const toggle = (enabled: boolean) =>
+			handleNetif(makeRpcContext().ws, {
+				name: DONGLE,
+				ip: SHARED_IP,
+				enabled,
+			} as Parameters<typeof handleNetif>[1]);
+		toggle(false);
+		expect(getNetworkInterfaces()[DONGLE]?.enabled).toBe(false);
+
+		scan(DONGLE, TWIN, UPLINK);
+		toggle(true);
+		expect(genSrtlaIpList().filter((ip) => ip === SHARED_IP)).toHaveLength(2);
+
+		scan(DONGLE, UPLINK);
+
+		expect(getNetworkInterfaces()[DONGLE]).toMatchObject({
 			error: 0,
 			enabled: true,
 		});

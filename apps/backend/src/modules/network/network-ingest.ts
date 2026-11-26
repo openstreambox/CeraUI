@@ -62,6 +62,7 @@ import { broadcastMsg } from "../ui/websocket-server.ts";
 import { isSupportedWifiIfname } from "../wifi/wifi-concurrent-interface.ts";
 import {
 	getNetworkInterfaces,
+	NETIF_ERR_DUPIPV4,
 	NETIF_ERR_HOTSPOT,
 } from "./network-interfaces.ts";
 
@@ -197,6 +198,8 @@ export function resolvePrimaryLanIp(netif: NetifLike): string | undefined {
 	for (const name in netif) {
 		const entry = netif[name];
 		if (!entry?.ip || !entry.enabled) continue;
+		// A shared address can't name this device to a client.
+		if (((entry.error ?? 0) & NETIF_ERR_DUPIPV4) !== 0) continue;
 		if (LAN_PREFERRED_RE.test(name)) {
 			preferred ??= entry.ip;
 			continue;
