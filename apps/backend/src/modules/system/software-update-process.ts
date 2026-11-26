@@ -25,6 +25,9 @@ export { buildDetachedAptUpgradeCommand } from "./software-update-service.ts";
 const OUTPUT_POLL_INTERVAL_MS = 250;
 const FINAL_DRAIN_MAX_FAILURES = 20;
 const INSPECT_RETRY_MAX_MS = 30_000;
+// systemd unloads an unreferenced stopped unit right after the stop job; a
+// unit still loaded after these reads is kept by a reference.
+const PINNED_READS = 3;
 
 export type SoftwareUpdateOutputHandlers = {
 	readonly onStdout: (chunk: string) => void;
@@ -39,6 +42,11 @@ export type SoftwareUpdateOutputHandlers = {
 	 * Rejecting means no unit was submitted.
 	 */
 	readonly submit?: <T>(launch: () => Promise<T>) => Promise<T>;
+	/**
+	 * The unit has stopped but systemd keeps it loaded (an image's drain names
+	 * it in After=), so no install can start under its name until the next boot.
+	 */
+	readonly onUnitPinned?: () => void;
 	readonly onObserverError?: (
 		error: unknown,
 		suppressedRetries?: number,
@@ -266,10 +274,29 @@ async function observeDetachedAptUpgrade(
 	} catch (error) {
 		throw new DetachedAptServiceCleanupError(state.exitCode, error);
 	}
+	await reportPinnedAfterCleanup(handlers, deps);
 	return state.exitCode;
 }
 
 const submitDirectly = <T>(launch: () => Promise<T>): Promise<T> => launch();
+// Read-only and best effort: it never changes the transaction's result.
+async function reportPinnedAfterCleanup(
+	handlers: SoftwareUpdateOutputHandlers,
+	deps: DetachedAptUpgradeDeps,
+): Promise<void> {
+	if (!handlers.onUnitPinned) return;
+	try {
+		for (let read = 1; ; read++) {
+			const state = await deps.inspect();
+			if (state.kind !== "absent" || !state.loaded) return;
+			if (read === PINNED_READS) break;
+			await deps.sleep(OUTPUT_POLL_INTERVAL_MS);
+		}
+	} catch {
+		return;
+	}
+	handlers.onUnitPinned();
+}
 
 export async function runDetachedAptUpgrade(
 	aptArgs: readonly string[],
@@ -280,7 +307,10 @@ export async function runDetachedAptUpgrade(
 	if (existing.kind !== "absent") {
 		throw new DetachedAptServiceAlreadyExistsError();
 	}
-	if (existing.loaded) throw new DetachedAptServicePinnedError();
+	if (existing.loaded) {
+		handlers.onUnitPinned?.();
+		throw new DetachedAptServicePinnedError();
+	}
 	await deps.prepareOutput();
 	const command = buildDetachedAptUpgradeCommand(aptArgs, deps.outputPaths);
 	await (handlers.submit ?? submitDirectly)(() => deps.start(command));
@@ -297,7 +327,10 @@ export async function runDetachedAptAll(
 	const existing = await deps.inspect();
 	if (existing.kind !== "absent")
 		throw new DetachedAptServiceAlreadyExistsError();
-	if (existing.loaded) throw new DetachedAptServicePinnedError();
+	if (existing.loaded) {
+		handlers.onUnitPinned?.();
+		throw new DetachedAptServicePinnedError();
+	}
 	await deps.prepareOutput();
 	const command = buildDetachedAptAllCommand(
 		installArgs,
@@ -342,7 +375,10 @@ export async function recoverDetachedAptUpgrade(
 	deps: DetachedAptUpgradeDeps = defaultDetachedAptServiceDeps(),
 ): Promise<RecoveredDetachedAptUpgrade | null> {
 	const state = await deps.inspect();
-	if (state.kind === "absent") return null;
+	if (state.kind === "absent") {
+		if (state.loaded) handlers.onUnitPinned?.();
+		return null;
+	}
 	handlers.onAttached?.();
 	return {
 		completion: observeDetachedAptUpgrade(state, handlers, deps),

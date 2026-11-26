@@ -448,6 +448,7 @@ export function resetSoftwareUpdateState(): void {
 	softwareUpdateRecoveryRetryTimer = undefined;
 	resetSoftwareUpdateRecovery();
 	lastInstallUnitVerdict = "not-probed";
+	installUnitPinned = false;
 	aptDiscoveryRunning = false;
 	softUpdateStatus = null;
 	currentUpdateIdentity = null;
@@ -2284,6 +2285,7 @@ export function startSoftwareUpdate(
 	if (isSoftwareUpdateRecoveryInconclusive()) {
 		return refuseUpdateStart("check_unavailable");
 	}
+	if (installUnitPinned) return refuseUpdateStart("check_unavailable");
 
 	// Image apt source: what the wire shows stands until a start is accepted.
 	// A start that is refused after all puts it back (below).
@@ -2455,6 +2457,7 @@ export function createSoftwareUpdateProcessMonitor(
 	};
 
 	const handlers: SoftwareUpdateOutputHandlers = {
+		onUnitPinned: noteInstallUnitPinned,
 		onStdout: (data) => {
 			aptLog += take("stdout", data);
 			publishProgress(false);
@@ -3096,6 +3099,22 @@ function refuseUnknownPackageInstall(): void {
 export type InstallUnitVerdict = "attached" | "absent" | "not-probed";
 
 let lastInstallUnitVerdict: InstallUnitVerdict = "not-probed";
+
+/**
+ * A stopped install unit that systemd keeps loaded for the rest of this boot
+ * (an image's shutdown drain names it in After=). systemd refuses a new unit by
+ * that name, so a start is refused up front instead of failing after the
+ * orchestrator recorded an install attempt.
+ */
+let installUnitPinned = false;
+
+function noteInstallUnitPinned(): void {
+	if (installUnitPinned) return;
+	installUnitPinned = true;
+	logger.warn(
+		"Software update: the stopped install unit stays loaded until the next boot; installs wait for a restart",
+	);
+}
 
 export function getLastInstallUnitVerdict(): InstallUnitVerdict {
 	return lastInstallUnitVerdict;
