@@ -1473,18 +1473,34 @@ strictly. With a valid record:
   orchestrator is not holding the package offer, as after the card's own
   check) is not one the orchestrator started: when it ends before launch the
   card shows the failure and the orchestrator keeps its phase, until the next
-  package check clears the failure and brings the two back in line (Check
-  now, the next tick while the orchestrator holds the offer, or its scheduled
-  check when it is idle). Once such a unit launched, a stream stops it
-  exactly as it stops one the orchestrator started.
-- Before launch, everything an install does it does as the pending attempt
-  and asks first whether it still is (`owns` in `software-updates.ts`). An
-  install that ended starts no further probe, apt run, spool setup or
-  routing rule and writes nothing, also when a wait it had in flight returns
-  or fails later. Until that wait has returned, the updater is not free: a
-  new install is refused and a check waits. A failure before launch is
-  published when it is known, before any archive cleanup, which the next
-  install's preflight does.
+  package check clears the failure and brings the two back in line: Check
+  now, or the scheduled package check when the orchestrator is idle and
+  automatic package updates are on. No tick checks packages only because the
+  two disagree, and image checks keep their schedule meanwhile. Once such a
+  unit launched, a stream stops it exactly as it stops one the orchestrator
+  started.
+- Before launch, everything an install does it does as the pending attempt,
+  and that is enforced where the work leaves the process
+  (`helpers/effect-owner.ts`): both command runners refuse to start a
+  command for an install that has ended, and the files and published state
+  written for it (the unit's output files, a probe's private files, the
+  routing journal, the published transport selection, the reachability
+  cache) refuse likewise. A command already running is not killed; it
+  finishes and its result goes nowhere. An ended install may only take down
+  what it set up: the routing rule and routes of a pinned run, their journal
+  entries, a private file. It logs nothing more. Until its last wait has
+  returned, the updater is not free: a new install is refused and a check
+  waits.
+- Updates turned off and a stream are looked at right before each of those
+  effects, so the install ends there rather than at its next checkpoint.
+- Where the backend elects the default route, apt asks the host's shared
+  gateway election for a repaired route. The election keeps who asked: it
+  leaves the route alone only when every requester is an install that has
+  ended, and the network module's next pass then writes it for the host.
+- A failure before launch is published when it is known: a failed download
+  under the pin before its routing is taken down, and before any archive
+  cleanup, which the next install's preflight does. A start that is refused
+  afterwards leaves that failure showing; the offer returns with a check.
 
 A record that is present but does not validate refuses package checks and
 installs (`discovery_failed`), and never falls back to the first-party
