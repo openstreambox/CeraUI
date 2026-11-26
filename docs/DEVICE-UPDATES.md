@@ -1515,7 +1515,8 @@ strictly. With a valid record:
   path when the probe ends. A removal that fails is logged as a security
   line, whoever the probe was for. That one directory is wiped when the
   backend starts, by the process that actually holds the single-instance
-  lock at that moment.
+  lock at that moment. An instance without that lock keeps its configs in a
+  directory of its own instead.
 - While a stream is live a scheduled package check waits on these images
   instead of being refused as busy: no failed check is counted, and the
   image check that is due runs on that tick. One look decides, after the
