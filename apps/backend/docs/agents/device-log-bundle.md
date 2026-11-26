@@ -32,6 +32,44 @@ historical versions stay null. No config dump, password hash, authentication-tok
 NetworkManager profile is included. `readUpdateChannel()` reuses the update
 owner's validated readers without migrating or writing settings.
 
+`bundle-state.ts` builds the device state, written as a second `settings`
+record (`{"section":"settings","device":{…}}`) so the manifest keeps the section
+list released viewers accept. It holds uptime, memory headroom from the cached
+device stats, how the running and previous journal boots ended (`current`, or
+the classifier's `clean`/`unclean`/`unknown` with its evidence codes and the
+boot's first and last timestamps, through `classifyFinishedBoot`), both rootfs
+slots from `rauc status` (A/B, state, boot status), the boot-state helper's
+order and attempts left from `/boot/boot_state.txt`, each modem's
+connection state, mode, access technology, signal, roaming, SIM presence, lock
+type and whether an APN is configured, each network interface as an anonymous
+kind-and-ordinal label (`cellular-1`, `wifi-1`, `ethernet-1`, `other-1`) with
+bond, IPv4 and error flags and rates, and the stream lifecycle with applied and
+ceiling bitrate.
+
+Every string is a closed-vocabulary member (unknown members become `other`) or
+an anonymous label. No model, manufacturer, operator, interface, package or slot
+name text is copied, and no version string at all: the versions section already
+carries the running image, CeraUI, engine and sender versions, and no format
+check separates a version part from a short identifier (`2026.11.97531`). The
+dpkg status file is not read. The boot state is used only when the
+image's helper would accept it: a non-empty order of A and B without repeats,
+both counters present and within the default budget of three, each key once,
+and a `BOOT_CRC` equal to POSIX `cksum` of the canonical payload when present;
+otherwise it is `null` (x86 keeps its state in the GRUB environment and reports
+`null`; a device configured with a larger budget also reports `null`).
+
+`screenState` then checks every key and value except boot ids with the bundle's
+own redactor and the held secrets. A value it would act on becomes `null`
+(nulls are never inspected), and a key it would act on drops the whole record.
+`bundle-body.ts` runs the record through the final inspection before admitting
+it and leaves it out on a collision, so the optional record can neither leak
+such a value nor make preparation refuse. Each source is optional: a failed
+read leaves its field null or empty. Only an image with the `os-updates`
+capability (`hasCapability`, outside mock mode) runs `rauc` or reads the
+boot-state file. An image without a capability record falls back to the
+legacy device detection, and `CERALIVE_DEVICE_TYPE` overrides both, so an
+ordinary dev host or CI never reads them unless forced to `real`.
+
 Held config, relay, hotspot, APN and router credentials are inputs to redaction
 only. `getStoredModemCredentials()` returns copies of the username/password
 pairs, including disconnected devices, without identity or verification
