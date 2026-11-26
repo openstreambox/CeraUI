@@ -69,6 +69,10 @@ import {
 	setPrivateCurlDirectoryForTest,
 } from "../../modules/system/curl-private-url.ts";
 import {
+	type DeviceDetectionDeps,
+	defaultDeviceDetectionDeps,
+} from "../../modules/system/device-detection.ts";
+import {
 	IMAGE_APT_SOURCE_POLICY,
 	setDpkgUpdatesDirForTest,
 	setImageAptSourceReaderForTest,
@@ -431,6 +435,18 @@ const installSpies: ReturnType<typeof spyOn>[] = [];
 const cleanups: (() => void | Promise<void>)[] = [];
 const updatesEnabled = setup.apt_update_enabled;
 const hasBoardCapability = board.hasCapability;
+// What the real lookup reads on a host that is no board: none of its files
+// is there. Answered here instead of by the host, so nothing outside the
+// install waits on a real file read whose length no test can count on.
+const absent = (): Promise<string> => Promise.reject(new Error("ENOENT"));
+const NO_BOARD_FILES: DeviceDetectionDeps = {
+	...defaultDeviceDetectionDeps,
+	readDeviceTreeModel: absent,
+	readDeviceTreeCompatible: absent,
+	readCeraliveRelease: absent,
+	readDmiProductName: absent,
+	readDmiBoardName: absent,
+};
 const readStoredStateFile = storedState.readStoredStateFile;
 
 /** A line the device logged, and who logged it. */
@@ -712,10 +728,11 @@ export async function acceptedInstall(variant: Variant) {
 			),
 		),
 		// The pinned transport serves a board that routes apt itself. Anything
-		// but the install (the orchestrator's own requests) reads the real one.
+		// but the install (the orchestrator's own requests) asks the real one,
+		// on a host that is no board.
 		spyOn(board, "hasCapability").mockImplementation((capability, deps) =>
 			sequencer.isOutside()
-				? hasBoardCapability(capability, deps)
+				? hasBoardCapability(capability, deps ?? NO_BOARD_FILES)
 				: wait(
 						`read the board capability ${capability}`,
 						() => pinned || (routed && capability === "os-updates"),
