@@ -8,8 +8,13 @@ import {
 } from "../modules/system/software-update-process.ts";
 import { isSoftwareUpdateRecoveryInconclusive } from "../modules/system/software-update-recovery.ts";
 import {
+	buildDetachedAptAllCommand,
+	buildDetachedAptUpgradeCommand,
+} from "../modules/system/software-update-service.ts";
+import {
 	DetachedAptServiceCommandError,
 	SOFTWARE_UPDATE_UNIT,
+	validateDetachedAptServiceFragment,
 } from "../modules/system/software-update-service-contract.ts";
 import { parseDetachedAptServiceProbe } from "../modules/system/software-update-service-state.ts";
 import {
@@ -36,6 +41,54 @@ const install = buildAptAllInstallArgs(
 );
 const execStart = (status: "running" | "exited") =>
 	`ExecStart={ path=/usr/bin/flock ; argv[]=/usr/bin/flock -x /run/lock/ceralive-update.lock /bin/sh -ec /usr/bin/apt-get -d -y upgrade --with-new-pkgs && /usr/bin/apt-get ${install.join(" ")} ; ignore_errors=no ; start_time=[Wed 2026-11-26 07:20:01 UTC] ; stop_time=[${status === "running" ? "n/a" : "Wed 2026-11-26 07:21:12 UTC"}] ; pid=4242 ; code=${status === "running" ? "(null)" : "exited"} ; status=${status === "running" ? "0/0" : "0/SUCCESS"} }`;
+
+// The transient file systemd 257 writes for a systemd-run request: one write
+// per property in the order systemd-run sends them (Description, each
+// --property, then the service settings), with a section header whenever the
+// section changes. Checked against a file captured on a board below.
+const UNIT_SECTION_KEYS = new Set(["Before", "After", "Wants", "Requires"]);
+function transientFragment(argv: readonly string[]): string {
+	const end = argv.indexOf("--");
+	const options = argv.slice(0, end);
+	const value = (prefix: string) =>
+		options
+			.filter((arg) => arg.startsWith(prefix))
+			.map((arg) => arg.slice(prefix.length));
+	const writes: [string, string][] = value("--description=").map((d) => [
+		"Unit",
+		`Description=${d}`,
+	]);
+	for (const property of value("--property="))
+		writes.push([
+			UNIT_SECTION_KEYS.has(property.slice(0, property.indexOf("=")))
+				? "Unit"
+				: "Service",
+			property,
+		]);
+	if (options.includes("--remain-after-exit"))
+		writes.push(["Service", "RemainAfterExit=yes"]);
+	for (const type of value("--service-type="))
+		writes.push(["Service", `Type=${type}`]);
+	for (const env of value("--setenv="))
+		writes.push(["Service", `Environment="${env}"`]);
+	writes.push(["Service", "ExecStart="]);
+	writes.push([
+		"Service",
+		`ExecStart=:${argv
+			.slice(end + 1)
+			.map((arg) => `"${arg}"`)
+			.join(" ")}`,
+	]);
+	let file =
+		"# This is a transient unit file, created programmatically via the systemd API. Do not edit.\n";
+	let section = "";
+	for (const [name, line] of writes) {
+		if (name !== section) file += `${section ? "\n" : ""}[${name}]\n`;
+		section = name;
+		file += `${line}\n`;
+	}
+	return file;
+}
 
 type UnitState = {
 	active: "active" | "inactive";
@@ -70,6 +123,8 @@ function render(unit: UnitState | null): string {
 
 function modelledSystemd(drainAfter: readonly string[]) {
 	let unit: UnitState | null = null;
+	let fragment = "";
+	let polls = 0;
 	const launches: (readonly string[])[] = [];
 	const stops: string[] = [];
 	const command = ["systemctl", "show", SOFTWARE_UPDATE_UNIT];
@@ -85,13 +140,19 @@ function modelledSystemd(drainAfter: readonly string[]) {
 					`Failed to start transient service unit: Unit ${SOFTWARE_UPDATE_UNIT} was already loaded or has a fragment file.`,
 				);
 			launches.push(argv);
+			fragment = transientFragment(argv);
 			unit = { active: "active", sub: "running", job: "", exited: false };
 		},
-		inspect: async () =>
-			parseDetachedAptServiceProbe(
+		// As inspectService: a loaded unit's transient file is checked too.
+		inspect: async () => {
+			const state = parseDetachedAptServiceProbe(
 				{ exitCode: 0, stdout: render(unit), stderr: "" },
 				command,
-			),
+			);
+			if (state.kind !== "absent" || state.loaded)
+				validateDetachedAptServiceFragment(fragment);
+			return state;
+		},
 		cleanup: async (state) => {
 			stops.push(state.cleanup);
 			if (unit === null) throw new Error("cleanup of an absent unit");
@@ -105,6 +166,9 @@ function modelledSystemd(drainAfter: readonly string[]) {
 			nextOffset: offset,
 		}),
 		sleep: async () => {
+			// A unit CeraUI can't read (a refused transient file) keeps the
+			// observer retrying; on a box that never ends.
+			if (++polls > 50) throw new Error("observer kept polling");
 			// apt-get finishes on the observer's first poll.
 			if (unit?.sub === "running")
 				unit = { ...unit, sub: "exited", exited: true };
@@ -197,4 +261,61 @@ test("a stopped unit with a queued job is still unrecognized and retried", async
 	// Then it fails closed and asks again later.
 	await expect(recovered).rejects.toThrow(/unrecognized.*inactive\/dead/);
 	expect(retries).toHaveLength(1);
+});
+
+// systemd 257.13 on a ROCK 5B+ (image 6.2), for the command with Before= sent
+// after the output paths: two [Service] sections.
+const boardFragment = `# This is a transient unit file, created programmatically via the systemd API. Do not edit.
+[Unit]
+Description=CeraLive software update
+
+[Service]
+StandardOutput=append:/run/ceralive/software-update.stdout
+StandardError=append:/run/ceralive/software-update.stderr
+
+[Unit]
+Before=ceralive-write-drain.service
+
+[Service]
+RemainAfterExit=yes
+Type=exec
+Environment="LC_ALL=C"
+ExecStart=
+ExecStart=:"/usr/bin/apt-get" "-y" "-o" "Dpkg::Options::=--force-confdef" "-o" "Dpkg::Options::=--force-confold" "install" "srtla"
+`;
+const directArgs = [
+	"-y",
+	"-o",
+	"Dpkg::Options::=--force-confdef",
+	"-o",
+	"Dpkg::Options::=--force-confold",
+	"install",
+	"srtla",
+];
+
+test("the transient file of either command form passes CeraUI's own fragment check", () => {
+	// Given the modelled writer reproduces the board's file for Before= sent late.
+	const direct = buildDetachedAptUpgradeCommand(
+		directArgs,
+		softwareUpdateOutputPaths(),
+	);
+	const before = "--property=Before=ceralive-write-drain.service";
+	const late = direct.filter((arg) => arg !== before);
+	late.splice(late.indexOf("--"), 0, before);
+	expect(transientFragment(late)).toBe(boardFragment);
+	expect(() => validateDetachedAptServiceFragment(boardFragment)).toThrow(
+		"Service section is duplicated",
+	);
+	// When the units are written for the commands CeraUI sends.
+	const all = buildDetachedAptAllCommand(
+		install,
+		"any",
+		softwareUpdateOutputPaths(),
+	);
+	// Then each file has one [Service] section and is adopted.
+	for (const argv of [direct, all]) {
+		const file = transientFragment(argv);
+		expect(file.match(/^\[Service\]$/gm)).toHaveLength(1);
+		expect(() => validateDetachedAptServiceFragment(file)).not.toThrow();
+	}
 });
