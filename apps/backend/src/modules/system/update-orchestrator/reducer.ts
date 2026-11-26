@@ -305,8 +305,19 @@ function reduceAvailable(
 				phase: "checking",
 				packageCheck: clockAtAttemptStart(state.packageCheck, event.now),
 			});
-		// A waiting package offer must not hide a system image, so the image
-		// check runs in place: the offer stays unless an image is found.
+		default:
+			return reduceOsCheckBesidePackages(state, event);
+	}
+}
+
+// A package offer that waits (offered, or queued for idle) must not hide a
+// system image, so the image check runs in place: the offer stays unless an
+// image is found, which replaces it. A launched install is not waiting.
+function reduceOsCheckBesidePackages(
+	state: OrchestratorState,
+	event: OrchestratorEvent,
+): OrchestratorState {
+	switch (event.type) {
 		case "OS_CHECK_STARTED":
 			return {
 				...state,
@@ -350,7 +361,7 @@ function reduceAwaitingIdle(
 				packageAttempt: event.packageAttempt,
 			});
 		default:
-			return state;
+			return reduceOsCheckBesidePackages(state, event);
 	}
 }
 

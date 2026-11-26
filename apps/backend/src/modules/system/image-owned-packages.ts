@@ -45,19 +45,68 @@ export type ImageOwnedPackages = {
 	readonly source: "image-record" | "fallback";
 };
 
-const FIELD_RE = /^([A-Za-z][A-Za-z-]*):[ \t]*(.*?)[ \t]*$/;
+// Value: the rest of the line, carriage returns included (dpkg judges them).
+const FIELD_RE = /^([A-Za-z][A-Za-z-]*):[ \t]*([^\n]*?)[ \t]*$/;
+// The forms the image writes: the installed copy, or its exact version.
+const PIN_RELEASE_NOW = "release a=now";
+const PIN_VERSION_PREFIX = "version ";
+const DPKG_MAX_EPOCH = 2_147_483_647;
+
+/**
+ * A version as `dpkg --validate-version --` takes it: spaces and tabs around
+ * it dropped and none left inside, an optional epoch up to the first colon
+ * (what strtol reads: leading whitespace, an optional sign and digits, from 0
+ * to 2147483647, so `-0` passes), the revision after the last hyphen (if any),
+ * and an upstream part that starts with a digit.
+ */
+export function isDebianVersion(raw: string): boolean {
+	const version = raw.replace(/^[ \t]+|[ \t]+$/g, "");
+	if (/[ \t]/.test(version)) return false;
+	const colon = version.indexOf(":");
+	let rest = version;
+	if (colon !== -1) {
+		// Blanks are gone already; strtol also skips the other ASCII whitespace.
+		const epoch = version.slice(0, colon).replace(/^[\n\v\f\r]+/, "");
+		if (!/^[+-]?[0-9]+$/.test(epoch)) return false;
+		const value = Number(epoch);
+		if (value < 0 || value > DPKG_MAX_EPOCH) return false;
+		rest = version.slice(colon + 1);
+	}
+	const hyphen = rest.lastIndexOf("-");
+	if (hyphen !== -1 && !/^[A-Za-z0-9.+~]+$/.test(rest.slice(hyphen + 1)))
+		return false;
+	return /^[0-9][A-Za-z0-9.+~:-]*$/.test(
+		hyphen === -1 ? rest : rest.slice(0, hyphen),
+	);
+}
+
+function isImagePinForm(pin: string): boolean {
+	return (
+		pin === PIN_RELEASE_NOW ||
+		(pin.startsWith(PIN_VERSION_PREFIX) &&
+			isDebianVersion(pin.slice(PIN_VERSION_PREFIX.length)))
+	);
+}
+
+// A pin that holds a package must outrank the apt.ceralive.tv origin pin, and
+// APT ignores a priority beyond a signed 16-bit value.
+const ORIGIN_PIN_PRIORITY = 990;
+const APT_MAX_PIN_PRIORITY = 32_767;
 
 /**
  * The package names an APT preferences file pins, or null when any stanza is
- * not a complete `Package`/`Pin`/`Pin-Priority` record. A file with only
- * comments pins nothing.
+ * not a complete `Package`/`Pin`/`Pin-Priority` record in a form the image
+ * writes (`release a=now` or `version <v>`, above the origin pin's 990). A file
+ * with only comments pins nothing.
  */
 export function parseLocalOverridePin(text: string): string[] | null {
 	const names: string[] = [];
 	for (const stanza of text.split(/\n[ \t]*\n/)) {
 		const fields = new Map<string, string>();
 		for (const line of stanza.split("\n")) {
-			if (line.trim() === "" || line.startsWith("#")) continue;
+			// Blank means spaces and tabs only, as APT reads it; a Unicode
+			// separator is not whitespace to APT.
+			if (/^[ \t]*$/.test(line) || line.startsWith("#")) continue;
 			const match = FIELD_RE.exec(line);
 			if (!match) return null;
 			const key = (match[1] ?? "").toLowerCase();
@@ -66,11 +115,15 @@ export function parseLocalOverridePin(text: string): string[] | null {
 		}
 		fields.delete("explanation");
 		if (fields.size === 0) continue;
-		const packages = fields.get("package")?.split(/\s+/) ?? [];
+		// APT separates names with spaces and tabs only, so a name with a
+		// Unicode separator inside stays one (invalid) name.
+		const packages = fields.get("package")?.split(/[ \t]+/) ?? [];
 		if (
 			fields.size !== 3 ||
-			!fields.get("pin") ||
-			!/^-?\d+$/.test(fields.get("pin-priority") ?? "") ||
+			!isImagePinForm(fields.get("pin") ?? "") ||
+			!/^\d+$/.test(fields.get("pin-priority") ?? "") ||
+			Number(fields.get("pin-priority")) <= ORIGIN_PIN_PRIORITY ||
+			Number(fields.get("pin-priority")) > APT_MAX_PIN_PRIORITY ||
 			packages.length === 0 ||
 			packages.some((name) => !APT_PACKAGE_NAME_RE.test(name))
 		)

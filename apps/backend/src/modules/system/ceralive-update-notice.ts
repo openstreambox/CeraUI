@@ -40,6 +40,7 @@ import {
 	admittedTargets,
 	candidateOrigin,
 	isFirstPartyPackage,
+	type PinnedAptPackage,
 } from "./apt-all-packages.ts";
 import { policySources } from "./apt-all-source-policy.ts";
 import {
@@ -172,7 +173,8 @@ function refreshedEveryCeraliveSource(
  * Capable: the check's verified first-party rows, each the exact instance its own
  * complete simulation plans. One unverified row, or a first-party package the
  * simulation keeps back, means unknown. `keptBack` is the simulation's kept-back
- * list when it names exactly what it counts, else null.
+ * list when it names exactly what it counts, else null. `withheld` are the plan's
+ * rows for packages the image ships itself: seen, and never offered.
  */
 export function firstPartyOffer(
 	packages: readonly UpdatePackage[],
@@ -180,6 +182,7 @@ export function firstPartyOffer(
 	simulation: string,
 	refresh: string,
 	keptBack: readonly string[] | null,
+	withheld: readonly PinnedAptPackage[] = [],
 ): CeraliveVerdict {
 	if (
 		keptBack === null ||
@@ -190,6 +193,13 @@ export function firstPartyOffer(
 		return "unknown";
 	const instances = admittedTargets(simulation);
 	if (instances === null) return "unknown";
+	// Every first-party row the plan holds is either checked below or withheld.
+	const accounted = (row: { name: string; version: string }) =>
+		[...packages, ...withheld].some(
+			(item) => item.name === row.name && item.version === row.version,
+		);
+	if (instances.some((row) => capableFirstParty(row.name) && !accounted(row)))
+		return "unknown";
 	const offer: OfferedPackage[] = [];
 	for (const { name, version, origin, actionable } of packages) {
 		if (!capableFirstParty(name)) continue;

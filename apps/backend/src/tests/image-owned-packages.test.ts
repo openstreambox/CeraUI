@@ -9,8 +9,10 @@ import {
 	assertPinnedInstallSimulation,
 	discoverAptAllPackages,
 } from "../modules/system/apt-all-packages.ts";
+import { firstPartyOffer } from "../modules/system/ceralive-update-notice.ts";
 import {
 	FALLBACK_IMAGE_OWNED_PACKAGES,
+	isDebianVersion,
 	parseLocalOverridePin,
 	readImageOwnedPackages,
 	setImageOwnedPackagesReaderForTest,
@@ -33,20 +35,21 @@ useSessionOwnerForFile();
 afterEach(() => setImageOwnedPackagesReaderForTest(null));
 
 // The file the image's app layer writes (image-building-pipeline
-// pin_first_party_local_overrides): its header, then one stanza per override.
+// pin_first_party_local_overrides): its header, then one stanza per override,
+// pinning the installed copy.
 const imagePin = `# First-party packages this image installed from a reviewed local override,
-# pinned to that version (pin_first_party_local_overrides, app layer).
+# pinned to their installed version (pin_first_party_local_overrides, app layer).
 
 Package: ceralive-device
-Pin: version 2026.11.5-20261124T222734.1dbec5e62
+Pin: release a=now
 Pin-Priority: 1001
 
 Package: libmm-glib0
-Pin: version 1.24.2-2~ceralive.3+osb2
+Pin: release a=now
 Pin-Priority: 1001
 
 Package: modemmanager
-Pin: version 1.24.2-2~ceralive.3+osb2
+Pin: release a=now
 Pin-Priority: 1001
 `;
 
@@ -113,6 +116,49 @@ describe("the image's local-override pin", () => {
 		]);
 	});
 
+	it.each([
+		"1.24.2-2~ceralive.3+osb2",
+		"2026.11.5-20261124T222734.1dbec5e62",
+		"1:2.3",
+	])("also reads the exact-version form (%s)", (version) => {
+		expect(
+			parseLocalOverridePin(
+				`Package: modemmanager\nPin: version ${version}\nPin-Priority: 32767\n`,
+			),
+		).toEqual(["modemmanager"]);
+	});
+
+	it("takes spaces and tabs between names as APT does", () => {
+		expect(
+			parseLocalOverridePin(
+				"Package: modemmanager \tlibmm-glib0\nPin: release a=now\nPin-Priority: 1001\n",
+			),
+		).toEqual(["modemmanager", "libmm-glib0"]);
+	});
+
+	it.each([
+		["a line separator", "\u2028"],
+		["a paragraph separator", "\u2029"],
+		["a no-break space", "\u00a0"],
+	])(
+		"refuses names joined by %s, which APT would not pin",
+		(_label, separator) => {
+			expect(
+				parseLocalOverridePin(
+					`Package: modemmanager${separator}zstd\nPin: release a=now\nPin-Priority: 1001\n`,
+				),
+			).toBeNull();
+		},
+	);
+
+	it("does not take a line of Unicode separators as a blank line", () => {
+		expect(
+			parseLocalOverridePin(
+				"Package: modemmanager\nPin: release a=now\n\u2028\nPin-Priority: 1001\n",
+			),
+		).toBeNull();
+	});
+
 	it("reads a header-only file as pinning nothing", () => {
 		expect(parseLocalOverridePin("# header\n# only\n")).toEqual([]);
 		expect(parseLocalOverridePin("")).toEqual([]);
@@ -137,8 +183,115 @@ describe("the image's local-override pin", () => {
 			"a non-numeric priority",
 			"Package: zstd\nPin: version 1\nPin-Priority: high\n",
 		],
+		[
+			"a pin form the image never writes",
+			"Package: zstd\nPin: garbage\nPin-Priority: 1001\n",
+		],
+		[
+			"an origin pin",
+			"Package: zstd\nPin: origin apt.ceralive.tv\nPin-Priority: 1001\n",
+		],
+		[
+			"a pin that does not outrank the origin pin",
+			"Package: zstd\nPin: release a=now\nPin-Priority: 990\n",
+		],
+		[
+			"a version dpkg would refuse",
+			"Package: zstd\nPin: version 1:\nPin-Priority: 1001\n",
+		],
+		[
+			"a version with a stray colon",
+			"Package: zstd\nPin: version 1.0:2\nPin-Priority: 1001\n",
+		],
+		[
+			"a priority APT ignores",
+			"Package: zstd\nPin: release a=now\nPin-Priority: 32768\n",
+		],
 	])("refuses %s", (_label, text) => {
 		expect(parseLocalOverridePin(text)).toBeNull();
+	});
+});
+
+// `dpkg --validate-version -- <version>` on the workstation (dpkg 1.23.7),
+// 25 Nov 2026; the `--` matters, since a leading minus is otherwise an option.
+const dpkgVerdicts: ReadonlyArray<readonly [string, boolean]> = [
+	["1:2.3:4-1", true],
+	["2.3--1", true],
+	["2147483648:1", false],
+	["2147483647:1", true],
+	["1:", false],
+	["1.0:2", false],
+	["2.3-", false],
+	["a1.0", false],
+	["1.24.2-2~ceralive.3+osb2", true],
+	["2026.11.5-20261124T222734.1dbec5e62", true],
+	["1:2.3", true],
+	[":1", false],
+	["1.0-r_1", false],
+	["1.0 2", false],
+	["0:1", true],
+	["1-2-3", true],
+	["1:1:1", true],
+	["1.0-", false],
+	["-1", false],
+	["1.0-1:2", false],
+	["+1:2", true],
+	["+0:1", true],
+	["-0:1", true],
+	["-1:2", false],
+	["+:1", false],
+	["-:1", false],
+	["-00:1", true],
+	["++1:2", false],
+	["1 :2", false],
+	["0x1:2", false],
+	["+2147483647:1", true],
+	["+2147483648:1", false],
+	["-0:", false],
+	["01:2", true],
+	["1:+2", false],
+	["1:-2", false],
+	[" +1:2 ", true],
+	["1.0\t", true],
+	[" 1.0", true],
+	["\u00a01.0", false],
+	["1.0\u00a0", false],
+	["\v1.0", false],
+	["\r1.0", false],
+	["\f1.0", false],
+	["-+0:1", false],
+	["+-0:1", false],
+	[" -0:1", true],
+	["\v1:2", true],
+	["\f1:2", true],
+	["\r1:2", true],
+	["\v+1:2", true],
+	["\v-0:1", true],
+	[" \v1:2", true],
+	["\v 1:2", false],
+	["1\v:2", false],
+	["1:\v2", false],
+	["\u00a01:2", false],
+	["\v:2", false],
+	["\v\f1:2", true],
+	["\t\v1:2", true],
+	["\v1.0", false],
+	["1.0\t2", false],
+	["\v\t1:2", false],
+	["\t1:2", true],
+	["1:2\v", false],
+	["1.0\v", false],
+	["1:2\r", false],
+];
+
+describe("pin versions follow dpkg", () => {
+	it.each(dpkgVerdicts)("%s: dpkg accepts = %p", (version, accepted) => {
+		expect(isDebianVersion(version)).toBe(accepted);
+		expect(
+			parseLocalOverridePin(
+				`Package: modemmanager\nPin: version ${version}\nPin-Priority: 1001\n`,
+			),
+		).toEqual(accepted ? ["modemmanager"] : null);
 	});
 });
 
@@ -328,5 +481,58 @@ describe("a capable package check on the 5.1 box", () => {
 			resetSoftwareUpdateState();
 			await rm(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("the CeraLive update notice beside withheld packages", () => {
+	const refresh = `Hit:1 https://apt.ceralive.tv/dists/stable/binary-arm64 ./ InRelease
+Hit:2 https://deb.debian.org/debian trixie InRelease
+`;
+
+	it("knows nothing is offered when the image's own row is withheld", async () => {
+		const result = await discoverAptAllPackages(
+			simulation,
+			"",
+			policyFor,
+			sourcePolicy,
+			new Set(FALLBACK_IMAGE_OWNED_PACKAGES),
+		);
+		expect(
+			firstPartyOffer(
+				result.packages,
+				sourcePolicy,
+				simulation,
+				refresh,
+				[],
+				result.withheld,
+			),
+		).toEqual([]);
+	});
+
+	it("stays unknown when a first-party plan row is neither checked nor withheld", async () => {
+		const result = await discoverAptAllPackages(
+			simulation,
+			"",
+			policyFor,
+			sourcePolicy,
+			new Set(FALLBACK_IMAGE_OWNED_PACKAGES),
+		);
+		expect(
+			firstPartyOffer(result.packages, sourcePolicy, simulation, refresh, []),
+		).toBe("unknown");
+	});
+
+	it("still offers a verified first-party build that is not withheld", async () => {
+		const result = await discoverAptAllPackages(
+			simulation,
+			"",
+			policyFor,
+			sourcePolicy,
+		);
+		expect(
+			firstPartyOffer(result.packages, sourcePolicy, simulation, refresh, []),
+		).toEqual([
+			{ name: "ceralive-device", arch: "arm64", version: offeredCeraui },
+		]);
 	});
 });

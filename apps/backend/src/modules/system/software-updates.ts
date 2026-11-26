@@ -783,6 +783,7 @@ async function getCapableUpdateSize(
 					simulation.stdout,
 					refresh,
 					keptBackNames(simulation.stdout),
+					result.withheld,
 				),
 			);
 		return null;
