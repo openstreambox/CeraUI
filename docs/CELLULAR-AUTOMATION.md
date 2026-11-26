@@ -55,6 +55,27 @@ autoconnect choice (or enable a newly created manual profile). Interrupted
 firmware preparation is held for explicit recovery rather than claiming an
 unverified restoration. This has host/fixture evidence only.
 
+### APN for a new SIM
+
+A new SIM's profile normally starts on Automatic APN. NetworkManager then looks
+the APN up in the mobile provider database by the network the modem is
+registered on and takes the first entry marked for internet use. That is the
+wrong APN for a roaming SIM, for an MVNO SIM with its own network code on a host
+network, and where the first entry is an IMS APN. In those cases the new profile
+is written with the APN the database lists for the SIM's own network, with
+Automatic APN off, and the modem dialog says under the APN field that this value
+comes from the provider database. When the database lists no internet APN for
+the SIM's network, Automatic APN stays on and the dialog says so beside the
+switch; if mobile data does not connect, turn Automatic APN off and enter the
+provider's APN. Networks that a qualified row of the carrier table above covers
+are left on Automatic APN for its takeover. Existing profiles are never changed;
+a new profile copied from another SIM of the same operator is judged the same
+way, unless that profile holds an APN someone entered. Modems admitted for
+transport preparation keep Automatic APN, because that preparation needs it.
+The check runs once, when the profile is created: a SIM that was not yet
+registered is judged as if on its home network, so if it later roams and mobile
+data does not connect, enter the APN from your provider.
+
 ### RM520N-GL at USB 2
 
 The RM520N-GL raises its own receiver's noise floor when its USB 3 link is
@@ -207,6 +228,30 @@ Guardar un perfil manual restaura la elección anterior de conexión automática
 o la activa para un perfil manual nuevo. Una preparación de firmware interrumpida
 requiere recuperación explícita; no se supone que se haya restaurado. Estos
 cambios solo tienen pruebas en el host y en entornos de prueba.
+
+### APN para una SIM nueva
+
+El perfil de una SIM nueva empieza normalmente con APN Automático. NetworkManager
+busca entonces el APN en la base de datos de operadores móviles según la red en
+la que está registrado el módem y toma la primera entrada marcada para internet.
+Ese APN es incorrecto para una SIM en roaming, para una SIM de un operador móvil
+virtual con su propio código de red sobre una red anfitriona y cuando la primera
+entrada es un APN de IMS. En esos casos el perfil nuevo se escribe con el APN
+que la base de datos indica para la red propia de la SIM, con APN Automático
+desactivado, y el diálogo del módem indica bajo el campo APN que el valor viene
+de la base de datos de operadores. Si la base de datos no indica ningún APN de
+internet para la red de la SIM, APN Automático sigue activado y el diálogo lo
+indica junto al interruptor; si los datos móviles no se conectan, desactiva APN
+Automático e introduce el APN de tu operador. Las redes que cubre una fila
+calificada de la tabla de operadores de arriba siguen con APN Automático para
+que esa tabla pueda aplicarse. Los perfiles existentes nunca se modifican; un
+perfil nuevo copiado de otra SIM del mismo operador se evalúa igual, salvo que
+ese perfil tenga un APN introducido por alguien. Los módems admitidos para la
+preparación del transporte siguen con APN Automático, porque esa preparación lo
+necesita. La comprobación se hace una sola vez, al crear el perfil: una SIM que
+aún no estaba registrada se evalúa como si estuviera en su red propia; si después
+está en roaming y los datos móviles no se conectan, introduce el APN de tu
+operador.
 
 ### RM520N-GL en USB 2
 
