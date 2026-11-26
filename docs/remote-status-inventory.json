@@ -49638,7 +49638,7 @@
     "apps/backend/src/modules/modems/modems-state.ts": "664049da3a73481068a483da604719cbea8abe290995f907a9e07eebc69cc3a5",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
     "apps/backend/src/modules/network/network-ingest.ts": "04753a910fc6443947813f8396ee72053d663b3948f1e0ea35a8c973a0fee9dc",
-    "apps/backend/src/modules/network/network-interfaces.ts": "547fd982ead0e71805b8f2a7229fd47e284221c42066e1cf357e85d73d2e5a70",
+    "apps/backend/src/modules/network/network-interfaces.ts": "b481052504898531b05682dd421b954f161a5eb3c70d700982c6463189189892",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "2221782a8312e2ffddc545a6f4434e62cf53d0f82948d49987a5a9263fe60d26",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "59e35c76047fe4bfa5484cbbeaae996507cc0f1f778641eb83dc6248f72b6395",

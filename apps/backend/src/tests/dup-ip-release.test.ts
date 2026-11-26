@@ -241,4 +241,23 @@ describe("the duplicate-IP release", () => {
 		});
 		expect(genSrtlaIpList().sort()).toEqual([SHARED_IP, UPLINK_IP]);
 	});
+
+	test("unmappable twins never count as the last link to keep", () => {
+		setBondIdentityResolverForTest((ifname) => {
+			if (ifname === DONGLE || ifname === TWIN) throw new Error("no identity");
+			return resolveModemPhysicalIdentity(ifname);
+		});
+		scan(DONGLE, TWIN, UPLINK);
+		expect(genSrtlaIpList()).toEqual([UPLINK_IP]);
+
+		const outcome = handleNetif(makeRpcContext().ws, {
+			name: UPLINK,
+			ip: UPLINK_IP,
+			enabled: false,
+		} as Parameters<typeof handleNetif>[1]);
+
+		expect(outcome).toMatchObject({ ok: false });
+		expect(getNetworkInterfaces()[UPLINK]?.enabled).toBe(true);
+		expect(genSrtlaIpList()).toEqual([UPLINK_IP]);
+	});
 });

@@ -1811,8 +1811,8 @@ function publishIfconfigEntries(
 
 	if (intsChanged) {
 		// Same-subnet detection (informational). Runs AFTER dup-IP so a hard
-		// dup-IP pair (now flagged NETIF_ERR_DUPIPV4 → enabled=false) is skipped
-		// and never also tagged as a same-subnet group.
+		// dup-IP pair (now flagged NETIF_ERR_DUPIPV4) is skipped and never also
+		// tagged as a same-subnet group.
 		computeSameSubnetGroups(newInterfaces);
 	}
 
@@ -2339,10 +2339,13 @@ function applyDongleProjection(m: NetworkInterfaceResponseMessage): void {
 	lastDongleMarked = marked;
 }
 
+// The legacy raw count. A duplicate is left out, as it was while the flag still
+// forced `enabled` false: an unmappable twin's intent alone carries no traffic.
 function countActiveNetif() {
 	let count = 0;
 	for (const int in netif) {
-		if (netif[int]?.enabled) count++;
+		const entry = netif[int];
+		if (entry?.enabled && (entry.error & NETIF_ERR_DUPIPV4) === 0) count++;
 	}
 	return count;
 }

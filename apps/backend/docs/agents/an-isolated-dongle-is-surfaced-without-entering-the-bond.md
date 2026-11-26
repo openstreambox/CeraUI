@@ -1347,10 +1347,11 @@ correct answers once a mapping exists:
 
 The flag stays raised on the per-interface `netif` wire, and `isBondCandidate`
 answers bond membership separately. **Two identical lines in `BIND_IPS_FILE` are
-LEGAL** and covered. `enabled` still governs membership — but a dup-IP link's
-`enabled` is forced false by the flag itself, so the operator's own choice lives
-in `operatorBondOptOut` (`setBondOptOut`, written by `handleNetif`) rather than in
-a bit the error path overwrites. A link that cannot be DESCRIBED
+LEGAL** and covered. `enabled` still governs membership, and the flag never
+writes it: it is the bond intent the operator's toggle (`handleNetif`, which also
+records `operatorBondOptOut`) and the holding gates (SIM-less, hotspot,
+shared-LAN) share, so a duplicate joins only while `enabled` and mappable, and
+the end of a collision has nothing to undo. A link that cannot be DESCRIBED
 (`isMappableEntry`: valid iface name, valid `link_id`, non-empty ip) is not made
 eligible by wishing.
 
