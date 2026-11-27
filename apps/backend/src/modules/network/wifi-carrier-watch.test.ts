@@ -121,6 +121,7 @@ describe("parseLinkStateLine", () => {
 type Scheduled = {
 	callback: () => void;
 	at: number;
+	ms: number;
 	cleared: boolean;
 };
 
@@ -208,7 +209,7 @@ function harness(options: { stations?: string[] } = {}) {
 		},
 		now: () => clock,
 		setTimeout: (callback, ms) => {
-			scheduled.push({ callback, at: clock + ms, cleared: false });
+			scheduled.push({ callback, at: clock + ms, ms, cleared: false });
 			return scheduled.length - 1;
 		},
 		clearTimeout: (timer) => {
@@ -261,6 +262,9 @@ function harness(options: { stations?: string[] } = {}) {
 		flush,
 		edge,
 		pending: () => scheduled.filter((entry) => !entry.cleared),
+		/** Pending holds and settles: everything but the periodic sweep. */
+		work: () =>
+			scheduled.filter((entry) => !entry.cleared && entry.ms !== MARK_CHECK_MS),
 	};
 }
 
@@ -341,7 +345,7 @@ describe("WifiCarrierWatch marks", () => {
 			h.advance(1_000);
 		}
 		expect(h.marks).toEqual([]);
-		expect(h.pending()).toEqual([]);
+		expect(h.work()).toEqual([]);
 		h.watch.stop();
 	});
 
@@ -492,9 +496,7 @@ describe("WifiCarrierWatch marks", () => {
 		h.carrier.set("wlan0", true);
 		h.advance(MARK_CHECK_MS);
 		expect(h.lost.has("wlan0")).toBe(false);
-		// The check lapses on its next tick, with nothing left to check.
-		h.advance(MARK_CHECK_MS);
-		expect(h.pending()).toEqual([]);
+		expect(h.work()).toEqual([]);
 		// A second loss after the recovered line is still seen and marked.
 		h.edge("wlan0", false);
 		h.advance(CARRIER_LOSS_HOLD_MS);
@@ -543,6 +545,23 @@ describe("WifiCarrierWatch marks", () => {
 		watch.stop();
 	});
 
+	test("an up track whose netdev went without a deletion line is retired too", () => {
+		const h = harness();
+		const present = new Map<string, number | false>([["wlan1", 3]]);
+		const watch = new WifiCarrierWatch({
+			...h.deps,
+			netdevNow: (ifname) => present.get(ifname),
+		});
+		watch.start();
+		watch.handleLine(linkLine("wlan1", ASSOCIATED, "UP"));
+		present.set("wlan1", false);
+		h.advance(MARK_CHECK_MS);
+		// Nothing is tracked any more, so the sweep stops.
+		h.advance(MARK_CHECK_MS);
+		expect(h.pending()).toEqual([]);
+		watch.stop();
+	});
+
 	test("another netdev under the name does not inherit the mark", () => {
 		const h = harness();
 		h.watch.start();
@@ -566,7 +585,7 @@ describe("WifiCarrierWatch marks", () => {
 		h.edge("wlan1", true);
 		h.advance(10_000);
 		expect(h.marks).toEqual([]);
-		expect(h.pending()).toEqual([]);
+		expect(h.work()).toEqual([]);
 		h.watch.stop();
 	});
 

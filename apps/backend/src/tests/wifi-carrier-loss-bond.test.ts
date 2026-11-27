@@ -49,7 +49,11 @@ import {
 	genSrtlaBondEntriesForLocalIpAddress,
 	setBondIdentityResolverForTest,
 } from "../modules/streaming/srtla.ts";
-import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
+import {
+	carryingIfacesFrom,
+	prepareSrtlaIpAddresses,
+	publishedRowsFrom,
+} from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
 import { stopWifiUpdateLoopForTest } from "../modules/wifi/wifi-interfaces.ts";
 
 const RADIO_A = {
@@ -155,6 +159,10 @@ function bench() {
 				localList: genSrtlaBondEntriesForLocalIpAddress,
 				bondedList: genSrtlaBondEntries,
 				carryingIfaces: () => carrying,
+				publishedRows: () =>
+					publishedRowsFrom({
+						entries: ALL.map((l) => ({ iface: l.name, ip: l.ip }) as BondEntry),
+					}),
 				writeList: async (entries) => {
 					written = entries;
 					return { ok: true, changed: true } as unknown as BindMapPublication;
@@ -426,6 +434,7 @@ describe("the carrier rule at publication", () => {
 		lost: readonly string[] | ((ifname: string) => boolean),
 		down: readonly string[] = typeof lost === "function" ? [] : lost,
 		carrying?: readonly string[],
+		held?: readonly BondEntry[],
 	) => {
 		let written: readonly BondEntry[] = [];
 		await prepareSrtlaIpAddresses(
@@ -442,6 +451,7 @@ describe("the carrier rule at publication", () => {
 					typeof lost === "function" ? lost : (ifname) => lost.includes(ifname),
 				carrierDown: (ifname) => down.includes(ifname),
 				carryingIfaces: () => new Set(carrying ?? entries.map((e) => e.iface)),
+				publishedRows: () => publishedRowsFrom({ entries: held ?? entries }),
 			},
 			"refresh",
 		);
@@ -507,6 +517,45 @@ describe("the carrier rule at publication", () => {
 				["eth0"],
 			),
 		).toEqual(["eth0"]);
+	});
+
+	test("a survivor the sender does not hold under that address is no survivor", async () => {
+		// eth0 just got a new lease: its carrying evidence is the old socket's.
+		const moved = [entry("wlan0"), entry("eth0", undefined, "192.0.2.77")];
+		expect(
+			await publish(moved, ["wlan0"], ["wlan0"], undefined, [
+				entry("wlan0"),
+				entry("eth0"),
+			]),
+		).toEqual(["wlan0", "eth0"]);
+		expect(
+			await publish(moved, ["wlan0"], ["wlan0"], undefined, moved),
+		).toEqual(["eth0"]);
+	});
+
+	test("the telemetry adapter counts only fresh carrying rows", () => {
+		const row = (iface: string, carrying?: boolean, stale = false) =>
+			({
+				iface,
+				stale,
+				...(carrying === undefined ? {} : { carrying }),
+			}) as never;
+		expect([
+			...carryingIfacesFrom({
+				links: [
+					row("eth0", true),
+					row("wwan0", false),
+					row("wlan1"),
+					row("usb0", true, true),
+				],
+			} as never),
+		]).toEqual(["eth0"]);
+		expect(
+			carryingIfacesFrom({ links: [row("eth0", true)], stale: true } as never)
+				.size,
+		).toBe(0);
+		expect(carryingIfacesFrom(null).size).toBe(0);
+		expect([...publishedRowsFrom(undefined)]).toEqual([]);
 	});
 
 	test("each entry's state is read once per publication", async () => {

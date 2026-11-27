@@ -241,6 +241,7 @@ export class WifiCarrierWatch {
 				marked: false,
 			};
 			this.#links.set(ifname, track);
+			this.#armMarkCheck();
 		}
 		// Wireless events, statistics and flag changes that keep the state
 		// repeat the same line: only an edge does anything.
@@ -347,7 +348,8 @@ export class WifiCarrierWatch {
 	/**
 	 * Every mark is checked against sysfs, so no lost line can strand one, and
 	 * every down or marked track against the netdev, so a lost deletion line
-	 * leaves nothing behind. Runs while any track is down or marked.
+	 * leaves nothing behind. Runs while any track exists (a few stats per
+	 * radio every 5 s).
 	 */
 	#armMarkCheck(): void {
 		if (this.#markCheck !== undefined) return;
@@ -362,11 +364,8 @@ export class WifiCarrierWatch {
 					this.#forget(ifname, track);
 					continue;
 				}
-				if (!track.marked) {
-					if (track.running === false) anyLeft = true;
-					continue;
-				}
 				anyLeft = true;
+				if (!track.marked) continue;
 				// An up line was seen: its settle decides, not this check.
 				if (track.running !== false) continue;
 				const edges = track.edges;

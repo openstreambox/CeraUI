@@ -30,9 +30,11 @@ import {
 import type { BondEntry } from "../bind-map.ts";
 import type { BindMapPublication } from "../bind-map-writer.ts";
 import { buildLinkTelemetry } from "../link-telemetry.ts";
+import type { LinkTelemetryMessage } from "../link-telemetry-rows.ts";
 import {
 	genSrtlaBondEntries,
 	genSrtlaBondEntriesForLocalIpAddress,
+	getLastPublishedBond,
 	publishSrtlaBond,
 } from "../srtla.ts";
 
@@ -50,6 +52,8 @@ export type SrtlaIpPreparationDeps = {
 	readonly carrierDown?: (ifname: string) => boolean;
 	/** Interfaces the sender's telemetry shows carrying the stream right now. */
 	readonly carryingIfaces?: () => ReadonlySet<string>;
+	/** `iface ip` of every row the sender was last given (its live sockets). */
+	readonly publishedRows?: () => ReadonlySet<string>;
 };
 
 const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
@@ -75,8 +79,14 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
   family is carrying: one that is not marked, whose carrier is not down right
   now, that the sender's own telemetry shows carrying the stream (a fresh row
   with `carrying: true`, so a link that is up but cannot reach the receiver is
-  no backup), and that is not a CLAT translator row (write-time revalidation
-  may still drop those). Without that evidence nothing counts as a backup. Otherwise the list keeps those entries: an empty list, or one
+  no backup), that the sender already holds under the same interface and
+  address (so the evidence belongs to that very socket, not to one an address
+  change is about to replace), and that is not a CLAT translator row
+  (write-time revalidation may still drop those). Without that evidence nothing
+  counts as a backup. The telemetry's `carrying` is transmit progress over a
+  short dwell, not a receiver acknowledgement: a backup that stops delivering
+  inside that dwell while a radio loses its AP can still let the radio go, at
+  the cost of one re-registration when it returns. Otherwise the list keeps those entries: an empty list, or one
   with only links the receiver cannot be reached over, would make the sender
   drop its last usable connection, and radios that lost one access point
   together usually re-associate within a second or two with their sockets
@@ -109,9 +119,10 @@ const liveCarrierLost = (ifname: string) =>
 const liveCarrierDown = (ifname: string) =>
 	liveFor(ifname, wifiCarrierDownState);
 
-/** The sender's fresh telemetry rows that are carrying, read once. */
-function telemetryCarryingIfaces(): ReadonlySet<string> {
-	const telemetry = buildLinkTelemetry();
+/** The fresh telemetry rows that are carrying. Stale or missing: none. */
+export function carryingIfacesFrom(
+	telemetry: LinkTelemetryMessage | null,
+): ReadonlySet<string> {
 	if (!telemetry || telemetry.stale) return new Set();
 	return new Set(
 		telemetry.links
@@ -120,11 +131,21 @@ function telemetryCarryingIfaces(): ReadonlySet<string> {
 	);
 }
 
+/** The rows of the last applied publication, as `iface ip`. */
+export function publishedRowsFrom(
+	bond: { readonly entries: readonly BondEntry[] } | undefined,
+): ReadonlySet<string> {
+	return new Set(
+		(bond?.entries ?? []).map((entry) => `${entry.iface} ${entry.ip}`),
+	);
+}
+
 function withoutDeafWifi(
 	entries: BondEntry[],
 	carrierLost: (ifname: string) => boolean,
 	carrierDown: (ifname: string) => boolean,
 	carryingIfaces: () => ReadonlySet<string>,
+	publishedRows: () => ReadonlySet<string>,
 ): BondEntry[] {
 	const state = new Map(
 		entries.map((entry) => [
@@ -136,6 +157,7 @@ function withoutDeafWifi(
 	if (deaf.length === 0) return entries;
 	const family = (entry: BondEntry) => isIP(entry.ip);
 	const carrying = carryingIfaces();
+	const held = publishedRows();
 	const carriers = new Set(
 		entries
 			.filter((entry) => {
@@ -144,7 +166,8 @@ function withoutDeafWifi(
 					entry.parentIface === undefined &&
 					!s?.lost &&
 					!s?.down &&
-					carrying.has(entry.iface)
+					carrying.has(entry.iface) &&
+					held.has(`${entry.iface} ${entry.ip}`)
 				);
 			})
 			.map(family),
@@ -180,7 +203,10 @@ export async function prepareSrtlaIpAddresses(
 					collected,
 					deps.carrierLost ?? liveCarrierLost,
 					deps.carrierDown ?? liveCarrierDown,
-					deps.carryingIfaces ?? telemetryCarryingIfaces,
+					deps.carryingIfaces ??
+						(() => carryingIfacesFrom(buildLinkTelemetry())),
+					deps.publishedRows ??
+						(() => publishedRowsFrom(getLastPublishedBond())),
 				)
 			: collected;
 	if (purpose === "launch" && entries.length === 0) {
