@@ -343,7 +343,9 @@ describe("a disposition is a SENTENCE, not a boolean", () => {
 
 		expect(dispositions).toContain("wired");
 		expect(dispositions).toContain("unwired");
-		expect(dispositions).toContain("absent");
+		// eSIM was the final absent entry and now has an explicit operator surface.
+		expect(CAPABILITY_MODULE_PARITY.esim?.disposition).toBe("wired");
+		expect(dispositions).not.toContain("absent");
 		expect(dispositions).toContain("not-applicable");
 	});
 });

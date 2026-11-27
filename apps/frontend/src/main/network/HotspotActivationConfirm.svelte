@@ -82,9 +82,18 @@ let loaded = { name: '', password: '' };
 let name = $state('');
 let password = $state('');
 let acknowledged = $state(false);
+let confirmationLive = true;
+onDestroy(() => {
+	confirmationLive = false;
+});
+
+function cancel() {
+	confirmationLive = false;
+	onCancel();
+}
 
 function current(seq: number, captured: WifiRadioBinding): boolean {
-	return seq === attempt && sameWifiRadio(captured, {
+	return confirmationLive && seq === attempt && sameWifiRadio(captured, {
 		device, incarnation, link: getLinkEpoch(), session,
 	}) && degradedReason === undefined;
 }
@@ -465,7 +474,7 @@ async function confirm() {
 			bind:ref={cancelButton}
 			class="h-9 min-h-[var(--touch-target-min)]"
 			data-testid="hotspot-confirm-cancel"
-			onclick={onCancel}
+			onclick={cancel}
 			size="sm"
 			variant="outline"
 		>

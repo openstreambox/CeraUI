@@ -1,0 +1,41 @@
+name: Native lpac runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths:
+      - '.github/workflows/lpac-runtime.yml'
+      - 'scripts/esim/Dockerfile'
+      - 'scripts/esim/build-lpac.sh'
+      - 'scripts/esim/lpac-*.patch'
+      - 'docs/LPAC.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lpac-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-latest
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build, test and export the native runtime
+        run: docker build --file scripts/esim/Dockerfile --output type=local,dest=artifacts .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lpac-${{ matrix.architecture }}
+          path: artifacts/
+          if-no-files-found: error

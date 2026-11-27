@@ -169,6 +169,8 @@ async function acknowledgeHeld(
 	if (device.status !== "present") return fail("read_failed");
 
 	if (mode === "verified-rollback") {
+		// Descriptor equality cannot verify an irreversible eUICC profile operation.
+		if (entry.kind === "esim") return fail("state_mismatch");
 		if (entry.kind === "router-subnet") {
 			const result = await verifyRouterSubnet(entry.preState, device.ifname);
 			if (!isMutationJournalRevisionCurrent(revision))
