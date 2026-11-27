@@ -111,7 +111,7 @@ describe("EXTERNAL origins get the typed refusal", () => {
 });
 
 describe("INTERNAL origins AWAIT instead of failing", () => {
-	for (const origin of ["autostart", "restoration"] as const) {
+	for (const origin of ["autostart", "restoration", "link-recovery"] as const) {
 		test(`${origin} does not settle while replay is pending, then launches ONCE`, async () => {
 			beginRecoveryBarrier();
 			let launched = 0;
@@ -147,6 +147,7 @@ describe("a fail-closed modem blocks GLOBAL stream autostart", () => {
 			"restoration",
 			"remote-control",
 			"set-profile",
+			"link-recovery",
 		] as const) {
 			const result = await orchestrator({
 				blockingMutation: () => ({ stableKey: "usb-0:1.4.1" }),
