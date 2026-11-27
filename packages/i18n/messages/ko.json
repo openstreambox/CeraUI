@@ -3150,6 +3150,8 @@
 	"notifications.clientCarryingUnknown": "클라이언트 활동을 확인 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
 	"general.updateReasonClientTraffic": "방송 중이거나 상태를 확인 중입니다. 업데이트 전에 연결된 기기와 박스의 방송을 중지하세요.",
 	"notifications.disruptiveActionClientTraffic": "이 작업은 실행되지 않았습니다. 박스 자체 스트림과 연결된 기기의 스트리밍 트래픽이 유휴 상태이고 업데이트가 진행 중이 아닐 때 다시 시도하세요.",
+	"notifications.disruptiveActionCarryingChecking": "이 작업은 실행되지 않았습니다. 박스가 아직 연결된 기기가 박스를 통해 스트리밍 트래픽을 보내는지 확인하고 있습니다. 몇 분 후에 다시 시도하세요.",
+	"notifications.disruptiveActionStreamUnconfirmed": "이 작업은 실행되지 않았습니다. 박스가 아직 자체 스트림이 중지되었는지 확인하지 못했습니다. 잠시 후 다시 시도하세요. 계속 거부되면 먼저 라이브 페이지에서 '스트림 중지'를 사용하세요.",
 	"hud.forwarding": "전달 중",
 	"hud.checking": "확인 중",
 	"carrying.active": "전달 중 · 이 박스를 통한 휴대폰 트래픽",

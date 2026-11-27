@@ -43,6 +43,20 @@ export function getStreamLiveness(
 	});
 }
 
+/** The box's own stream session alone, without client carrying evidence.
+ * Refusal copy reads it to say which part of an unknown answer is still being
+ * checked; admission never reads it. */
+export function getOwnStreamLiveness(): StreamLiveness {
+	if (testSource) return testSource();
+	const leaf = streamLiveness();
+	return deriveStreamLiveness({
+		reconciled: isStreamReconciliationCompleted(),
+		live: getIsStreaming() || leaf === "streaming",
+		lifecycle: getStreamLifecycleState(),
+		sentinel: leaf === "idle" ? "absent" : "unknown",
+	});
+}
+
 export function isStreamConfirmedIdle(): boolean {
 	return getStreamLiveness() === "idle";
 }

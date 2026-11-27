@@ -876,8 +876,17 @@ kiosk start/stop and post-boot/SIGUSR1 add-on refresh share one gate:
 confirmed idle stream evidence with no interruptible update work. Anything else is
 refused with a typed reason (`streaming`, `stream_liveness_unknown` or
 `update_in_progress`): the RPC answers `{success:false, error}`, the local power
-and SSH handlers broadcast `notifications.disruptiveActionRefused`, and the remote path
-answers `ok:false` with the reason. A remote confirm is the owner's intent, not
+and SSH handlers broadcast a refusal notice, and the remote path answers `ok:false`
+with the reason. The notice names what is still open. `streaming` and update work
+use `notifications.disruptiveActionClientTraffic` (a pending local action uses
+`network.os.deviceBusy`). `stream_liveness_unknown` reads the box's own session
+alone (`getOwnStreamLiveness()`): idle means only client traffic is still being
+checked, such as the two-minute window after a backend restart, so
+`notifications.disruptiveActionCarryingChecking` says to try again in a few
+minutes; otherwise `notifications.disruptiveActionStreamUnconfirmed` says the
+box's own stream is not yet confirmed stopped and points to Stop Stream. The
+choice is made after the decision and never changes it; admission reads only
+`getStreamLiveness()`. A remote confirm is the owner's intent, not
 idle evidence, so the gate is read on receipt and again at confirm. A remote
 reboot/factory-reset command that exits nonzero answers `ok:false` with its status.
 Local power likewise reports a failed native submission instead of starting the
