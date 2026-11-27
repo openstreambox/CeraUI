@@ -296,11 +296,17 @@ export function beginHotspotStartTerminal(
 	/** `waited` is false only for the immediate frame without steering. */
 	publish: (result: HotspotReadinessResult, waited: boolean) => void,
 	onError: (error: unknown) => void,
+	/** Runs once the wait is over, whether or not it published a frame. */
+	done: () => void = () => {},
 ): () => void {
 	if (!steering || steering.active?.() === false)
 		return () => {
-			if (hotspotOperationCurrent(start.ticket))
-				publish({ success: true }, false);
+			try {
+				if (hotspotOperationCurrent(start.ticket))
+					publish({ success: true }, false);
+			} finally {
+				done();
+			}
 		};
 	const fence = captureHotspotSteeringFence(row, uuid, start);
 	if (fence.owned()) awaitingSteering.set(row, fence);
@@ -311,10 +317,12 @@ export function beginHotspotStartTerminal(
 		void awaitHotspotSteering(fence, steering, undefined, (result) => {
 			release();
 			publish(result, true);
-		}).then(release, (error: unknown) => {
-			release();
-			onError(error);
-		});
+		})
+			.then(release, (error: unknown) => {
+				release();
+				onError(error);
+			})
+			.finally(done);
 	};
 }
 
