@@ -47,8 +47,8 @@ echo 'ok 3 unavailable logind acquisition is bounded below one second'
 systemctl start ceralive
 old="$(systemctl show ceralive -p MainPID --value)"
 kill -STOP "$old"
-# Shipped WatchdogSec=30s plus RestartSec=2s; no shortened test-only interval.
-for ((i=0; i<45; i++)); do
+# Shipped WatchdogSec=90s plus RestartSec=2s; no shortened test-only interval.
+for ((i=0; i<105; i++)); do
   current="$(systemctl show ceralive -p MainPID --value)"
   if [[ "$current" != 0 && "$current" != "$old" ]] && systemctl is-active --quiet ceralive; then break; fi
   sleep 1
