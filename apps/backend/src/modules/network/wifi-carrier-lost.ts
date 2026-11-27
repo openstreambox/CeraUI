@@ -20,7 +20,7 @@
 */
 
 const lost = new Map<string, number | undefined>();
-const down = new Set<string>();
+const down = new Map<string, number | undefined>();
 const listeners = new Set<() => void>();
 
 /**
@@ -55,16 +55,32 @@ export function wifiCarrierLostIfnames(): readonly string[] {
 }
 
 /**
- * The carrier is down right now (inside the hold or past it). Not notified:
- * it only stops such a link from counting as a survivor when a mark changes.
+ * The carrier is down right now (inside the hold or past it), bound to the
+ * netdev's ifindex like a mark. Going down is not notified: it only stops such
+ * a link from counting as a survivor when a mark changes. Coming back up is
+ * notified while another link holds a mark, so a marked link that kept its
+ * place only because this one was down is left out again.
  */
-export function setWifiCarrierDown(ifname: string, value: boolean): void {
-	if (value) down.add(ifname);
-	else down.delete(ifname);
+export function setWifiCarrierDown(
+	ifname: string,
+	value: boolean,
+	ifindex?: number,
+): void {
+	if (value) {
+		down.set(ifname, ifindex);
+		return;
+	}
+	if (!down.delete(ifname)) return;
+	// A marked link's own return is published when its mark clears.
+	const others = [...lost.keys()].some((name) => name !== ifname);
+	if (others) for (const listener of listeners) listener();
 }
 
-export function isWifiCarrierDown(ifname: string): boolean {
-	return down.has(ifname);
+/** The down state on `ifname`, with the ifindex it was seen on, if any. */
+export function wifiCarrierDownState(
+	ifname: string,
+): { readonly ifindex: number | undefined } | undefined {
+	return down.has(ifname) ? { ifindex: down.get(ifname) } : undefined;
 }
 
 /** Called after the marks changed; the bond re-derives its members. */

@@ -394,6 +394,58 @@ describe("WifiCarrierWatch marks", () => {
 		h.watch.stop();
 	});
 
+	test("the sysfs check leaves a settling radio to its settle", () => {
+		const h = harness();
+		h.watch.start();
+		h.edge("wlan0", true);
+		h.edge("wlan0", false);
+		h.advance(CARRIER_LOSS_HOLD_MS);
+		// The carrier returns 50 ms before the check is due.
+		h.advance(MARK_CHECK_MS - 50);
+		h.edge("wlan0", true);
+		h.advance(50);
+		expect(h.lost.has("wlan0")).toBe(true);
+		// It drops again inside the settle: the mark was never cleared.
+		h.advance(50);
+		h.edge("wlan0", false);
+		h.advance(READMIT_SETTLE_MS);
+		expect(h.lost.has("wlan0")).toBe(true);
+		expect(h.marks).toEqual([["wlan0", true]]);
+		h.watch.stop();
+	});
+
+	test("an async sysfs answer is applied when it lands, and only if still current", async () => {
+		const h = harness();
+		let answer!: (value: boolean) => void;
+		const watch = new WifiCarrierWatch({
+			...h.deps,
+			isOperational: () =>
+				new Promise<boolean>((resolve) => {
+					answer = resolve;
+				}),
+		});
+		watch.start();
+		watch.handleLine(linkLine("wlan0", ASSOCIATED, "UP"));
+		watch.handleLine(linkLine("wlan0", NO_CARRIER, "DORMANT"));
+		h.advance(CARRIER_LOSS_HOLD_MS);
+		expect(h.marks).toEqual([]);
+		answer(false);
+		await h.flush();
+		expect(h.marks).toEqual([["wlan0", true]]);
+		// A late answer for a radio that is back again changes nothing.
+		watch.handleLine(
+			`Deleted ${linkLine("wlan1", "BROADCAST,MULTICAST", "DOWN")}`,
+		);
+		watch.handleLine(linkLine("wlan1", ASSOCIATED, "UP", 4));
+		watch.handleLine(linkLine("wlan1", NO_CARRIER, "DORMANT", 4));
+		h.advance(CARRIER_LOSS_HOLD_MS);
+		watch.handleLine(linkLine("wlan1", ASSOCIATED, "UP", 4));
+		answer(false);
+		await h.flush();
+		expect(h.marks).toEqual([["wlan0", true]]);
+		watch.stop();
+	});
+
 	test("a mark whose carrier-up line was lost is cleared by the sysfs check", () => {
 		const h = harness();
 		h.watch.start();
@@ -405,6 +457,8 @@ describe("WifiCarrierWatch marks", () => {
 		h.carrier.set("wlan0", true);
 		h.advance(MARK_CHECK_MS);
 		expect(h.lost.has("wlan0")).toBe(false);
+		// The check lapses on its next tick, with nothing left to check.
+		h.advance(MARK_CHECK_MS);
 		expect(h.pending()).toEqual([]);
 		// A second loss after the recovered line is still seen and marked.
 		h.edge("wlan0", false);
@@ -637,7 +691,7 @@ describe("WifiCarrierWatch child lifetime", () => {
 		watch.stop();
 	});
 
-	test("sysfs that cannot be read never sets a mark", () => {
-		expect(sysfsOperational("osb-no-such-netdev0")).toBe(true);
+	test("sysfs that cannot be read never sets a mark", async () => {
+		expect(await sysfsOperational("osb-no-such-netdev0")).toBe(true);
 	});
 });

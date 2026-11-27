@@ -56,8 +56,6 @@
   interface and the concurrent-AP netdev are ignored.
 */
 
-import { readFileSync } from "node:fs";
-
 import { logger } from "../../helpers/logger.ts";
 import {
 	type ManagedProcess,
@@ -126,9 +124,9 @@ function isRunningState(
 	return adminUp && (state === "UP" || (state === "UNKNOWN" && carrier()));
 }
 
-function readSysfs(path: string): string | undefined {
+async function readSysfs(path: string): Promise<string | undefined> {
 	try {
-		return readFileSync(path, "utf8").trim();
+		return (await Bun.file(path).text()).trim();
 	} catch {
 		return undefined;
 	}
@@ -138,14 +136,14 @@ function readSysfs(path: string): string | undefined {
  * sysfs, read with the monitor's rule. Unreadable counts as operational, so a
  * read failure never sets or keeps a mark.
  */
-export function sysfsOperational(ifname: string): boolean {
-	const operstate = readSysfs(`/sys/class/net/${ifname}/operstate`);
+export async function sysfsOperational(ifname: string): Promise<boolean> {
+	const operstate = await readSysfs(`/sys/class/net/${ifname}/operstate`);
 	if (operstate === undefined) return true;
-	return isRunningState(
-		true,
-		operstate,
-		() => readSysfs(`/sys/class/net/${ifname}/carrier`) === "1",
-	);
+	const carrier =
+		operstate.toUpperCase() === "UNKNOWN"
+			? (await readSysfs(`/sys/class/net/${ifname}/carrier`)) === "1"
+			: false;
+	return isRunningState(true, operstate, () => carrier);
 }
 
 type Timer = ReturnType<typeof setTimeout> | number;
@@ -155,9 +153,9 @@ export type WifiCarrierWatchDeps = {
 	/** A Wi-Fi station interface (not a hotspot AP, not the concurrent AP). */
 	readonly isWifiStation: (ifname: string) => boolean;
 	/** sysfs says the link is operational ({@link sysfsOperational}). */
-	readonly isOperational: (ifname: string) => boolean;
+	readonly isOperational: (ifname: string) => boolean | Promise<boolean>;
 	readonly setLost: (ifname: string, lost: boolean, ifindex?: number) => void;
-	readonly setDown: (ifname: string, down: boolean) => void;
+	readonly setDown: (ifname: string, down: boolean, ifindex?: number) => void;
 	readonly now: () => number;
 	readonly setTimeout: (callback: () => void, ms: number) => Timer;
 	readonly clearTimeout: (timer: Timer) => void;
@@ -239,7 +237,7 @@ export class WifiCarrierWatch {
 		// repeat the same line: only an edge does anything.
 		if (track.running === running) return;
 		track.running = running;
-		this.deps.setDown(ifname, !running);
+		this.deps.setDown(ifname, !running, track.ifindex);
 		if (running) this.#onCarrierUp(ifname, track);
 		else this.#onCarrierDown(ifname, track);
 	}
@@ -257,21 +255,45 @@ export class WifiCarrierWatch {
 			if (!this.deps.isWifiStation(ifname)) return;
 			// The monitor said down; the kernel must still agree. If it does
 			// not, a line was lost: take the kernel's word for the state.
-			if (this.deps.isOperational(ifname)) {
-				this.#markRunning(ifname, track);
-				return;
-			}
-			track.marked = true;
-			logger.info(
-				"Wi-Fi station lost its carrier; leaving it out of the bond",
-				{
-					ifname,
-					down_ms: this.deps.now() - (track.downSince ?? this.deps.now()),
-				},
-			);
-			this.deps.setLost(ifname, true, track.ifindex);
-			this.#armMarkCheck();
+			this.#withOperational(ifname, (operational) => {
+				if (!this.#current(ifname, track) || track.running !== false) return;
+				if (operational) {
+					this.#markRunning(ifname, track);
+					return;
+				}
+				this.#setMark(ifname, track);
+			});
 		}, CARRIER_LOSS_HOLD_MS);
+	}
+
+	#setMark(ifname: string, track: LinkTrack): void {
+		track.marked = true;
+		logger.info("Wi-Fi station lost its carrier; leaving it out of the bond", {
+			ifname,
+			down_ms: this.deps.now() - (track.downSince ?? this.deps.now()),
+		});
+		this.deps.setLost(ifname, true, track.ifindex);
+		this.#armMarkCheck();
+	}
+
+	/** The track is still the one this watch follows for `ifname`. */
+	#current(ifname: string, track: LinkTrack): boolean {
+		return this.#wanted && this.#links.get(ifname) === track;
+	}
+
+	/** A sync answer (tests) is applied at once, an async one when it lands. */
+	#withOperational(
+		ifname: string,
+		apply: (operational: boolean) => void,
+	): void {
+		let answer: boolean | Promise<boolean>;
+		try {
+			answer = this.deps.isOperational(ifname);
+		} catch {
+			answer = true;
+		}
+		if (typeof answer === "boolean") apply(answer);
+		else void answer.then(apply, () => apply(true));
 	}
 
 	#onCarrierUp(ifname: string, track: LinkTrack): void {
@@ -317,19 +339,23 @@ export class WifiCarrierWatch {
 			let anyMarked = false;
 			for (const [ifname, track] of this.#links) {
 				if (!track.marked) continue;
-				if (
-					!this.deps.isWifiStation(ifname) ||
-					this.deps.isOperational(ifname)
-				) {
+				anyMarked = true;
+				// An up line was seen: its settle decides, not this check.
+				if (track.running !== false) continue;
+				const clear = () => {
+					if (!this.#current(ifname, track) || track.running !== false) return;
 					logger.info("Wi-Fi carrier mark cleared by the sysfs check", {
 						ifname,
 					});
 					this.#unmark(ifname, track);
 					// The up line was lost: the next down line is a real edge.
 					this.#markRunning(ifname, track);
-					continue;
-				}
-				anyMarked = true;
+				};
+				if (!this.deps.isWifiStation(ifname)) clear();
+				else
+					this.#withOperational(ifname, (operational) => {
+						if (operational) clear();
+					});
 			}
 			if (anyMarked) this.#armMarkCheck();
 		}, MARK_CHECK_MS);

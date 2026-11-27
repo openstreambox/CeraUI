@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 import type { ManagedProcess, WatcherHandle } from "../helpers/spawn-policy.ts";
+import { resetEventEmitterForTest } from "../modules/events/emit.ts";
 import { netdevPresence } from "../modules/network/netdev-lifetime.ts";
 import {
 	getNetworkInterfaces,
@@ -165,6 +166,11 @@ function bench() {
 }
 
 beforeEach(() => {
+	// The fixture's interface events go nowhere: no store, no log, no timers left.
+	resetEventEmitterForTest({
+		appendEvent: () => undefined,
+		log: () => undefined,
+	});
 	// Every fixture netdev answers with the ifindex its monitor lines carry.
 	spyOn(netdevPresence, "ifindex").mockReturnValue(3);
 	resetNetifSnapshotForTest();
@@ -186,6 +192,7 @@ afterEach(() => {
 	resetBondOptOut();
 	resetWifiCarrierLostForTest();
 	(netdevPresence.ifindex as unknown as { mockRestore(): void }).mockRestore();
+	resetEventEmitterForTest();
 });
 
 describe("Wi-Fi carrier loss and the published bond", () => {
@@ -348,17 +355,62 @@ describe("Wi-Fi carrier loss and the published bond", () => {
 	});
 });
 
+describe("Wi-Fi carrier loss: survivors that come and go", () => {
+	test("a survivor back inside its own hold lets the marked radio go", async () => {
+		setBondOptOut(MODEM.name, true);
+		const b = bench();
+		let refreshes = 0;
+		const unsubscribe = onNetworkInterfaceSourcesChange(() => {
+			refreshes++;
+		});
+		try {
+			b.setCarrier(RADIO_A.name, false);
+			b.advance(CARRIER_LOSS_HOLD_MS - 300);
+			// wlan1 starts a short roam just before wlan0 is marked.
+			b.setCarrier(RADIO_B.name, false);
+			b.advance(300);
+			expect(await b.published()).toEqual(["wlan0", "wlan1"]);
+			const before = refreshes;
+			b.setCarrier(RADIO_B.name, true);
+			// Its return republishes, and the marked radio is left out.
+			expect(refreshes).toBe(before + 1);
+			expect(await b.published()).toEqual(["wlan1"]);
+		} finally {
+			unsubscribe();
+			b.watch.stop();
+		}
+	});
+
+	test("another netdev under a down radio's name counts as a survivor", async () => {
+		setBondOptOut(MODEM.name, true);
+		const b = bench();
+		b.setCarrier(RADIO_A.name, false);
+		b.advance(CARRIER_LOSS_HOLD_MS - 300);
+		b.setCarrier(RADIO_B.name, false);
+		b.advance(300);
+		expect(await b.published()).toEqual(["wlan0", "wlan1"]);
+		// wlan1's name now belongs to another netdev, whose down line has not come.
+		(
+			netdevPresence.ifindex as unknown as {
+				mockImplementation(fn: (name: string) => number): void;
+			}
+		).mockImplementation((name) => (name === RADIO_B.name ? 12 : 3));
+		expect(await b.published()).toEqual(["wlan1"]);
+		b.watch.stop();
+	});
+});
+
 describe("the carrier rule at publication", () => {
-	const entry = (iface: string, parentIface?: string) =>
+	const entry = (iface: string, parentIface?: string, ip = "192.0.2.1") =>
 		({
 			iface,
-			ip: "192.0.2.1",
+			ip,
 			...(parentIface ? { parentIface } : {}),
 		}) as unknown as BondEntry;
 	const publish = async (
 		entries: BondEntry[],
-		lost: readonly string[],
-		down: readonly string[] = lost,
+		lost: readonly string[] | ((ifname: string) => boolean),
+		down: readonly string[] = typeof lost === "function" ? [] : lost,
 	) => {
 		let written: readonly BondEntry[] = [];
 		await prepareSrtlaIpAddresses(
@@ -371,7 +423,8 @@ describe("the carrier rule at publication", () => {
 					written = list;
 					return { ok: true, changed: true } as unknown as BindMapPublication;
 				},
-				carrierLost: (ifname) => lost.includes(ifname),
+				carrierLost:
+					typeof lost === "function" ? lost : (ifname) => lost.includes(ifname),
 				carrierDown: (ifname) => down.includes(ifname),
 			},
 			"refresh",
@@ -402,5 +455,40 @@ describe("the carrier rule at publication", () => {
 		expect(
 			await publish([entry("wlan0"), entry("wlan1")], ["wlan0"], ["wlan0"]),
 		).toEqual(["wlan1"]);
+	});
+
+	test("a survivor must reach the receiver's address family", async () => {
+		// IPv6 Wi-Fi with an IPv4-only Ethernet beside it: Ethernet is no backup.
+		expect(
+			await publish(
+				[entry("wlan0", undefined, "2001:db8::31"), entry("eth0")],
+				["wlan0"],
+			),
+		).toEqual(["wlan0", "eth0"]);
+		// Another IPv6 link that can carry lets the marked radio go.
+		expect(
+			await publish(
+				[
+					entry("wlan0", undefined, "2001:db8::31"),
+					entry("wlan1", undefined, "2001:db8::32"),
+					entry("eth0"),
+				],
+				["wlan0"],
+			),
+		).toEqual(["wlan1", "eth0"]);
+	});
+
+	test("each entry's state is read once per publication", async () => {
+		const reads = new Map<string, number>();
+		// A flipping reader would empty the list if it were asked twice.
+		const flipping = (ifname: string) => {
+			const n = (reads.get(ifname) ?? 0) + 1;
+			reads.set(ifname, n);
+			return ifname === "wlan0" || (ifname === "wlan1" && n > 1);
+		};
+		expect(await publish([entry("wlan0"), entry("wlan1")], flipping)).toEqual([
+			"wlan1",
+		]);
+		expect([...reads.values()]).toEqual([1, 1]);
 	});
 });

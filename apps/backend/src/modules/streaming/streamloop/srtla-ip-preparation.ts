@@ -15,6 +15,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { isIP } from "node:net";
+
 // Resolving the bonded link set for a launch and publishing it, IP list plus
 // bind-map sidecar, before anything is spawned.
 
@@ -22,7 +24,7 @@ import { isLocalIp } from "../../../helpers/ip-addresses.ts";
 import { logger } from "../../../helpers/logger.ts";
 import { netdevPresence } from "../../network/netdev-lifetime.ts";
 import {
-	isWifiCarrierDown,
+	wifiCarrierDownState,
 	wifiCarrierLostMark,
 } from "../../network/wifi-carrier-lost.ts";
 import type { BondEntry } from "../bind-map.ts";
@@ -66,46 +68,73 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
   and the sender would keep assigning packets to it. The carrier watch marks it
   (`network/wifi-carrier-lost.ts`), and a live refresh leaves it out of the
   list for whichever receiver this bond serves (a LAN receiver's subnet subset
-  included). It is left out only while another entry can carry: one that is
-  not marked, whose carrier is not down right now, and that is not a CLAT
-  translator row (write-time revalidation may still drop those). Otherwise the
-  list keeps every entry: an empty list would make the sender drop every
-  connection, and radios that lost one access point together usually
-  re-associate within a second or two with their sockets intact.
+  included). It is left out only while another entry of the same address
+  family can carry: one that is not marked, whose carrier is not down right
+  now, and that is not a CLAT translator row (write-time revalidation may still
+  drop those). Otherwise the list keeps those entries: an empty list, or one
+  with only links the receiver cannot be reached over, would make the sender
+  drop its last usable connection, and radios that lost one access point
+  together usually re-associate within a second or two with their sockets
+  intact. (A working CLAT backup therefore does not displace a marked radio:
+  the conservative choice, as before this rule.)
+
+  Each entry's state is read once per publication, so one refresh cannot judge
+  an entry two ways.
 
   A launch (manual start, ingest forward without a live refresh, restoration)
   ignores marks: nothing would bring a link left out there back.
 */
-function liveCarrierLost(ifname: string): boolean {
-	const mark = wifiCarrierLostMark(ifname);
-	if (mark === undefined) return false;
-	// A mark binds the netdev it was set on; an unreadable index fails open.
+function liveFor(
+	ifname: string,
+	read: (
+		ifname: string,
+	) => { readonly ifindex: number | undefined } | undefined,
+): boolean {
+	const state = read(ifname);
+	if (state === undefined) return false;
+	// State binds the netdev it was set on; an unreadable index fails open.
 	return (
-		mark.ifindex === undefined ||
-		netdevPresence.ifindex(ifname) === mark.ifindex
+		state.ifindex === undefined ||
+		netdevPresence.ifindex(ifname) === state.ifindex
 	);
 }
+
+const liveCarrierLost = (ifname: string) =>
+	liveFor(ifname, wifiCarrierLostMark);
+const liveCarrierDown = (ifname: string) =>
+	liveFor(ifname, wifiCarrierDownState);
 
 function withoutDeafWifi(
 	entries: BondEntry[],
 	carrierLost: (ifname: string) => boolean,
 	carrierDown: (ifname: string) => boolean,
 ): BondEntry[] {
-	const deaf = entries.filter((entry) => carrierLost(entry.iface));
-	if (deaf.length === 0) return entries;
-	const carries = entries.some(
-		(entry) =>
-			entry.parentIface === undefined &&
-			!carrierLost(entry.iface) &&
-			!carrierDown(entry.iface),
+	const state = new Map(
+		entries.map((entry) => [
+			entry,
+			{ lost: carrierLost(entry.iface), down: carrierDown(entry.iface) },
+		]),
 	);
-	if (!carries) {
+	const deaf = entries.filter((entry) => state.get(entry)?.lost);
+	if (deaf.length === 0) return entries;
+	const family = (entry: BondEntry) => isIP(entry.ip);
+	const carriers = new Set(
+		entries
+			.filter((entry) => {
+				const s = state.get(entry);
+				return entry.parentIface === undefined && !s?.lost && !s?.down;
+			})
+			.map(family),
+	);
+	const kept = deaf.filter((entry) => !carriers.has(family(entry)));
+	if (kept.length > 0) {
 		logger.info("Wi-Fi links without carrier kept: no other bond link", {
-			ifnames: deaf.map((entry) => entry.iface),
+			ifnames: kept.map((entry) => entry.iface),
 		});
-		return entries;
 	}
-	return entries.filter((entry) => !carrierLost(entry.iface));
+	return entries.filter(
+		(entry) => !state.get(entry)?.lost || kept.includes(entry),
+	);
 }
 
 /**
@@ -127,7 +156,7 @@ export async function prepareSrtlaIpAddresses(
 			? withoutDeafWifi(
 					collected,
 					deps.carrierLost ?? liveCarrierLost,
-					deps.carrierDown ?? isWifiCarrierDown,
+					deps.carrierDown ?? liveCarrierDown,
 				)
 			: collected;
 	if (purpose === "launch" && entries.length === 0) {
