@@ -87,8 +87,24 @@ export function stableKeyOf(link: BoxLink): string {
 	return key;
 }
 
-function stanza(link: BoxLink, index: number): string {
-	const mac = `02:00:00:00:00:${(16 + index).toString(16)}`;
+// A link's MAC follows its device (serial, else udev path, else name), not its
+// place in the scan: a netdev that keeps its index and MAC is the same kernel
+// interface, and a device that moves to another slot keeps its MAC.
+function macOf(link: BoxLink): string {
+	const key = link.serial ?? link.idPath ?? link.ifname;
+	let hash = 5381;
+	for (const char of key) hash = ((hash * 33) ^ char.charCodeAt(0)) >>> 0;
+	const bytes = [
+		hash >>> 24,
+		(hash >>> 16) & 0xff,
+		(hash >>> 8) & 0xff,
+		hash & 0xff,
+	];
+	return `02:00:${bytes.map((byte) => byte.toString(16).padStart(2, "0")).join(":")}`;
+}
+
+function stanza(link: BoxLink): string {
+	const mac = macOf(link);
 	return [
 		`${link.ifname}: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500`,
 		`        inet ${link.ip}  netmask 255.255.255.0  broadcast ${link.ip.replace(/\.\d+$/, ".255")}`,
@@ -163,7 +179,7 @@ export async function realisticBox(): Promise<RealisticBox> {
 			// Publish presence first, then observe the bus against the actual owner token.
 			// A new or reused name can advance the token during its first publication.
 			// Both observations precede the descriptor sweep, as in production.
-			const output = links.map(stanza).join("\n\n");
+			const output = links.map((link) => stanza(link)).join("\n\n");
 			for (let observation = 0; observation < 2; observation++) {
 				processIfconfigOutput(
 					output,
