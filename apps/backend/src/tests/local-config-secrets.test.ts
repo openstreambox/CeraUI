@@ -258,9 +258,14 @@ describe("add-on state withholds secret-named userConfig fields", () => {
 		broadcastMsg(ADDON_EVENT, { [descriptor.id]: state });
 		const wire = [...sent, ...tab.sent].join("\n");
 
+		const projected = {
+			[descriptor.id]: { ...state, userConfig: { label: "kept" } },
+		};
 		expect(wire).not.toContain(ADDON_TOKEN);
-		expect(JSON.parse(sent[0] ?? "{}")).toEqual({
-			addons: { [descriptor.id]: { ...state, userConfig: { label: "kept" } } },
+		expect(JSON.parse(sent[0] ?? "{}")).toEqual({ addons: projected });
+		expect(tab.sent).toHaveLength(1);
+		expect(JSON.parse(tab.sent[0] ?? "{}")).toMatchObject({
+			addons: projected,
 		});
 		expect(state.userConfig.api_token).toBe(ADDON_TOKEN);
 	});

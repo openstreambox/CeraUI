@@ -343,7 +343,11 @@ export function buildMessage(
 	return JSON.stringify(obj);
 }
 
-/** The local wire form of an event; `config` and `addons` never carry a secret. */
+/**
+ * The local wire form of an event. `config` and `addons` drop secret-named
+ * keys (the config frame keeps the owner's `ssh_pass` and `remote_key`); see
+ * `helpers/local-config-projection.ts`.
+ */
 export function publicEventData(type: string, data: unknown): unknown {
 	if (type === "config") return publicLocalConfig(data);
 	if (type === ADDON_EVENT) return publicAddonStates(data);
