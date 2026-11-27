@@ -21,6 +21,11 @@
  * - `radio-replaced`: another physical radio took over the interface name
  *   before the loss ended, or while its carrier was being read (the carrier
  *   then belongs to that radio);
+ * - `uncertain`: the IP list could not be read at some point of the loss, so
+ *   whether and when the interface left is unknown; the loss is followed
+ *   until the list is readable again before it ends;
+ * - `shared-address`: another interface has one of the radio's addresses,
+ *   so the IP list cannot tell whether this one is in it; not measured;
  * - `timeout`: none of these within 30 s.
  *
  * Radios are keyed by the physical radio id. A radio a round no longer lists
@@ -44,6 +49,8 @@ export type LossOutcome =
 	| "unordered"
 	| "not-in-bond"
 	| "radio-replaced"
+	| "uncertain"
+	| "shared-address"
 	| "timeout";
 
 export type LossEvent = Readonly<{
@@ -68,6 +75,8 @@ export type WatchedRadio = Readonly<{
 	bssid: string | null;
 	/** Its source addresses as the IP list writes them; empty when it has none. */
 	addresses: readonly string[];
+	/** Another interface has one of these addresses right now. */
+	sharedAddress: boolean;
 }>;
 
 export type LossWatchDeps = Readonly<{
@@ -90,6 +99,11 @@ type State = {
 	bssid: string | null;
 	/** Last addresses seen; kept through a loss, when the radio has none. */
 	addresses: readonly string[];
+	sharedAddress: boolean;
+	/** What the rounds saw during a loss, taken over when it ends. */
+	seenDuringLoss: { bssid: string | null; addresses: readonly string[] };
+	/** The IP list could not be read at some look during this loss. */
+	uncertain: boolean;
 	lostAt: number | null;
 	/** Listed by the last round; an unlisted radio is kept only mid-loss. */
 	listed: boolean;
@@ -128,6 +142,11 @@ export class LossWatch {
 				if (state.lostAt === null) {
 					if (r.bssid !== null) state.bssid = r.bssid;
 					if (r.addresses.length > 0) state.addresses = r.addresses;
+					state.sharedAddress = r.sharedAddress;
+				} else {
+					if (r.bssid !== null) state.seenDuringLoss.bssid = r.bssid;
+					if (r.addresses.length > 0)
+						state.seenDuringLoss.addresses = r.addresses;
 				}
 			} else
 				this.#radios.set(r.id, {
@@ -136,6 +155,9 @@ export class LossWatch {
 					inBond: undefined,
 					bssid: r.bssid,
 					addresses: r.addresses,
+					sharedAddress: r.sharedAddress,
+					seenDuringLoss: { bssid: null, addresses: [] },
+					uncertain: false,
 					lostAt: null,
 					listed: true,
 					last: null,
@@ -192,18 +214,29 @@ export class LossWatch {
 				}
 				if (state.lostAt === null) {
 					if (state.carrier === true && carrier === false) {
-						if (inBond === true) state.lostAt = now;
+						// Another interface shares the address: the list cannot say.
+						if (state.sharedAddress)
+							this.#end(state, now, now, "shared-address");
+						else if (inBond === true) state.lostAt = now;
 						// Both dropped since the last look: the order is unknown.
 						else if (state.inBond === true)
 							this.#end(state, now, now, "unordered");
 						else this.#end(state, now, now, "not-in-bond");
 					}
-				} else if (inBond === false)
-					this.#end(state, state.lostAt, now, "left-bond");
-				else if (carrier === true)
-					this.#end(state, state.lostAt, now, "recovered");
-				else if (now - state.lostAt >= LOSS_TIMEOUT_MS)
-					this.#end(state, state.lostAt, now, "timeout");
+				} else {
+					if (inBond === undefined) state.uncertain = true;
+					if (now - state.lostAt >= LOSS_TIMEOUT_MS)
+						this.#end(state, state.lostAt, now, "timeout");
+					// Nothing is concluded while the list cannot be read.
+					else if (inBond === undefined) {
+						/* keep following */
+					} else if (state.uncertain)
+						this.#end(state, state.lostAt, now, "uncertain");
+					else if (inBond === false)
+						this.#end(state, state.lostAt, now, "left-bond");
+					else if (carrier === true)
+						this.#end(state, state.lostAt, now, "recovered");
+				}
 				if (carrier !== undefined) state.carrier = carrier;
 				state.inBond = inBond;
 			}
@@ -224,6 +257,13 @@ export class LossWatch {
 			durationMs: now - lostAt,
 		};
 		state.lostAt = null;
+		state.uncertain = false;
+		// What the rounds saw during the loss is the radio's state now.
+		if (state.seenDuringLoss.bssid !== null)
+			state.bssid = state.seenDuringLoss.bssid;
+		if (state.seenDuringLoss.addresses.length > 0)
+			state.addresses = state.seenDuringLoss.addresses;
+		state.seenDuringLoss = { bssid: null, addresses: [] };
 		state.last = event;
 		state.losses++;
 		this.#events.push(event);

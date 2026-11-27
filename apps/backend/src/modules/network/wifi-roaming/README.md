@@ -90,7 +90,8 @@ when done.
   profile has connected to, whether it fixes a BSSID, and its key management,
   read with one `nmcli -g 802-11-wireless.seen-bssids,802-11-wireless.bssid,
   802-11-wireless-security.key-mgmt connection show uuid <uuid>` at most once
-  a minute per profile (the count is kept, not the access points), and
+  a minute per profile (the count is kept, not the access points; an open
+  profile has no security setting, so its key-management line is absent), and
   reported only if the same profile is still active when the round is
   assembled. `scanRule`: `rare` (fewer than two, no fixed BSSID, no 802.1X:
   NetworkManager's once-a-day interval above -70 dBm, so the radio will not
@@ -108,8 +109,12 @@ when done.
   `left-bond` (the window), `recovered` (the carrier came back first),
   `unordered` (both changed within 100 ms), `not-in-bond`, `radio-replaced`
   (another radio took the name, also while its carrier was being read),
+  `uncertain` (the list could not be read at some point; the loss is followed
+  until it can be), `shared-address` (another interface has one of the
+  radio's addresses, so the list cannot tell; noted, not measured),
   `timeout` (30 s). During a loss the record keeps the access point that went
-  and the addresses the sender had. Every admitted client radio is watched,
+  and the addresses the sender had; what the rounds saw meanwhile becomes the
+  radio's state when the loss ends. Every admitted client radio is watched,
   associated or not, and a loss in progress is followed to its end. At most
   256 ended losses wait for the journal; older ones are dropped and counted
   (`lossDropped`); stop joins a tick in flight before the last drain.

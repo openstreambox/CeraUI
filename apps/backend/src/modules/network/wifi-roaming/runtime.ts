@@ -319,6 +319,7 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 					ifname: r.ifname,
 					bssid: r.link ? r.link.bssid : null,
 					addresses: r.addresses,
+					sharedAddress: r.sharedAddress,
 				})),
 		);
 		const events = observer.round({

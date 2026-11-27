@@ -53,6 +53,7 @@ const radio = (over: Partial<RadioView> = {}): RadioView => ({
 	seenBssids: 2,
 	scanRule: "normal",
 	addresses: ["192.0.2.11"],
+	sharedAddress: false,
 	...over,
 });
 

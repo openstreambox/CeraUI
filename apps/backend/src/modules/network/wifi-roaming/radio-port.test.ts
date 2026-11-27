@@ -120,6 +120,7 @@ describe("radios as the observer reads them", () => {
 			admit: (key) => admitWifiAdapter(key),
 			exclude,
 			addressesOf: (ifname) => (ifname === "wlan1" ? ["192.0.2.11"] : []),
+			addressShared: () => false,
 			...over,
 		});
 
@@ -218,6 +219,15 @@ describe("radios as the observer reads them", () => {
 			scanRule: "rare",
 		});
 		expect(parseProfileScan("A\n")).toBeNull();
+		// An open profile: nmcli omits the absent security setting's line.
+		expect(parseProfileScan("A\n\n")).toEqual({
+			seenBssids: 1,
+			scanRule: "rare",
+		});
+		expect(
+			parseProfileScan("A,B\nAA\\:BB\\:CC\\:DD\\:EE\\:01\n")?.scanRule,
+		).toBe("other");
+		expect(parseProfileScan("")).toBeNull();
 	});
 
 	test("a profile change on one radio during another radio's read is caught at assembly", async () => {

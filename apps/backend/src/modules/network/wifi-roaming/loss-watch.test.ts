@@ -19,6 +19,7 @@ const A: WatchedRadio = {
 	ifname: "wlan1",
 	bssid: "aa:00:00:00:00:01",
 	addresses: ["192.0.2.11"],
+	sharedAddress: false,
 };
 const B: WatchedRadio = {
 	id: "02:00:00:00:b0:02/61:6:p6",
@@ -26,6 +27,7 @@ const B: WatchedRadio = {
 	ifname: "wlan2",
 	bssid: "aa:00:00:00:00:02",
 	addresses: ["192.0.2.12"],
+	sharedAddress: false,
 };
 
 const OWNER_OF: Record<string, string> = {
@@ -374,5 +376,63 @@ describe("the IP list file", () => {
 			setup.ips_file = saved;
 			await rm(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("what the IP list cannot tell", () => {
+	test("an address another interface also has: the loss is noted, not measured", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([{ ...A, sharedAddress: true }]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "shared-address", durationMs: 0 },
+		]);
+	});
+
+	test("a list unreadable during the loss makes it uncertain, never a recovery", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		const list = w.bond;
+		w.bond = undefined;
+		w.carrier.set("wlan1", true);
+		await run(watch, w, 300);
+		expect(watch.drain()).toEqual([]);
+		w.bond = list;
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([{ outcome: "uncertain" }]);
+	});
+
+	test("the next loss names the access point the radio was on after the last one", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		// It reassociates to another access point during the loss, then recovers.
+		watch.watch([{ ...A, bssid: "aa:00:00:00:00:77" }]);
+		w.carrier.set("wlan1", true);
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "recovered", bssid: A.bssid },
+		]);
+		// No round in between: the second loss still names the new one.
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		w.bond?.delete("wlan1");
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "left-bond", bssid: "aa:00:00:00:00:77" },
+		]);
 	});
 });
