@@ -121,6 +121,15 @@ never reported the AP up, which is a different thing to tell someone.
 point is up". Wire contract: `hotspotToggleErrorSchema` (six members, none
 collapsible) + `hotspotToggleOutputSchema` in `@ceraui/rpc`.
 
+Discovery retains published device IDs while it awaits NetworkManager reads.
+A completed pass normally prunes IDs whose mappings it did not refresh, which
+includes observed degraded rows. During a roster swap it also retains mappings
+whose keys were observed. When NM confirms an AP before its network-interface
+snapshot arrives, the steering wait binds the first
+observed incarnation of that AP and still rechecks the exact NM activation
+before reporting readiness. A change after that first incarnation cancels the
+wait.
+
 Transition ownership begins before awaited NM activation. The shared
 `beginHotspotTransition` cancels and removes previous confirmation observers
 and sets the new flag in one synchronous operation under the adapter lock.
