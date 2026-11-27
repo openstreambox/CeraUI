@@ -29,7 +29,7 @@ import {
 	ScrollText,
 	SquareTerminal,
 } from '@lucide/svelte';
-import { type Component, onDestroy } from 'svelte';
+import { type Component, onDestroy, onMount } from 'svelte';
 import { MediaQuery } from 'svelte/reactivity';
 
 import AsyncSwitch from '$lib/components/custom/async-switch.svelte';
@@ -39,7 +39,7 @@ import ModeToggle from '$lib/components/custom/mode-toggle.svelte';
 import { AppDialog, LazyDialog, lazyDialog } from '$lib/components/dialogs';
 import { osCommand } from '$lib/rpc/async-operation.svelte';
 import { rpc } from '$lib/rpc/client';
-import { getConfig, getKiosk } from '$lib/rpc/subscriptions.svelte';
+import { getConfig, getIsConnected, getKiosk, getStatus, getUplinks } from '$lib/rpc/subscriptions.svelte';
 import {
 	clearRequestedDialog,
 	getRequestedDialog,
@@ -48,6 +48,8 @@ import {
 } from '$lib/stores/dialog-request.svelte';
 import { currentNavigation } from '$lib/stores/navigation.svelte';
 import { cn } from '$lib/utils';
+import PhoneBoxHealth from './PhoneBoxHealth.svelte';
+
 import DeviceStatsSection from './settings/DeviceStatsSection.svelte';
 import PortalSetting from './settings/PortalSetting.svelte';
 import RemoteControlStatus from './settings/RemoteControlStatus.svelte';
@@ -302,9 +304,15 @@ $effect(() => {
 	if (target === 'logs') openLogs(getRequestedDialogContext());
 	clearRequestedDialog();
 });
+let now = $state(Date.now());
+ onMount(() => {
+  const clock = setInterval(() => { now = Date.now(); }, 1000);
+  return () => clearInterval(clock);
+ });
 </script>
 
 <div class="flex-col md:flex">
+{#if getStatus()?.phone_box}<PhoneBoxHealth settingsSummary reachable={getIsConnected()} health={getStatus()?.box_health} carrying={getStatus()?.carrying?.state} links={(getUplinks()??[]).filter(l=>l.staleAt>now).map(l=>({label:l.displayName??l.iface,internet:l.state==='up'?'yes':'unknown'}))} onrestart={()=>powerOpen=true}/>{/if}
 	<div class="container mx-auto max-w-3xl flex-1 space-y-8 p-4 pt-6 sm:p-8">
 		<!-- Header -->
 		<header class="space-y-2">

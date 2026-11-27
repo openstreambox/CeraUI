@@ -1,3 +1,4 @@
+import { phonePartSchema } from './phone-box.schema';
 /**
  * Status Zod schemas (full application status)
  */
@@ -495,7 +496,17 @@ export const remoteDiagnosticsSchema = z.object({
 export const statusResponseSchema = z.object({
 	remote_diagnostics: remoteDiagnosticsSchema.optional(),
 	remote_status: z.literal(true).optional(),
-	carrying: z.object({ state: z.enum(['streaming', 'idle', 'unknown']) }).optional(),
+	phone_box: z.boolean().optional(),
+	phone_links: z
+		.object({
+			ready: z.number().int().nonnegative(),
+			sending: z.number().int().nonnegative().nullable(),
+		})
+		.optional(),
+	box_health: z.array(z.object({ part: phonePartSchema, since: z.number() })).optional(),
+	carrying: z
+		.object({ state: z.enum(['streaming', 'idle', 'unknown']), startup: z.boolean().optional() })
+		.optional(),
 	is_streaming: z.boolean().optional(),
 	audio_mix_active: z.boolean().optional(),
 	audio_mix_excluded: z.array(audioMixExcludedInputSchema).optional(),

@@ -39,7 +39,9 @@ import { buildModemsWireMessage } from "../modems/modem-status.ts";
 import { getNetworkIngestInfo } from "../network/network-ingest.ts";
 import { netIfBuildMsg } from "../network/network-interfaces.ts";
 import { getUnclaimedAdapters } from "../network/unclaimed-adapters.ts";
+import { getPhoneLinkCounts } from "../network/uplink-health/state";
 import { buildRelaysMsg, getRelays } from "../remote/remote-relays.ts";
+import { setup } from "../setup";
 import { getActiveEncodeStatus } from "../streaming/active-encode-status.ts";
 import { deriveAudioSources, getAudioDevices } from "../streaming/audio.ts";
 import { excludedAudioInputs } from "../streaming/audio-inputs.ts";
@@ -65,10 +67,11 @@ import { getPreviewEncoderRealizedStatus } from "../streaming/preview-encoder-st
 import { getSourcesMessage } from "../streaming/sources.ts";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
-import { getCarryingLiveness } from "../system/carrying.ts";
+import { getCarryingStatus } from "../system/carrying.ts";
 import { CPU_EVENT, getCpuInfo } from "../system/cpu.ts";
 import { ENCODER_LOAD_EVENT, getEncoderLoad } from "../system/encoder-load.ts";
 import { FAN_EVENT, getFan } from "../system/fan.ts";
+import { getPhoneBoxHealth } from "../system/readiness";
 import { getRevisions } from "../system/revisions.ts";
 import { getSensors } from "../system/sensors.ts";
 import {
@@ -83,6 +86,9 @@ import { notificationSendPersistent } from "./notifications.ts";
 import { buildMsg } from "./websocket-server.ts";
 
 export type StatusResponseMessage = {
+	phone_box?: boolean;
+	phone_links?: { ready: number; sending: number | null };
+	box_health?: ReturnType<typeof getPhoneBoxHealth>;
 	is_streaming?: ReturnType<typeof getIsStreaming>;
 	audio_mix_active?: boolean;
 	audio_mix_excluded?: AudioMixExcludedInput[];
@@ -108,7 +114,7 @@ export type StatusResponseMessage = {
 	bond_mapping?: BondMapping | null;
 	buffering?: BufferingStatus | null;
 	network_ingest?: NetworkIngest | null;
-	carrying?: { state: ReturnType<typeof getCarryingLiveness> };
+	carrying?: ReturnType<typeof getCarryingStatus>;
 	active_encode?: ActiveEncode | null;
 	engine_bitrate?: EngineBitrate | null;
 	preview_encoder_realized?: PreviewEncoderRealized | null;
@@ -145,7 +151,10 @@ export function sendStatus(conn: WebSocket, buildWifi = wifiBuildMsg) {
 			...linkTelemetryStatus(),
 			bond_mapping: buildBondMapping(),
 			network_ingest: getNetworkIngestInfo(),
-			carrying: { state: getCarryingLiveness() },
+			carrying: getCarryingStatus(),
+			phone_box: setup.engine === "none",
+			phone_links: getPhoneLinkCounts(),
+			box_health: getPhoneBoxHealth(),
 			active_encode: getActiveEncodeStatus(),
 			engine_bitrate: getEngineBitrateStatus(),
 			preview_encoder_realized: getPreviewEncoderRealizedStatus(),

@@ -500,6 +500,7 @@ async function remoteConnect() {
 						projectRemoteLegacyFrame(
 							frame,
 							`legacy:${protocol}://${endpointHost}${endpointPath}`,
+							setup.engine === "none",
 						),
 					);
 		if (getRemoteProjectionDrops() > dropsBefore && !warnedProjectionDrop) {
