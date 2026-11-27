@@ -98,7 +98,8 @@ async function prepare(
 			return PUBLISHED;
 		},
 		onSubnet: interfacesOnSubnet,
-		warn: (message) => warnings.push(message),
+		warnWholeBond: (receiver, outsideBond) =>
+			warnings.push(`${receiver} | ${outsideBond.join(", ")}`),
 	};
 	await prepareSrtlaIpAddresses(receiver, deps, purpose);
 	return {

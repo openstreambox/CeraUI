@@ -40,7 +40,11 @@ export type SrtlaIpPreparationDeps = {
 	) => Promise<BindMapPublication>;
 	/** Every interface on the receiver's subnet, bonded or not. */
 	readonly onSubnet?: (address: string) => string[];
-	readonly warn?: (message: string, meta?: Record<string, unknown>) => void;
+	/** Told when a private receiver gets the whole bond (launch only). */
+	readonly warnWholeBond?: (
+		receiver: string,
+		outsideBond: readonly string[],
+	) => void;
 };
 
 const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
@@ -54,7 +58,11 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
 			localReceiver === undefined ? undefined : { localReceiver },
 		),
 	onSubnet: interfacesOnSubnet,
-	warn: (message, meta) => logger.warn(message, meta),
+	warnWholeBond: (receiver, outsideBond) =>
+		logger.warn(
+			`Receiver ${receiver} is a private address and no bonded link is on its subnet; offering every bonded link in case it is routed (on its subnet but out of the bond: ${outsideBond.length > 0 ? outsideBond.join(", ") : "none"})`,
+			{ receiver, outsideBond },
+		),
 };
 
 /*
@@ -93,14 +101,7 @@ function selectReceiverLinks(
 		const outside = (deps.onSubnet?.(srtlaAddr) ?? [])
 			.filter((name) => !bonded.some((entry) => entry.iface === name))
 			.map(maskMacDerivedIfname);
-		deps.warn?.(
-			`Receiver ${srtlaAddr} is a private address and no bonded link is on its subnet` +
-				(outside.length > 0
-					? ` (out of the bond: ${outside.join(", ")})`
-					: "") +
-				"; offering every bonded link in case it is routed",
-			{ receiver: srtlaAddr, outsideBond: outside },
-		);
+		deps.warnWholeBond?.(srtlaAddr, outside);
 	}
 	return { entries: bonded };
 }
