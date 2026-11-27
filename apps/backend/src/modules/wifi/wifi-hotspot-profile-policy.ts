@@ -42,6 +42,7 @@ import {
 	normalizeMacAddress,
 	wifiAdapterKeyPort,
 } from "./wifi-permanent-mac.ts";
+import { PROVISIONING_AP_IFNAME } from "./wifi-provisioning-ap.ts";
 import {
 	radioInventoryFor,
 	sameRadioLifetime,
@@ -108,7 +109,8 @@ export async function applyHotspotProfilePolicy(
 			case "read":
 				break;
 		}
-		if (profile.mode !== "ap") continue;
+		// A persisted claim on the image's setup AP grants no policy authority.
+		if (profile.mode !== "ap" || profile.provisioning) continue;
 		if (
 			healthyTwins &&
 			profile.autoconnect !== "yes" &&
@@ -228,6 +230,12 @@ export async function applyHotspotProfilePolicy(
 							radios.every((row) => row.devicePath !== undefined) &&
 							(await readInventory()).kind === "complete"
 						);
+					// The image's setup radio never keeps an owned AP armed. A profile
+					// without a MAC pin matches it by port alone, so its sole owner may
+					// disarm it there; candidates exclude the setup radio, so nothing
+					// here repins it or brings an activation down on it.
+					if (!profile.mac && occupant.ifname === PROVISIONING_AP_IFNAME)
+						return true;
 					if (occupant.permanentMac !== undefined)
 						return occupant.permanentMac === mac;
 					// Station teardown can use the exact recorded AP witness on a
@@ -326,8 +334,13 @@ export async function applyHotspotProfilePolicy(
 					const identity = candidates.find(
 						(row) => row.classification === "verified",
 					);
+					// The image's setup radio stays disarmed; CeraUI's restore owns the AP there.
+					const setupRadio =
+						profile.ifname === PROVISIONING_AP_IFNAME ||
+						candidates.some((row) => row.ifname === PROVISIONING_AP_IFNAME);
 					if (
 						!hybrid &&
+						!setupRadio &&
 						mac &&
 						identity?.devicePath &&
 						profile.mac.toLowerCase() === mac &&
