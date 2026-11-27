@@ -13,8 +13,13 @@
   settings object is replaced by an unrelated save — toggling automatic
   packages must not throw away a window the operator is halfway through typing.
 
-  Package automation works on every image, so it always renders. The system
-  image toggle and the channel exist only where the image has an OS agent.
+  Package automation always renders, and always saves `packagesAuto`. Only its
+  name follows `packagesMode`: `install` names automatic installs; `check`
+  (the device installs packages only by hand, where `packagesAuto` still
+  drives the scheduled package check and its notice) names the check, with a
+  hint that installs are manual; `unknown` (no current capabilities reply)
+  uses a name that claims neither. The system image toggle and the channel
+  exist only where the image has an OS agent.
 
   Both choices are bits-ui radio groups: one tab stop, arrow keys move and
   select (C-m3). While a write is in flight they turn READ-ONLY rather than
@@ -33,6 +38,7 @@ import { Checkbox } from '$lib/components/ui/checkbox';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
 import { Switch } from '$lib/components/ui/switch';
+import type { PackagesAutomationMode } from '$lib/updates/update-surface.svelte';
 import {
 	type ScheduleDraft,
 	scheduleDraftDirty,
@@ -47,11 +53,21 @@ interface Props {
 	settings: UpdateSettings;
 	/** The image has an OS agent: show the system toggle and the channel. */
 	system: boolean;
+	/** What the package switch turns on here; it decides only the name and hint. */
+	packagesMode?: PackagesAutomationMode;
 	saving: boolean;
 	onSave: (patch: Partial<UpdateSettings>) => Promise<boolean>;
 }
 
-let { settings, system, saving, onSave }: Props = $props();
+let { settings, system, packagesMode = 'install', saving, onSave }: Props = $props();
+
+const PACKAGES_LABEL: Record<PackagesAutomationMode, () => string> = {
+	install: () => m['settings.updates.automation.packages'](),
+	check: () => m['settings.updates.automation.packagesCheck'](),
+	unknown: () => m['settings.updates.automation.packagesNeutral'](),
+};
+const packagesLabel = () => PACKAGES_LABEL[packagesMode]();
+const packagesManual = $derived(packagesMode === 'check');
 
 const appliedUrl = $derived(settings.channelUrl ?? 'https://images.ceralive.tv');
 let channelUrl = $derived.by(() => {
@@ -121,9 +137,17 @@ const rung =
 
 	<div class="divide-border divide-y overflow-hidden rounded-lg border">
 		<div class="flex items-center justify-between gap-4 px-4 py-3">
-			<p class="min-w-0 text-sm font-medium">{m['settings.updates.automation.packages']()}</p>
+			<div class="min-w-0">
+				<p class="text-sm font-medium">{packagesLabel()}</p>
+				{#if packagesManual}
+					<p class="text-muted-foreground mt-0.5 text-xs" data-testid="update-auto-packages-manual" id="update-auto-packages-manual">
+						{m['settings.updates.automation.packagesManualHint']()}
+					</p>
+				{/if}
+			</div>
 			<Switch
-				aria-label={m['settings.updates.automation.packages']()}
+				aria-describedby={packagesManual ? 'update-auto-packages-manual' : undefined}
+				aria-label={packagesLabel()}
 				bind:checked={() => settings.packagesAuto, (next) => void onSave({ packagesAuto: next })}
 				data-testid="update-auto-packages"
 				disabled={saving}

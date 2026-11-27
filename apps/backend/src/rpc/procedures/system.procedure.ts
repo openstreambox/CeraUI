@@ -90,7 +90,10 @@ import {
 	setTailscaleEnabled,
 } from "../../modules/system/tailscale.ts";
 import { reconcileAptChannel } from "../../modules/system/update-apt-channel.ts";
-import { readUpdateCapabilities } from "../../modules/system/update-capabilities.ts";
+import {
+	readUpdateCapabilities,
+	readUpdateCapabilitiesReply,
+} from "../../modules/system/update-capabilities.ts";
 import { readUpdateDetails } from "../../modules/system/update-orchestrator/details.ts";
 import {
 	allowCellularOnce,
@@ -127,7 +130,7 @@ export const setUpdateSettingsProcedure = authedProcedure
 
 export const getUpdateCapabilitiesProcedure = authedProcedure
 	.output(updateCapabilitiesSchema)
-	.handler(() => readUpdateCapabilities());
+	.handler(() => readUpdateCapabilitiesReply());
 
 /**
  * Get revisions procedure

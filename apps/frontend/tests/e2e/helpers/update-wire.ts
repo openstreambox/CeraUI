@@ -181,6 +181,8 @@ export interface UpdateWireOptions {
 	orchestrator?: UpdateOrchestratorWireState | null;
 	/** RPC path → result. A matched call never reaches the backend. */
 	fakes?: Record<string, unknown>;
+	/** RPC path → error envelope, answered as a failed call; never reaches the backend. */
+	failures?: Record<string, { code: string; message: string }>;
 	/** Inject a pipeline, a source and a destination so Start is enabled. */
 	startable?: boolean;
 	packages?: UpdateState;
@@ -210,6 +212,7 @@ export async function installUpdateWire(
 			? orchestratorState("idle")
 			: options.orchestrator;
 	const fakes = new Map<string, unknown>(Object.entries(options.fakes ?? {}));
+	const failures = new Map(Object.entries(options.failures ?? {}));
 	const recorded: Array<{ path: string; input: unknown }> = [];
 	const startable = options.startable === true;
 	let route: WebSocketRoute | null = null;
@@ -246,6 +249,11 @@ export async function installUpdateWire(
 				const frame = JSON.parse(text) as Frame;
 				const path = Array.isArray(frame.path) ? (frame.path as string[]).join(".") : "";
 				if (path) recorded.push({ path, input: frame.input });
+				const failure = path ? failures.get(path) : undefined;
+				if (failure) {
+					setTimeout(() => ws.send(JSON.stringify({ id: frame.id, error: failure })), 0);
+					return;
+				}
 				if (path && fakes.has(path)) {
 					const result = fakes.get(path);
 					setTimeout(() => ws.send(JSON.stringify({ id: frame.id, result })), 0);
