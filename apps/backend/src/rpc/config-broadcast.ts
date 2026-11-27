@@ -38,15 +38,42 @@ export function rememberConfigSent(config: object): void {
 	for (const key of carried(config)) sent.add(key);
 }
 
+// The one raw `config` send; the cloud relay projects `relay` by its allowlist.
+// Typed as the runtime config so the remote-status inventory sees its fields.
+function sendConfig(frame: RuntimeConfig, relay: RuntimeConfig): void {
+	broadcastMsg("config", frame, 0, true, relay);
+}
+
 /** Broadcast `config`, then `config_clear` for every key it no longer carries. */
 export function broadcastConfig(config: RuntimeConfig): void {
 	const now = carried(config);
 	const cleared = [...sent].filter((key) => !now.has(key));
-	broadcastMsg("config", config);
+	sendConfig(config, config);
 	if (cleared.length > 0) broadcastMsg(CONFIG_CLEAR_EVENT, { keys: cleared });
 	sent = now;
 	if (now.has("audio_inputs") || cleared.includes("audio_inputs"))
 		broadcastMsg("status", { audio_mix_excluded: excludedAudioInputs(config) });
+}
+
+/**
+ * Echo only the settings a writer changed, for a writer that cannot clear a
+ * key. Every local frame carries the two Stream ID flags, read here from the
+ * stored config: a partial frame without them would read as "unset". The
+ * cloud relay keeps the whole config, which its allowlist projection reduces.
+ */
+export function broadcastConfigFields(
+	config: RuntimeConfig,
+	keys: readonly (keyof RuntimeConfig)[],
+): void {
+	const frame: Record<string, unknown> = {};
+	for (const key of keys) frame[key] = config[key];
+	frame.srt_streamid_configured = Boolean(config.srt_streamid);
+	frame.relay_streamid_override_configured = Boolean(
+		config.relay_streamid_override,
+	);
+	// The flags are wire-only, outside the stored schema.
+	sendConfig(frame as RuntimeConfig, config);
+	rememberConfigSent(frame);
 }
 
 // After the writer's own synchronous broadcast, which leaves nothing to publish.

@@ -23,7 +23,7 @@
 import fs from "node:fs";
 import { logger } from "../../../helpers/logger.ts";
 import { AUTOSTART_RETRY_DELAY } from "../../../helpers/timing-constants.ts";
-import { broadcastConfig } from "../../../rpc/config-broadcast.ts";
+import { broadcastConfigFields } from "../../../rpc/config-broadcast.ts";
 import { getConfig, saveConfig } from "../../config.ts";
 import { emitEvent } from "../../events/emit.ts";
 import { isUpdating } from "../../system/software-updates.ts";
@@ -49,7 +49,8 @@ export function setAutostart(value: boolean): boolean {
 	config.autostart = value;
 	saveConfig();
 
-	broadcastConfig(config);
+	// The toggle changes one setting; the whole config is not the tab's to see.
+	broadcastConfigFields(config, ["autostart"]);
 	return config.autostart;
 }
 

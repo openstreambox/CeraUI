@@ -22094,7 +22094,7 @@
 		"apps/backend/src/modules/wifi/wifi-interfaces.ts": "d179b2269a86b9c365020f59c66bcabff6fd963186ae7899f7b0e874bb87c158",
 		"apps/backend/src/modules/wifi/wifi.ts": "709b09c21fbca6e341b47e128c43fa6716e1cc0a90fb480b27699adfaec5a70a",
 		"apps/backend/src/rpc/compat.ts": "72b36615b97ab0a66ff668280a088fcef088de4dbf9c4546bd8694bf0373969c",
-		"apps/backend/src/rpc/config-broadcast.ts": "57ee4d91c4ebc82e7351c448b3b4f7ecb2e9951f610c4b1005a7b9903a0ba974",
+		"apps/backend/src/rpc/config-broadcast.ts": "42dfc95573d9eedad94a28483e09095ac021cccb298e1c15f8a95da3a1447085",
 		"apps/backend/src/rpc/procedures/network.procedure.ts": "a44dfdcbe37ac32f9c65392671072332b072e50b841344e13dc467954d207640",
 		"apps/backend/src/rpc/procedures/streaming.procedure.ts": "1beba963d32f3c469cd83b992e646069defb81ae9edab4efd736028a52c3e593",
 		"bun.lock": "311175002287ebf799cc23dabe3e294949bc3e12c86b409a1436c747f87a7fd2",
