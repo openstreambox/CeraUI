@@ -1,5 +1,11 @@
 import { isIPv6 } from "node:net";
 import type { LogBundleFailureReason } from "@ceraui/rpc/schemas";
+import { isSensitiveKey, REDACTED } from "../../helpers/logger.ts";
+import {
+	type SecretSpan,
+	type SecretTextRules,
+	secretValueSpans,
+} from "../../helpers/secret-text-lexer.ts";
 
 export class BundleReadError extends Error {
 	readonly code: "READ_FAILED" | "BUSY";
@@ -25,21 +31,36 @@ function isLocalIPv4(a: number, b: number): boolean {
 	);
 }
 
-// SRT passphrase fields by name, as srt-secret-redaction.ts masks them, so a value
-// that is no longer held (changed, cleared or never loaded) stays out too.
-const NAMED_PASSPHRASES: readonly RegExp[] = [
-	/(?<=passphrase=)(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s&"']+)/gi,
-	/(?<=passphrase"\s*:\s*)"(?:[^"\\]|\\.)*"/gi,
-	/(?<=passphrase\\"\s*:\s*\\")(?:\\\\\\\\|\\\\\\"|\\\\[^"\\]|[^"\\])+(?=\\")/gi,
-];
+// Secret values by key name, so a value that is no longer held (changed,
+// cleared or never loaded) stays out too. The shared lexer
+// (`helpers/secret-text-lexer.ts`) reads JSON fields, URI query assignments and
+// prose assignments at any depth of nested strings; the logger's
+// `isSensitiveKey` is the key rule, the same one every log transport uses.
 
-function namedPassphrase(match: string): string {
-	// Already masked upstream of the journal, possibly with trailing punctuation.
-	if (match === '""' || /^"?\[REDACTED(?::[a-z0-9_]+)?\]/.test(match))
-		return match;
-	return match.startsWith('"')
-		? '"[REDACTED:srt_passphrase]"'
-		: "[REDACTED:srt_passphrase]";
+/**
+ * An SRT passphrase field such as `passphrase`, `srt_passphrase` or
+ * `relay_passphrase`: its values keep their typed marker. Every other secret
+ * key gets the plain marker.
+ */
+export function isPassphraseKey(key: string): boolean {
+	return /passphrase$/i.test(key);
+}
+
+const PASSPHRASE_MARKER = "[REDACTED:srt_passphrase]";
+
+const EXPORT_RULES: SecretTextRules = {
+	isSecretKey: isSensitiveKey,
+	marker: (key) => (isPassphraseKey(key) ? PASSPHRASE_MARKER : REDACTED),
+};
+
+export type NamedSpan = SecretSpan;
+
+/**
+ * Every value of a secret-bearing key in `input` that needs masking, in source
+ * order and not overlapping: the source range to replace and its masked form.
+ */
+export function namedSecretSpans(input: string): NamedSpan[] {
+	return secretValueSpans(input, EXPORT_RULES);
 }
 
 /** Held values shorter than this are not matched: too many false hits. */
@@ -132,20 +153,21 @@ export function buildRedactor(
 		},
 		known(value: string) {
 			let redactions = 0;
-			let text =
+			const text =
 				exact === null
 					? value
 					: value.replace(exact, (match) => {
 							redactions++;
 							return literals.get(percentCase(match)) ?? "[REDACTED]";
 						});
-			for (const pattern of NAMED_PASSPHRASES)
-				text = text.replace(pattern, (match) => {
-					const next = namedPassphrase(match);
-					if (next !== match) redactions++;
-					return next;
-				});
-			return { text, redactions };
+			let position = 0;
+			let named = "";
+			for (const span of namedSecretSpans(text)) {
+				named += text.slice(position, span.start) + span.marker;
+				position = span.end;
+				redactions++;
+			}
+			return { text: named + text.slice(position), redactions };
 		},
 		text(value: string, exempt) {
 			const spans: Array<{
@@ -153,6 +175,7 @@ export function buildRedactor(
 				end: number;
 				marker: string;
 				known: boolean;
+				named?: boolean;
 			}> = [];
 			if (exact !== null) {
 				for (const match of value.matchAll(exact))
@@ -209,7 +232,8 @@ export function buildRedactor(
 				pattern: RegExp,
 				replacement: (
 					match: string,
-					address?: (typeof addresses)[number],
+					address: (typeof addresses)[number] | undefined,
+					index: number,
 				) => string,
 				addressContext = false,
 				ignore?: TextSpan,
@@ -229,7 +253,7 @@ export function buildRedactor(
 						if (address && address.start <= match.index && end <= address.end)
 							containing = address;
 					}
-					const next = replacement(text, containing);
+					const next = replacement(text, containing, match.index);
 					if (next !== text)
 						spans.push({
 							start: match.index,
@@ -292,12 +316,22 @@ export function buildRedactor(
 				/eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+/g,
 				() => "[REDACTED:token]",
 			);
-			for (const pattern of NAMED_PASSPHRASES) mask(pattern, namedPassphrase);
+			for (const span of namedSecretSpans(value))
+				spans.push({ ...span, known: false, named: true });
 			spans.sort((a, b) => a.start - b.start);
 			const merged: typeof spans = [];
 			for (const span of spans) {
 				const previous = merged.at(-1);
 				if (previous && span.start < previous.end) {
+					// A named value's span carries its own delimiters (quotes and
+					// all); a match inside it doesn't replace that marker.
+					if (previous.named && span.end <= previous.end) continue;
+					if (span.named && span.start <= previous.start) {
+						Object.assign(previous, span, {
+							end: Math.max(previous.end, span.end),
+						});
+						continue;
+					}
 					previous.end = Math.max(previous.end, span.end);
 					if (span.known && !previous.known) {
 						previous.marker = span.marker;

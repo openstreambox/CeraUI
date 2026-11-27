@@ -320,14 +320,8 @@ export function isSensitiveKey(key: string): boolean {
 	);
 }
 
-/**
- * SRT passphrase fields are left to their own typed masking (`redactSrtPassphrases`
- * at write time and in the viewer, the named-passphrase rules of the export and
- * the bundle), which keeps the `[REDACTED:srt_passphrase]` markers and the
- * bundle's counts.
- */
 const TEXT_RULES: SecretTextRules = {
-	isSecretKey: (key) => isSensitiveKey(key) && !/passphrase/i.test(key),
+	isSecretKey: isSensitiveKey,
 	marker: () => REDACTED,
 };
 
@@ -335,36 +329,25 @@ const TEXT_RULES: SecretTextRules = {
  * The key rules applied to JSON and assignments that are already TEXT: a
  * template message that interpolated `JSON.stringify(...)`, a `key=value`
  * phrase, or a journal record that journald split or that no longer parses.
- * Read with the shared lexer (`secret-text-lexer.ts`), so escapes, nested
- * strings, URI queries and cut-off values follow the same rules everywhere.
+ * Read with the shared lexer (`secret-text-lexer.ts`) that the support export
+ * and bundle use too, so escapes, nested strings, URI queries and cut-off
+ * values follow the same rules everywhere.
  */
 export function redactKeyValueText(text: string): string {
 	return maskSecretValues(text, TEXT_RULES);
-}
-
-const JSON_TEXT_RULES: SecretTextRules = { ...TEXT_RULES, assignments: false };
-
-/**
- * {@link redactKeyValueText} for JSON fields only. The journal read side uses
- * it on every record: the export and the bundle mask `key=` assignments of
- * held secrets themselves with typed markers, which a generic marker written
- * first would pre-empt.
- */
-export function redactJsonKeyValueText(text: string): string {
-	return maskSecretValues(text, JSON_TEXT_RULES);
 }
 
 const KEY_WALK_MAX_DEPTH = 16;
 
 /**
  * The key rules alone, for records read back from the journal: masks values
- * under sensitive keys (and sensitive pairs inside string leaves) without the
- * write-time value matchers, which rebuild their held-secret variants per
- * string and cost too much across a journal scan. Deeper than
- * {@link KEY_WALK_MAX_DEPTH} levels is masked whole.
+ * under sensitive keys without the write-time value matchers, which rebuild
+ * their held-secret variants per string and cost too much across a journal
+ * scan. String leaves are left to the next stage (the viewer's text rule, the
+ * export's and the bundle's lexer), which reads them with typed markers.
+ * Deeper than {@link KEY_WALK_MAX_DEPTH} levels is masked whole.
  */
 export function redactSensitiveKeys(value: unknown, depth = 0): unknown {
-	if (typeof value === "string") return redactJsonKeyValueText(value);
 	if (value === null || typeof value !== "object") return value;
 	if (depth >= KEY_WALK_MAX_DEPTH) return REDACTED;
 	if (Array.isArray(value))

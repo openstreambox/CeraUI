@@ -50,18 +50,18 @@ metadata first gets the write-time rules an older build lacked (a `config
 loaded` record keeps only the allowlisted config fields; an RPC trace of a
 procedure whose arguments are never logged loses them), then goes through
 `redactSensitiveKeys` (key rules only, no held-value matchers, so a scan stays
-within its budget). Every message text, split or unparseable records and other
-units' lines included, goes through `redactJsonKeyValueText`: the shared lexer
-in `helpers/secret-text-lexer.ts`, reading JSON fields only. It decodes each
-string with its own escapes, recursively, and masks a sensitive key's string or
-number value, to the end of the text when the value is cut off. URI and prose
-`key=` assignments are left to the next stage, so the export's and the
-bundle's typed held-secret markers aren't pre-empted. The viewer (query,
-around, follow) projects with `toViewerEntry`, which adds the logger's typed
-SRT passphrase and stream-id scrubbers and the full text rule, assignments
-included, once per record. Not covered: a split piece that starts inside a
-value, and an object or array under a sensitive key in unparsed text. Both are
-rare at journald's 48 KiB line limit.
+within its budget). Text is masked by the stage that shows it, all with the
+shared lexer in `helpers/secret-text-lexer.ts` and the logger's
+`isSensitiveKey`: the export and the bundle (`device-logs/redaction.ts`,
+SRT passphrase fields with their typed marker), and the viewer (query, around,
+follow), which projects with `toViewerEntry` and adds the logger's typed SRT
+passphrase and stream-id scrubbers. The lexer decodes each string with its own
+escapes, recursively, and masks a sensitive key's JSON string or number value,
+URI query assignment or prose assignment, to the end of the text when the
+value is cut off; only exactly a marker counts as already masked. Not covered:
+a split piece that starts inside a value, and an object or array under a
+sensitive key in unparsed text. Both are rare at journald's 48 KiB line
+limit.
 Classifier fields `messageId`, `unitField` and `pid` stay internal;
 `toLogEntry` removes them at the wire boundary.
 
