@@ -45,6 +45,7 @@ import {
 	deriveWifiLinkView,
 	wpa3ChipKey,
 } from './wifi-capability-view';
+import { wifiTokenWithheld } from './wifi-radio-binding';
 import {
 	deriveWifiStationLock,
 	wifiHotspotOpKey,
@@ -85,7 +86,8 @@ const HotspotDialog = lazyDialog(() => import('../dialogs/HotspotDialog.svelte')
 
 // The dialog is bound to the row it was opened for and stays mounted while that
 // pick lasts. It gets the row only while the row still carries the incarnation
-// it was opened with: a lost or replaced radio leaves it without one, so it
+// it was opened with, or withholds its token during a restart: a lost or
+// replaced radio leaves it without one, so it
 // closes with a notice (a Start already sent still reports), and the same id
 // under a new incarnation needs a fresh pick instead of reopening. A tokenless
 // row (identity not yet proven, or a degraded radio) opens read-only: live
@@ -97,7 +99,7 @@ const hotspotIface = $derived.by(() => {
 	if (!hotspotDialogTarget) return undefined;
 	const { id: target, incarnation } = hotspotDialogTarget;
 	const row = wifiRadios.find(([id]) => id === target)?.[1];
-	return row?.incarnation === incarnation ? row : undefined;
+	return row?.incarnation === incarnation || wifiTokenWithheld(row) ? row : undefined;
 });
 
 function openHotspotSetup(id: string) {

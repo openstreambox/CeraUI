@@ -1137,10 +1137,12 @@ function handleMessage(
 				// pending while the same owner performs its one bounded retry.
 				const shownToken = wifiState?.[String(config.device)]?.incarnation;
 				// The key carries the dispatched token, so a withheld display token
-				// cannot make this settle another radio's operation.
+				// cannot make this settle another radio's operation. A terminal that
+				// names its token settles that radio's own key even after a
+				// replacement is on screen; it never touches the replacement's key.
 				if (
 					ownsDispatch &&
-					(shownToken === undefined || config.incarnation === shownToken) &&
+					(config.incarnation !== undefined || shownToken === undefined) &&
 					config.error !== "binding-required" &&
 					!(
 						config.error === "radio-changed" &&

@@ -97,7 +97,7 @@ import {
 	wifiModeTarget,
 } from '$main/network/wifi-adapter-mode-view';
 import { withWifiEntryRetry } from '$main/network/wifi-entry-request';
-import { sameWifiRadio, type WifiRadioBinding, wifiRadioChanged } from '$main/network/wifi-radio-binding';
+import { sameWifiRadio, type WifiRadioBinding, wifiRadioChanged, wifiTokenWithheld } from '$main/network/wifi-radio-binding';
 import { deriveWifiStationLock, wifiHotspotConfigOpKey, wifiHotspotOpKey, wifiModeOpKey } from '$main/network/wifi-station-lock';
 
 import {
@@ -306,7 +306,7 @@ $effect.pre(() => {
 	const refreshOnSettlement = refreshFormOnSettlement;
 	// A restart withholds the token for a moment; only another radio, or a token
 	// gone outside a transition, ends this dialog's radio lifetime.
-	const withheld = next.incarnation === undefined && iface?.transition !== undefined;
+	const withheld = wifiTokenWithheld(iface);
 	untrack(() => {
 		if (opened && !prevOpen) {
 			retireDetachedStart();
@@ -578,6 +578,7 @@ async function writeConfig(
 		},
 	});
 	controller.abort();
+	if (detachedStart === controller) retireDetachedStart();
 	return result;
 }
 
