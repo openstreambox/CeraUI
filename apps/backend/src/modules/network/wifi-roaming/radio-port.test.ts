@@ -56,16 +56,22 @@ const station = (over: Partial<SeedRadio> = {}): SeedRadio => ({
 /** Answers `iw` from a table and records every command. */
 function fakeIw(answers: Record<string, string | Error> = {}) {
 	const calls: string[] = [];
-	const run = async (bin: string, args: string[]) => {
+	const loud: string[] = [];
+	const run = async (
+		bin: string,
+		args: string[],
+		opts?: { timeout?: number; quiet?: boolean },
+	) => {
 		const line = `${bin} ${args.join(" ")}`;
 		calls.push(line);
+		if (opts?.quiet !== true) loud.push(line);
 		const answer =
 			answers[line] ??
 			(line === "iw dev" ? IW_DEV : line.endsWith(" link") ? LINK : "");
 		if (answer instanceof Error) throw answer;
 		return answer;
 	};
-	return { run, calls };
+	return { run, calls, loud };
 }
 
 describe("parsers", () => {
@@ -99,6 +105,7 @@ describe("radios as the observer reads them", () => {
 		restoreWifiRegistry(inherited);
 	});
 
+	let clock = 0;
 	const port = (
 		iw = fakeIw(),
 		exclude: ReadonlySet<string> = new Set(),
@@ -106,6 +113,7 @@ describe("radios as the observer reads them", () => {
 	) =>
 		createRadioPort({
 			run: iw.run,
+			now: () => clock,
 			rows: getWifiInterfacesByMacAddress,
 			admit: (key) => admitWifiAdapter(key),
 			exclude,
@@ -127,8 +135,67 @@ describe("radios as the observer reads them", () => {
 			link: { bssid: "aa:00:00:00:00:01", ssid: "venue", signalDbm: -63 },
 		});
 		expect(radio?.id.startsWith(`${MAC1}/51:`)).toBe(true);
-		// Only reads: the interface list and the radio's link, never a scan.
+		// Only reads: the interface list and the radio's link, never a scan,
+		// and none of them leaves a debug trace.
 		expect(iw.calls).toEqual(["iw dev", "iw dev wlan1 link"]);
+		expect(iw.loud).toEqual([]);
+	});
+
+	test("the interface list is read at most every 5 s, the link every round", async () => {
+		await seed.publish([station()]);
+		const iw = fakeIw();
+		const p = port(iw);
+		clock = 0;
+		await p.read();
+		clock = 4_000;
+		await p.read();
+		clock = 5_000;
+		await p.read();
+		expect(iw.calls.filter((c) => c === "iw dev")).toHaveLength(2);
+		expect(iw.calls.filter((c) => c.endsWith(" link"))).toHaveLength(3);
+	});
+
+	test("a radio that could serve a hotspot but does not is a client radio", async () => {
+		// Discovery gives every AP-capable radio a hotspot object.
+		await seed.publish([
+			station({
+				row: {
+					conn: CONN,
+					activeMode: "infrastructure",
+					hotspot: {
+						availableChannels: [],
+						bandCapability: ["auto"],
+						warnings: {},
+					},
+				} as unknown as Partial<WifiInterface>,
+			}),
+		]);
+		const read = await port().read();
+		expect(read.radios[0]).toMatchObject({ station: true, reserved: false });
+	});
+
+	test("an active concurrent AP leg reserves the radio; a leg without an active connection does not", async () => {
+		const leg = (activeConn: string | null) =>
+			station({
+				row: {
+					conn: CONN,
+					activeMode: "infrastructure",
+					concurrentHotspot: { ifname: "clap-wlan1", activeConn },
+				} as unknown as Partial<WifiInterface>,
+			});
+		await seed.publish([leg(CONN)]);
+		expect((await port().read()).radios[0]?.reserved).toBe(true);
+		await seed.publish([leg(null)]);
+		expect((await port().read()).radios[0]?.reserved).toBe(false);
+	});
+
+	test("a radio in an unknown NetworkManager mode is not a station", async () => {
+		await seed.publish([
+			station({
+				row: { conn: CONN, activeMode: "unknown" } as Partial<WifiInterface>,
+			}),
+		]);
+		expect((await port().read()).radios[0]?.station).toBe(false);
 	});
 
 	test("a radio whose phy carries an AP leg is reserved", async () => {
@@ -263,6 +330,52 @@ describe("radios as the observer reads them", () => {
 		expect(read.skipped).toEqual([
 			{ ifname: "wlan1", reason: "changed-during-read" },
 		]);
+	});
+
+	test("a radio replugged while another radio's link is read is skipped too", async () => {
+		await seed.publish([
+			station(),
+			station({ ifname: "wlan2", mac: MAC2, ifindex: 61, phy: 6 }),
+		]);
+		const iw = fakeIw();
+		let replugged = false;
+		const read = await port(iw, new Set(), {
+			run: async (bin, args) => {
+				const out = await iw.run(bin, args);
+				// wlan1 was read already; it is replugged while wlan2 is read.
+				if (args[1] === "wlan2" && !replugged) {
+					replugged = true;
+					await seed.publish([
+						station({ ifindex: 52 }),
+						station({ ifname: "wlan2", mac: MAC2, ifindex: 61, phy: 6 }),
+					]);
+				}
+				return out;
+			},
+		}).read();
+		expect(read.skipped).toContainEqual({
+			ifname: "wlan1",
+			reason: "changed-during-read",
+		});
+		expect(read.radios.map((r) => r.ifname)).not.toContain("wlan1");
+	});
+
+	test("a verified twin (registry key MAC@port) is skipped as a twin", async () => {
+		addWifiInterface("02:00:00:00:d0:09@usb-1.2", {
+			id: 91,
+			ifname: "wlan7",
+			conn: null,
+			hw: "twin",
+			available: new Map(),
+			saved: {},
+			savedAll: {},
+		} as WifiInterface);
+		try {
+			const read = await port().read();
+			expect(read.skipped).toContainEqual({ ifname: "wlan7", reason: "twin" });
+		} finally {
+			removeWifiInterface("02:00:00:00:d0:09@usb-1.2");
+		}
 	});
 
 	test("no radio admitted: nothing is run", async () => {

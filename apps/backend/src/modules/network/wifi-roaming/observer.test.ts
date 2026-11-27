@@ -40,6 +40,7 @@ const READY: SenderView = {
 	reachable: true,
 	arrivalReports: true,
 	standby: true,
+	mapping: { unmapped: 0, ambiguous: 0, uncounted: 0 },
 };
 
 const radio = (over: Partial<RadioView> = {}): RadioView => ({
@@ -60,6 +61,8 @@ function snap(
 	t: number,
 	opts: {
 		deliver?: number;
+		/** Second at which the stayer's acknowledgements pause for one step, then catch up. */
+		gapAt?: number;
 		radioMapped?: boolean;
 		unmapped?: boolean;
 		stayer?: boolean;
@@ -72,7 +75,10 @@ function snap(
 		radios.set("wwan0", {
 			...base,
 			queued: 30 * t,
-			entries: Math.floor(30 * t * (opts.deliver ?? 1)),
+			entries:
+				opts.gapAt !== undefined && t === opts.gapAt
+					? Math.floor(30 * (t - 1) * (opts.deliver ?? 1))
+					: Math.floor(30 * t * (opts.deliver ?? 1)),
 		});
 	const others = new Map<string, LinkSample>();
 	if (opts.unmapped) others.set("conn:9", base);
@@ -325,5 +331,83 @@ describe("stayers", () => {
 		const snaps = [1, 2, 3, 4, 5, 6].map((t) => snap(t, { stayer: false }));
 		expect(deliveringStayers(snaps, "wlan1")).toEqual([]);
 		expect(deliveringStayers(snaps, "wlan2")).toEqual(["wlan1"]);
+	});
+});
+
+describe("what the sender evidence has to be", () => {
+	const fadeWith = (step: (t: number) => Step) => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 5);
+		rounds(o, 6, 12, (t) => ({ radio: fading, ...step(t) }));
+		return status(o);
+	};
+
+	test("a sender whose state stopped moving is stale: no stayer, no nudge", () => {
+		const frozen = snap(5);
+		const st = fadeWith(() => ({ snapshot: frozen }));
+		expect(st?.blockers).toContain("sender-evidence-stale");
+		expect(st?.stayers).toEqual([]);
+		expect(st?.decision).toBe("would-wait");
+	});
+
+	test("a link without counters, or one that maps ambiguously, blocks even when the snapshot looks clean", () => {
+		expect(
+			fadeWith(() => ({
+				sender: {
+					...READY,
+					mapping: { unmapped: 0, ambiguous: 0, uncounted: 1 },
+				},
+			}))?.blockers,
+		).toEqual(["uncounted-sender-link"]);
+		expect(
+			fadeWith(() => ({
+				sender: {
+					...READY,
+					mapping: { unmapped: 0, ambiguous: 1, uncounted: 0 },
+				},
+			}))?.blockers,
+		).toEqual(["ambiguous-sender-link"]);
+		expect(
+			fadeWith(() => ({ sender: { ...READY, mapping: null } }))?.blockers,
+		).toContain("no-sender-evidence");
+	});
+
+	test("a stayer whose acknowledgements broke off inside the span does not count, even when they caught up", () => {
+		// Over the span it delivered all it was offered: only the break counts.
+		const snaps = [6, 7, 8, 9, 10, 11, 12].map((t) => snap(t, { gapAt: 11 }));
+		expect(deliveringStayers(snaps, "wlan1")).toEqual([]);
+		const st = fadeWith((t) => ({ snapshot: snap(t, { gapAt: 11 }) }));
+		expect(st?.blockers).toContain("no-delivering-stayer");
+		// Without the gap the same stayer counts.
+		expect(
+			deliveringStayers(
+				[6, 7, 8, 9, 10, 11, 12].map((t) => snap(t)),
+				"wlan1",
+			),
+		).toEqual(["wwan0"]);
+	});
+});
+
+describe("a radio without a link", () => {
+	test("says why: not associated, or the link could not be read", () => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 2, { radio: { link: null } });
+		expect(status(o)).toMatchObject({
+			condition: null,
+			decision: "none",
+			blockers: ["not-associated"],
+		});
+		rounds(o, 3, 3, { radio: { link: undefined } });
+		expect(status(o)?.blockers).toEqual(["link-unreadable"]);
+	});
+});
+
+describe("the physical id is recorded", () => {
+	test("in the status and on every journal line", () => {
+		const o = new RoamingObserver();
+		const events = rounds(o, 1, 12, (t) => (t > 5 ? { radio: fading } : {}));
+		expect(status(o)?.id).toBe(ID);
+		expect(events.length).toBeGreaterThan(1);
+		for (const e of events) expect(e.id).toBe(ID);
 	});
 });

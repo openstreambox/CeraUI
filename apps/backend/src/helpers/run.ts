@@ -59,6 +59,11 @@ export const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024;
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
 export type RunOpts = {
+	/**
+	 * Skip the per-call debug trace. Only for routine read-only probes that run
+	 * every second, where the trace would fill the device journal.
+	 */
+	quiet?: boolean;
 	/** Select stderr for commands whose machine receipt is on that channel. */
 	output?: "stdout" | "stderr";
 	/** Max bytes captured from stdout/stderr before the child is killed. */
@@ -328,7 +333,7 @@ export async function run(
 	}
 
 	const redacted = `${bin} ${redactArgv(args)}`.trim();
-	logger.debug(`run: ${redacted}`);
+	if (!opts?.quiet) logger.debug(`run: ${redacted}`);
 
 	if (opts?.signal?.aborted) {
 		throw new RunAbortError(redacted);

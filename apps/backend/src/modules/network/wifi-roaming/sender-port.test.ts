@@ -4,11 +4,23 @@ import type {
 	SenderLinkStats,
 	SenderStats,
 } from "@ceraui/srtla-send/control";
+import type { OwnedSender } from "../../streaming/continuity-observer.ts";
 import {
 	createSenderPort,
 	interfaceAddressesOf,
+	isOwnedSenderSocket,
+	linkMapping,
+	type OwnerCheckIo,
 	type SenderPortDeps,
+	startTimeOf,
 } from "./sender-port.ts";
+
+const OWNER: OwnedSender = {
+	lifetime: "11111111-1111-4111-8111-111111111111",
+	pid: 4242,
+	startTime: "987654",
+	controlSocket: "/tmp/srtla-send-control-5000.sock",
+};
 
 const link = (over: Partial<SenderLinkStats> = {}): SenderLinkStats => ({
 	conn_id: 0,
@@ -45,14 +57,20 @@ function fake() {
 			"get_capabilities",
 		]) as SenderCapabilityDocument | null,
 		reachable: true,
+		owner: OWNER as OwnedSender | null,
+		connectGate: null as Promise<void> | null,
+		connectedTo: [] as string[],
 		connects: 0,
 		closes: 0,
 		calls: [] as string[],
 	};
 	const deps: SenderPortDeps = {
 		now: () => state.now,
-		connect: async () => {
+		owner: () => state.owner,
+		connect: async (owner) => {
 			state.connects++;
+			state.connectedTo.push(owner.lifetime);
+			if (state.connectGate) await state.connectGate;
 			if (!state.reachable) return null;
 			return {
 				getStats: async () => {
@@ -148,11 +166,175 @@ describe("the sender read port", () => {
 		state.reachable = false;
 		await port.poll();
 		expect(port.snapshot()).toBeUndefined();
-		expect(port.view()).toEqual({
+		expect(port.view()).toMatchObject({
 			reachable: false,
 			arrivalReports: null,
 			standby: null,
 		});
+	});
+});
+
+describe("only the sender this backend launched", () => {
+	test("no owned sender: nothing connects, nothing is read", async () => {
+		const { state, port } = fake();
+		state.owner = null;
+		await port.poll();
+		expect(state.connects).toBe(0);
+		expect(port.snapshot()).toBeUndefined();
+		expect(port.view().reachable).toBe(false);
+	});
+
+	test("the owned sender going away drops the client and its snapshot", async () => {
+		const { state, port } = fake();
+		state.replies.push(stats([link()]));
+		await port.poll();
+		expect(port.snapshot()).toBeDefined();
+		state.owner = null;
+		await port.poll();
+		expect(state.closes).toBe(1);
+		expect(port.snapshot()).toBeUndefined();
+	});
+
+	test("a new owned sender (another lifetime) gets a new client", async () => {
+		const { state, port } = fake();
+		state.replies.push(stats([link()]));
+		await port.poll();
+		state.owner = {
+			...OWNER,
+			lifetime: "22222222-2222-4222-8222-222222222222",
+		};
+		state.replies.push(stats([link()]));
+		await port.poll();
+		expect(state.connectedTo).toEqual([
+			OWNER.lifetime,
+			"22222222-2222-4222-8222-222222222222",
+		]);
+		expect(state.closes).toBe(1);
+	});
+
+	test("a connect that resolves after close is closed at once and reads nothing", async () => {
+		const { state, port } = fake();
+		const gate = Promise.withResolvers<void>();
+		state.connectGate = gate.promise;
+		state.replies.push(stats([link()]));
+		const polling = port.poll();
+		port.close();
+		gate.resolve();
+		await polling;
+		expect(state.calls).toEqual([]);
+		expect(state.closes).toBe(1);
+		await port.poll();
+		expect(state.connects).toBe(1);
+	});
+});
+
+describe("how every link maps", () => {
+	const ifs = [
+		{ ifname: "wlan1", addresses: ["192.0.2.1"] },
+		{ ifname: "wlan2", addresses: ["192.0.2.1", "192.0.2.2"] },
+		{ ifname: "wwan0", addresses: ["100.64.0.2"] },
+	];
+	test("a link without counters is counted, and still mapped", () => {
+		expect(
+			linkMapping(
+				[
+					link({
+						ip: "100.64.0.2",
+						data_packets_queued_total: undefined,
+						srtla_ack_entries_total: undefined,
+						srtla_ack_epoch: undefined,
+					}),
+				],
+				ifs,
+			),
+		).toEqual({ unmapped: 0, ambiguous: 0, uncounted: 1 });
+	});
+	test("an address two interfaces share is ambiguous even when both have links of their own", () => {
+		expect(
+			linkMapping(
+				[
+					link({ conn_id: 0, iface: "wlan1", ip: "192.0.2.1" }),
+					link({ conn_id: 1, iface: "wlan2", ip: "192.0.2.2" }),
+					link({ conn_id: 2, ip: "192.0.2.1" }),
+				],
+				ifs,
+			),
+		).toEqual({ unmapped: 0, ambiguous: 1, uncounted: 0 });
+	});
+	test("two links on one interface are both ambiguous; a link from nowhere is unmapped", () => {
+		expect(
+			linkMapping(
+				[
+					link({ conn_id: 0, iface: "wwan0" }),
+					link({ conn_id: 1, iface: "wwan0" }),
+					link({ conn_id: 2, ip: "198.51.100.9" }),
+				],
+				ifs,
+			),
+		).toEqual({ unmapped: 1, ambiguous: 2, uncounted: 0 });
+	});
+	test("the view carries the mapping of the last reply", async () => {
+		const { state, port } = fake();
+		state.replies.push(
+			stats([link(), link({ conn_id: 1, ip: "203.0.113.5" })]),
+		);
+		await port.poll();
+		expect(port.view().mapping).toEqual({
+			unmapped: 1,
+			ambiguous: 0,
+			uncounted: 0,
+		});
+	});
+});
+
+describe("the owned sender's socket", () => {
+	const STAT = `4242 (srtla_send) S 1 4242 4242 0 -1 4194560 100 0 0 0 1 1 0 0 20 0 1 0 ${OWNER.startTime} 1000 100`;
+	const io = (over: Partial<OwnerCheckIo> = {}): OwnerCheckIo => ({
+		readText: async () => STAT,
+		socketOwner: async () => ({ socket: true, uid: 0 }),
+		uid: () => 0,
+		...over,
+	});
+	test("the start time field is read past the command name", () => {
+		expect(startTimeOf(STAT)).toBe(OWNER.startTime);
+		expect(
+			startTimeOf(
+				"1 (a b) c) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 777 9",
+			),
+		).toBe("777");
+	});
+	test("the same process and a socket of ours: yes", async () => {
+		expect(await isOwnedSenderSocket(OWNER, io())).toBe(true);
+	});
+	test("another process under the pid, a socket of another user, a plain file, or a failed read: no", async () => {
+		expect(
+			await isOwnedSenderSocket(
+				OWNER,
+				io({ readText: async () => STAT.replace(OWNER.startTime, "1") }),
+			),
+		).toBe(false);
+		expect(
+			await isOwnedSenderSocket(
+				OWNER,
+				io({ socketOwner: async () => ({ socket: true, uid: 1000 }) }),
+			),
+		).toBe(false);
+		expect(
+			await isOwnedSenderSocket(
+				OWNER,
+				io({ socketOwner: async () => ({ socket: false, uid: 0 }) }),
+			),
+		).toBe(false);
+		expect(
+			await isOwnedSenderSocket(
+				OWNER,
+				io({
+					readText: async () => {
+						throw new Error("ENOENT");
+					},
+				}),
+			),
+		).toBe(false);
 	});
 });
 
@@ -182,7 +364,7 @@ describe("what the sender can report and do", () => {
 		state.replies.push(stats([link()]), stats([link()]));
 		await port.poll();
 		await port.poll();
-		expect(port.view()).toEqual({
+		expect(port.view()).toMatchObject({
 			reachable: true,
 			arrivalReports: true,
 			standby: true,

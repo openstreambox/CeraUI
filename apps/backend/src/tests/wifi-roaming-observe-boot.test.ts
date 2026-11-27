@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { runtimeConfigSchema } from "../helpers/config-schemas.ts";
 import {
 	handleTerminationSignal,
@@ -39,12 +41,31 @@ describe("the roaming config", () => {
 });
 
 describe("boot and shutdown", () => {
-	test("off, and observe next to the two-radio coordinator, start nothing", async () => {
-		await initWifiRoaming(undefined, false);
-		await initWifiRoaming({ level: "off" }, false);
-		await initWifiRoaming({ level: "observe" }, true);
-		// Nothing started, so stopping has nothing to wait for.
-		await stopWifiRoaming();
+	test("off, and observe next to the two-radio coordinator, start no timer and touch nothing", async () => {
+		const timers = spyOn(globalThis, "setInterval");
+		try {
+			await initWifiRoaming(undefined, false);
+			await initWifiRoaming({ level: "off" }, false);
+			await initWifiRoaming({ level: "observe" }, true);
+			expect(timers).not.toHaveBeenCalled();
+			// Nothing started, so stopping has nothing to wait for.
+			await stopWifiRoaming();
+		} finally {
+			timers.mockRestore();
+		}
+	});
+
+	test("the boot starts it after steering and before the shaper, behind the non-critical guard, and shutdown stops it", () => {
+		const main = readFileSync(join(import.meta.dir, "..", "main.ts"), "utf8");
+		const steering = main.indexOf('guardNonCritical("uplink-steering"');
+		const roaming = main.indexOf('guardNonCritical("wifi-roaming"');
+		const shaper = main.indexOf('guardNonCritical("uplink-shaper"');
+		expect(steering).toBeGreaterThan(0);
+		expect(roaming).toBeGreaterThan(steering);
+		expect(shaper).toBeGreaterThan(roaming);
+		expect(main).toMatch(
+			/stopUplinkShaper,\s*stopWifiRoaming,\s*stopGatewayRoutes,/,
+		);
 	});
 
 	test("shutdown awaits the observer's stop before the streaming shutdown and exit", async () => {

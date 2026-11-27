@@ -3,17 +3,21 @@
  * default, and off does no IO. Never next to the two-radio coordinator.
  *
  * Each round (once a second, never overlapping): one sender read, one read of
- * the radios, one observer step, then the status file and any journal lines.
- * Both live under /run, mode 0600 (they name networks and radios), and are
- * diagnostics only: nothing reads them back for a decision, so a restart or a
- * failed write loses nothing that matters.
+ * the radios, one observer step, then the status file (when it changed, or
+ * every 10 s) and any journal lines. Both live under /run, mode 0600 in a 0700
+ * directory (they name networks and radios), and are diagnostics only: nothing
+ * reads them back for a decision, so a restart or a failed write loses nothing
+ * that matters. At most 256 journal lines wait for the disk; past that new
+ * events are dropped and counted in the status.
  *
- * `stop()` ends the loop, waits for the round in flight (bounded), closes the
- * sender client, writes a final "stopped" status and drains the journal.
+ * `stop()` ends the loop and, within 2 s, waits for the round in flight,
+ * closes the sender client, writes a final "stopped" status and drains the
+ * journal. After that deadline nothing more is written.
  */
 
 import {
 	appendFile,
+	chmod,
 	mkdir,
 	readFile,
 	rename,
@@ -36,8 +40,14 @@ import {
 
 export const WIFI_ROAMING_RUN_DIR = "/run/ceralive/wifi-roaming";
 export const ROUND_MS = 1_000;
-/** Shutdown waits at most this long for the round in flight. */
-export const STOP_DEADLINE_MS = 5_000;
+/** Shutdown waits at most this long for the round in flight and the drain. */
+export const STOP_DEADLINE_MS = 2_000;
+/** A sender read that has not answered in this long has failed. */
+export const SENDER_TIMEOUT_MS = 1_000;
+/** Journal lines that may wait for the disk; newer events are dropped past it. */
+export const JOURNAL_MAX_PENDING = 256;
+/** An unchanged status is still rewritten this often, as a liveness mark. */
+export const STATUS_REFRESH_MS = 10_000;
 /** The journal keeps at most this many lines; older ones are dropped. */
 export const JOURNAL_MAX_LINES = 2_000;
 
@@ -74,7 +84,17 @@ export function fileIo(dir = WIFI_ROAMING_RUN_DIR): RuntimeIo {
 		(await readFile(journal, "utf8").catch(() => ""))
 			.split("\n")
 			.filter(Boolean);
-	const ensureDir = () => mkdir(dir, { recursive: true, mode: 0o700 });
+	let prepared = false;
+	// Existing files keep their mode on rename and append: set it once.
+	const ensureDir = async () => {
+		await mkdir(dir, { recursive: true, mode: 0o700 });
+		if (prepared) return;
+		await chmod(dir, 0o700);
+		await chmod(journal, 0o600).catch(() => {
+			// No journal yet: it is created 0600.
+		});
+		prepared = true;
+	};
 	return {
 		async writeStatus(json) {
 			await ensureDir();
@@ -124,17 +144,68 @@ function statusDocument(
 	state: "observing" | "stopped",
 	startedAt: number,
 	status: ObserverStatus | null,
+	journalDropped: number,
 ): string {
-	return `${JSON.stringify({ level: "observe", state, startedAt, ...(status ?? {}) }, null, 2)}\n`;
+	return `${JSON.stringify({ level: "observe", state, startedAt, journalDropped, ...(status ?? {}) }, null, 2)}\n`;
 }
 
 export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 	const observer = new RoamingObserver();
 	const startedAt = deps.now();
 	let stopped = false;
+	/** Set when the stop deadline passed: nothing is written after it. */
+	let sealed = false;
 	let inFlight: Promise<void> | null = null;
 	/** The last journal append; appends are ordered and never reject. */
 	let journalTail: Promise<void> = Promise.resolve();
+	let journalPending = 0;
+	let journalDropped = 0;
+	let lastStatus: { body: string; at: number } | null = null;
+
+	const document = (state: "observing" | "stopped") =>
+		statusDocument(state, startedAt, observer.status(), journalDropped);
+
+	const writeStatus = async (state: "observing" | "stopped") => {
+		if (sealed) return;
+		const now = deps.now();
+		// Compare without the round's time: only a change is worth a write.
+		const body = statusDocument(
+			state,
+			startedAt,
+			observer.status()
+				? { ...(observer.status() as ObserverStatus), at: 0 }
+				: null,
+			journalDropped,
+		);
+		if (
+			state === "observing" &&
+			lastStatus?.body === body &&
+			now - lastStatus.at < STATUS_REFRESH_MS
+		)
+			return;
+		try {
+			await deps.io.writeStatus(document(state));
+			lastStatus = { body, at: now };
+		} catch (error) {
+			logger.debug("wifi-roaming: status write failed", { error });
+		}
+	};
+
+	const journal = (line: string) => {
+		if (journalPending >= JOURNAL_MAX_PENDING) {
+			journalDropped++;
+			return;
+		}
+		journalPending++;
+		journalTail = journalTail
+			.then(() => (sealed ? undefined : deps.io.appendJournal(line)))
+			.catch((error: unknown) => {
+				logger.debug("wifi-roaming: journal write failed", { error });
+			})
+			.finally(() => {
+				journalPending--;
+			});
+	};
 
 	const once = async () => {
 		await deps.sender.poll();
@@ -148,21 +219,9 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 			snapshot: deps.sender.snapshot(),
 			sender: deps.sender.view(),
 		});
-		try {
-			await deps.io.writeStatus(
-				statusDocument("observing", startedAt, observer.status()),
-			);
-		} catch (error) {
-			logger.debug("wifi-roaming: status write failed", { error });
-		}
-		for (const event of events) {
-			const line = JSON.stringify(event);
-			journalTail = journalTail
-				.then(() => deps.io.appendJournal(line))
-				.catch((error: unknown) => {
-					logger.debug("wifi-roaming: journal write failed", { error });
-				});
-		}
+		if (stopped) return;
+		for (const event of events) journal(JSON.stringify(event));
+		await writeStatus("observing");
 	};
 
 	const round = () => {
@@ -197,20 +256,13 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 					(async () => {
 						await inFlight;
 						deps.sender.close();
-						await deps.io
-							.writeStatus(
-								statusDocument("stopped", startedAt, observer.status()),
-							)
-							.catch((error: unknown) => {
-								logger.debug("wifi-roaming: final status write failed", {
-									error,
-								});
-							});
+						await writeStatus("stopped");
 						await journalTail;
 					})(),
 					deadline,
 				]);
 			} finally {
+				sealed = true;
 				clearTimeout(timer);
 				deps.sender.close();
 			}
@@ -240,8 +292,8 @@ export async function initWifiRoaming(
 	const now = () => Date.now();
 	current = createObserverRuntime({
 		now,
-		sender: createSenderPort(defaultSenderPortDeps(now)),
-		radios: createRadioPort(defaultRadioPortDeps(run, exclude)),
+		sender: createSenderPort(defaultSenderPortDeps(now, SENDER_TIMEOUT_MS)),
+		radios: createRadioPort(defaultRadioPortDeps(run, now, exclude)),
 		io: fileIo(),
 		setInterval: (fn, ms) => setInterval(fn, ms),
 		clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),

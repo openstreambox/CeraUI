@@ -1,11 +1,12 @@
 /*
   Level `observe` acts on nothing. These guards hold that over every file in
-  the roaming module and every literal style, so a later change that adds an
-  effect has to change a guard on purpose.
+  the roaming module, nested ones included, and every literal and import
+  style, so a later change that adds an effect has to change a guard on
+  purpose.
 */
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 
 const SRC = join(import.meta.dir, "..");
 const DIR = join(SRC, "modules/network/wifi-roaming");
@@ -21,8 +22,18 @@ const EXPECTED = [
 	"sender-port.ts",
 ];
 
-const sources = readdirSync(DIR)
-	.filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+/** Every file under the module, nested ones too, relative to it. */
+function walk(dir: string): string[] {
+	return readdirSync(dir).flatMap((name) => {
+		const path = join(dir, name);
+		return statSync(path).isDirectory() ? walk(path) : [relative(DIR, path)];
+	});
+}
+const everything = walk(DIR).sort();
+/** Source files of any script kind, tests excluded. */
+const sources = everything
+	.filter((f) => /\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/.test(f))
+	.filter((f) => !/\.test\.[a-z]+$/.test(f))
 	.sort();
 const read = (file: string) => readFileSync(join(DIR, file), "utf8");
 
@@ -38,6 +49,19 @@ function literals(text: string): string[] {
 	const out: string[] = [];
 	for (const m of code(text).matchAll(/(["'`])((?:\\.|(?!\1)[^\\])*)\1/gs))
 		out.push(m[2] as string);
+	return out;
+}
+
+/** Every module a file loads: static, side-effect, dynamic, require, re-export. */
+function specifiers(text: string): string[] {
+	const out: string[] = [];
+	for (const re of [
+		/\bfrom\s*(["'`])([^"'`]+)\1/g,
+		/\bimport\s*(["'`])([^"'`]+)\1/g,
+		/\bimport\s*\(\s*(["'`])([^"'`]+)\1/g,
+		/\brequire\s*\(\s*(["'`])([^"'`]+)\1/g,
+	])
+		for (const m of code(text).matchAll(re)) out.push(m[2] as string);
 	return out;
 }
 
@@ -89,8 +113,10 @@ const FORBIDDEN_NAMES = [
 	"subscribe",
 	"subscribeStats",
 	"Bun.spawn",
+	"Bun.$",
 	"child_process",
 	"execFile",
+	"spawn",
 	"withWifiAdapterLock",
 	"holdOutOfBond",
 	"protectRadiosFromScans",
@@ -100,10 +126,9 @@ const FORBIDDEN_NAMES = [
 const ALLOWED_IMPORTS = new Set([
 	"node:fs/promises",
 	"@ceraui/srtla-send/control",
-	"@ceraui/srtla-send/sender",
 	"../../../helpers/logger.ts",
 	"../../../helpers/run.ts",
-	"../../streaming/constants.ts",
+	"../../streaming/continuity-observer.ts",
 	"../../wifi/wifi-adapter-admission.ts",
 	"../../wifi/wifi-connections.ts",
 	"../../wifi/wifi-interfaces.ts",
@@ -117,9 +142,59 @@ const ALLOWED_IMPORTS = new Set([
 	"./sender-port.ts",
 ]);
 
+/** From each shared module, exactly these symbols. */
+const ALLOWED_SYMBOLS: Record<string, string[]> = {
+	"../../../helpers/logger.ts": ["logger"],
+	"../../../helpers/run.ts": ["ID_RE", "argMatch", "run"],
+	"../../streaming/continuity-observer.ts": [
+		"OwnedSender",
+		"ownedSenderLifetime",
+	],
+	"../../wifi/wifi-adapter-admission.ts": [
+		"WifiAdapterAdmission",
+		"admitWifiAdapter",
+		"physicalWifiAdapterId",
+		"samePhysicalWifiAdapter",
+	],
+	"../../wifi/wifi-connections.ts": ["getWifiInterfacesByMacAddress"],
+	"../../wifi/wifi-interfaces.ts": ["WifiInterface"],
+	"../../wifi/wifi-permanent-mac.ts": ["normalizeMacAddress"],
+	"../network-interfaces.ts": ["getNetworkInterfaces"],
+	"@ceraui/srtla-send/control": [
+		"ControlClient",
+		"SenderLinkStats",
+		"SenderStats",
+		"createControlClient",
+	],
+	"node:fs/promises": [
+		"appendFile",
+		"chmod",
+		"lstat",
+		"mkdir",
+		"readFile",
+		"rename",
+		"writeFile",
+	],
+};
+
+const sortedEntries = (o: Record<string, Iterable<string>>) =>
+	Object.fromEntries(
+		Object.entries(o)
+			.map(([k, v]) => [k, [...v].sort()] as const)
+			.sort(([a], [b]) => a.localeCompare(b)),
+	);
+
 describe("the roaming observer acts on nothing", () => {
-	test("its files are the expected ones, and none of the effect modules exist", () => {
+	test("its files are the expected ones, nothing else hides there, and no effect module exists", () => {
 		expect(sources).toEqual(EXPECTED);
+		expect(
+			everything.filter(
+				(f) =>
+					!EXPECTED.includes(f) &&
+					f !== "README.md" &&
+					!/^[a-z-]+\.test\.ts$/.test(f),
+			),
+		).toEqual([]);
 		for (const gone of [
 			"bond-hold.ts",
 			"scan-gate.ts",
@@ -146,11 +221,11 @@ describe("the roaming observer acts on nothing", () => {
 		const hits: string[] = [];
 		for (const file of sources) {
 			const text = code(read(file));
-			for (const name of FORBIDDEN_NAMES)
-				if (
-					new RegExp(`(^|[^\\w.])${name.replace(/\./g, "\\.")}\\b`).test(text)
-				)
+			for (const name of FORBIDDEN_NAMES) {
+				const escaped = name.replace(/[.$]/g, (c) => `\\${c}`);
+				if (new RegExp(`(^|[^\\w.])${escaped}(?!\\w)`).test(text))
 					hits.push(`${file}: ${name}`);
+			}
 		}
 		expect(hits).toEqual([]);
 	});
@@ -164,44 +239,90 @@ describe("the roaming observer acts on nothing", () => {
 		expect(hits).toEqual([]);
 	});
 
-	test("it imports only reads, the pure modules and its own files", () => {
+	test("it loads only reads, the pure modules and its own files, in any import form", () => {
 		const hits: string[] = [];
 		for (const file of sources)
-			for (const m of code(read(file)).matchAll(/from\s+"([^"]+)"/g))
-				if (!ALLOWED_IMPORTS.has(m[1] as string)) hits.push(`${file}: ${m[1]}`);
+			for (const spec of specifiers(read(file)))
+				if (!ALLOWED_IMPORTS.has(spec)) hits.push(`${file}: ${spec}`);
 		expect(hits).toEqual([]);
-		// From the Wi-Fi registry only the read accessor.
+		// No dynamic loading at all: every module is named statically.
+		for (const file of sources)
+			expect(/\bimport\s*\(|\brequire\s*\(/.test(code(read(file)))).toBe(false);
+	});
+
+	test("from shared modules it takes only the read symbols it needs", () => {
+		const taken: Record<string, Set<string>> = {};
 		for (const file of sources) {
-			const m =
-				/import\s*{([^}]*)}\s*from\s*"\.\.\/\.\.\/wifi\/wifi-connections\.ts"/.exec(
-					code(read(file)),
-				);
-			if (m)
-				expect(
-					(m[1] as string)
-						.split(",")
-						.map((s) => s.trim())
-						.filter(Boolean),
-				).toEqual(["getWifiInterfacesByMacAddress"]);
+			const text = code(read(file));
+			// Namespace and default imports would take everything.
+			expect(
+				/\bimport\s+(?:type\s+)?(?:\*|\w+\s*(?:,|\bfrom\b))/.test(text),
+			).toBe(false);
+			for (const m of text.matchAll(
+				/\bimport\s+(?:type\s+)?{([^}]*)}\s*from\s*(["'`])([^"'`]+)\2/g,
+			)) {
+				const spec = m[3] as string;
+				if (spec.startsWith("./")) continue;
+				const names = taken[spec] ?? new Set<string>();
+				taken[spec] = names;
+				for (const raw of (m[1] as string).split(",")) {
+					const name = raw
+						.replace(/^\s*type\s+/, "")
+						.trim()
+						.split(/\s+as\s+/)[0];
+					if (name) names.add(name);
+				}
+			}
 		}
+		expect(sortedEntries(taken)).toEqual(sortedEntries(ALLOWED_SYMBOLS));
+	});
+
+	test("the sender client is narrowed to its two reads", () => {
+		const port = code(read("sender-port.ts"));
+		expect(port.replace(/\s+/g, " ")).toContain(
+			'Pick< ControlClient, "getStats" | "getCapabilities" | "close" >',
+		);
+		const calls = [...port.matchAll(/\b(?:client|opened)\??\.(\w+)\(/g)].map(
+			(m) => m[1],
+		);
+		expect(new Set(calls)).toEqual(
+			new Set(["close", "getCapabilities", "getStats"]),
+		);
 	});
 
 	test("the only command it runs is iw, with the interface list or one radio's link", () => {
-		const runs: string[] = [];
-		for (const file of sources) {
-			const text = code(read(file));
-			for (const m of text.matchAll(/\brun\(\s*"([^"]+)"/g))
-				runs.push(`${file}: ${m[1]}`);
-			for (const m of text.matchAll(/\bquiet\(\s*(\[[^\]]*\])/g))
-				runs.push(`${file}: iw ${m[1]}`);
-		}
-		expect(runs.sort()).toEqual(
+		// Every way a runner could be reached: the name, a property, a read.
+		const sites: string[] = [];
+		for (const file of sources)
+			for (const m of code(read(file)).matchAll(
+				/\bquiet\(\[[^\]]*\]\)|\.run\b|\brun\b/g,
+			))
+				sites.push(`${file}: ${m[0].replace(/\s+/g, " ")}`);
+		const LINK =
+			/^radio-port\.ts: quiet\(\[ ?"dev", argMatch\(ID_RE, admission\.row\.ifname\), "link",? ?\]\)$/;
+		const normalized = sites.map((s) => (LINK.test(s) ? "LINK" : s)).sort();
+		// Exactly these sites, each as often as listed.
+		expect(normalized).toEqual(
 			[
-				"radio-port.ts: iw",
-				'radio-port.ts: iw ["dev"]',
-				'radio-port.ts: iw ["dev", ifname, "link"]',
+				// The radio port's runner: the deps field, the production deps'
+				// parameter and shorthand, the one call through it, the interface
+				// list and the link read.
+				"radio-port.ts: run",
+				"radio-port.ts: run",
+				"radio-port.ts: run",
+				"radio-port.ts: run",
+				"radio-port.ts: .run",
+				'radio-port.ts: quiet(["dev"])',
+				"LINK",
+				// The runtime: the production runner imported and handed to the
+				// radio port, and the /run directory in its path and its doc.
+				"runtime.ts: run",
+				"runtime.ts: run",
+				"runtime.ts: run",
+				"runtime.ts: run",
 			].sort(),
 		);
+		expect(code(read("radio-port.ts"))).toContain('deps.run("iw", args, {');
 	});
 });
 
@@ -220,8 +341,20 @@ describe("what the observer leaves untouched", () => {
 			);
 	});
 
-	test("only the boot wiring and the shutdown reach the observer", () => {
-		const main = readFileSync(join(SRC, "main.ts"), "utf8");
-		expect(main).toContain("./modules/network/wifi-roaming/runtime.ts");
+	test("only the boot wiring reaches the observer", () => {
+		const hits: string[] = [];
+		const scan = (dir: string) => {
+			for (const name of readdirSync(dir)) {
+				const path = join(dir, name);
+				if (statSync(path).isDirectory()) {
+					if (path !== DIR && name !== "tests") scan(path);
+				} else if (/\.ts$/.test(name) && !/\.test\.ts$/.test(name)) {
+					if (readFileSync(path, "utf8").includes("wifi-roaming/"))
+						hits.push(relative(SRC, path));
+				}
+			}
+		};
+		scan(SRC);
+		expect(hits).toEqual(["main.ts"]);
 	});
 });

@@ -8,10 +8,11 @@
  * loss above 5 %). A nudge would then also need, in the design's order:
  * - the radio admitted (the radio port only lists admitted radios), not
  *   serving a hotspot, activated in NetworkManager as a station, associated;
- * - sender evidence: arrival reports, every sender link mapped to exactly one
- *   interface, the radio's own link among them;
- * - a stayer: another mapped link that delivers at least 95 % of what it was
- *   offered over a complete span;
+ * - sender evidence: fresh (the sender's state moved within the last 3 s),
+ *   with arrival reports on every link, every link mapped to exactly one
+ *   interface of its own, the radio's own link among them;
+ * - a stayer: another mapped link that delivered at least 95 % of what it was
+ *   offered over a complete, unbroken span;
  * - the sender's standby (`set_link_standby`), without which no hold exists;
  * - no cooldown: after a would-nudge the radio waits 15 s, doubling to
  *   10 min while it stays on the same access point; after it moved, 30 s.
@@ -39,6 +40,8 @@ export const COOLDOWN_BASE_MS = 15_000;
 export const COOLDOWN_MAX_MS = 600_000;
 /** After the radio moved by itself, no nudge for this long. */
 export const ROAM_DWELL_MS = 30_000;
+/** Sender evidence older than this is stale: the sender's state stopped moving. */
+export const SENDER_FRESH_MS = 3_000;
 /** Sender snapshots kept for the stayer's span (the span plus RTT lag). */
 const SNAPSHOT_WINDOW_MS = PROOF_POLICY.maxSpanMs + 5_000;
 const MAX_SNAPSHOTS = 64;
@@ -52,6 +55,8 @@ export type Blocker =
 	| "not-associated"
 	| "link-unreadable"
 	| "no-sender-evidence"
+	| "sender-evidence-stale"
+	| "uncounted-sender-link"
 	| "unmapped-sender-link"
 	| "ambiguous-sender-link"
 	| "radio-link-not-mapped"
@@ -60,6 +65,8 @@ export type Blocker =
 	| "cooldown";
 
 export type RadioStatus = Readonly<{
+	/** The physical radio id the observer keys its state by. */
+	id: string;
 	permanentMac: string;
 	ifname: string;
 	ssid: string | null;
@@ -83,7 +90,7 @@ export type ObserverStatus = Readonly<{
 }>;
 
 export type JournalEvent = Readonly<
-	{ at: number; radio: string; ifname: string } & (
+	{ at: number; radio: string; id: string; ifname: string } & (
 		| { event: "fade-start" | "fade-end"; signalDbm: number | null }
 		| { event: "would-nudge"; bssid: string | null; stayers: string[] }
 		| { event: "blocked"; blockers: Blocker[] }
@@ -101,6 +108,7 @@ export type RoundInput = Readonly<{
 }>;
 
 type RadioState = {
+	id: string;
 	permanentMac: string;
 	ifname: string;
 	samples: SignalSample[];
@@ -128,6 +136,7 @@ export function deliveringStayers(
 		const m = measureSpan(snaps, (s) => s.radios.get(name));
 		if (
 			m.status === "measured" &&
+			!m.continuityBreak &&
 			deliversAtLeast(m, STAYER_RATIO) &&
 			holderFailing(m.latest) === null
 		)
@@ -137,9 +146,23 @@ export function deliveringStayers(
 }
 
 /** Why the sender's evidence cannot back a hold on `ifname`, if it cannot. */
-function senderBlockers(snap: Snapshot | undefined, ifname: string): Blocker[] {
+function senderBlockers(
+	snap: Snapshot | undefined,
+	sender: SenderView,
+	ifname: string,
+	at: number,
+): Blocker[] {
 	if (!snap) return ["no-sender-evidence"];
 	const out: Blocker[] = [];
+	if (at - snap.at > SENDER_FRESH_MS) out.push("sender-evidence-stale");
+	// The mapping of every link, counted or not, from the same reply.
+	const mapping = sender.mapping;
+	if (!mapping) out.push("no-sender-evidence");
+	else {
+		if (mapping.uncounted > 0) out.push("uncounted-sender-link");
+		if (mapping.unmapped > 0) out.push("unmapped-sender-link");
+		if (mapping.ambiguous > 0) out.push("ambiguous-sender-link");
+	}
 	if (snap.others.size > 0) out.push("unmapped-sender-link");
 	for (const name of snap.claimed)
 		if (!snap.radios.has(name)) {
@@ -171,6 +194,7 @@ export class RoamingObserver {
 			let state = this.#radios.get(radio.id);
 			if (!state) {
 				state = {
+					id: radio.id,
 					permanentMac: radio.permanentMac,
 					ifname: radio.ifname,
 					samples: [],
@@ -225,6 +249,7 @@ export class RoamingObserver {
 		return {
 			at,
 			radio: state.permanentMac,
+			id: state.id,
 			ifname: state.ifname,
 			...body,
 		} as JournalEvent;
@@ -303,8 +328,12 @@ export class RoamingObserver {
 			if (!radio.station) blockers.push("not-a-station");
 			if (link === undefined) blockers.push("link-unreadable");
 			else if (link === null) blockers.push("not-associated");
-			blockers.push(...senderBlockers(input.snapshot, radio.ifname));
-			stayers = deliveringStayers(this.#snaps, radio.ifname);
+			blockers.push(
+				...senderBlockers(input.snapshot, input.sender, radio.ifname, at),
+			);
+			stayers = blockers.includes("sender-evidence-stale")
+				? []
+				: deliveringStayers(this.#snaps, radio.ifname);
 			if (stayers.length === 0) blockers.push("no-delivering-stayer");
 			if (input.sender.standby !== true)
 				blockers.push("sender-without-standby");
@@ -324,7 +353,12 @@ export class RoamingObserver {
 			events.push(this.#event(at, state, { event: "blocked", blockers }));
 		state.blockerKey = blockerKey;
 
+		// A radio without a link is no nudge candidate; say why it has none.
+		if (condition === null)
+			blockers = link === undefined ? ["link-unreadable"] : ["not-associated"];
+
 		return {
+			id: radio.id,
 			permanentMac: radio.permanentMac,
 			ifname: radio.ifname,
 			ssid: link?.ssid ?? null,
@@ -333,7 +367,7 @@ export class RoamingObserver {
 			slopeDbPerS: slope === null ? null : Math.round(slope * 100) / 100,
 			condition,
 			decision,
-			blockers: decision === "none" ? [] : blockers,
+			blockers,
 			stayers,
 			wouldNudges: state.wouldNudges,
 			lastWouldNudgeAt: state.lastWouldNudgeAt,

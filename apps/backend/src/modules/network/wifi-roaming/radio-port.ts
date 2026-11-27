@@ -9,9 +9,17 @@
  * CeraUI already keeps; the link itself from `iw dev <if> link` and the
  * radio's phy from `iw dev`. Neither starts a scan, and nothing here writes.
  *
- * The reads await, so a radio's admission is taken again after them and must
- * name the same physical radio and publication; a radio replugged or
- * republished during the read is skipped for the round.
+ * The reads await, so every radio's admission is taken again after all of
+ * them and must name the same physical radio and publication; a radio
+ * replugged or republished during the round's reads is skipped.
+ *
+ * Verified twins (two radios sharing a permanent MAC, registered as
+ * `MAC@port`) are not admitted by the shared admission and are skipped as
+ * `twin`, as the diversity check and the two-radio adapter skip them.
+ *
+ * `iw dev` (which interfaces are in AP mode on which phy) is read at most
+ * every 5 s; the link of each radio once a round. Both are routine reads and
+ * leave no debug trace per call.
  */
 
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
@@ -27,10 +35,12 @@ import type { WifiInterface } from "../../wifi/wifi-interfaces.ts";
 export type Runner = (
 	bin: string,
 	args: string[],
-	opts?: { timeout?: number },
+	opts?: { timeout?: number; quiet?: boolean },
 ) => Promise<string>;
 
 const READ_TIMEOUT_MS = 2_000;
+/** How long one `iw dev` read stands for the phy's AP state. */
+export const PHY_READ_MS = 5_000;
 
 /** The link of an associated radio, from `iw dev <if> link`. */
 export type RadioLink = Readonly<{
@@ -45,14 +55,16 @@ export type RadioView = Readonly<{
 	permanentMac: string;
 	ifname: string;
 	/**
-	 * NetworkManager has the radio activated as a station and it holds an
-	 * address (the registry's `conn`, gated on the address, with a station mode).
+	 * NetworkManager has the radio activated in infrastructure (station) mode
+	 * and it holds an address (the registry's `conn` is gated on the address).
 	 */
 	station: boolean;
 	/**
-	 * Serving a hotspot: the row has an active hotspot or a concurrent AP leg,
-	 * or the radio or another interface on its phy is in AP mode. `null` when
-	 * the phy could not be read. A hybrid radio is reserved whole.
+	 * Serving a hotspot now: NetworkManager has an AP active on the radio, its
+	 * concurrent AP leg has an active connection, or the radio or another
+	 * interface on its phy is in AP mode. `null` when the phy could not be read
+	 * and nothing else says so. A hybrid radio is reserved whole. (A row's
+	 * `hotspot` object alone says only that the radio could serve one.)
 	 */
 	reserved: boolean | null;
 	/** `null`: not associated; `undefined`: the link could not be read. */
@@ -68,6 +80,7 @@ export type RadioRead = Readonly<{
 
 export type RadioPortDeps = Readonly<{
 	run: Runner;
+	now(): number;
 	rows(): Readonly<Record<string, WifiInterface>>;
 	admit(registryKey: string): WifiAdapterAdmission | undefined;
 	/** Permanent MACs the operator excluded, normalized. */
@@ -134,20 +147,32 @@ export function apOnPhyOf(
 }
 
 function rowServesHotspot(row: WifiInterface): boolean {
-	return (
-		row.activeMode === "ap" ||
-		("hotspot" in row && row.hotspot !== undefined) ||
-		("concurrentHotspot" in row && row.concurrentHotspot !== undefined)
-	);
+	if (row.activeMode === "ap") return true;
+	const leg = "concurrentHotspot" in row ? row.concurrentHotspot : undefined;
+	return leg !== undefined && leg.activeConn !== null;
 }
 
 export function createRadioPort(deps: RadioPortDeps) {
 	const quiet = async (args: string[]) => {
 		try {
-			return await deps.run("iw", args, { timeout: READ_TIMEOUT_MS });
+			return await deps.run("iw", args, {
+				timeout: READ_TIMEOUT_MS,
+				quiet: true,
+			});
 		} catch {
 			return undefined;
 		}
+	};
+	let phys:
+		| { at: number; devs: ReturnType<typeof parseIwDev> | undefined }
+		| undefined;
+	const readPhys = async () => {
+		const now = deps.now();
+		if (phys === undefined || now - phys.at >= PHY_READ_MS) {
+			const out = await quiet(["dev"]);
+			phys = { at: now, devs: out === undefined ? undefined : parseIwDev(out) };
+		}
+		return phys.devs;
 	};
 
 	return {
@@ -158,7 +183,10 @@ export function createRadioPort(deps: RadioPortDeps) {
 				if (row.ifname.startsWith("clap-")) continue;
 				const admission = deps.admit(key);
 				if (!admission) {
-					skipped.push({ ifname: row.ifname, reason: "not-admitted" });
+					skipped.push({
+						ifname: row.ifname,
+						reason: key.includes("@") ? "twin" : "not-admitted",
+					});
 					continue;
 				}
 				if (deps.exclude.has(admission.permanentMac)) {
@@ -168,13 +196,17 @@ export function createRadioPort(deps: RadioPortDeps) {
 				admitted.push([key, admission]);
 			}
 
-			const devsOut = admitted.length > 0 ? await quiet(["dev"]) : undefined;
-			const devs = devsOut === undefined ? undefined : parseIwDev(devsOut);
+			const devs = admitted.length > 0 ? await readPhys() : undefined;
+			const links: (string | undefined)[] = [];
+			for (const [, admission] of admitted)
+				links.push(
+					await quiet(["dev", argMatch(ID_RE, admission.row.ifname), "link"]),
+				);
+			// Every read awaited: each radio must still be the admitted one,
+			// checked after all of them, not just after its own.
 			const radios: RadioView[] = [];
-			for (const [key, admission] of admitted) {
-				const ifname = argMatch(ID_RE, admission.row.ifname);
-				const linkOut = await quiet(["dev", ifname, "link"]);
-				// The reads awaited: the radio must still be the admitted one.
+			admitted.forEach(([key, admission], i) => {
+				const ifname = admission.row.ifname;
 				const now = deps.admit(key);
 				if (
 					!now ||
@@ -183,20 +215,20 @@ export function createRadioPort(deps: RadioPortDeps) {
 					!samePhysicalWifiAdapter(now, admission)
 				) {
 					skipped.push({ ifname, reason: "changed-during-read" });
-					continue;
+					return;
 				}
 				const row = admission.row;
 				const ap = devs === undefined ? null : apOnPhyOf(devs, ifname).apOnPhy;
-				const reserved = rowServesHotspot(row) ? true : ap;
+				const linkOut = links[i];
 				radios.push({
 					id: physicalWifiAdapterId(admission),
 					permanentMac: admission.permanentMac,
 					ifname,
-					station: row.conn !== null && row.activeMode !== "ap",
-					reserved,
+					station: row.conn !== null && row.activeMode === "infrastructure",
+					reserved: rowServesHotspot(row) ? true : ap,
 					link: linkOut === undefined ? undefined : parseIwLink(linkOut),
 				});
-			}
+			});
 			return { radios, skipped };
 		},
 	};
@@ -205,10 +237,12 @@ export function createRadioPort(deps: RadioPortDeps) {
 /** The production dependencies: CeraUI's registry and upstream's admission. */
 export function defaultRadioPortDeps(
 	run: Runner,
+	now: () => number,
 	exclude: ReadonlySet<string>,
 ): RadioPortDeps {
 	return {
 		run,
+		now,
 		rows: getWifiInterfacesByMacAddress,
 		admit: (key) => admitWifiAdapter(key),
 		exclude,

@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import {
+	chmod,
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	stat,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RadioRead } from "./radio-port.ts";
@@ -7,9 +15,11 @@ import {
 	createObserverRuntime,
 	fileIo,
 	JOURNAL_MAX_LINES,
+	JOURNAL_MAX_PENDING,
 	type RuntimeDeps,
 	type RuntimeIo,
 	roamingBlocker,
+	STATUS_REFRESH_MS,
 	STOP_DEADLINE_MS,
 } from "./runtime.ts";
 import type { SenderPort, SenderView } from "./sender-port.ts";
@@ -29,6 +39,13 @@ const VIEW: SenderView = {
 	reachable: true,
 	arrivalReports: true,
 	standby: false,
+	mapping: { unmapped: 0, ambiguous: 0, uncounted: 0 },
+};
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+type FakeDeps = Omit<RuntimeDeps, "sender" | "io"> & {
+	sender: Mutable<SenderPort>;
+	io: Mutable<RuntimeIo>;
 };
 
 function fakeDeps(over: Partial<RuntimeDeps> = {}) {
@@ -37,7 +54,7 @@ function fakeDeps(over: Partial<RuntimeDeps> = {}) {
 	const journal: string[] = [];
 	let tick: (() => void) | null = null;
 	let cleared = false;
-	const sender: SenderPort = {
+	const sender: Mutable<SenderPort> = {
 		poll: async () => {
 			log.push("poll");
 		},
@@ -65,7 +82,7 @@ function fakeDeps(over: Partial<RuntimeDeps> = {}) {
 			};
 		},
 	};
-	const io: RuntimeIo = {
+	const io: Mutable<RuntimeIo> = {
 		writeStatus: async (json) => {
 			statuses.push(json);
 		},
@@ -73,8 +90,9 @@ function fakeDeps(over: Partial<RuntimeDeps> = {}) {
 			journal.push(line);
 		},
 	};
-	const deps: RuntimeDeps = {
-		now: () => 5_000,
+	const clock = { now: 5_000 };
+	const deps: FakeDeps = {
+		now: () => clock.now,
 		sender,
 		radios,
 		io,
@@ -88,6 +106,7 @@ function fakeDeps(over: Partial<RuntimeDeps> = {}) {
 		...over,
 	};
 	return {
+		clock,
 		deps,
 		log,
 		statuses,
@@ -178,6 +197,86 @@ describe("the observer runtime", () => {
 		await rt.round();
 		expect(f.log).toEqual(["poll", "read", "poll", "read"]);
 		await rt.stop();
+	});
+});
+
+describe("bounded writes", () => {
+	test("an unchanged status is written again only every 10 s", async () => {
+		const f = fakeDeps();
+		const rt = createObserverRuntime(f.deps);
+		await rt.round();
+		f.clock.now += 1_000;
+		await rt.round();
+		f.clock.now += 1_000;
+		await rt.round();
+		expect(f.statuses).toHaveLength(1);
+		f.clock.now += STATUS_REFRESH_MS;
+		await rt.round();
+		expect(f.statuses).toHaveLength(2);
+		await rt.stop();
+	});
+
+	test("a stalled journal holds at most its pending bound; the rest is dropped and counted", async () => {
+		const f = fakeDeps();
+		const never = new Promise<void>(() => {});
+		f.deps.io.appendJournal = () => never;
+		// Every round replaces the radio: a radio-gone and a radio-added event.
+		let n = 0;
+		f.deps.radios.read = async () => ({
+			radios: [
+				{
+					id: `02:00:00:00:f0:01/${n++}:1:p`,
+					permanentMac: "02:00:00:00:f0:01",
+					ifname: "wlan1",
+					station: true,
+					reserved: false,
+					link: null,
+				},
+			],
+			skipped: [],
+		});
+		const rt = createObserverRuntime(f.deps);
+		for (let i = 0; i < JOURNAL_MAX_PENDING; i++) {
+			f.clock.now += STATUS_REFRESH_MS;
+			await rt.round();
+		}
+		const doc = JSON.parse(f.statuses.at(-1) as string);
+		expect(doc.journalDropped).toBeGreaterThan(0);
+		const started = Date.now();
+		await rt.stop();
+		expect(Date.now() - started).toBeLessThan(STOP_DEADLINE_MS + 500);
+	}, 10_000);
+
+	test("nothing is written after the stop deadline", async () => {
+		const f = fakeDeps();
+		const gate = Promise.withResolvers<void>();
+		f.deps.sender.poll = () => gate.promise;
+		const rt = createObserverRuntime(f.deps);
+		void rt.round();
+		await rt.stop();
+		const written = f.statuses.length + f.journal.length;
+		gate.resolve();
+		await Bun.sleep(20);
+		expect(f.statuses.length + f.journal.length).toBe(written);
+	}, 10_000);
+});
+
+describe("modes of existing files", () => {
+	test("an existing directory and journal get their modes back", async () => {
+		const root = await mkdtemp(join(tmpdir(), "wifi-roaming-modes-"));
+		const dir = join(root, "run");
+		try {
+			await mkdir(dir, { mode: 0o755 });
+			await chmod(dir, 0o755);
+			await writeFile(join(dir, "journal.jsonl"), "", { mode: 0o644 });
+			await chmod(join(dir, "journal.jsonl"), 0o644);
+			const io = fileIo(dir);
+			await io.appendJournal('{"e":1}');
+			expect((await stat(dir)).mode & 0o777).toBe(0o700);
+			expect((await stat(join(dir, "journal.jsonl"))).mode & 0o777).toBe(0o600);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 });
 
