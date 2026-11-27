@@ -50,8 +50,8 @@ still streaming, the sender it ended carries nothing, so the process Stops that
 session as its own (stop cause `engine_loss`, so an armed marker survives and
 restoration relaunches). Only an admitted Start, an explicit Stop or a confirmed
 idle engine ends that record; a lost observation-only connection never creates
-one, and a restarted process has none. While liveness is `unknown` the session publishes that state to the
-interlocks that otherwise read only `is_streaming` (USB modem mode and its offer,
+one, and a restarted process has none. While liveness is `unknown` the session
+publishes that state to the interlocks that otherwise read only `is_streaming` (USB modem mode and its offer,
 FCC unlock, modem transition disruption, exclusive hotspot start and Wi-Fi mode
 switch/restore), so they refuse as for a live stream; `is_streaming` itself stays
 false and the UI never shows the session as live. Only concordant
