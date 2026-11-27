@@ -540,6 +540,7 @@ gaps for overlap with the independent legacy launcher. Transition table from
 | `downloading` | `DOWNLOAD_PROGRESS` | `downloading` |
 | `downloading` | `COMMIT_PHASE_ENTERED` | `committing` |
 | `downloading` | `DOWNLOAD_FAILED` | `failed` |
+| `downloading` | `INSTALL_LAUNCH_REFUSED` | `awaiting-idle` (the launch ended before `systemd-run`, so apt never ran; see UPDATE-RECOVERY.md) |
 | `downloading` | `DOWNLOAD_ABORTED_FOR_STREAM` | `available` |
 | `downloading` | `DOWNLOAD_RESUME_UNIT_ABSENT` | `idle` with the package check due now (resume only, when a probe proved the install unit gone) |
 | `committing` | `COMMIT_PROGRESS` | `committing` |

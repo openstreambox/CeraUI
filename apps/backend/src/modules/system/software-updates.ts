@@ -134,6 +134,7 @@ import {
 	runLegacyPackageEffects,
 } from "./software-update-pending-effects.ts";
 import {
+	DetachedAptLaunchRefusedError,
 	DetachedAptServiceCleanupError,
 	recoverDetachedAptUpgrade,
 	runDetachedAptAll,
@@ -1859,9 +1860,13 @@ export function createSoftwareUpdateProcessMonitor(
 		owned: boolean,
 	): Promise<number> => {
 		let code: number;
+		// Ended before its unit was submitted: nothing ran, so it is retried,
+		// not recorded as a failed download.
+		let refused = false;
 		try {
 			code = await completion;
 		} catch (err) {
+			refused = err instanceof DetachedAptLaunchRefusedError;
 			const message = err instanceof Error ? err.message : String(err);
 			aptErr += aptErr.length > 0 ? `\n${message}` : message;
 			code =
@@ -1892,6 +1897,7 @@ export function createSoftwareUpdateProcessMonitor(
 											availableIdentity) as UpdateIdentity,
 									}
 								: {}),
+							...(refused ? { retryable: true as const } : {}),
 						};
 			// getUpdateState()-relevant assignments happen FIRST and
 			// unconditionally, before any broadcast/notification call below —
@@ -1904,7 +1910,12 @@ export function createSoftwareUpdateProcessMonitor(
 			const settledStatus = softUpdateStatus;
 			softUpdateStatus = null;
 			try {
-				if (failure) {
+				if (failure?.retryable) {
+					logger.warn(
+						"Software update did not start; nothing was installed and the install is retried",
+						{ reason: failure.reason },
+					);
+				} else if (failure) {
 					notificationBroadcast(
 						"ceralive_update_failed",
 						"error",

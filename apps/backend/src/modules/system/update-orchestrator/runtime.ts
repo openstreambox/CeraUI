@@ -1497,6 +1497,16 @@ async function pollPackageInstallProgress(): Promise<void> {
 		dispatch({ type: "COMMIT_SUCCEEDED", now });
 		return;
 	}
+	// Only a launch this phase made can be refused before submission: once
+	// apt's output has moved the phase on, a failure is the transaction's.
+	if (
+		wire.kind === "failed" &&
+		wire.retryable &&
+		state.phase === "downloading"
+	) {
+		dispatch({ type: "INSTALL_LAUNCH_REFUSED", now });
+		return;
+	}
 	if (wire.kind === "failed") {
 		const failure = {
 			now,

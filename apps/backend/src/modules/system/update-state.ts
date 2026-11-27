@@ -28,6 +28,8 @@ export interface UpdateFailure {
 	reason: string;
 	identity?: UpdateIdentity;
 	failure_id?: string;
+	/** The start ended before its unit was submitted: apt never ran for it. */
+	retryable?: true;
 }
 
 // The raw backend signals the reducer folds into ONE state. `available === false`

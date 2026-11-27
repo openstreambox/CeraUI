@@ -336,6 +336,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Software update archive cleanup failed"],
 	["Software update capability regime unknown"],
 	["Software update check failed: apt-get dist-upgrade exited ", ""],
+	[
+		"Software update did not start; nothing was installed and the install is retried",
+	],
 	["Software update observer retrying after a local read failure"],
 	["Software update preflight refused"],
 	["Software update reboot submission failed"],
@@ -1728,6 +1731,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["Tailscale enrolment requires a private inbox"],
 	["Target must be a regular file"],
 	["The previous change is still being saved"],
+	["The software update did not start: ", ""],
 	["Transport operation not admitted"],
 	["Transport reset did not retire its generation"],
 	["Trying to register existing modem id ", ""],

@@ -361,6 +361,9 @@ export const updateStateSchema = z.discriminatedUnion('kind', [
 		reason: z.string(),
 		identity: updateIdentitySchema.optional(),
 		failure_id: z.uuid().optional(),
+		// The install ended before its unit was submitted, so apt never ran for
+		// it: nothing was installed, and the device retries it on its own.
+		retryable: z.literal(true).optional(),
 	}),
 ]);
 export type UpdateState = z.infer<typeof updateStateSchema>;

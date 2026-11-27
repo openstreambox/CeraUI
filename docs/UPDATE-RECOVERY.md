@@ -1861,6 +1861,41 @@ Still open:
   later reboot. One that fails after `mark-good` never falls back (see
   [DEVICE-UPDATES.md](./DEVICE-UPDATES.md)).
 
+## A launch refused before its unit was submitted [EXISTS — fixture-proven]
+
+A package launch first asks systemd for the fixed unit name
+(`systemctl show ceralive-software-update.service`) and prepares the output
+files; only then does it submit the unit with `systemd-run`. When anything in
+that preparation fails (the probe times out or is unreadable, it finds a unit
+by that name, or the output files cannot be prepared) the launcher throws
+`DetachedAptLaunchRefusedError`, with the original error as `cause`. Apt never
+ran for that start. This used to settle like apt's own failure: `failed` on the
+wire, `DOWNLOAD_FAILED`, and a persisted `failed` phase that waited for an
+operator reset, across reboots, although nothing had been tried.
+
+Now the process monitor publishes `failed` with `retryable: true` (the reason
+names the cause), logs a warning instead of the "update failed" notification,
+and the orchestrator, still in `downloading` for that launch, dispatches
+`INSTALL_LAUNCH_REFUSED`: the phase goes back to `awaiting-idle` with no failure
+reason and without the launched attempt's provenance, exactly where a start
+refused up front stays. The next tick inside the idle window, or Install now,
+launches again; a retry while the name is still taken is refused the same way
+and never submits a unit over it. `pending-packages.json` stays as the refused
+launch wrote it: the retry starts from a `failed` wire, so it keeps that record
+(the limitation under "Still open" above), which is the plan that was just
+refused.
+
+Everything from the `systemd-run` call on is unchanged: a refused or timed-out
+submission may still have created the unit, so it stays a failed download, and
+a `retryable` failure seen once the phase is `committing` goes through the
+commit-failure path as before. Command validation (`buildDetachedApt*Command`)
+is also outside the refusal: an argument the builder rejects would be rejected
+on every retry. Coverage:
+`software-update-launch-refused.test.ts` (each pre-submission cause on both
+launchers, the wire and notification, the orchestrator replay of a
+`systemctl show` timeout and of a name taken by another start, and the
+submission and committing cases that keep their failure).
+
 ## OS staging recovery [PARTIAL — fixture-proven, board re-drill owed]
 
 A failed OS stage is no longer a sticky `failed` by default. The persisted

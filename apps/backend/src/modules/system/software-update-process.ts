@@ -93,6 +93,41 @@ export class DetachedAptServicePinnedError extends Error {
 	}
 }
 
+/**
+ * A start that ended before its unit was submitted to systemd, so apt never ran
+ * for it: the probe of the unit name failed or found the name taken, or the
+ * output files could not be prepared. `cause` is what ended it. Anything from
+ * the `systemd-run` call on is not this: a refused or timed-out submission may
+ * still have created the unit.
+ */
+export class DetachedAptLaunchRefusedError extends Error {
+	constructor(override readonly cause: unknown) {
+		super(
+			`The software update did not start: ${cause instanceof Error ? cause.message : String(cause)}`,
+		);
+		this.name = "DetachedAptLaunchRefusedError";
+	}
+}
+
+// Everything a launch does before it submits the unit.
+async function prepareLaunch(
+	deps: DetachedAptUpgradeDeps,
+	handlers: SoftwareUpdateOutputHandlers,
+): Promise<void> {
+	try {
+		const existing = await deps.inspect();
+		if (existing.kind !== "absent")
+			throw new DetachedAptServiceAlreadyExistsError();
+		if (existing.loaded) {
+			handlers.onUnitPinned?.();
+			throw new DetachedAptServicePinnedError();
+		}
+		await deps.prepareOutput();
+	} catch (error) {
+		throw new DetachedAptLaunchRefusedError(error);
+	}
+}
+
 export class DetachedAptServiceCleanupError extends Error {
 	constructor(
 		readonly transactionExitCode: number,
@@ -291,15 +326,7 @@ export async function runDetachedAptUpgrade(
 	handlers: SoftwareUpdateOutputHandlers,
 	deps: DetachedAptUpgradeDeps = defaultDetachedAptServiceDeps(),
 ): Promise<number> {
-	const existing = await deps.inspect();
-	if (existing.kind !== "absent") {
-		throw new DetachedAptServiceAlreadyExistsError();
-	}
-	if (existing.loaded) {
-		handlers.onUnitPinned?.();
-		throw new DetachedAptServicePinnedError();
-	}
-	await deps.prepareOutput();
+	await prepareLaunch(deps, handlers);
 	await deps.start(buildDetachedAptUpgradeCommand(aptArgs, deps.outputPaths));
 	return observeDetachedAptUpgrade({ kind: "running" }, handlers, deps);
 }
@@ -310,14 +337,7 @@ export async function runDetachedAptAll(
 	handlers: SoftwareUpdateOutputHandlers,
 	deps: DetachedAptUpgradeDeps = defaultDetachedAptServiceDeps(),
 ): Promise<number> {
-	const existing = await deps.inspect();
-	if (existing.kind !== "absent")
-		throw new DetachedAptServiceAlreadyExistsError();
-	if (existing.loaded) {
-		handlers.onUnitPinned?.();
-		throw new DetachedAptServicePinnedError();
-	}
-	await deps.prepareOutput();
+	await prepareLaunch(deps, handlers);
 	await deps.start(
 		buildDetachedAptAllCommand(installArgs, verdict, deps.outputPaths),
 	);

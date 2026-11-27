@@ -384,6 +384,17 @@ function reduceDownloading(
 				progress: null,
 				failureReason: event.reason,
 			});
+		// Back to the queue it launched from, as a start refused up front is:
+		// nothing was submitted, so there is no failure to record, and the
+		// launched attempt's provenance goes with it.
+		case "INSTALL_LAUNCH_REFUSED": {
+			const { packageAttempt: _launched, ...rest } = state;
+			return enter(rest, event.now, {
+				phase: "awaiting-idle",
+				progress: null,
+				failureReason: null,
+			});
+		}
 		case "DOWNLOAD_ABORTED_FOR_STREAM":
 			return enter(state, event.now, { phase: "available", progress: null });
 		// To `idle` with the package check due now, not to `awaiting-idle`: the

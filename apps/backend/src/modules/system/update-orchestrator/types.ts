@@ -142,6 +142,10 @@ export type OrchestratorEvent =
 			readonly reason: string;
 			readonly failureId?: string;
 	  }
+	// The launch ended before its unit was submitted (a probe of the unit name
+	// that failed or found it taken, output that could not be prepared): apt
+	// never ran, so the install is queued again instead of failed.
+	| { readonly type: "INSTALL_LAUNCH_REFUSED"; readonly now: number }
 	// Records a stop request, not cancellation (root AGENTS.md D8 Known gaps (b), (g)).
 	| { readonly type: "DOWNLOAD_ABORTED_FOR_STREAM"; readonly now: number }
 	// Resume-only: a persisted `downloading` whose unit a probe PROVED gone.
