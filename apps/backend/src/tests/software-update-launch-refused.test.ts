@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { statusResponseSchema } from "@ceraui/rpc";
 import { SpawnTimeoutError } from "../helpers/spawn-policy.ts";
 import { buildAptAllInstallArgs } from "../modules/system/apt-all-packages.ts";
+import type { AptReachability } from "../modules/system/apt-reachability.ts";
 import { softwareUpdateOutputPaths } from "../modules/system/software-update-output.ts";
 import * as transaction from "../modules/system/software-update-process.ts";
 import {
@@ -20,6 +21,8 @@ import {
 } from "../modules/system/software-update-service-contract.ts";
 import {
 	getUpdateState,
+	runUpdateDiscoveryAndReport,
+	setAptReachabilityProbeForTest,
 	startSoftwareUpdate,
 	triggerManualUpdateCheck,
 } from "../modules/system/software-updates.ts";
@@ -316,6 +319,13 @@ test("a systemctl show timeout during preparation leaves the install queued, not
 		expect.objectContaining({ kind: "failed", retryable: true }),
 	);
 	expect(failureNotices()).toEqual([]);
+	// And the overlay cleared without a finished install's result, so no tab
+	// announces a failure.
+	const refusedFrames = h.frames
+		.map((frame) => statusResponseSchema.parse(frame))
+		.filter((frame) => frame.update_state?.kind === "failed");
+	expect(refusedFrames.length).toBeGreaterThan(0);
+	for (const frame of refusedFrames) expect(frame.updating ?? null).toBeNull();
 	await runOrchestratorTick();
 	// And the install waits in the queue again, with nothing persisted as
 	// failed, no provenance kept, and the offer back on the wire.
@@ -383,6 +393,87 @@ test("a stream start after a settled refusal stops nothing under the name", asyn
 	expect(admission).toEqual({ allowed: true });
 	expect(stops()).toBe(0);
 	expect(getOrchestratorState().phase).toBe("awaiting-idle");
+});
+
+test("a refusal that settles while the stream start probes the commit stage stops nothing", async () => {
+	// Given an install this orchestrator launched, still downloading.
+	let refused = false;
+	let stops = 0;
+	setOrchestratorRuntimeDepsForTest(
+		fakeDeps({
+			quarantine: testQuarantine(),
+			getPackageInstallWireState: () => ({
+				kind: "downloading",
+				progress: { total: 0, downloading: 0, unpacking: 0, setting_up: 0 },
+			}),
+			takePackageLaunchRefusal: () => refused,
+			// The launch is refused while the probe waits.
+			isCommitStageRunning: async () => {
+				refused = true;
+				return false;
+			},
+			stopPackageInstallUnit: async () => {
+				stops++;
+			},
+		}),
+	);
+	setOrchestratorStateForTest({
+		...initialOrchestratorState(0),
+		phase: "available",
+	});
+	expect(await installUpdatesNow()).toEqual({ started: true });
+	// When a stream starts.
+	const admission = await admitAndPrepareStreamStart();
+	// Then the refusal seen after the probe settles the launch, and the unit
+	// that holds the name is not stopped.
+	expect(admission).toEqual({ allowed: true });
+	expect(stops).toBe(0);
+	expect(getOrchestratorState().phase).toBe("awaiting-idle");
+});
+
+test("a commit stage under the name still refuses the stream after a settled refusal", async () => {
+	// Given a refused launch whose name another transaction holds, in dpkg.
+	setOrchestratorRuntimeDepsForTest(
+		fakeDeps({
+			quarantine: testQuarantine(),
+			takePackageLaunchRefusal: () => true,
+			isCommitStageRunning: async () => true,
+		}),
+	);
+	setOrchestratorStateForTest({
+		...initialOrchestratorState(0),
+		phase: "available",
+	});
+	expect(await installUpdatesNow()).toEqual({ started: true });
+	// When a stream starts.
+	const admission = await admitAndPrepareStreamStart();
+	// Then the commit guard holds, as for any install in that window.
+	expect(admission.allowed).toBe(false);
+});
+
+test("a second start while one waits for discovery is refused, not reported started", async () => {
+	// Given a Packages card start that waits for a discovery in flight.
+	await using _h = await updateHarness();
+	const discovery = Promise.withResolvers<AptReachability>();
+	setAptReachabilityProbeForTest(() => discovery.promise);
+	const discovered = runUpdateDiscoveryAndReport();
+	try {
+		expect(startSoftwareUpdate()).toEqual({ started: true });
+		// When the orchestrator starts its own install meanwhile.
+		const second = startSoftwareUpdate(undefined, {});
+		// Then it is refused, so it never holds a ticket for a launch it does
+		// not own.
+		expect(second).toEqual({ started: false, reason: "already_updating" });
+	} finally {
+		discovery.resolve({
+			ipv4: "no_route",
+			ipv6: "no_route",
+			used: "any",
+			verdict: "unreachable",
+			detail: [],
+		});
+		await discovered;
+	}
 });
 
 test("a check that clears the wire first does not strand the refused launch", async () => {

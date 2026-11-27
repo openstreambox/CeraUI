@@ -60,11 +60,15 @@ export function announceLegacyInstallOutcome(
 
 const ENDED = { total: 0, downloading: 0, unpacking: 0, setting_up: 0 };
 
-/** An install this tab showed ended without its result reaching the tab, but the device reported it. */
+/**
+ * An install this tab showed ended without its result reaching the tab, but
+ * the device reported it. A `retryable` failure is a launch the device queued
+ * again before anything was installed: nothing to announce.
+ */
 export function announceMissedInstallOutcome(state: UpdateState): void {
 	if (state.kind === "success")
 		announceLegacyInstallOutcome({ ...ENDED, result: 0 });
-	else if (state.kind === "failed")
+	else if (state.kind === "failed" && !state.retryable)
 		announceLegacyInstallOutcome({ ...ENDED, result: state.reason ?? "" });
 }
 

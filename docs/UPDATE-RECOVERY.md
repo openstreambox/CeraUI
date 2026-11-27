@@ -1872,26 +1872,34 @@ that name, or the output files cannot be prepared) the launcher throws
 install transaction never ran for that start. Discovery, the space preflight's
 `apt-get --print-uris`, the pinned-plan simulation (`apt-get -s`) and, on a
 pinned route, the download-only prefetch (`apt-get -d`) can run before it;
-none of them runs dpkg, and the prefetch leaves only archives in the cache that
-the next install reuses. This used to settle like apt's own failure: `failed`
+none of them runs dpkg. The monitor still cleans the archive cache when the
+refusal settles, so a retry downloads again. This used to settle like apt's own failure: `failed`
 on the wire, `DOWNLOAD_FAILED`, and a persisted `failed` phase that waited for
 an operator reset, across reboots.
 
 For an install the orchestrator started, the refusal now belongs to that
 launch. The orchestrator hands each start a ticket (`startSoftwareUpdate`'s
 second argument); the process monitor records a refusal against it, publishes
-`failed` with `retryable: true` and the cause as the reason, and logs a warning
+`failed` with `retryable: true` and the cause as the reason, clears the overlay without a
+finished install's result (so no tab announces a failure), and logs a warning
 instead of the "update failed" notification. The orchestrator takes the
 refusal for its own launch (`takePackageLaunchRefusal`) on its next poll, or
-first thing when a stream starts, and dispatches `INSTALL_LAUNCH_REFUSED`: the
+when a stream starts, and dispatches `INSTALL_LAUNCH_REFUSED`: the
 phase goes back to `awaiting-idle` with no failure reason and without the
 launch's provenance, where a start refused up front already stays. It never
 reads the refusal off the wire, so a Packages card start of its own, or a check
-that clears the wire first, cannot move another launch. A stream start that
-finds a settled refusal stops nothing: whatever holds the name is not this
-install's. Taking the refusal withdraws it from the wire if the wire still
-shows it, so the offer is back and the retry records the plan it launches in
-`pending-packages.json`. The next tick in the idle window, or Install now,
+that clears the wire first, cannot move another launch. A stream start keeps
+the commit-stage guard (a unit under the name that runs dpkg still refuses the
+stream), then takes a refusal that settled before or during that probe and
+stops nothing: whatever holds the name is not this install's. A second start
+while one waits for discovery is refused (`already_updating`) instead of being
+reported started, so a ticket always belongs to the launch that runs. Taking
+the refusal withdraws it from the wire if the wire still shows it, so the offer
+is back and the retry saves `pending-packages.json` from it, as a first launch
+does. That record is the offer's vector; a capable launch rediscovers its own
+before it runs, so the existing limitation under "Still open" above (a commit
+failure can quarantine the earlier plan's versions) applies to the retry as it
+does to any launch. The next tick in the idle window, or Install now,
 launches again (60 s apart at most while the refusal persists); a retry while
 the name is still taken is refused the same way and never submits a unit over
 it.

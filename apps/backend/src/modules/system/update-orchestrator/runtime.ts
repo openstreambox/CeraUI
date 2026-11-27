@@ -1172,9 +1172,6 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 		});
 	if (pendingPackageSuccess.pending) return COMMIT_STAGE_REFUSAL;
 	if (isDisruptiveActionPending()) return COMMIT_STAGE_REFUSAL;
-	// A launch refused before submission has no unit to stop: whatever holds
-	// the name is not this install's.
-	settleRefusedLaunch();
 	const cached = admitStreamStart(state);
 	if (!cached.allowed) return cached;
 
@@ -1205,6 +1202,10 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 			return COMMIT_STAGE_REFUSAL;
 		}
 		if (pendingPackageSuccess.pending) return COMMIT_STAGE_REFUSAL;
+		// A launch refused before submission (seen now, after the probe's
+		// wait) has no unit to stop: whatever holds the name is not this
+		// install's. The commit guard above still applied to it.
+		if (settleRefusedLaunch()) return { allowed: true };
 		await deps.stopPackageInstallUnit();
 		if (pendingPackageSuccess.pending) return COMMIT_STAGE_REFUSAL;
 		dispatch({ type: "DOWNLOAD_ABORTED_FOR_STREAM", now: deps.now() });

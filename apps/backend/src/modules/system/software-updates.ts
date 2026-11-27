@@ -1757,6 +1757,9 @@ export function startSoftwareUpdate(
 	if (!aptUpdatesEnabled()) return refuseUpdateStart("updates_disabled");
 	if (!isStreamConfirmedIdle()) return refuseUpdateStart("streaming");
 	if (isUpdating()) return refuseUpdateStart("already_updating");
+	// A start already waits for discovery with its own caller's hooks; a second
+	// one would be reported started while the first one runs.
+	if (delayedSoftwareUpdateStart) return refuseUpdateStart("already_updating");
 	if (isSoftwareUpdateRecoveryInconclusive()) {
 		return refuseUpdateStart("check_unavailable");
 	}
@@ -1976,8 +1979,11 @@ export function createSoftwareUpdateProcessMonitor(
 						},
 					);
 				}
+				// A refusal the orchestrator retries is not a finished install:
+				// the overlay clears without a result, so no tab announces a
+				// failure for it.
 				broadcastMsg("status", {
-					updating: settledStatus,
+					updating: failure?.retryable ? null : settledStatus,
 					update_state: getUpdateState(),
 				});
 				broadcastUpdateState();
