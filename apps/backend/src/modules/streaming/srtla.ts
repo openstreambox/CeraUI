@@ -253,21 +253,32 @@ function isLocalBondCandidate(
 	);
 }
 
+/** Is this published bond row an IPv4 source on the receiver's subnet? */
+function isOnReceiverSubnet(entry: BondEntry, receiver: string): boolean {
+	if (isIP(entry.ip) !== 4) return false;
+	const int = getNetworkInterfaces()[entry.iface];
+	return (
+		int?.ip === entry.ip &&
+		int.netmask !== undefined &&
+		isSameSubnet(receiver, entry.ip, int.netmask)
+	);
+}
+
 /**
  * The bonded links on a private receiver's subnet.
  *
- * A receiver on the LAN narrows the bond to the links that share its subnet;
- * it never widens it. Every rule `isBondCandidate` applies (the user's bond
- * toggle, hotspot and shared-LAN exclusions, pending identity) holds here too.
- * It must still describe each link, or a same-subnet pair of twins would
- * collapse exactly as the bonded pair used to.
+ * A receiver on the LAN narrows the bond to the rows that share its subnet; it
+ * never widens it. The narrowing runs on the finished bond, after family
+ * selection and one-row-per-modem deduplication, so it can only drop rows the
+ * normal bond publishes, never swap one in (a modem's translator for its native
+ * IPv4, say). Every rule `isBondCandidate` applies (the user's bond toggle,
+ * hotspot and shared-LAN exclusions, pending identity) holds here too.
  */
 export function genSrtlaBondEntriesForLocalIpAddress(
 	ipAddress: string,
 ): BondEntry[] {
-	return collectBondEntries(
-		(name, int) => isLocalBondCandidate(name, int, ipAddress),
-		true,
+	return genSrtlaBondEntries().filter((entry) =>
+		isOnReceiverSubnet(entry, ipAddress),
 	);
 }
 

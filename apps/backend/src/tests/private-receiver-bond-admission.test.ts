@@ -15,8 +15,15 @@
 */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { isLocalIp } from "../helpers/ip-addresses.ts";
-import { getConfig } from "../modules/config.ts";
+import {
+	getConfig,
+	getConfigFilePath,
+	setConfigFilePath,
+} from "../modules/config.ts";
 import * as netif from "../modules/network/network-interfaces.ts";
 import type { BondEntry } from "../modules/streaming/bind-map.ts";
 import type { BindMapPublication } from "../modules/streaming/bind-map-writer.ts";
@@ -64,6 +71,7 @@ function seedBench() {
 }
 
 type Prepared = {
+	readonly writes: number;
 	readonly ifaces: readonly string[];
 	readonly localReceiver: string | undefined;
 	readonly warnings: readonly string[];
@@ -73,6 +81,7 @@ async function prepare(
 	receiver: string,
 	purpose: "launch" | "refresh" = "launch",
 ): Promise<Prepared> {
+	let writes = 0;
 	let published: readonly BondEntry[] = [];
 	let localReceiver: string | undefined;
 	const warnings: string[] = [];
@@ -81,6 +90,7 @@ async function prepare(
 		localList: genSrtlaBondEntriesForLocalIpAddress,
 		bondedList: genSrtlaBondEntries,
 		writeList: async (entries, receiverForRevalidation) => {
+			writes += 1;
 			published = entries;
 			localReceiver = receiverForRevalidation;
 			return PUBLISHED;
@@ -90,19 +100,29 @@ async function prepare(
 	};
 	await prepareSrtlaIpAddresses(receiver, deps, purpose);
 	return {
+		writes,
 		ifaces: published.map((entry) => entry.iface),
 		localReceiver,
 		warnings,
 	};
 }
 
+let dir: string | undefined;
+let savedConfigPath = "";
+
 beforeEach(() => {
+	savedConfigPath = getConfigFilePath();
+	dir = mkdtempSync(join(tmpdir(), "private-receiver-bond-"));
+	setConfigFilePath(join(dir, "config.json"));
 	resetBondFixture();
 	getConfig().bond_opt_out = {};
 });
 afterEach(() => {
 	resetBondFixture();
 	getConfig().bond_opt_out = {};
+	setConfigFilePath(savedConfigPath);
+	if (dir) rmSync(dir, { recursive: true, force: true });
+	dir = undefined;
 });
 
 describe("same-subnet private receiver", () => {
@@ -191,11 +211,23 @@ describe("private receiver no bonded link shares a subnet with", () => {
 		for (const name of ["eth0", "wlan0", "wlx0", "enx0"])
 			netif.setBondOptOut(name, true);
 
-		expect((await prepare("192.168.50.20", "refresh")).ifaces).toEqual([]);
+		const result = await prepare("192.168.50.20", "refresh");
+		expect(result.writes).toBe(1);
+		expect(result.ifaces).toEqual([]);
 	});
 });
 
 describe("public receiver", () => {
+	test("a hostname that starts like a private range is not a LAN receiver", async () => {
+		seedBench();
+
+		const result = await prepare("10.relay.example");
+
+		expect(result.ifaces).toEqual(["eth0", "wlan0", "wlx0", "enx0"]);
+		expect(result.localReceiver).toBeUndefined();
+		expect(result.warnings).toEqual([]);
+	});
+
 	test("is unchanged: the whole bond", async () => {
 		seedBench();
 		netif.setBondOptOut("eth0", true);

@@ -1,12 +1,15 @@
 # Private receiver bond admission
 
-A receiver address that is a private or link-local IPv4 literal (`isLocalIp`)
-narrows the launch bond; it never widens it.
+A receiver address that is a private or link-local IPv4 literal (`isLocalIp`;
+a hostname never is, even one starting `10.`) narrows the launch bond; it never
+widens it.
 
 - The candidate set is always the user's bond: `isBondCandidate` (per-link bond
   toggle, hotspot and shared-LAN exclusions, pending identity, modem holds).
-  `genSrtlaBondEntriesForLocalIpAddress` returns the bonded links on the
-  receiver's subnet, a subset of `genSrtlaBondEntries`.
+  `genSrtlaBondEntriesForLocalIpAddress` filters the finished
+  `genSrtlaBondEntries` (after family selection and one row per translated
+  modem) to IPv4 rows on the receiver's subnet, so it can drop rows but never
+  swap a modem's translator in for its native IPv4.
 - When at least one bonded link shares the receiver's subnet, only those links
   are published, and write-time CLAT revalidation keeps the subnet rule
   (`localReceiver`).
