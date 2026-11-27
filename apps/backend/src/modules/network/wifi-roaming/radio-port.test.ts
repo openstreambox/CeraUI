@@ -120,7 +120,6 @@ describe("radios as the observer reads them", () => {
 			admit: (key) => admitWifiAdapter(key),
 			exclude,
 			addressesOf: (ifname) => (ifname === "wlan1" ? ["192.0.2.11"] : []),
-			addressShared: () => false,
 			...over,
 		});
 

@@ -109,9 +109,12 @@ when done.
   `left-bond` (the window), `recovered` (the carrier came back first),
   `unordered` (both changed within 100 ms), `not-in-bond`, `radio-replaced`
   (another radio took the name, also while its carrier was being read),
-  `uncertain` (the list could not be read at some point; the loss is followed
-  until it can be), `shared-address` (another interface has one of the
-  radio's addresses, so the list cannot tell; noted, not measured),
+  `uncertain` (the list could not be read at some point, its first look
+  included; the loss is followed until it can be; a missing list, before any
+  stream, is an empty one), `shared-address` (another interface has one of the
+  addresses the watch keeps for the radio, checked at every look, so the list
+  cannot tell; noted, not measured), a conclusive look at the deadline wins
+  over it,
   `timeout` (30 s). During a loss the record keeps the access point that went
   and the addresses the sender had; what the rounds saw meanwhile becomes the
   radio's state when the loss ends. Every admitted client radio is watched,

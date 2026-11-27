@@ -98,8 +98,6 @@ export type RadioView = Readonly<{
 	scanRule: "rare" | "normal" | "other" | null;
 	/** Its source addresses as the IP list writes them (IPv4, IPv6). */
 	addresses: readonly string[];
-	/** Another interface has one of these addresses right now. */
-	sharedAddress: boolean;
 }>;
 
 export type SkippedRadio = Readonly<{ ifname: string; reason: string }>;
@@ -118,8 +116,6 @@ export type RadioPortDeps = Readonly<{
 	exclude: ReadonlySet<string>;
 	/** A radio's current source addresses (the network registry). */
 	addressesOf(ifname: string): readonly string[];
-	/** Whether an interface other than `ifname` has one of `addresses`. */
-	addressShared(ifname: string, addresses: readonly string[]): boolean;
 }>;
 
 /** Parse `iw dev <if> link`. */
@@ -373,7 +369,6 @@ export function createRadioPort(deps: RadioPortDeps) {
 					seenBssids: scan?.seenBssids ?? null,
 					scanRule: scan?.scanRule ?? null,
 					addresses: deps.addressesOf(ifname),
-					sharedAddress: deps.addressShared(ifname, deps.addressesOf(ifname)),
 				});
 			});
 			return { radios, skipped };
@@ -397,11 +392,5 @@ export function defaultRadioPortDeps(
 			const int = getNetworkInterfaces()[ifname];
 			return [int?.ip, int?.ipv6].filter((a): a is string => !!a);
 		},
-		addressShared: (ifname, addresses) =>
-			Object.entries(getNetworkInterfaces()).some(
-				([name, int]) =>
-					name !== ifname &&
-					addresses.some((a) => a === int?.ip || a === int?.ipv6),
-			),
 	};
 }

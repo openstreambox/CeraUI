@@ -21,10 +21,11 @@
  * - `radio-replaced`: another physical radio took over the interface name
  *   before the loss ended, or while its carrier was being read (the carrier
  *   then belongs to that radio);
- * - `uncertain`: the IP list could not be read at some point of the loss, so
- *   whether and when the interface left is unknown; the loss is followed
- *   until the list is readable again before it ends;
- * - `shared-address`: another interface has one of the radio's addresses,
+ * - `uncertain`: the IP list could not be read at some point of the loss,
+ *   its first look included, so whether and when the interface left is
+ *   unknown; the loss is followed until the list is readable again;
+ * - `shared-address`: another interface has one of the addresses the watch
+ *   keeps for the radio (checked at every look, against the kept addresses),
  *   so the IP list cannot tell whether this one is in it; not measured;
  * - `timeout`: none of these within 30 s.
  *
@@ -37,6 +38,7 @@
 import { readFile } from "node:fs/promises";
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
 import { setup } from "../../setup.ts";
+import { getNetworkInterfaces } from "../network-interfaces.ts";
 
 export const LOSS_TICK_MS = 100;
 export const LOSS_TIMEOUT_MS = 30_000;
@@ -75,8 +77,6 @@ export type WatchedRadio = Readonly<{
 	bssid: string | null;
 	/** Its source addresses as the IP list writes them; empty when it has none. */
 	addresses: readonly string[];
-	/** Another interface has one of these addresses right now. */
-	sharedAddress: boolean;
 }>;
 
 export type LossWatchDeps = Readonly<{
@@ -88,6 +88,8 @@ export type LossWatchDeps = Readonly<{
 	 * the list could not be read or there is no address to look for.
 	 */
 	inBond(addresses: readonly string[]): Promise<boolean | undefined>;
+	/** Whether an interface other than `ifname` has one of `addresses`. */
+	shared(ifname: string, addresses: readonly string[]): boolean;
 }>;
 
 type State = {
@@ -99,7 +101,6 @@ type State = {
 	bssid: string | null;
 	/** Last addresses seen; kept through a loss, when the radio has none. */
 	addresses: readonly string[];
-	sharedAddress: boolean;
 	/** What the rounds saw during a loss, taken over when it ends. */
 	seenDuringLoss: { bssid: string | null; addresses: readonly string[] };
 	/** The IP list could not be read at some look during this loss. */
@@ -142,7 +143,6 @@ export class LossWatch {
 				if (state.lostAt === null) {
 					if (r.bssid !== null) state.bssid = r.bssid;
 					if (r.addresses.length > 0) state.addresses = r.addresses;
-					state.sharedAddress = r.sharedAddress;
 				} else {
 					if (r.bssid !== null) state.seenDuringLoss.bssid = r.bssid;
 					if (r.addresses.length > 0)
@@ -155,7 +155,6 @@ export class LossWatch {
 					inBond: undefined,
 					bssid: r.bssid,
 					addresses: r.addresses,
-					sharedAddress: r.sharedAddress,
 					seenDuringLoss: { bssid: null, addresses: [] },
 					uncertain: false,
 					lostAt: null,
@@ -212,12 +211,18 @@ export class LossWatch {
 					this.#radios.delete(id);
 					continue;
 				}
+				// Another interface has one of the kept addresses: the list cannot
+				// tell this radio's entry from that one.
+				const shared = this.#deps.shared(state.radio.ifname, state.addresses);
 				if (state.lostAt === null) {
 					if (state.carrier === true && carrier === false) {
-						// Another interface shares the address: the list cannot say.
-						if (state.sharedAddress)
-							this.#end(state, now, now, "shared-address");
+						if (shared) this.#end(state, now, now, "shared-address");
 						else if (inBond === true) state.lostAt = now;
+						// Unreadable at the first look: follow it as uncertain.
+						else if (inBond === undefined) {
+							state.lostAt = now;
+							state.uncertain = true;
+						}
 						// Both dropped since the last look: the order is unknown.
 						else if (state.inBond === true)
 							this.#end(state, now, now, "unordered");
@@ -225,17 +230,19 @@ export class LossWatch {
 					}
 				} else {
 					if (inBond === undefined) state.uncertain = true;
-					if (now - state.lostAt >= LOSS_TIMEOUT_MS)
-						this.#end(state, state.lostAt, now, "timeout");
+					const late = now - state.lostAt >= LOSS_TIMEOUT_MS;
+					if (shared) this.#end(state, state.lostAt, now, "shared-address");
 					// Nothing is concluded while the list cannot be read.
 					else if (inBond === undefined) {
-						/* keep following */
+						if (late) this.#end(state, state.lostAt, now, "timeout");
 					} else if (state.uncertain)
 						this.#end(state, state.lostAt, now, "uncertain");
+					// A conclusive look wins over the deadline it arrives at.
 					else if (inBond === false)
 						this.#end(state, state.lostAt, now, "left-bond");
 					else if (carrier === true)
 						this.#end(state, state.lostAt, now, "recovered");
+					else if (late) this.#end(state, state.lostAt, now, "timeout");
 				}
 				if (carrier !== undefined) state.carrier = carrier;
 				state.inBond = inBond;
@@ -303,10 +310,16 @@ export function ipListAddresses(text: string): Set<string> {
 	);
 }
 
-/** The production reads: sysfs carrier and the IP list on disk. */
+/** The production reads: sysfs carrier, the IP list on disk and the registry. */
 export function defaultLossWatchDeps(now: () => number): LossWatchDeps {
 	return {
 		now,
+		shared: (ifname, addresses) =>
+			Object.entries(getNetworkInterfaces()).some(
+				([name, int]) =>
+					name !== ifname &&
+					addresses.some((a) => a === int?.ip || a === int?.ipv6),
+			),
 		carrier: async (ifname) => {
 			try {
 				const v = (
@@ -327,9 +340,12 @@ export function defaultLossWatchDeps(now: () => number): LossWatchDeps {
 			try {
 				const listed = ipListAddresses(await readFile(file, "utf8"));
 				return addresses.some((a) => listed.has(a));
-			} catch {
-				// No list on disk (no stream yet): nothing is in the bond.
-				return undefined;
+			} catch (error) {
+				// No list on disk (no stream yet): nothing is in the bond. Any
+				// other failure leaves it unknown.
+				return (error as NodeJS.ErrnoException).code === "ENOENT"
+					? false
+					: undefined;
 			}
 		},
 	};

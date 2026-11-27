@@ -19,7 +19,6 @@ const A: WatchedRadio = {
 	ifname: "wlan1",
 	bssid: "aa:00:00:00:00:01",
 	addresses: ["192.0.2.11"],
-	sharedAddress: false,
 };
 const B: WatchedRadio = {
 	id: "02:00:00:00:b0:02/61:6:p6",
@@ -27,7 +26,6 @@ const B: WatchedRadio = {
 	ifname: "wlan2",
 	bssid: "aa:00:00:00:00:02",
 	addresses: ["192.0.2.12"],
-	sharedAddress: false,
 };
 
 const OWNER_OF: Record<string, string> = {
@@ -41,6 +39,8 @@ function world() {
 		now: 0,
 		carrier: new Map<string, boolean | undefined>(),
 		bond: new Set<string>() as Set<string> | undefined,
+		/** Interfaces whose address another interface also has. */
+		shared: new Set<string>(),
 	};
 	const deps: LossWatchDeps = {
 		now: () => w.now,
@@ -50,6 +50,7 @@ function world() {
 			w.bond
 				? addresses.some((a) => w.bond?.has(OWNER_OF[a] ?? ""))
 				: undefined,
+		shared: (ifname) => w.shared.has(ifname),
 	};
 	return { w, watch: new LossWatch(deps) };
 }
@@ -182,9 +183,10 @@ describe("the dead-link window", () => {
 		expect(watch.status(replacement.id)).toMatchObject({ losses: 0 });
 	});
 
-	test("no bond published yet counts as not in the bond", async () => {
+	test("no IP list yet counts as not in the bond", async () => {
 		const { w, watch } = world();
-		w.bond = undefined;
+		// An empty list (no stream: the production read answers false).
+		w.bond = new Set();
 		w.carrier.set("wlan1", true);
 		watch.watch([A]);
 		await run(watch, w, 200);
@@ -242,6 +244,7 @@ describe("losses the order or the radio of which is uncertain", () => {
 				return w.carrier;
 			},
 			inBond: async () => true,
+			shared: () => false,
 		});
 		watch.watch([A]);
 		w.now = 100;
@@ -274,7 +277,7 @@ describe("losses the order or the radio of which is uncertain", () => {
 
 	test("at most 256 ended losses wait; older ones are dropped and counted", async () => {
 		const { w, watch } = world();
-		w.bond = undefined;
+		w.bond = new Set();
 		watch.watch([A]);
 		for (let i = 0; i < 300; i++) {
 			w.carrier.set("wlan1", true);
@@ -298,6 +301,7 @@ describe("what the window is measured against", () => {
 				return w.carrier;
 			},
 			inBond: async () => true,
+			shared: () => false,
 		});
 		watch.watch([A]);
 		w.now = 100;
@@ -367,11 +371,15 @@ describe("the IP list file", () => {
 		try {
 			setup.ips_file = join(dir, "ips");
 			const deps = defaultLossWatchDeps(() => 0);
-			expect(await deps.inBond(["192.0.2.11"])).toBeUndefined();
+			// No file yet: no stream, nothing is in the bond.
+			expect(await deps.inBond(["192.0.2.11"])).toBe(false);
 			await writeFile(setup.ips_file, "192.0.2.11\n192.0.2.30\n");
 			expect(await deps.inBond(["192.0.2.11"])).toBe(true);
 			expect(await deps.inBond(["192.0.2.99"])).toBe(false);
 			expect(await deps.inBond([])).toBeUndefined();
+			// A list that exists but cannot be read is unknown.
+			setup.ips_file = dir;
+			expect(await deps.inBond(["192.0.2.11"])).toBeUndefined();
 		} finally {
 			setup.ips_file = saved;
 			await rm(dir, { recursive: true, force: true });
@@ -384,12 +392,67 @@ describe("what the IP list cannot tell", () => {
 		const { w, watch } = world();
 		w.carrier.set("wlan1", true);
 		w.bond?.add("wlan1");
-		watch.watch([{ ...A, sharedAddress: true }]);
+		w.shared.add("wlan1");
+		watch.watch([A]);
 		await run(watch, w, 200);
 		w.carrier.set("wlan1", false);
 		await run(watch, w, 100);
 		expect(watch.drain()).toMatchObject([
 			{ outcome: "shared-address", durationMs: 0 },
+		]);
+	});
+
+	test("an address that becomes shared during a loss ends it as shared, never as a recovery", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 300);
+		// The radio lost its registry address; a twin now has the kept one, and
+		// the twin's entry keeps the address in the list.
+		watch.watch([{ ...A, addresses: [] }]);
+		w.shared.add("wlan1");
+		w.carrier.set("wlan1", true);
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([{ outcome: "shared-address" }]);
+	});
+
+	test("a list unreadable at the first look after the carrier dropped is followed as uncertain", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		const list = w.bond;
+		w.bond = undefined;
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 300);
+		expect(watch.drain()).toEqual([]);
+		expect(watch.status(A.id)?.lostSince).not.toBeNull();
+		w.bond = list;
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([{ outcome: "uncertain" }]);
+	});
+
+	test("a withdrawal seen at the deadline is a window, not a timeout", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		const lostAt = w.now;
+		await run(watch, w, LOSS_TIMEOUT_MS - LOSS_TICK_MS);
+		expect(watch.drain()).toEqual([]);
+		// The next look is exactly at the deadline, and shows the withdrawal.
+		w.bond?.delete("wlan1");
+		await run(watch, w, LOSS_TICK_MS);
+		expect(w.now - lostAt).toBe(LOSS_TIMEOUT_MS);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "left-bond", durationMs: LOSS_TIMEOUT_MS },
 		]);
 	});
 
