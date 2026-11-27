@@ -9,17 +9,21 @@ import { REDACTED } from "./logger.ts";
  * until someone decides it is safe to show. The key-side rules in `logger.ts`
  * still run on everything listed here.
  *
- * Deliberately absent: every credential (`password`, `password_hash`,
- * `ssh_pass`, `ssh_pass_hash`, `srt_passphrase`, `remote_key`,
- * `pairing_secret`), stream ids and the relay override, account and receiver
- * identifiers, device identifiers, remembered SSIDs and devices, the custom
- * provider host, and add-on user config.
+ * Listed are settings whose values are scalars or closed enums and carry no
+ * identifier. Deliberately absent: every credential (`password`,
+ * `password_hash`, `ssh_pass`, `ssh_pass_hash`, `srt_passphrase`, `remote_key`,
+ * `pairing_secret`), stream ids and the relay override, the relay server and
+ * account, the receiver address, device and source identifiers (`device_id`,
+ * `source`, `selected_video_input`, stable ids, `source_preference`,
+ * `composition`, `audio_inputs`, `asrc`, `pipeline`), maps keyed by a MAC, an
+ * interface or a physical link (`wifi_modes`, `eth_roles`, `bond_opt_out`,
+ * `usb_serial_shared`), remembered SSIDs and devices, the custom provider host,
+ * and add-on user config.
  */
 export const LOGGABLE_CONFIG_FIELDS: ReadonlySet<keyof RuntimeConfig> = new Set<
 	keyof RuntimeConfig
 >([
 	"ssh_persistent",
-	"relay_server",
 	"relay_protocol",
 	"srt_pbkeylen",
 	"srt_latency",
@@ -28,29 +32,19 @@ export const LOGGABLE_CONFIG_FIELDS: ReadonlySet<keyof RuntimeConfig> = new Set<
 	"stream_profile",
 	"profile_decided_by",
 	"srtla_port",
-	"asrc",
-	"audio_inputs",
 	"acodec",
 	"audio_backend",
 	"bitrate_overlay",
 	"max_br",
 	"delay",
 	"balancer",
-	"pipeline",
 	"resolution",
 	"framerate",
 	"video_codec",
-	"selected_video_input",
 	"video_passthrough",
 	"failover_rate_policy",
-	"source",
-	"source_stable_id",
-	"last_streamed_source",
-	"last_streamed_source_stable_id",
 	"input_mode",
-	"source_preference",
 	"previewEncode",
-	"composition",
 	"captive_portal_enabled",
 	"autostart",
 	"remote_provider",
@@ -63,12 +57,7 @@ export const LOGGABLE_CONFIG_FIELDS: ReadonlySet<keyof RuntimeConfig> = new Set<
 	"kiosk_performance",
 	"two_radio_enabled",
 	"network_ingest",
-	"sources_visibility",
 	"country",
-	"wifi_modes",
-	"eth_roles",
-	"bond_opt_out",
-	"usb_serial_shared",
 	"modem_provisioning",
 	"modem_backend",
 	"fm350_internal_calls",

@@ -1,6 +1,9 @@
 import type { LogEntry, LogLevel } from "@ceraui/rpc/schemas";
 import { z } from "zod";
-import { logRedact } from "../../helpers/logger.ts";
+import {
+	redactKeyValueText,
+	redactSensitiveKeys,
+} from "../../helpers/logger.ts";
 import { sourceOfUnit } from "./catalog.ts";
 
 export type RawJournalRecord = LogEntry & {
@@ -90,13 +93,9 @@ export function parseRecord(input: unknown): RawJournalRecord | null {
 					const meta = eventMetaSchema.safeParse(data.meta);
 					if (meta.success) eventId = meta.data.event_id;
 				}
-				// Records written before a key joined the logger's redaction rules
-				// stay in the persistent journal for up to its retention; the same
-				// key rules run again here so the viewer, export and bundle don't
-				// replay a credential an older build logged.
 				text = `${typeof data.module === "string" && data.module ? `[${data.module}] ` : ""}${data.msg}${
 					data.meta !== null && typeof data.meta === "object"
-						? ` ${JSON.stringify(logRedact(data.meta))}`
+						? ` ${JSON.stringify(redactSensitiveKeys(data.meta))}`
 						: ""
 				}`;
 				if (
@@ -109,6 +108,13 @@ export function parseRecord(input: unknown): RawJournalRecord | null {
 			if (!(error instanceof SyntaxError)) throw error;
 		}
 	}
+	// Records written before a key joined the logger's rules stay in the
+	// persistent journal for its whole retention. The key rules run again on
+	// every record read, so the viewer, export and bundle don't replay a
+	// credential an older build logged: structurally on a parsed record's
+	// metadata above, and as text on everything (a split or unparseable
+	// record, a message that embedded JSON, another unit's line).
+	text = redactKeyValueText(text);
 	const clipped = clipJournalMessage(text);
 	truncated ||= clipped !== text;
 	const messageId = stringField(obj.MESSAGE_ID);

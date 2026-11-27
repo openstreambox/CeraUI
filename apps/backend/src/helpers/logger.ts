@@ -243,6 +243,7 @@ const SECRET_KEY_TOKENS: ReadonlySet<string> = new Set<string>([
 	"privatekey",
 	"cookie",
 	"sshpass",
+	"puk",
 ]);
 
 /**
@@ -316,6 +317,65 @@ export function isSensitiveKey(key: string): boolean {
 		isOwnNumberSensitiveKey(key) ||
 		isCredentialSensitiveKey(key)
 	);
+}
+
+/**
+ * The key rules applied to JSON that is already TEXT: a frame preview, a
+ * template message that interpolated `JSON.stringify(...)`, or a journal record
+ * that journald split or that no longer parses. A `"key": value` pair whose key
+ * {@link isSensitiveKey} matches keeps its key and loses its value, in plain
+ * and in once-escaped (`\"key\":\"value\"`) form. A value cut off by the
+ * end of the text is masked to the end.
+ */
+const PLAIN_PAIR_RE =
+	/"([A-Za-z0-9_.\- ]{1,128})"(\s*:\s*)(?:"(?:[^"\\]|\\.)*(?:"|$)|-?\d[\d.eE+-]*)/g;
+const ESCAPED_PAIR_RE =
+	/\\"([A-Za-z0-9_.\- ]{1,128})\\"(\s*:\s*)(?:\\"(?:[^"\\]|\\[^"])*(?:\\"|$)|-?\d[\d.eE+-]*)/g;
+
+/**
+ * SRT passphrase fields are left to their own typed masking (`redactSrtPassphrases`
+ * at write time, the named-passphrase rules of the export and the bundle), which
+ * keeps the `[REDACTED:srt_passphrase]` markers and the bundle's counts.
+ */
+function masksTextPair(key: string): boolean {
+	return isSensitiveKey(key) && !/passphrase/i.test(key);
+}
+
+export function redactKeyValueText(text: string): string {
+	if (!text.includes(":")) return text;
+	let out = text;
+	if (out.includes('"'))
+		out = out.replace(PLAIN_PAIR_RE, (match, key: string, colon: string) =>
+			masksTextPair(key) ? `"${key}"${colon}"${REDACTED}"` : match,
+		);
+	if (out.includes('\\"'))
+		out = out.replace(ESCAPED_PAIR_RE, (match, key: string, colon: string) =>
+			masksTextPair(key) ? `\\"${key}\\"${colon}\\"${REDACTED}\\"` : match,
+		);
+	return out;
+}
+
+const KEY_WALK_MAX_DEPTH = 16;
+
+/**
+ * The key rules alone, for records read back from the journal: masks values
+ * under sensitive keys (and sensitive pairs inside string leaves) without the
+ * write-time value matchers, which rebuild their held-secret variants per
+ * string and cost too much across a journal scan. Deeper than
+ * {@link KEY_WALK_MAX_DEPTH} levels is masked whole.
+ */
+export function redactSensitiveKeys(value: unknown, depth = 0): unknown {
+	if (typeof value === "string") return redactKeyValueText(value);
+	if (value === null || typeof value !== "object") return value;
+	if (depth >= KEY_WALK_MAX_DEPTH) return REDACTED;
+	if (Array.isArray(value))
+		return value.map((item) => redactSensitiveKeys(item, depth + 1));
+	const out: Record<string, unknown> = {};
+	for (const [key, inner] of Object.entries(value))
+		out[key] = isSensitiveKey(key)
+			? REDACTED
+			: redactSensitiveKeys(inner, depth + 1);
+	return out;
 }
 
 /**
@@ -418,7 +478,7 @@ function redactValue(value: unknown): unknown {
 	if (typeof value === "string") {
 		return looksSecret(value)
 			? REDACTED
-			: redactStreamIdText(redactSrtPassphrases(value));
+			: redactKeyValueText(redactStreamIdText(redactSrtPassphrases(value)));
 	}
 	if (Array.isArray(value)) {
 		return value.map(redactValue);

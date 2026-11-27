@@ -42,6 +42,19 @@ Missing priority defaults to info. Missing message remains empty with an
 explicit truncation flag; oversized messages retain their first 16 KiB.
 Journal byte arrays decode as UTF-8, retaining replacement characters for
 invalid message bytes. Invalid UTF-8 in the JSON transport itself is an error.
+
+Read-side key redaction: records written before a key joined the logger's
+rules stay in the persistent journal for its retention, so `parseRecord`
+applies the logger's key rules again before clipping. A parsed backend record's
+metadata goes through `redactSensitiveKeys` (key rules only, no held-value
+matchers, so a scan stays within its budget), and every message text,
+including split or unparseable records and other units' lines, goes through
+`redactKeyValueText`, which masks the value of a sensitive `"key": value`
+pair in plain or once-escaped JSON, to the end of the text when the value is
+cut off. The viewer, the export and the bundle all read through this. Not
+covered: a split piece that starts inside a value, and an object or array
+under a sensitive key in unparsed text. Both are rare at journald's 48 KiB
+line limit.
 Classifier fields `messageId`, `unitField` and `pid` stay internal;
 `toLogEntry` removes them at the wire boundary.
 

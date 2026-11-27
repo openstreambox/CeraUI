@@ -14,6 +14,7 @@ import {
 } from "../modules/device-logs/export.ts";
 import { queryLogs } from "../modules/device-logs/query.ts";
 import * as stored from "../modules/events/store.ts";
+import * as bootFat from "../modules/system/boot-fat-fault.ts";
 import * as updates from "../modules/system/update-settings.ts";
 import * as versions from "../modules/system/version-context.ts";
 import {
@@ -30,7 +31,14 @@ const currentSshPass = "current-ssh-pass-31";
 const staleSshPass = "stale-ssh-pass-62";
 const sshPassHash = "$6$fixturesalt$fixturehashfixturehash";
 const staleRemoteKey = "stale-remote-key-93";
-const leaked = [staleSshPass, sshPassHash, staleRemoteKey, currentSshPass];
+const staleFrameKey = "stale-frame-remote-key-47";
+const leaked = [
+	staleSshPass,
+	sshPassHash,
+	staleRemoteKey,
+	currentSshPass,
+	staleFrameKey,
+];
 
 // The exact record shape a 5.1 to 6.2 build writes on every start.
 const legacyConfigLoaded = JSON.stringify({
@@ -43,6 +51,23 @@ const legacyConfigLoaded = JSON.stringify({
 		ssh_pass_hash: sshPassHash,
 		remote_key: staleRemoteKey,
 		max_br: 5000,
+	},
+});
+// The same record as journald stores it once split at its line limit: the
+// first piece no longer parses, and its last value is cut off.
+const splitConfigLoaded = legacyConfigLoaded.slice(
+	0,
+	legacyConfigLoaded.indexOf(staleRemoteKey) + "stale-remote".length,
+);
+// An older build's rejected-frame warning: the frame is a string preview, so the
+// credential sits in escaped JSON inside a metadata string.
+const legacyFramePreview = JSON.stringify({
+	ts: "2026-11-27T00:00:01.000Z",
+	level: "warn",
+	msg: "rpc: unrecognised frame",
+	module: "rpc.adapter",
+	meta: {
+		preview: JSON.stringify({ remote_key: staleFrameKey, x: 1 }).slice(0, 40),
 	},
 });
 
@@ -76,12 +101,17 @@ beforeEach(() => {
 	restore(spyOn(stored, "readEvents").mockReturnValue([]));
 	restore(spyOn(stored, "readBoots").mockReturnValue([]));
 	restore(
+		spyOn(bootFat, "readBootFatFault").mockResolvedValue({ state: "absent" }),
+	);
+	restore(
 		spyOn(config, "getConfig").mockReturnValue({ ssh_pass: currentSshPass }),
 	);
 	fixture.scan.mockImplementation(
 		journal([
 			record(1, { MESSAGE: legacyConfigLoaded }),
 			record(2, { MESSAGE: "an ordinary line" }),
+			record(3, { MESSAGE: splitConfigLoaded }),
+			record(4, { MESSAGE: legacyFramePreview }),
 		]),
 	);
 });
@@ -96,6 +126,8 @@ test("the log viewer query shows a stored config loaded line without credentials
 	const result = await queryLogs({}, {});
 	const text = JSON.stringify(result);
 	for (const secret of leaked) expect(text).not.toContain(secret);
+	// The split record's cut-off value, too.
+	expect(text).not.toContain("stale-remote");
 	expect(text).toContain("config loaded");
 	expect(text).toContain('\\"max_br\\":5000');
 });
@@ -107,8 +139,10 @@ test("the log view export carries no credential an older build logged", async ()
 		await handleLogExportRequest(new Request(`http://device${created.url}`))
 	).text();
 	for (const secret of leaked) expect(text).not.toContain(secret);
+	// The split record's cut-off value, too.
+	expect(text).not.toContain("stale-remote");
 	expect(text).toContain("config loaded");
-	expect(text).toEndWith("# complete: 2 entries\n");
+	expect(text).toEndWith("# complete: 4 entries\n");
 });
 
 test("the support bundle carries no credential an older build logged", async () => {
@@ -123,5 +157,7 @@ test("the support bundle carries no credential an older build logged", async () 
 		response.body.pipeThrough(new DecompressionStream("gzip")),
 	).text();
 	for (const secret of leaked) expect(text).not.toContain(secret);
+	// The split record's cut-off value, too.
+	expect(text).not.toContain("stale-remote");
 	expect(text).toContain("config loaded");
 });

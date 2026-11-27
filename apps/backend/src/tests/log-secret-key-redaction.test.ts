@@ -14,9 +14,11 @@ import {
 	logRedact,
 	onLogLine,
 	REDACTED,
+	redactKeyValueText,
 } from "../helpers/logger.ts";
 import { loadConfig, setConfigFilePath } from "../modules/config.ts";
 import { parseRecord } from "../modules/device-logs/parse.ts";
+import { logRpcCall } from "../rpc/rpc-logging.ts";
 import { journalObject } from "./helpers/device-journal-record.ts";
 
 // Synthetic values only. Each is distinctive so a leak shows up verbatim.
@@ -27,6 +29,7 @@ const UI_PASSWORD_HASH = "$2b$10$fixturebcryptfixturebcryptfixtureb";
 const SRT_PASSPHRASE = "fixture-srt-passphrase";
 const PAIRING_SECRET = "fixture-pairing-secret";
 const WIFI_PSK = "fixture-wifi-psk-55";
+const RELAY_ACCOUNT = "fixture-relay-account-61";
 
 const SECRETS = [
 	SSH_PASS,
@@ -38,8 +41,28 @@ const SECRETS = [
 	WIFI_PSK,
 ];
 
-const flush = (): Promise<void> =>
-	new Promise((resolve) => setTimeout(resolve, 25));
+/**
+ * Collect ring records containing `marker` while `emit` runs, resolving once
+ * one has arrived (winston delivers on a later tick) or failing after 2 s.
+ */
+async function captureLines(
+	marker: string,
+	emit: () => unknown,
+): Promise<string[]> {
+	const lines: string[] = [];
+	const stop = onLogLine((line) => {
+		if (line.includes(marker)) lines.push(line);
+	});
+	try {
+		await emit();
+		const deadline = Date.now() + 2_000;
+		while (lines.length === 0 && Date.now() < deadline)
+			await new Promise((resolve) => setTimeout(resolve, 5));
+	} finally {
+		stop();
+	}
+	return lines;
+}
 
 describe("logger key rules: credentials whose names the substring rule missed", () => {
 	test("ssh_pass, ssh_pass_hash, remote_key and their spellings are masked", () => {
@@ -109,19 +132,12 @@ describe("logger key rules: credentials whose names the substring rule missed", 
 	});
 
 	test("the top-level record keys go through the same rules on a live transport", async () => {
-		const lines: string[] = [];
-		const stop = onLogLine((line) => {
-			if (line.includes("top-level credential probe")) lines.push(line);
-		});
-		try {
+		const lines = await captureLines("top-level credential probe", () =>
 			logger.debug("top-level credential probe", {
 				ssh_pass: SSH_PASS,
 				remote_key: REMOTE_KEY,
-			});
-			await flush();
-		} finally {
-			stop();
-		}
+			}),
+		);
 
 		expect(lines).toHaveLength(1);
 		expect(lines[0]).not.toContain(SSH_PASS);
@@ -129,10 +145,79 @@ describe("logger key rules: credentials whose names the substring rule missed", 
 	});
 });
 
+describe("key rules on JSON that is already text", () => {
+	test("plain, escaped, cut-off and numeric pairs lose their values", () => {
+		const text = [
+			`{"ssh_pass":"${SSH_PASS}","max_br":5000}`,
+			`"{\\"remote_key\\":\\"${REMOTE_KEY}\\",\\"x\\":1}"`,
+			'{"puk": 12345678, "pin":1234}',
+			// A value cut off by the end of the text (a split record).
+			`{"ssh_pass_hash":"${SSH_PASS_HASH}`,
+		].join(" ");
+		const out = redactKeyValueText(text);
+
+		for (const secret of [SSH_PASS, REMOTE_KEY, SSH_PASS_HASH, "12345678"])
+			expect(out).not.toContain(secret);
+		expect(out).not.toMatch(/"pin":\s*1234/);
+		expect(out).toContain('"max_br":5000');
+		expect(out).toContain('\\"x\\":1');
+	});
+
+	test("ordinary pairs and plain text are left alone", () => {
+		const text =
+			'{"video_passthrough":"auto","stableKey":"usb-1.2","msg":"ok: done"} note: fine';
+		expect(redactKeyValueText(text)).toBe(text);
+	});
+
+	test("a rejected frame's string preview is masked at write time", () => {
+		const preview = JSON.stringify({
+			path: ["system", "setRemoteConfig"],
+			input: { remote_key: REMOTE_KEY },
+		}).slice(0, 64);
+		const out = logRedact({ preview }) as { preview: string };
+
+		expect(out.preview).not.toContain(REMOTE_KEY.slice(0, 12));
+		expect(out.preview).toContain("setRemoteConfig");
+	});
+});
+
+describe("RPC traces: procedures whose credentials have generic names", () => {
+	test.each([
+		[["pairing", "completePairing"], { code: "fixture-claim-code" }],
+		[["modems", "unlockSimPuk"], { puk: "12345678", newPin: "1234" }],
+		[["addons", "configure"], { id: "a", userConfig: { token2: "x" } }],
+		[["addons", "install"], { id: "a", userConfig: { anything: "x" } }],
+	] as const)("%p records no arguments", (path, input) => {
+		const traces: Array<Record<string, unknown> | undefined> = [];
+		logRpcCall(
+			{ path, input, ok: true, latencyMs: 1, cid: "c" },
+			{
+				sink: { debug: (_message, meta) => traces.push(meta) },
+				now: () => 0,
+				genCorrelationId: () => "c",
+				isEnabled: () => true,
+			},
+		);
+
+		expect(traces).toHaveLength(1);
+		expect(traces[0]?.args).toBeUndefined();
+	});
+
+	test("a PUK is masked by its key wherever it is logged", () => {
+		expect(logRedact({ puk: "12345678" })).toEqual({ puk: REDACTED });
+	});
+});
+
 describe("config loaded: allowlisted fields only", () => {
 	let dir = "";
 
-	afterEach(() => {
+	afterEach(async () => {
+		// loadConfig replaced the runtime config and both held hashes; leave an
+		// empty config behind, not this fixture's credentials.
+		if (dir) {
+			writeFileSync(join(dir, "config.json"), "{}", { mode: 0o600 });
+			await loadConfig();
+		}
 		setConfigFilePath("config.json");
 		if (dir) rmSync(dir, { recursive: true, force: true });
 		dir = "";
@@ -150,26 +235,22 @@ describe("config loaded: allowlisted fields only", () => {
 				remote_key: REMOTE_KEY,
 				srt_passphrase: SRT_PASSPHRASE,
 				pairing_secret: PAIRING_SECRET,
+				// Masked only by the allowlist: no key rule matches it.
+				relay_account: RELAY_ACCOUNT,
 				max_br: 5000,
 			}),
 			{ mode: 0o600 },
 		);
 		setConfigFilePath(path);
 
-		const lines: string[] = [];
-		const stop = onLogLine((line) => {
-			if (line.includes('"msg":"config loaded"')) lines.push(line);
-		});
-		try {
-			await loadConfig();
-			await flush();
-		} finally {
-			stop();
-		}
+		const lines = await captureLines('"msg":"config loaded"', () =>
+			loadConfig(),
+		);
 
 		expect(lines).toHaveLength(1);
 		const line = lines[0] ?? "";
-		for (const secret of SECRETS) expect(line).not.toContain(secret);
+		for (const secret of [...SECRETS, RELAY_ACCOUNT])
+			expect(line).not.toContain(secret);
 		// Still useful: allowlisted values survive, masked keys stay visible.
 		expect(line).toContain('"max_br":5000');
 		expect(line).toContain(`"ssh_pass":"${REDACTED}"`);
