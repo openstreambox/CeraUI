@@ -433,6 +433,11 @@ class LineConnection {
 		while (nl !== -1) {
 			const line = this.buffer.slice(0, nl);
 			this.buffer = this.buffer.slice(nl + 1);
+			// A complete line is held to the same ceiling as a pending one.
+			if (line.length > MAX_CONTROL_LINE_CHARS) {
+				this.overflow();
+				return;
+			}
 			if (line.trim().length > 0) this.handleLine(line);
 			if (this.closed) return;
 			nl = this.buffer.indexOf("\n");

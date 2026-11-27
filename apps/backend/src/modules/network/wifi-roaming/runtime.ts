@@ -21,6 +21,7 @@ import {
 	mkdir,
 	readFile,
 	rename,
+	unlink,
 	writeFile,
 } from "node:fs/promises";
 import { logger } from "../../../helpers/logger.ts";
@@ -69,6 +70,8 @@ export function roamingBlocker(
 export type RuntimeIo = Readonly<{
 	writeStatus(json: string): Promise<void>;
 	appendJournal(line: string): Promise<void>;
+	/** From now on no file step runs: a write in progress stops at its next step. */
+	seal?(): void;
 }>;
 
 /**
@@ -77,6 +80,7 @@ export type RuntimeIo = Readonly<{
  * atomically, so no line is lost to a race.
  */
 export function fileIo(dir = WIFI_ROAMING_RUN_DIR): RuntimeIo {
+	let sealed = false;
 	let lines: number | null = null;
 	let queue: Promise<void> = Promise.resolve();
 	const journal = `${dir}/journal.jsonl`;
@@ -96,23 +100,44 @@ export function fileIo(dir = WIFI_ROAMING_RUN_DIR): RuntimeIo {
 		prepared = true;
 	};
 	return {
+		seal() {
+			sealed = true;
+		},
 		async writeStatus(json) {
+			if (sealed) return;
 			await ensureDir();
+			if (sealed) return;
 			const tmp = `${dir}/status.json.${process.pid}.tmp`;
 			await writeFile(tmp, json, { mode: 0o600 });
+			// Sealed while writing: the new status is never published.
+			if (sealed) {
+				await unlink(tmp).catch(() => {
+					// Gone already: nothing was published.
+				});
+				return;
+			}
 			await rename(tmp, `${dir}/status.json`);
 		},
 		appendJournal(line) {
 			const next = queue.then(async () => {
+				if (sealed) return;
 				await ensureDir();
+				if (sealed) return;
 				if (lines === null) lines = (await read()).length;
 				if (lines >= JOURNAL_MAX_LINES) {
 					const kept = (await read()).slice(-Math.floor(JOURNAL_MAX_LINES / 2));
 					const tmp = `${journal}.${process.pid}.tmp`;
 					await writeFile(tmp, `${kept.join("\n")}\n`, { mode: 0o600 });
+					if (sealed) {
+						await unlink(tmp).catch(() => {
+							// Gone already: nothing was published.
+						});
+						return;
+					}
 					await rename(tmp, journal);
 					lines = kept.length;
 				}
+				if (sealed) return;
 				await appendFile(journal, `${line}\n`, { mode: 0o600 });
 				lines++;
 			});
@@ -263,6 +288,7 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 				]);
 			} finally {
 				sealed = true;
+				deps.io.seal?.();
 				clearTimeout(timer);
 				deps.sender.close();
 			}

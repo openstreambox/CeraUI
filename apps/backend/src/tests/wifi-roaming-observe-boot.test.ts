@@ -66,6 +66,10 @@ describe("boot and shutdown", () => {
 		expect(main).toMatch(
 			/stopUplinkShaper,\s*stopWifiRoaming,\s*stopGatewayRoutes,/,
 		);
+		// It is handed the config's roaming section and the two-radio flag.
+		expect(main.replace(/\s+/g, " ")).toContain(
+			"await initWifiRoaming(config.wifi_roaming, config.two_radio_enabled === true);",
+		);
 	});
 
 	test("shutdown awaits the observer's stop before the streaming shutdown and exit", async () => {

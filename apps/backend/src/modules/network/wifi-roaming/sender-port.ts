@@ -6,9 +6,12 @@
  * Only the sender this backend launched is read. Its control socket lives in
  * shared temporary storage, so the port connects only while the streaming
  * module reports an owned sender (pid and start time confirmed after launch),
- * only to that sender's socket, only when the process still has that start
- * time and the socket belongs to this backend's user. When the owned sender
- * changes or goes away, the client is dropped.
+ * only to that sender's socket, and only when, both before and after the
+ * connect: the process still has that start time, the path is a socket of
+ * this backend's user, and the listening socket bound at that path is one the
+ * owned process holds open (`/proc/net/unix` and `/proc/<pid>/fd`). Ownership
+ * is checked again after every read; when the owned sender changes or goes
+ * away, the client and its reply are dropped.
  *
  * - `poll()` fetches one `get_stats`; one read at a time, never throws.
  * - `at` is on the caller's clock, stamped when the reply arrived, and advances
@@ -19,7 +22,7 @@
  * - After `close()` nothing connects or reads again.
  */
 
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile, readlink } from "node:fs/promises";
 import {
 	type ControlClient,
 	createControlClient,
@@ -63,6 +66,11 @@ export type LinkMapping = Readonly<{
 	ambiguous: number;
 	/** Links without per-link arrival counters. */
 	uncounted: number;
+	/**
+	 * Which link (connection and epoch) maps to which interface, as one
+	 * comparable string. A span is measured only under one mapping.
+	 */
+	key: string;
 }>;
 
 /** What the observer can say about the sender, for the status file. */
@@ -119,6 +127,7 @@ export function linkMapping(
 	let unmapped = 0;
 	let ambiguous = 0;
 	const claims = new Map<string, number>();
+	const assigned: [number, number | null, string][] = [];
 	for (const link of links) {
 		const owners = interfaces.filter((r) =>
 			link.iface !== undefined
@@ -131,12 +140,19 @@ export function linkMapping(
 			const name = (owners[0] as RadioAddresses).ifname;
 			claims.set(name, (claims.get(name) ?? 0) + 1);
 		}
+		assigned.push([
+			link.conn_id,
+			link.srtla_ack_epoch ?? null,
+			owners.length === 1 ? (owners[0] as RadioAddresses).ifname : "?",
+		]);
 	}
 	for (const n of claims.values()) if (n > 1) ambiguous += n;
+	assigned.sort((a, b) => a[0] - b[0]);
 	return {
 		unmapped,
 		ambiguous,
 		uncounted: links.filter((l) => !hasArrivalReports(l)).length,
+		key: JSON.stringify(assigned),
 	};
 }
 
@@ -160,6 +176,10 @@ export function createSenderPort(deps: SenderPortDeps): SenderPort {
 
 	let inFlight: Promise<void> | null = null;
 
+	/** The owned sender is still the one the client was opened to. */
+	const stillOwned = () =>
+		clientLifetime !== null && deps.owner()?.lifetime === clientLifetime;
+
 	const read = async () => {
 		try {
 			const owner = deps.owner();
@@ -182,6 +202,10 @@ export function createSenderPort(deps: SenderPortDeps): SenderPort {
 				clientLifetime = owner.lifetime;
 				const doc = await client.getCapabilities();
 				if (closed) return;
+				if (!stillOwned()) {
+					drop();
+					return;
+				}
 				view = {
 					...view,
 					standby: doc?.methods
@@ -191,6 +215,10 @@ export function createSenderPort(deps: SenderPortDeps): SenderPort {
 			}
 			const stats = await client.getStats();
 			if (closed) return;
+			if (!stillOwned()) {
+				drop();
+				return;
+			}
 			if (!stats) {
 				drop();
 				return;
@@ -250,9 +278,27 @@ export function startTimeOf(stat: string): string | undefined {
 	return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
 }
 
+/** `__SO_ACCEPTCON` in `/proc/net/unix`: the socket is listening. */
+const SO_ACCEPTCON = 0x10000;
+
+/** Inodes of the listening sockets bound at `path`, from `/proc/net/unix`. */
+export function listenersAt(table: string, path: string): Set<string> {
+	const out = new Set<string>();
+	for (const line of table.split("\n").slice(1)) {
+		const f = line.trim().split(/\s+/);
+		// Num RefCount Protocol Flags Type St Inode Path
+		if (f.length < 8 || f.slice(7).join(" ") !== path) continue;
+		if ((Number.parseInt(f[3] as string, 16) & SO_ACCEPTCON) === 0) continue;
+		out.add(f[6] as string);
+	}
+	return out;
+}
+
 export type OwnerCheckIo = Readonly<{
 	readText(path: string): Promise<string>;
 	socketOwner(path: string): Promise<{ socket: boolean; uid: number }>;
+	/** The socket inodes a process holds open, from `/proc/<pid>/fd`. */
+	heldSockets(pid: number): Promise<Set<string>>;
 	uid(): number;
 }>;
 
@@ -262,12 +308,24 @@ const ownerCheckIo: OwnerCheckIo = {
 		const st = await lstat(path);
 		return { socket: st.isSocket(), uid: st.uid };
 	},
+	heldSockets: async (pid) => {
+		const dir = `/proc/${pid}/fd`;
+		const out = new Set<string>();
+		for (const fd of await readdir(dir)) {
+			const target = await readlink(`${dir}/${fd}`).catch(() => "");
+			const inode = /^socket:\[(\d+)\]$/.exec(target)?.[1];
+			if (inode) out.add(inode);
+		}
+		return out;
+	},
 	uid: () => process.getuid?.() ?? 0,
 };
 
 /**
- * The owned sender is still that process (same start time) and its socket is
- * a socket that belongs to this backend's user. Any read failing is "no".
+ * The owned sender is still that process (same start time), its socket path
+ * is a socket of this backend's user, and the listener bound at that path is
+ * held open by the owned process, not by anything else that could have bound
+ * the path in shared storage. Any read failing is "no".
  */
 export async function isOwnedSenderSocket(
 	owner: OwnedSender,
@@ -277,7 +335,14 @@ export async function isOwnedSenderSocket(
 		const stat = await io.readText(`/proc/${owner.pid}/stat`);
 		if (startTimeOf(stat) !== owner.startTime) return false;
 		const sock = await io.socketOwner(owner.controlSocket);
-		return sock.socket && sock.uid === io.uid();
+		if (!sock.socket || sock.uid !== io.uid()) return false;
+		const listeners = listenersAt(
+			await io.readText("/proc/net/unix"),
+			owner.controlSocket,
+		);
+		if (listeners.size !== 1) return false;
+		const held = await io.heldSockets(owner.pid);
+		return [...listeners].every((inode) => held.has(inode));
 	} catch {
 		return false;
 	}
@@ -291,13 +356,19 @@ export function defaultSenderPortDeps(
 	return {
 		now,
 		owner: ownedSenderLifetime,
-		connect: async (owner) =>
-			(await isOwnedSenderSocket(owner))
-				? createControlClient({
-						socketPath: owner.controlSocket,
-						timeoutMs: connectTimeoutMs,
-					})
-				: null,
+		connect: async (owner) => {
+			if (!(await isOwnedSenderSocket(owner))) return null;
+			const client = await createControlClient({
+				socketPath: owner.controlSocket,
+				timeoutMs: connectTimeoutMs,
+			});
+			// The path could have changed hands during the connect: check again.
+			if (client && !(await isOwnedSenderSocket(owner))) {
+				client.close();
+				return null;
+			}
+			return client;
+		},
 		interfaces: () => interfaceAddressesOf(getNetworkInterfaces()),
 	};
 }

@@ -172,7 +172,10 @@ const ALLOWED_SYMBOLS: Record<string, string[]> = {
 		"lstat",
 		"mkdir",
 		"readFile",
+		"readdir",
+		"readlink",
 		"rename",
+		"unlink",
 		"writeFile",
 	],
 };
@@ -323,6 +326,14 @@ describe("the roaming observer acts on nothing", () => {
 			].sort(),
 		);
 		expect(code(read("radio-port.ts"))).toContain('deps.run("iw", args, {');
+		// The wrapper is never aliased, passed on or called with a computed
+		// argument: its name appears exactly at its definition and its two reads.
+		const refs = sources.flatMap((file) =>
+			// A property key of the same name (the runner option) is no reference.
+			[...code(read(file)).matchAll(/\bquiet\b(?!\??\s*:)/g)].map(() => file),
+		);
+		expect(refs).toEqual(["radio-port.ts", "radio-port.ts", "radio-port.ts"]);
+		expect(code(read("radio-port.ts"))).toContain("const quiet = async (args");
 	});
 });
 

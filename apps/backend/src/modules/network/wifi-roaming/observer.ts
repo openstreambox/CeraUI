@@ -176,6 +176,7 @@ function senderBlockers(
 export class RoamingObserver {
 	readonly #radios = new Map<string, RadioState>();
 	#snaps: Snapshot[] = [];
+	#mappingKey: string | null = null;
 	#status: ObserverStatus | null = null;
 
 	status(): ObserverStatus | null {
@@ -185,7 +186,7 @@ export class RoamingObserver {
 	round(input: RoundInput): JournalEvent[] {
 		const { at } = input;
 		const events: JournalEvent[] = [];
-		this.#keepSnapshot(input.snapshot, at);
+		this.#keepSnapshot(input.snapshot, input.sender.mapping?.key ?? null, at);
 
 		const seen = new Set<string>();
 		const statuses: RadioStatus[] = [];
@@ -229,13 +230,24 @@ export class RoamingObserver {
 		return events;
 	}
 
-	#keepSnapshot(snap: Snapshot | undefined, at: number): void {
+	#keepSnapshot(
+		snap: Snapshot | undefined,
+		mappingKey: string | null,
+		at: number,
+	): void {
 		// A missing read breaks every span: spans must be contiguous.
-		if (!snap) {
+		if (!snap || mappingKey === null) {
 			this.#snaps = [];
+			this.#mappingKey = null;
 			return;
 		}
-		if (this.#snaps.at(-1)?.at !== snap.at) this.#snaps.push(snap);
+		// So does a change of which link (connection and epoch) is whose: a span
+		// measured under the old mapping says nothing about the links now.
+		if (mappingKey !== this.#mappingKey) this.#snaps = [];
+		this.#mappingKey = mappingKey;
+		const kept = this.#snaps.at(-1);
+		if (kept?.at === snap.at) this.#snaps[this.#snaps.length - 1] = snap;
+		else this.#snaps.push(snap);
 		this.#snaps = this.#snaps
 			.filter((s) => at - s.at <= SNAPSHOT_WINDOW_MS)
 			.slice(-MAX_SNAPSHOTS);

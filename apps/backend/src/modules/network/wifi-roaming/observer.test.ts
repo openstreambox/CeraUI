@@ -40,7 +40,7 @@ const READY: SenderView = {
 	reachable: true,
 	arrivalReports: true,
 	standby: true,
-	mapping: { unmapped: 0, ambiguous: 0, uncounted: 0 },
+	mapping: { unmapped: 0, ambiguous: 0, uncounted: 0, key: "k1" },
 };
 
 const radio = (over: Partial<RadioView> = {}): RadioView => ({
@@ -355,7 +355,7 @@ describe("what the sender evidence has to be", () => {
 			fadeWith(() => ({
 				sender: {
 					...READY,
-					mapping: { unmapped: 0, ambiguous: 0, uncounted: 1 },
+					mapping: { unmapped: 0, ambiguous: 0, uncounted: 1, key: "k1" },
 				},
 			}))?.blockers,
 		).toEqual(["uncounted-sender-link"]);
@@ -363,7 +363,7 @@ describe("what the sender evidence has to be", () => {
 			fadeWith(() => ({
 				sender: {
 					...READY,
-					mapping: { unmapped: 0, ambiguous: 1, uncounted: 0 },
+					mapping: { unmapped: 0, ambiguous: 1, uncounted: 0, key: "k1" },
 				},
 			}))?.blockers,
 		).toEqual(["ambiguous-sender-link"]);
@@ -409,5 +409,37 @@ describe("the physical id is recorded", () => {
 		expect(status(o)?.id).toBe(ID);
 		expect(events.length).toBeGreaterThan(1);
 		for (const e of events) expect(e.id).toBe(ID);
+	});
+});
+
+describe("a span under one mapping", () => {
+	test("says nothing once the sender's links map differently, even with the same counters", () => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 8, (t) => (t > 5 ? { radio: fading } : {}));
+		expect(status(o)?.stayers).toEqual(["wwan0"]);
+		// The same reply again (same counters, same time), but one link now
+		// maps to another interface: the history no longer describes the links.
+		const remapped = {
+			...READY,
+			mapping: {
+				...(READY.mapping as NonNullable<SenderView["mapping"]>),
+				key: "k2",
+			},
+		};
+		rounds(o, 9, 9, { radio: fading, snapshot: snap(8), sender: remapped });
+		expect(status(o)?.stayers).toEqual([]);
+		expect(status(o)?.blockers).toContain("no-delivering-stayer");
+	});
+
+	test("a repeated reply replaces the kept one, so its mapping is the current one", () => {
+		const snaps = [1, 2, 3, 4, 5, 6].map((t) => snap(t));
+		expect(deliveringStayers(snaps, "wlan1")).toEqual(["wwan0"]);
+		const o = new RoamingObserver();
+		rounds(o, 1, 8, (t) => (t > 5 ? { radio: fading } : {}));
+		// The sender answers with the same state again; the observer keeps the
+		// newest copy of that sample, not the first.
+		const again = snap(8, { stayer: false });
+		rounds(o, 9, 9, { radio: fading, snapshot: again });
+		expect(status(o)?.stayers).toEqual([]);
 	});
 });

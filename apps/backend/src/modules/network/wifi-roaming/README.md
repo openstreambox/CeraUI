@@ -48,10 +48,13 @@ when done.
 1. One `get_stats` from the sender, mapped onto every interface by `iface` or
    source address (`sender-port.ts`). Only the sender this backend launched is
    read: the streaming module reports it (pid and start time confirmed after
-   launch), the process must still have that start time, and its control
-   socket must be a socket of this backend's user. Without one nothing
-   connects. Every link of the reply, with arrival counters or not, is checked
-   for its mapping. The capability document is read once per connection;
+   launch). Before and after the connect, the process must still have that
+   start time, its control socket must be a socket of this backend's user, and
+   the listener bound at that path (`/proc/net/unix`) must be one the owned
+   process holds open (`/proc/<pid>/fd`). Ownership is checked again after
+   every read. Without an owned sender nothing connects. Every link of the
+   reply, with arrival counters or not, is checked for its mapping, and a
+   change of which connection is on which interface starts the spans afresh. The capability document is read once per connection;
    `set_link_standby` in its method list means the sender can hold a link.
    A read that takes longer than 1 s has failed.
 2. The radios (`radio-port.ts`). A radio is considered only through upstream's
@@ -61,7 +64,8 @@ when done.
    excluded radios are skipped. Verified twins (two radios with one permanent
    MAC, registered as `MAC@port`) are skipped as `twin`: the shared admission
    accepts bare-MAC rows only, as the diversity check and the two-radio
-   adapter do. NetworkManager's state comes from the registry row (a station
+   adapter do. Admitting them is a change to that shared admission, for every
+   consumer at once, not to this module. NetworkManager's state comes from the registry row (a station
    is `infrastructure` mode with an address); the link from
    `iw dev <if> link` every round and the phy from `iw dev` at most every 5 s
    (neither scans, and neither leaves a debug trace per call). Every radio's
@@ -101,8 +105,10 @@ carries the encoder's whole rate.
 
 `stop()` (shutdown, before streaming teardown) ends the loop and, within 2 s,
 waits for the round in flight, closes the sender client, writes a final
-`stopped` status and drains the journal. After that deadline nothing more is
-written and a late sender connection is closed unread.
+`stopped` status and drains the journal. Then the file writer is sealed: a
+write still in progress stops at its next step (a status written to its
+temporary file is discarded, not renamed), and a late sender connection is
+closed unread.
 
 ## Guards
 

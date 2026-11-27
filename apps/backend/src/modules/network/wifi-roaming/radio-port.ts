@@ -164,13 +164,28 @@ export function createRadioPort(deps: RadioPortDeps) {
 		}
 	};
 	let phys:
-		| { at: number; devs: ReturnType<typeof parseIwDev> | undefined }
+		| {
+				at: number;
+				/** The admitted radios (name and physical id) the read was for. */
+				radios: string;
+				devs: ReturnType<typeof parseIwDev> | undefined;
+		  }
 		| undefined;
-	const readPhys = async () => {
+	// A cached read stands only for the same physical radios under the same
+	// names: a radio replaced under its name gets a fresh read.
+	const readPhys = async (radios: string) => {
 		const now = deps.now();
-		if (phys === undefined || now - phys.at >= PHY_READ_MS) {
+		if (
+			phys === undefined ||
+			phys.radios !== radios ||
+			now - phys.at >= PHY_READ_MS
+		) {
 			const out = await quiet(["dev"]);
-			phys = { at: now, devs: out === undefined ? undefined : parseIwDev(out) };
+			phys = {
+				at: now,
+				radios,
+				devs: out === undefined ? undefined : parseIwDev(out),
+			};
 		}
 		return phys.devs;
 	};
@@ -196,7 +211,15 @@ export function createRadioPort(deps: RadioPortDeps) {
 				admitted.push([key, admission]);
 			}
 
-			const devs = admitted.length > 0 ? await readPhys() : undefined;
+			const devs =
+				admitted.length > 0
+					? await readPhys(
+							admitted
+								.map(([, a]) => `${a.row.ifname}=${physicalWifiAdapterId(a)}`)
+								.sort()
+								.join(","),
+						)
+					: undefined;
 			const links: (string | undefined)[] = [];
 			for (const [, admission] of admitted)
 				links.push(

@@ -10,6 +10,7 @@ import {
 	interfaceAddressesOf,
 	isOwnedSenderSocket,
 	linkMapping,
+	listenersAt,
 	type OwnerCheckIo,
 	type SenderPortDeps,
 	startTimeOf,
@@ -59,6 +60,7 @@ function fake() {
 		reachable: true,
 		owner: OWNER as OwnedSender | null,
 		connectGate: null as Promise<void> | null,
+		statsGate: null as Promise<void> | null,
 		connectedTo: [] as string[],
 		connects: 0,
 		closes: 0,
@@ -75,6 +77,7 @@ function fake() {
 			return {
 				getStats: async () => {
 					state.calls.push("getStats");
+					if (state.statsGate) await state.statsGate;
 					const next = state.replies.shift() ?? null;
 					if (next instanceof Error) throw next;
 					return next;
@@ -212,6 +215,21 @@ describe("only the sender this backend launched", () => {
 		expect(state.closes).toBe(1);
 	});
 
+	test("a reply that arrives after the owned sender went away is dropped, not reported", async () => {
+		const { state, port } = fake();
+		const gate = Promise.withResolvers<void>();
+		state.statsGate = gate.promise;
+		state.replies.push(stats([link()]));
+		const polling = port.poll();
+		await Bun.sleep(5);
+		state.owner = null;
+		gate.resolve();
+		await polling;
+		expect(port.snapshot()).toBeUndefined();
+		expect(port.view().reachable).toBe(false);
+		expect(state.closes).toBe(1);
+	});
+
 	test("a connect that resolves after close is closed at once and reads nothing", async () => {
 		const { state, port } = fake();
 		const gate = Promise.withResolvers<void>();
@@ -247,7 +265,7 @@ describe("how every link maps", () => {
 				],
 				ifs,
 			),
-		).toEqual({ unmapped: 0, ambiguous: 0, uncounted: 1 });
+		).toMatchObject({ unmapped: 0, ambiguous: 0, uncounted: 1 });
 	});
 	test("an address two interfaces share is ambiguous even when both have links of their own", () => {
 		expect(
@@ -259,7 +277,7 @@ describe("how every link maps", () => {
 				],
 				ifs,
 			),
-		).toEqual({ unmapped: 0, ambiguous: 1, uncounted: 0 });
+		).toMatchObject({ unmapped: 0, ambiguous: 1, uncounted: 0 });
 	});
 	test("two links on one interface are both ambiguous; a link from nowhere is unmapped", () => {
 		expect(
@@ -271,15 +289,49 @@ describe("how every link maps", () => {
 				],
 				ifs,
 			),
-		).toEqual({ unmapped: 1, ambiguous: 2, uncounted: 0 });
+		).toMatchObject({ unmapped: 1, ambiguous: 2, uncounted: 0 });
 	});
+	test("the mapping key names which connection and epoch is on which interface", () => {
+		const a = linkMapping(
+			[
+				link({ conn_id: 0, iface: "wlan1", srtla_ack_epoch: 1 }),
+				link({ conn_id: 1, iface: "wwan0", srtla_ack_epoch: 1 }),
+			],
+			ifs,
+		);
+		const swapped = linkMapping(
+			[
+				link({ conn_id: 0, iface: "wwan0", srtla_ack_epoch: 1 }),
+				link({ conn_id: 1, iface: "wlan1", srtla_ack_epoch: 1 }),
+			],
+			ifs,
+		);
+		const newEpoch = linkMapping(
+			[
+				link({ conn_id: 0, iface: "wlan1", srtla_ack_epoch: 2 }),
+				link({ conn_id: 1, iface: "wwan0", srtla_ack_epoch: 1 }),
+			],
+			ifs,
+		);
+		const reordered = linkMapping(
+			[
+				link({ conn_id: 1, iface: "wwan0", srtla_ack_epoch: 1 }),
+				link({ conn_id: 0, iface: "wlan1", srtla_ack_epoch: 1 }),
+			],
+			ifs,
+		);
+		expect(swapped.key).not.toBe(a.key);
+		expect(newEpoch.key).not.toBe(a.key);
+		expect(reordered.key).toBe(a.key);
+	});
+
 	test("the view carries the mapping of the last reply", async () => {
 		const { state, port } = fake();
 		state.replies.push(
 			stats([link(), link({ conn_id: 1, ip: "203.0.113.5" })]),
 		);
 		await port.poll();
-		expect(port.view().mapping).toEqual({
+		expect(port.view().mapping).toMatchObject({
 			unmapped: 1,
 			ambiguous: 0,
 			uncounted: 0,
@@ -289,9 +341,16 @@ describe("how every link maps", () => {
 
 describe("the owned sender's socket", () => {
 	const STAT = `4242 (srtla_send) S 1 4242 4242 0 -1 4194560 100 0 0 0 1 1 0 0 20 0 1 0 ${OWNER.startTime} 1000 100`;
+	const NET_UNIX = [
+		"Num       RefCount Protocol Flags    Type St Inode Path",
+		`0000000000000000: 00000002 00000000 00010000 0001 01 777001 ${OWNER.controlSocket}`,
+		`0000000000000000: 00000003 00000000 00000000 0001 03 777002 ${OWNER.controlSocket}`,
+		"0000000000000000: 00000002 00000000 00010000 0001 01 777003 /run/other.sock",
+	].join("\n");
 	const io = (over: Partial<OwnerCheckIo> = {}): OwnerCheckIo => ({
-		readText: async () => STAT,
+		readText: async (path) => (path === "/proc/net/unix" ? NET_UNIX : STAT),
 		socketOwner: async () => ({ socket: true, uid: 0 }),
+		heldSockets: async () => new Set(["777001", "12"]),
 		uid: () => 0,
 		...over,
 	});
@@ -306,6 +365,32 @@ describe("the owned sender's socket", () => {
 	test("the same process and a socket of ours: yes", async () => {
 		expect(await isOwnedSenderSocket(OWNER, io())).toBe(true);
 	});
+	test("the listener at the path is held by someone else, or there is none: no", async () => {
+		// The owned process holds only an accepted connection, not the listener.
+		expect(
+			await isOwnedSenderSocket(
+				OWNER,
+				io({ heldSockets: async () => new Set(["777002"]) }),
+			),
+		).toBe(false);
+		expect(
+			await isOwnedSenderSocket(
+				OWNER,
+				io({
+					readText: async (path) =>
+						path === "/proc/net/unix" ? (NET_UNIX.split("\n")[0] ?? "") : STAT,
+				}),
+			),
+		).toBe(false);
+	});
+
+	test("only listening sockets bound at exactly that path count", () => {
+		expect([...listenersAt(NET_UNIX, OWNER.controlSocket)]).toEqual(["777001"]);
+		expect([...listenersAt(NET_UNIX, "/tmp/srtla-send-control-5000")]).toEqual(
+			[],
+		);
+	});
+
 	test("another process under the pid, a socket of another user, a plain file, or a failed read: no", async () => {
 		expect(
 			await isOwnedSenderSocket(

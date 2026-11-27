@@ -39,7 +39,7 @@ const VIEW: SenderView = {
 	reachable: true,
 	arrivalReports: true,
 	standby: false,
-	mapping: { unmapped: 0, ambiguous: 0, uncounted: 0 },
+	mapping: { unmapped: 0, ambiguous: 0, uncounted: 0, key: "k1" },
 };
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
@@ -259,6 +259,45 @@ describe("bounded writes", () => {
 		await Bun.sleep(20);
 		expect(f.statuses.length + f.journal.length).toBe(written);
 	}, 10_000);
+});
+
+describe("sealed file io", () => {
+	test("a status write sealed while its file is written is never published", async () => {
+		const root = await mkdtemp(join(tmpdir(), "wifi-roaming-seal-"));
+		const dir = join(root, "run");
+		try {
+			const io = fileIo(dir);
+			await io.writeStatus('{"v":1}\n');
+			// Seal between the start of the write and its rename.
+			const writing = io.writeStatus('{"v":2}\n');
+			io.seal?.();
+			await writing;
+			expect(await readFile(join(dir, "status.json"), "utf8")).toBe(
+				'{"v":1}\n',
+			);
+			await io.appendJournal('{"e":1}');
+			expect(
+				await readFile(join(dir, "journal.jsonl"), "utf8").catch(() => null),
+			).toBeNull();
+			const { readdir } = await import("node:fs/promises");
+			expect((await readdir(dir)).filter((f) => f.endsWith(".tmp"))).toEqual(
+				[],
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("stop seals the io", async () => {
+		const f = fakeDeps();
+		let sealed = 0;
+		f.deps.io.seal = () => {
+			sealed++;
+		};
+		const rt = createObserverRuntime(f.deps);
+		await rt.stop();
+		expect(sealed).toBe(1);
+	});
 });
 
 describe("modes of existing files", () => {

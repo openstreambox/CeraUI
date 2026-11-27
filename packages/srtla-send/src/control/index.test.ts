@@ -822,6 +822,79 @@ describe("line size ceiling", () => {
 		client?.close();
 	});
 
+	test("an over-long line that ends with its newline is not parsed either", async () => {
+		// Starts like a valid reply for the request; it would resolve it if parsed.
+		const path = socketPath("hugeline");
+		const server = Bun.listen<undefined>({
+			unix: path,
+			socket: {
+				data(socket, chunk) {
+					const frame = JSON.parse(
+						new TextDecoder().decode(chunk).trim().split("\n")[0] as string,
+					) as { id: number };
+					const pad = "z".repeat(MAX_CONTROL_LINE_CHARS + 16);
+					const line = `${JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: statsResult(), pad })}\n`;
+					void (async () => {
+						let at = 0;
+						while (at < line.length) {
+							const n = socket.write(line.slice(at, at + 65_536));
+							at += n;
+							if (n === 0) await Bun.sleep(2);
+						}
+					})();
+				},
+			},
+		});
+		servers.push({ stop: () => server.stop(true) });
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 5000,
+		});
+		const outcome = await client?.getStats().then(
+			(v) => (v === null ? "null" : "resolved"),
+			() => "rejected",
+		);
+		expect(outcome).toBe("rejected");
+		client?.close();
+	});
+
+	test("a subscription push with a malformed new field still projects", async () => {
+		const server = await startServer(socketPath("tolerantpush"), (frame) =>
+			frame.method === "subscribe"
+				? [
+						JSON.stringify({
+							jsonrpc: "2.0",
+							result: { subscription_id: "sub-0" },
+							id: frame.id,
+						}),
+					]
+				: null,
+		);
+		const client = await createControlClient({
+			socketPath: server.path,
+			timeoutMs: 2000,
+		});
+		const seen: Array<unknown> = [];
+		const stop = client?.subscribeStats((snapshot) => seen.push(snapshot));
+		await Bun.sleep(30);
+		const stats = statsResult() as { links: Record<string, unknown>[] };
+		for (const link of stats.links) {
+			link.srtla_ack_epoch = "seven";
+			link.cc_loss_permille = -3;
+		}
+		server.push(
+			JSON.stringify({
+				jsonrpc: "2.0",
+				method: "stats.update",
+				params: { subscription_id: "sub-0", data: stats },
+			}),
+		);
+		await Bun.sleep(30);
+		expect(seen).toHaveLength(1);
+		expect(seen[0]).not.toBeNull();
+		stop?.();
+	});
+
 	test("a subscription sees an over-long push as a disconnect", async () => {
 		const path = await floodServer("hugepush", true);
 		const client = await createControlClient({

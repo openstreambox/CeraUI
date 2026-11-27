@@ -360,22 +360,47 @@ describe("radios as the observer reads them", () => {
 		expect(read.radios.map((r) => r.ifname)).not.toContain("wlan1");
 	});
 
-	test("a verified twin (registry key MAC@port) is skipped as a twin", async () => {
-		addWifiInterface("02:00:00:00:d0:09@usb-1.2", {
-			id: 91,
-			ifname: "wlan7",
-			conn: null,
-			hw: "twin",
-			available: new Map(),
-			saved: {},
-			savedAll: {},
-		} as WifiInterface);
-		try {
-			const read = await port().read();
-			expect(read.skipped).toContainEqual({ ifname: "wlan7", reason: "twin" });
-		} finally {
-			removeWifiInterface("02:00:00:00:d0:09@usb-1.2");
-		}
+	test("verified twins (one permanent MAC, registered as MAC@port) are skipped as twins, and get no command", async () => {
+		await seed.publish([
+			station(),
+			station({ ifname: "wlan2", ifindex: 61, phy: 6 }),
+		]);
+		const keys = Object.keys(getWifiInterfacesByMacAddress());
+		expect(keys.every((k) => k.startsWith(`${MAC1}@`))).toBe(true);
+		const iw = fakeIw();
+		const read = await port(iw).read();
+		expect(read.radios).toEqual([]);
+		expect(read.skipped).toEqual([
+			{ ifname: "wlan1", reason: "twin" },
+			{ ifname: "wlan2", reason: "twin" },
+		]);
+		expect(iw.calls).toEqual([]);
+	});
+
+	test("a cached interface list does not stand for a radio replaced under the same name", async () => {
+		await seed.publish([station()]);
+		// First read: wlan1 on phy5, no AP there.
+		const devs = { now: IW_DEV };
+		const iw = fakeIw();
+		const p = port(iw, new Set(), {
+			run: async (bin, args, opts) =>
+				args.length === 1 ? devs.now : iw.run(bin, args, opts),
+		});
+		clock = 0;
+		expect((await p.read()).radios[0]?.reserved).toBe(false);
+		// Within the cache window a new radio appears under the name, on a phy
+		// that serves an AP.
+		await seed.publish([station({ ifindex: 71, phy: 7 })]);
+		devs.now = `phy#7
+	Interface clap-wlan1
+		ifindex 72
+		type AP
+	Interface wlan1
+		ifindex 71
+		type managed
+`;
+		clock = 1_000;
+		expect((await p.read()).radios[0]?.reserved).toBe(true);
 	});
 
 	test("no radio admitted: nothing is run", async () => {
