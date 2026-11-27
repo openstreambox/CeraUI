@@ -214,37 +214,83 @@ describe("capability gating", () => {
 			system: false,
 			kernel: false,
 			slots: false,
+			packagesManual: false,
 		});
 		expect(updateCapabilityView({ mode: "legacy", features: [] })).toEqual({
 			legacy: true,
 			system: false,
 			kernel: false,
 			slots: false,
+			packagesManual: false,
 		});
 	});
 
 	it("each surface needs its own explicit feature", () => {
 		expect(
 			updateCapabilityView({ mode: "capable", features: ["apt-all-packages"] }),
-		).toEqual({ legacy: false, system: false, kernel: false, slots: false });
+		).toEqual({
+			legacy: false,
+			system: false,
+			kernel: false,
+			slots: false,
+			packagesManual: false,
+		});
 		expect(
 			updateCapabilityView({
 				mode: "capable",
 				features: ["apt-all-packages", "rauc-verity-streaming", "slot-sync"],
 			}),
-		).toEqual({ legacy: false, system: true, kernel: false, slots: true });
+		).toEqual({
+			legacy: false,
+			system: true,
+			kernel: false,
+			slots: true,
+			packagesManual: false,
+		});
 	});
 
 	it("requires capable mode and the explicit kernel feature", () => {
 		// Given a kernel-only declaration, when deriving surfaces, then only kernel is enabled.
 		expect(
 			updateCapabilityView({ mode: "capable", features: ["kernel-apt-stage"] }),
-		).toEqual({ legacy: false, system: false, kernel: true, slots: false });
+		).toEqual({
+			legacy: false,
+			system: false,
+			kernel: true,
+			slots: false,
+			packagesManual: false,
+		});
 		// A stale token in a legacy declaration cannot expose the kernel section.
 		expect(
 			updateCapabilityView({ mode: "legacy", features: ["kernel-apt-stage"] })
 				.kernel,
 		).toBe(false);
+	});
+
+	it("reports manual-only package installs only when the device says so", () => {
+		// Given the field true, false or absent, in either regime.
+		for (const mode of ["capable", "legacy"] as const) {
+			const features = ["apt-all-packages"] as const;
+			// Then only an explicit true makes package installs manual-only.
+			expect(
+				updateCapabilityView({
+					mode,
+					features: [...features],
+					packageInstallsManual: true,
+				}).packagesManual,
+			).toBe(true);
+			expect(
+				updateCapabilityView({
+					mode,
+					features: [...features],
+					packageInstallsManual: false,
+				}).packagesManual,
+			).toBe(false);
+			expect(
+				updateCapabilityView({ mode, features: [...features] }).packagesManual,
+			).toBe(false);
+		}
+		expect(updateCapabilityView(undefined).packagesManual).toBe(false);
 	});
 
 	it("shows kernel work as busy without making it a stream-start refusal", () => {

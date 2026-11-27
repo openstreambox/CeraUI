@@ -265,3 +265,30 @@ it.each(["busy", "not_available", "stream_active"])(
 		expect(rpc.system.startUpdate).not.toHaveBeenCalled();
 	},
 );
+
+it.each([
+	{ packageInstallsManual: undefined, disabled: false },
+	{ packageInstallsManual: false, disabled: false },
+	{ packageInstallsManual: true, disabled: true },
+])(
+	"automatic package switch follows packageInstallsManual=$packageInstallsManual",
+	async ({ packageInstallsManual, disabled }) => {
+		// Given the device's answer about manual-only package installs.
+		capabilities = {
+			mode: "capable",
+			features: ["apt-all-packages"],
+			...(packageInstallsManual === undefined ? {} : { packageInstallsManual }),
+		};
+		render(UpdatesDialog, { open: true });
+		const toggle = await screen.findByTestId("update-auto-packages");
+		await waitFor(() =>
+			expect(screen.queryByTestId("update-details-loading")).toBeNull(),
+		);
+		// Then the switch is disabled with the hint only where installs are manual-only.
+		expect(toggle.hasAttribute("disabled")).toBe(disabled);
+		expect(toggle.getAttribute("aria-checked")).toBe(String(!disabled));
+		expect(screen.queryByTestId("update-auto-packages-manual") !== null).toBe(
+			disabled,
+		);
+	},
+);

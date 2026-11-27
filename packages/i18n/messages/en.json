@@ -3080,6 +3080,7 @@
 	"settings.updates.slots.unavailable": "The slot status could not be read.",
 	"settings.updates.automation.title": "Automatic updates",
 	"settings.updates.automation.packages": "Install package updates automatically",
+	"settings.updates.automation.packagesManualHint": "Package updates on this device are installed by hand.",
 	"settings.updates.automation.system": "Install system images automatically",
 	"settings.updates.automation.systemHint": "A downloaded image is applied at the next restart. The device never restarts on its own.",
 	"settings.updates.automation.idleHint": "Automatic updates only run while nothing is streaming and nobody is using the device.",

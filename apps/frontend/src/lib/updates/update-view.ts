@@ -125,13 +125,27 @@ export interface UpdateCapabilityView {
 	readonly system: boolean;
 	readonly kernel: boolean;
 	readonly slots: boolean;
+	/**
+	 * The device installs package updates only when asked, whatever the
+	 * automatic setting says, so that switch is shown but cannot be turned on.
+	 * Independent of the regime: an older device that does not send the field
+	 * keeps the switch.
+	 */
+	readonly packagesManual: boolean;
 }
 
 export function updateCapabilityView(
 	caps: UpdateCapabilities | undefined,
 ): UpdateCapabilityView {
+	const packagesManual = caps?.packageInstallsManual === true;
 	if (caps === undefined || caps.mode !== "capable") {
-		return { legacy: true, system: false, kernel: false, slots: false };
+		return {
+			legacy: true,
+			system: false,
+			kernel: false,
+			slots: false,
+			packagesManual,
+		};
 	}
 	const has = (feature: UpdateCapabilities["features"][number]) =>
 		caps.features.includes(feature);
@@ -140,6 +154,7 @@ export function updateCapabilityView(
 		system: has("apt-all-packages") && has("rauc-verity-streaming"),
 		kernel: has("kernel-apt-stage"),
 		slots: has("slot-sync"),
+		packagesManual,
 	};
 }
 

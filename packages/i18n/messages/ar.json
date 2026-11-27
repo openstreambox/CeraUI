@@ -3140,6 +3140,7 @@
 	"settings.updates.slots.unavailable": "تعذّرت قراءة حالة الفتحات.",
 	"settings.updates.automation.title": "التحديثات التلقائية",
 	"settings.updates.automation.packages": "ثبّت تحديثات الحزم تلقائيًا",
+	"settings.updates.automation.packagesManualHint": "تُثبَّت تحديثات الحزم على هذا الجهاز يدويًا.",
 	"settings.updates.automation.system": "ثبّت صور النظام تلقائيًا",
 	"settings.updates.automation.systemHint": "تُطبَّق الصورة المنزَّلة عند إعادة التشغيل التالية. لا يُعيد الجهاز التشغيل من تلقاء نفسه أبدًا.",
 	"settings.updates.automation.idleHint": "لا تعمل التحديثات التلقائية إلا عندما لا يوجد بث ولا يستخدم أحد الجهاز.",
