@@ -5,6 +5,11 @@ import { z } from 'zod';
 
 // Sensors status schema
 export const sensorsStatusSchema = z.object({
+	Power: z.string().optional(),
+	'Power sample': z.string().optional(),
+	'Bank A': z.string().optional(),
+	'Bank B': z.string().optional(),
+	'Reserve pack': z.string().optional(),
 	'SoC temperature': z.string(),
 	'SoC current': z.string().optional(),
 	'SoC voltage': z.string().optional(),

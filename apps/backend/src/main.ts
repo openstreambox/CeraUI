@@ -121,9 +121,17 @@ import {
 	tickUplinkShaper,
 } from "./modules/network/uplink-shaper/runtime.ts";
 import { initUplinkSteering } from "./modules/network/uplink-steering/runtime.ts";
-import { initRemote } from "./modules/remote/remote.ts";
+import {
+	getRemoteWebSocket,
+	initRemote,
+	isRemotePowerPeerAuthenticated,
+} from "./modules/remote/remote.ts";
 import { wireActiveProfileReporter } from "./modules/remote-control/active-profile-wiring.ts";
-import { initControlChannel } from "./modules/remote-control/channel.ts";
+import {
+	initControlChannel,
+	isConnected as powerControlConnected,
+	sendFrame as sendPowerControlFrame,
+} from "./modules/remote-control/channel.ts";
 import { wireSetProfile } from "./modules/remote-control/set-profile-wiring.ts";
 import {
 	recordTelemetryTick,
@@ -184,6 +192,7 @@ import { initEncoderLoad } from "./modules/system/encoder-load.ts";
 import { initFan } from "./modules/system/fan.ts";
 import { getHardwareKind } from "./modules/system/hardware-kind.ts";
 import { publishPowerAdmissionStatus } from "./modules/system/power-admission.ts";
+import { deliverPowerSensors } from "./modules/system/power-delivery.ts";
 import {
 	initRevisions,
 	readBuildIdentity,
@@ -506,7 +515,21 @@ void guardNonCritical("boot-record", async () => {
 	await logBootRecord();
 	await recordDeviceStart();
 });
-initHardwareMonitoring();
+initHardwareMonitoring((data) =>
+	deliverPowerSensors(data, {
+		legacy: () => {
+			const socket = getRemoteWebSocket();
+			return socket
+				? {
+						authenticated: isRemotePowerPeerAuthenticated(),
+						send: (text) => socket.send(text),
+					}
+				: undefined;
+		},
+		controlConnected: powerControlConnected,
+		sendControl: sendPowerControlFrame,
+	}),
+);
 initDeviceStats();
 initCpu();
 await guardNonCritical("log-settings", initLogSettings);
