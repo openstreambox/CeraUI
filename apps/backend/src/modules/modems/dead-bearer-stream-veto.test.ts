@@ -47,7 +47,9 @@ import {
 
 const UUID = "9b0c1f3e-4f4f-4a51-9a51-3a0d1b7e2c11";
 const KEY = "platform-xhci-hcd.0.auto-usb-0:1.4";
-const SENDER_EPOCH = 1_790_000_000_000;
+// The sender stamps snapshots on the wall clock the staleness check reads, so a
+// snapshot the test feeds is fresh when it is fed (`wall` starts here too).
+const SENDER_EPOCH = 1_800_000_000_000;
 const POLL_MS = 15_000;
 
 const MODEM: BondEntry = {
