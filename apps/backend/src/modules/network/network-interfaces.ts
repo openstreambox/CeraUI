@@ -226,6 +226,9 @@ const polledNames = new Set<string>();
 const flappingNames = new Set<string>();
 // A name once seen on USB keeps the USB replacement fence after it disappears.
 const usbObservedNames = new Set<string>();
+// The MAC each published row carried. Local ingress tokens follow it, so a MAC
+// change is judged against what was published, not a sample a newer poll dropped.
+const publishedMacs = new Map<string, string | undefined>();
 type NetdevBusEvidence = {
 	readonly result: NetdevBus;
 	readonly seen: number;
@@ -259,6 +262,7 @@ export function resetNetifSnapshotForTest(): void {
 	polledNames.clear();
 	flappingNames.clear();
 	usbObservedNames.clear();
+	publishedMacs.clear();
 	resetNetdevLifetimesForTest();
 }
 
@@ -268,31 +272,45 @@ function bumpPresence(name: string): void {
 
 function installScanSettlement(): void {
 	if (stopScanSettlement) return;
-	const stopNetdevRetired = onNetdevRetired((name, epoch, fencePoll) => {
-		if (fencePoll) netifRefreshGeneration++;
-		presenceEpoch.set(name, epoch);
-		// A retired name last seen on USB waits for a scan of its successor's own
-		// identity before admission (a USB return cannot prove continuity). A
-		// Wi-Fi radio's lifetime is the radio's own; other names re-read their bus
-		// through the new lifetime instead.
-		if (
-			fencePoll &&
-			usbObservedNames.has(name) &&
-			usesUsbReplacementFence(name, isSupportedWifiIfname(name), true)
-		)
-			holdUsbReplacementIdentity(name);
-		polledNames.delete(name);
-		flappingNames.delete(name);
-		scanPublicationWarnings.delete(name);
-		if (netif[name]) {
-			delete netif[name];
-			// A scan can retire a row outside the monitor or poll's commit.
-			queueMicrotask(() => {
-				triggerNetworkInterfacesChange();
-				notifyTopologyChange();
-			});
-		}
-	});
+	const stopNetdevRetired = onNetdevRetired(
+		(name, epoch, fencePoll, retired) => {
+			if (fencePoll) netifRefreshGeneration++;
+			presenceEpoch.set(name, epoch);
+			publishedMacs.delete(name);
+			// Whoever retired the name (poll, monitor or USB scan), a different live
+			// netdev now holding it is a replacement and gets the replacement fence.
+			// A retired name last seen on USB waits for a scan of its successor's own
+			// identity even after a plain removal (a USB return cannot prove
+			// continuity). A Wi-Fi radio's lifetime is the radio's own; other removed
+			// names re-read their bus through the new lifetime instead.
+			const live = retired === undefined ? undefined : readNetdevWitness(name);
+			const replacedByLive =
+				retired !== undefined &&
+				live !== undefined &&
+				live.present !== false &&
+				hasNetdevWitness(live) &&
+				netdevChanged(retired, live);
+			if (fencePoll) {
+				if (replacedByLive) holdReplacedNetdev(name);
+				else if (
+					usbObservedNames.has(name) &&
+					usesUsbReplacementFence(name, isSupportedWifiIfname(name), true)
+				)
+					holdUsbReplacementIdentity(name);
+			}
+			polledNames.delete(name);
+			flappingNames.delete(name);
+			scanPublicationWarnings.delete(name);
+			if (netif[name]) {
+				delete netif[name];
+				// A scan can retire a row outside the monitor or poll's commit.
+				queueMicrotask(() => {
+					triggerNetworkInterfacesChange();
+					notifyTopologyChange();
+				});
+			}
+		},
+	);
 	const stopScanCommitted = onUsbNetScanCommitted(() => {
 		let released = false;
 		for (const [name, int] of Object.entries(netif)) {
@@ -1206,16 +1224,8 @@ async function refreshNetifFromOs(): Promise<void> {
 		if (!sample || generation !== netifRefreshGeneration) return;
 		const { entries, ipOverrides, ifnames, witnesses } = sample;
 		const replaced = new Set<string>();
-		const macChanges = new Set<string>();
 		for (const [name, witness] of witnesses) {
-			const previousMac = netdevWitness(name)?.mac;
 			if (observePollWitness(name, witness)) replaced.add(name);
-			else if (
-				previousMac !== undefined &&
-				witness.mac !== undefined &&
-				previousMac !== witness.mac
-			)
-				macChanges.add(name);
 		}
 		// The retirements above belong to this sample, not a competing observer.
 		generation = netifRefreshGeneration;
@@ -1374,7 +1384,6 @@ async function refreshNetifFromOs(): Promise<void> {
 			buses,
 			undefined,
 			replaced,
-			macChanges,
 		);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -1456,7 +1465,6 @@ export function processIfconfigOutput(
 	buses?: ReadonlyMap<string, NetdevBusEvidence>,
 	ifindices?: ReadonlyMap<string, number>,
 	pollReplacements?: ReadonlySet<string>,
-	pollMacChanges?: ReadonlySet<string>,
 ) {
 	publishIfconfigEntries(
 		parseIfconfigEntries(stdout),
@@ -1465,7 +1473,6 @@ export function processIfconfigOutput(
 		buses,
 		ifindices,
 		pollReplacements,
-		pollMacChanges,
 	);
 }
 
@@ -1476,7 +1483,6 @@ function publishIfconfigEntries(
 	buses?: ReadonlyMap<string, NetdevBusEvidence>,
 	ifindices?: ReadonlyMap<string, number>,
 	pollReplacements?: ReadonlySet<string>,
-	pollMacChanges?: ReadonlySet<string>,
 ) {
 	installScanSettlement();
 	const previousNetif = netif;
@@ -1534,7 +1540,7 @@ function publishIfconfigEntries(
 			);
 
 			const ifindex = ifindices?.get(name);
-			const previousMac = netdevWitness(name)?.mac;
+			const publishedMac = publishedMacs.get(name);
 			const hadRow = netif[name] !== undefined;
 			const replaced =
 				pollReplacements?.has(name) ??
@@ -1557,10 +1563,9 @@ function publishIfconfigEntries(
 			} else if (
 				current &&
 				polledNames.has(name) &&
-				(pollMacChanges?.has(name) ??
-					(previousMac !== undefined &&
-						mac !== undefined &&
-						previousMac !== mac))
+				publishedMac !== undefined &&
+				mac !== undefined &&
+				publishedMac !== mac
 			) {
 				// The same kernel netdev under a new MAC: local ingress ownership
 				// tokens are retired with a new presence epoch, USB evidence is kept.
@@ -1572,7 +1577,11 @@ function publishIfconfigEntries(
 				(observedBus !== undefined && observedBus !== "usb");
 			if (nonUsb && confirmNonUsbReplacement(name)) intsChanged = true;
 			if (nonUsb) usbObservedNames.delete(name);
-			else if (observedBus === "usb") usbObservedNames.add(name);
+			else if (
+				observedBus === "usb" ||
+				(!replaced && getUsbPhysicalDescriptor(name) !== undefined)
+			)
+				usbObservedNames.add(name);
 			polledNames.add(name);
 			const previous = replaced ? undefined : current;
 			let tp = 0;
@@ -1612,6 +1621,7 @@ function publishIfconfigEntries(
 				...(previous?.busReadWarned ? { busReadWarned: true } : {}),
 				...(previous?.identitySettled ? { identitySettled: true } : {}),
 			};
+			publishedMacs.set(name, mac);
 			const entry = newInterfaces[name];
 			if (
 				entry.busUnreadable &&
