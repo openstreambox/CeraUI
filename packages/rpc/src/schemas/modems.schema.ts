@@ -502,6 +502,12 @@ export const MODEM_MUTATION_HISTORY_CAP = 32;
 export const modemMutationEntrySchema = z.object({
 	version: z.literal(MODEM_MUTATION_JOURNAL_VERSION),
 	stableKey: z.string().min(1),
+	// A verified USB serial identity can supplement, but never replace, the port key.
+	unitLinkId: z.string().min(1).optional(),
+	deviceVidPid: z
+		.string()
+		.regex(/^[0-9a-f]{4}:[0-9a-f]{4}$/)
+		.optional(),
 	kind: modemMutationKindSchema,
 	state: modemMutationStateSchema,
 	attemptId: z.string().min(1),

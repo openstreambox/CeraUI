@@ -246,6 +246,9 @@ export async function runForwardAttempt(
 				srtlaSendExec,
 				defaultBindMapSpawnDeps(getLastPublishedBond),
 			);
+			const refreshPurpose = bind.includes("--allow-empty-bond")
+				? "refresh"
+				: "launch";
 			const stats = srtlaStatsFile(FORWARD_PORT);
 			const socket = controlSocketPath(FORWARD_PORT);
 			const ips = await deps.readIps();
@@ -273,7 +276,11 @@ export async function runForwardAttempt(
 				refresh = refresh.then(async () => {
 					if (retired) return;
 					try {
-						const publication = await deps.prepareSrtlaIpAddresses(address);
+						const publication = await deps.prepareSrtlaIpAddresses(
+							address,
+							undefined,
+							refreshPurpose,
+						);
 						if (
 							!retired &&
 							publication.changed &&

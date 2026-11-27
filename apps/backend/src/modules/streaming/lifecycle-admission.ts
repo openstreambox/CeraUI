@@ -230,6 +230,9 @@ export type ModemMutationAdmission =
 /** Why one physical identity is currently refusing mutations, from the journal. */
 export interface MutationBlock {
 	readonly stableKey: string;
+	readonly unitLinkId?: string;
+	readonly deviceVidPid?: string;
+	readonly matchUsbVendor?: true;
 	readonly refusal: ModemMutationRefusal;
 	/** Whether it ALSO holds global stream autostart (a decommission does not). */
 	readonly blocksStreaming: boolean;
@@ -371,6 +374,9 @@ export function setMutationBlocks(blocks: readonly MutationBlock[]): void {
 			return (
 				!old ||
 				old.refusal !== block.refusal ||
+				old.unitLinkId !== block.unitLinkId ||
+				old.deviceVidPid !== block.deviceVidPid ||
+				old.matchUsbVendor !== block.matchUsbVendor ||
 				old.blocksStreaming !== block.blocksStreaming
 			);
 		});
@@ -390,6 +396,31 @@ export function onMutationBlocksChange(listener: () => void): () => void {
 /** Whether this physical identity is blocked by the journal. */
 export function isModemKeyBlocked(stableKey: string): boolean {
 	return mutationBlocks.has(stableKey);
+}
+
+/** Keep the original port and verified unit held. Scope uncertainty by USB SKU. */
+export function modemBlockMatches(
+	block: MutationBlock,
+	port: string | undefined,
+	vidPid: string,
+	unit: string | undefined,
+): boolean {
+	if (
+		block.stableKey === port ||
+		(unit !== undefined && block.unitLinkId === unit)
+	)
+		return true;
+	if (block.deviceVidPid !== undefined) {
+		// A USB composition change can replace the product ID while keeping
+		// the same device. Unresolved returns can only be narrowed by vendor.
+		const matches = block.matchUsbVendor
+			? block.deviceVidPid.slice(0, 4) === vidPid.slice(0, 4)
+			: block.deviceVidPid === vidPid;
+		if (!matches) return false;
+	}
+	return (
+		port === undefined || (unit === undefined && block.unitLinkId !== undefined)
+	);
 }
 
 export function hasMutationBlocks(): boolean {
