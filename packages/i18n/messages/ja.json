@@ -1956,6 +1956,8 @@
 	"notifications.streamHealthRecovered": "ストリーム状態が回復しました",
 	"notifications.streamRecovered": "配信エンジンの再起動後、配信が自動的に復旧しました。",
 	"notifications.streamRecoveryFailed": "配信エンジンの再起動後、配信を復旧できませんでした。詳細は 設定 → システムログ を開いてください。",
+	"notifications.streamRecoveredAfterRestart": "サービスの再起動後、配信が自動的に復旧しました。",
+	"notifications.streamRecoveryFailedAfterRestart": "サービスの再起動後、配信を復旧できませんでした。詳細は 設定 → システムログ を開いてください。",
 	"notifications.staleLinkAddress": "{link} はまだ古いアドレスを使用しているため、送信に寄与していません。接続を再起動しますか？視聴者には数秒間 BRB 画面が表示されます。",
 	"notifications.staleLinkAddressUnnamed": "1 つのリンクがまだ古いアドレスを使用しているため、送信に寄与していません。接続を再起動しますか？視聴者には数秒間 BRB 画面が表示されます。",
 	"notifications.staleLinkAddressSeveral": "いくつかのリンクがまだ古いアドレスを使用しているため、送信に寄与していません。接続を再起動しますか？視聴者には数秒間 BRB 画面が表示されます。",

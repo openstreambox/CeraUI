@@ -620,7 +620,7 @@ function defaultOnSessionConnectionLost(
 			// runtime state and is self-serialising, so a second loss cannot start
 			// a second one.
 			const { runStreamRestoration } = await import("./stream-restoration.ts");
-			if (current()) void runStreamRestoration();
+			if (current()) void runStreamRestoration({}, "engine_restart");
 		} catch (err) {
 			defaultLogger.error(
 				"cerastream: could not retire the session after a control-connection loss",
@@ -834,6 +834,12 @@ export class CerastreamBackend implements StreamingBackend {
 	private client: CerastreamClient | undefined;
 	private subscription: Subscription | undefined;
 	private active = false;
+	private launchedSessionCurrent: (() => boolean) | undefined;
+
+	/** Only the unchanged client that acknowledged our Start is session proof. */
+	ownsLaunchedSession(): boolean {
+		return this.active && this.launchedSessionCurrent?.() === true;
+	}
 	private audioMixInputs: Array<AudioInputConfig & { id: string }> | undefined;
 	/** The delay the session runs with: one saved since is the next Start's. */
 	private runningDelay: number | undefined;
@@ -1108,6 +1114,8 @@ export class CerastreamBackend implements StreamingBackend {
 				// Subscription replay predates this Start acknowledgement.
 				if (this.client === client && this.clientEpoch === clientEpoch) {
 					this.audioMixInputs = audioMixInputs;
+					this.launchedSessionCurrent = () =>
+						this.client === client && this.clientEpoch === clientEpoch;
 					this.runtimeEvidence = undefined;
 				}
 			}, "start");
@@ -1716,6 +1724,8 @@ export class CerastreamBackend implements StreamingBackend {
 				this.deps.bridge.broadcastStatus();
 				break;
 			case "status": {
+				if (event.state === "idle" && event.streaming === false)
+					this.launchedSessionCurrent = undefined;
 				this.runtimeEvidence = {
 					state: classifyRuntimeState(event.state, event.streaming),
 					current,
