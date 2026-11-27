@@ -6,7 +6,7 @@ import {
 } from "../modules/remote-control/status-relay.ts";
 import type { StatusResponseMessage } from "../modules/ui/status.ts";
 import { rememberHotspotCredentials } from "../modules/wifi/hotspot-credentials.ts";
-import { broadcastWifiState } from "../modules/wifi/wifi.ts";
+import { broadcastWifiState, wifiBuildMsg } from "../modules/wifi/wifi.ts";
 import { cancelWifiAdapterReconciliation } from "../modules/wifi/wifi-adapter-reconcile-retry.ts";
 import {
 	defaultHotspotStopDeps,
@@ -89,32 +89,37 @@ test.each([false, true])(
 			}
 			authenticate();
 			broadcastWifiState();
-			const markers = (
-				frames: readonly string[],
-				source: "status" | "payload",
-			) =>
-				frames.map((bytes) => {
+			// The remote projection names the radio "Wi-Fi 1" and never carries a
+			// transition, mode witness or radio token, so no transport has an
+			// inherited Stop marker to clear: it sees the AP, then the station.
+			const rows = (frames: readonly string[], source: "status" | "payload") =>
+				frames.flatMap((bytes) => {
 					const frame: {
 						status?: StatusResponseMessage;
 						payload?: StatusResponseMessage;
 					} = JSON.parse(bytes);
-					return frame[source]?.wifi?.[f.row.id]?.transition;
+					const wifi = frame[source]?.wifi as
+						| Record<string, Record<string, unknown>>
+						| undefined;
+					return wifi === undefined ? [] : [wifi["Wi-Fi 1"]];
 				});
-			// The train's remote projection names rows by label and sends no
-			// transition, mode witness or radio token to either remote transport,
-			// so the inherited Stop marker never reaches them to be cleared.
 			const legacy = wifiStatusFrames(remote.sent);
-			expect(legacy).toHaveLength(2);
-			expect(relay.length).toBeGreaterThanOrEqual(2);
 			for (const bytes of [...legacy, ...relay])
 				expect(bytes).not.toMatch(/"(transition|leaving|incarnation)"/);
-			expect({
-				legacy: markers(legacy, "status"),
-				relay: markers(relay, "payload"),
-			}).toEqual({
-				legacy: [undefined, undefined],
-				relay: relay.map(() => undefined),
-			});
+			expect(rows(legacy, "status").map((row) => row?.mode)).toEqual([
+				"station",
+				"station",
+			]);
+			expect(rows(relay, "payload").map((row) => row?.mode)).toEqual(
+				guarded ? ["hotspot", "station"] : ["hotspot", "station", "station"],
+			);
+			// The local wire took the marker and has cleared it after the settled
+			// status and the reconnect.
+			expect(f.row.hotspot.transition).toBeUndefined();
+			expect(
+				(wifiBuildMsg() as Record<number, { transition?: string }>)[f.row.id]
+					?.transition,
+			).toBeUndefined();
 		} finally {
 			delay.finish();
 			resetStatusRelay();
