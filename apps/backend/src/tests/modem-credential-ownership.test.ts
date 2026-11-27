@@ -64,6 +64,8 @@ describe.each(["0123456789ABCDEF", "shared-unit-432"])(
 				// Given a real legacy store and two distinct USB parents sharing its id.
 				const twins = constructedTwins.map((device) => ({ ...device, serial }));
 				const legacyId = mintLinkId(`usb-serial:413c:${serial}`);
+				const legacyAlias =
+					serial === "0123456789ABCDEF" ? undefined : legacyId;
 				const saved = JSON.stringify({
 					version: 1,
 					devices: { [legacyId]: { ...credential, anchor: "usb-serial" } },
@@ -83,7 +85,7 @@ describe.each(["0123456789ABCDEF", "shared-unit-432"])(
 				);
 				for (const twin of twins) {
 					const device = resolveModemPhysicalIdentity(twin.ifname);
-					expect(device.legacyLinkId).toBe(legacyId);
+					expect(device.legacyLinkId).toBe(legacyAlias);
 					expect(readModemCredential(device)).toBeUndefined();
 				}
 
@@ -102,6 +104,7 @@ describe.each(["0123456789ABCDEF", "shared-unit-432"])(
 				const survivor = resolveModemPhysicalIdentity(second.ifname);
 
 				// Then neither lookup path may assign or consume the ambiguous login.
+				expect(survivor.legacyLinkId).toBe(legacyAlias);
 				expect(projectModemCredential(survivor)).toEqual({ configured: false });
 				expect(readModemCredential(survivor)).toBeUndefined();
 				expect(await Bun.file(store).text()).toBe(saved);
