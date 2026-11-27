@@ -24,6 +24,8 @@ interface Props {
 	linkTelemetry?: LinkTelemetryMessage | null;
 	/** Known interfaces that carry no bonded traffic; stated, never listed here. */
 	unbondedCount?: number;
+	/** A stream is running, so per-link RTT / NAK / weight have something to measure. */
+	streaming?: boolean;
 }
 
 const {
@@ -31,12 +33,20 @@ const {
 	modemEntries,
 	linkTelemetry = undefined,
 	unbondedCount = 0,
+	streaming = false,
 }: Props = $props();
 
 // The feed is `undefined` only before the first status push lands. Distinguish
 // that "not arrived yet" state from a delivered-but-empty feed (null / no entry
 // for this link) so cards show a skeleton on first paint instead of a "--" flicker.
 const telemetryLoading = $derived(linkTelemetry === undefined);
+
+// RTT / NAK / weight measure srtla_send, which only runs while streaming. Idle,
+// every card carried three empty cells (skeletons before the first push, "--"
+// after), so they are left out until a stream runs or telemetry rows exist.
+// While streaming they stay mounted through a null feed, so a sender restart
+// never changes the card height.
+const showTelemetry = $derived(streaming || (linkTelemetry?.links.length ?? 0) > 0);
 
 // Index telemetry rows by their resolved interface name so each card can join
 // its own values. `link.id` is the kernel ifname, which the backend resolves per
@@ -171,12 +181,14 @@ const totalStale = $derived(
 
 						<!-- per-link srtla telemetry: RTT / NAK / weight (Task 22) — rides
 						     the same row via a left divider, at reduced size (Task 19). -->
-						<div
-							class="min-w-0 border-s ps-2.5"
-							style="border-color: color-mix(in oklab, {color} 20%, transparent);"
-						>
-							<LinkTelemetry class="gap-x-2.5" {entry} loading={telemetryLoading} />
-						</div>
+						{#if showTelemetry}
+							<div
+								class="min-w-0 border-s ps-2.5"
+								style="border-color: color-mix(in oklab, {color} 20%, transparent);"
+							>
+								<LinkTelemetry class="gap-x-2.5" {entry} loading={telemetryLoading} />
+							</div>
+						{/if}
 					</div>
 				</div>
 			{/each}
