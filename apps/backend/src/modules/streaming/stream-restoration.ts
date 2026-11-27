@@ -62,7 +62,9 @@ import {
 	clearArmedStreamMarker,
 	decideStreamRestoration,
 	defaultArmedStreamMarkerDeps,
+	LAUNCHED_CAPTURE_KEYS,
 	pinnedLaunchedAudio,
+	pinnedLaunchedCapture,
 	RESTORATION_BOUND_MS,
 	RESTORATION_POLL_MS,
 	RESTORATION_UNKNOWN_DEADLINE_MS,
@@ -124,6 +126,13 @@ export function captureArmedStreamConfig(): ArmedStreamConfig {
 	copy("source_stable_id");
 	copy("selected_video_input");
 	copy("input_mode");
+	// The capture the Start dispatched, not a save made while it launched.
+	const capture = pinnedLaunchedCapture();
+	if (capture !== undefined)
+		for (const key of LAUNCHED_CAPTURE_KEYS) {
+			if (capture[key] === undefined) delete snapshot[key];
+			else snapshot[key] = capture[key];
+		}
 	return snapshot as ArmedStreamConfig;
 }
 
