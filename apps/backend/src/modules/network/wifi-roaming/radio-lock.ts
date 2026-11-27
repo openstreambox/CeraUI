@@ -28,7 +28,10 @@ import {
 	confirmWifiAdapterLifetime,
 	type WifiAdapterAdmission,
 } from "../../wifi/wifi-adapter-admission.ts";
-import { withWifiAdapterLock } from "../../wifi/wifi-adapter-lock.ts";
+import {
+	ownsWifiAdapterLock,
+	withWifiAdapterLock,
+} from "../../wifi/wifi-adapter-lock.ts";
 import { getWifiInterfacesByMacAddress } from "../../wifi/wifi-connections.ts";
 import type { RadioLockResult } from "./coordinator.ts";
 
@@ -41,17 +44,24 @@ export function admitRadio(ifname: string): WifiAdapterAdmission | undefined {
 	return admitWifiAdapter(keys[0] as string);
 }
 
-const lockedAdmission = new AsyncLocalStorage<WifiAdapterAdmission>();
+type LockedAction = { readonly admission: WifiAdapterAdmission; live: boolean };
+
+const lockedAdmission = new AsyncLocalStorage<LockedAction>();
 
 /**
  * The admission the current {@link withRadioLock} action runs under, when it
- * is for `ifname`. `undefined` outside such an action.
+ * is for `ifname`. `undefined` outside such an action, and also for work the
+ * action started without awaiting once the action has returned: async context
+ * outlives the callback, the lock does not.
  */
 export function admittedRadio(
 	ifname: string,
 ): WifiAdapterAdmission | undefined {
-	const admission = lockedAdmission.getStore();
-	return admission?.row.ifname === ifname ? admission : undefined;
+	const action = lockedAdmission.getStore();
+	if (!action?.live) return undefined;
+	const { admission } = action;
+	if (admission.row.ifname !== ifname) return undefined;
+	return ownsWifiAdapterLock(admission.owner) ? admission : undefined;
 }
 
 /**
@@ -74,10 +84,15 @@ export async function withRadioLock<T>(
 	const result = await withWifiAdapterLock(admission.owner, async () => {
 		if (!(await confirmWifiAdapterLifetime(admission)))
 			return { confirmed: false as const };
-		return {
-			confirmed: true as const,
-			value: await lockedAdmission.run(admission, fn),
-		};
+		const action: LockedAction = { admission, live: true };
+		try {
+			return {
+				confirmed: true as const,
+				value: await lockedAdmission.run(action, fn),
+			};
+		} finally {
+			action.live = false;
+		}
 	});
 	if (!result.success || !result.result.confirmed) return { ok: false };
 	return { ok: true, value: result.result.value };

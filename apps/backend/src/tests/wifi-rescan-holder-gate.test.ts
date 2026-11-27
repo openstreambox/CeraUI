@@ -23,6 +23,7 @@ import {
 	wifiRescan,
 	wifiRescanDispatched,
 } from "../modules/wifi/wifi-connections.ts";
+import { radioIdentityReaders } from "../modules/wifi/wifi-radio-identity.ts";
 import { wifiScanProcedure } from "../rpc/procedures/wifi.procedure.ts";
 import type { AppWebSocket, RPCContext } from "../rpc/types.ts";
 import {
@@ -376,5 +377,45 @@ describe("rescans admit the radio they scan", () => {
 		expect(dispatched).toBe(false);
 		expect(spawns).toEqual(["wlan1"]);
 		expect(getWifiScanStampForDevice(1)).toBeUndefined();
+	});
+
+	test("a sibling on the radio's phy protected during the identity sample stops the scan", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		eligible();
+		const readText = radioIdentityReaders.readText;
+		let changed = false;
+		radioIdentityReaders.readText = async (path) => {
+			// The coordinator protects a radio on wlan1's phy while the fresh
+			// sysfs sample of wlan1 is read.
+			if (!changed && path.startsWith("/sys/class/net/wlan1/")) {
+				changed = true;
+				protectRadiosFromScans(["wlan0", "wlan9"], ["phy-wlan0", "phy-wlan1"]);
+			}
+			return readText(path);
+		};
+		try {
+			expect(await wifiRescanDispatched(1)).toBe(false);
+		} finally {
+			radioIdentityReaders.readText = readText;
+		}
+		expect(changed).toBe(true);
+		expect(spawns).toEqual([]);
+	});
+
+	test("the radio itself protected during the identity sample is not scanned", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		eligible();
+		const readText = radioIdentityReaders.readText;
+		radioIdentityReaders.readText = async (path) => {
+			if (path.startsWith("/sys/class/net/wlan1/"))
+				protectRadiosFromScans(["wlan0", "wlan1"], ["phy-wlan0"]);
+			return readText(path);
+		};
+		try {
+			expect(await wifiRescanDispatched(1)).toBe(false);
+		} finally {
+			radioIdentityReaders.readText = readText;
+		}
+		expect(spawns).toEqual([]);
 	});
 });

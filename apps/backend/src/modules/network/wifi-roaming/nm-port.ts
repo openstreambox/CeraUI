@@ -193,6 +193,12 @@ export type SearchNmDeps = Readonly<{
 	 * the one admitted under the held lock.
 	 */
 	confirm?: (ifname: string) => Promise<boolean>;
+	/**
+	 * Before each profile write after an await: the action that admitted this
+	 * radio is still running and still owns its lock. Synchronous, so nothing
+	 * slips in between the check and the write.
+	 */
+	held?: (ifname: string) => boolean;
 }>;
 
 /*
@@ -214,6 +220,8 @@ export function createSearchNm(deps: SearchNmDeps) {
 	const run = deps.run;
 	const macOf = deps.macOf ?? admittedMac;
 	const confirm = deps.confirm ?? confirmAdmittedRadio;
+	const held =
+		deps.held ?? ((ifname: string) => admittedRadio(ifname) !== undefined);
 	const quiet = async (bin: string, args: string[], timeout = 10_000) => {
 		try {
 			return await run(bin, args, { timeout });
@@ -315,7 +323,8 @@ export function createSearchNm(deps: SearchNmDeps) {
 				uuid &&
 				uuid !== keep &&
 				uuid !== active &&
-				UUID_RE.test(uuid)
+				UUID_RE.test(uuid) &&
+				held(ifname)
 			)
 				await quiet("nmcli", ["connection", "delete", uuid]);
 		}
@@ -422,7 +431,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 			const dev = argMatch(ID_RE, ifname);
 			const target = argMatch(BSSID_RE, bssid.toLowerCase());
 			const source = (await boundProfiles(dev, "join")).get(ssid);
-			if (!source) return undefined;
+			if (!source || !held(dev)) return undefined;
 			const name = searchProfileName(dev);
 			const cloned = await quiet("nmcli", [
 				"connection",
@@ -433,6 +442,11 @@ export function createSearchNm(deps: SearchNmDeps) {
 			]);
 			const uuid = cloned && parseCloneUuid(cloned);
 			if (!uuid) return undefined;
+			if (!held(dev)) {
+				// Only our own clone, by its exact UUID: it touches no radio.
+				await quiet("nmcli", ["connection", "delete", uuid]);
+				return undefined;
+			}
 			const modified = await quiet("nmcli", [
 				"connection",
 				"modify",

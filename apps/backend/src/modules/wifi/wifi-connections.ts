@@ -32,8 +32,8 @@ import type {
 } from "../network/state-types.ts";
 import { admitRadio } from "../network/wifi-roaming/radio-lock.ts";
 import {
-	mayScanNow,
 	scanGateActive,
+	scanPermit,
 	scanProtectedRadios,
 } from "../network/wifi-roaming/scan-gate.ts";
 import {
@@ -879,8 +879,12 @@ async function runRescan(
 				target === ifname &&
 				ownsWifiAdapterLock(admission.owner);
 			const dispatch = async () => {
-				if (!(await mayScanNow(target))) return false;
+				const permit = await scanPermit(target);
+				if (!permit) return false;
 				if (!(await confirmWifiAdapterLifetime(admission))) return false;
+				// The sample awaited: protection may have moved onto this radio
+				// or its phy meanwhile. Re-check with no await before the scan.
+				if (!permit()) return false;
 				return (await rescanAction(target)) !== false;
 			};
 			const sent = inline

@@ -56,21 +56,38 @@ export function scanGateActive(): boolean {
 }
 
 /**
- * Whether CeraUI may scan `ifname` right now. Call it under the radio's
- * per-adapter Wi-Fi lock, immediately before dispatching the scan.
+ * A permit to scan `ifname`, or `undefined` when the gate refuses it now.
+ * Take it under the radio's per-adapter Wi-Fi lock, before dispatching.
+ *
+ * The permit is a synchronous re-check of the current protection against the
+ * name and the phy this read saw. Protection is republished whenever a role
+ * changes, so any later await (a fresh identity sample, say) can make a sibling
+ * on the same phy protected: call the permit immediately before the scan goes
+ * out, with no await in between.
  */
-export async function mayScanNow(ifname: string): Promise<boolean> {
-	if (protectedIfnames.has(ifname)) return false;
-	if (!scanGateActive()) return true;
-	if (!modeReader) return true;
+export async function scanPermit(
+	ifname: string,
+): Promise<(() => boolean) | undefined> {
+	const allowed = (phy: string | null) =>
+		!protectedIfnames.has(ifname) && !(phy !== null && protectedPhys.has(phy));
+	if (protectedIfnames.has(ifname)) return undefined;
+	if (!scanGateActive() || !modeReader) return () => allowed(null);
 	let mode: RadioMode | undefined;
 	try {
 		mode = await modeReader(ifname);
 	} catch {
-		return false;
+		return undefined;
 	}
-	if (mode?.apOnPhy !== false) return false;
+	if (mode?.apOnPhy !== false) return undefined;
 	// Re-read the set: it may have changed while the mode was read.
-	if (protectedIfnames.has(ifname)) return false;
-	return !(mode.phy !== null && protectedPhys.has(mode.phy));
+	const phy = mode.phy;
+	return allowed(phy) ? () => allowed(phy) : undefined;
+}
+
+/**
+ * Whether CeraUI may scan `ifname` right now. Call it under the radio's
+ * per-adapter Wi-Fi lock, immediately before dispatching the scan.
+ */
+export async function mayScanNow(ifname: string): Promise<boolean> {
+	return (await scanPermit(ifname)) !== undefined;
 }

@@ -95,7 +95,9 @@ radio associated without an address is not idle.
     ownership change. Each rescan of a radio is admitted like a coordinator
     action (below) and goes out under the owner lock its row resolves to,
     after a fresh, fail-closed read of its mode and phy and then a fresh
-    sample confirming the same radio and lifetime. A radio without a verified
+    sample confirming the same radio and lifetime, then a synchronous re-check
+    of the protection against the name and phy that read saw, with no await
+    before the scan. A radio without a verified
     identity is not scanned while the gate is active; a request naming a radio
     no row answers to scans nothing; a scan NetworkManager refuses is not
     reported as run. The scan RPC holds that lock across the dispatch and says so
@@ -123,7 +125,10 @@ radio associated without an address is not idle.
     join to the profiles pinned to the admitted permanent MAC (never the
     name's current, possibly randomized address) and confirms the radio again
     right before each scan and activation, so a replug under the same name
-    gets neither the scan nor the clone. Verified twins (two radios with one
+    gets neither the scan nor the clone. The admission ends with the action:
+    work the action started without awaiting gets none once it has returned,
+    and every profile write after an await checks that the action still runs
+    and owns its lock. Verified twins (two radios with one
     permanent MAC, registered as `MAC@port`) are refused like Limited radios:
     the shared admission accepts bare-MAC rows only, as the network-diversity
     check and the two-radio adapter do.
@@ -144,6 +149,10 @@ These come in later parts:
   and after each effect before accepting evidence, persist no lock key or
   incarnation, and stand the network-diversity scanner down for
   coordinator-owned radios (it calls NetworkManager directly).
+- While the gate is active, a Limited, unpublished or twin radio is not
+  scanned and the scan RPC answers `DEVICE_BUSY` for it. Before the wiring
+  turns the gate on, decide how the operator sees a refusal that lasts
+  (an identity the box cannot verify) rather than a busy radio.
 - The first holder is whatever NetworkManager activated with the operator's
   profile. Without a BSSID lock, NetworkManager gives it a background scan
   every 30 s below -65 dBm on a multi-AP network. `status()` reports

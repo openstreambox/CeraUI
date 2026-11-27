@@ -240,3 +240,41 @@ describe("the NetworkManager port under the lock", () => {
 		expect(f.calls.some((c) => c.includes("--rescan"))).toBe(false);
 	});
 });
+
+describe("work an action starts without awaiting", () => {
+	test("gets no admission once the action has returned", async () => {
+		const release = Promise.withResolvers<void>();
+		const locked = await withRadioLock("wlan2", async () => ({
+			later: release.promise.then(async () => ({
+				admitted: admittedRadio("wlan2"),
+				confirmed: await confirmAdmittedRadio("wlan2"),
+			})),
+		}));
+		if (!locked.ok) throw new Error("expected the action to run");
+		release.resolve();
+		expect(await locked.value.later).toEqual({
+			admitted: undefined,
+			confirmed: false,
+		});
+	});
+
+	test("a join it starts after the lock is released writes no profile", async () => {
+		const calls: string[] = [];
+		const nm = createSearchNm({
+			run: async (bin, args) => {
+				calls.push(`${bin} ${args.join(" ")}`);
+				return "";
+			},
+		});
+		const release = Promise.withResolvers<void>();
+		const locked = await withRadioLock("wlan2", async () => ({
+			later: release.promise.then(() =>
+				nm.join("wlan2", "venue", "aa:00:00:00:00:02"),
+			),
+		}));
+		if (!locked.ok) throw new Error("expected the action to run");
+		release.resolve();
+		expect(await locked.value.later).toBeUndefined();
+		expect(calls).toEqual([]);
+	});
+});
