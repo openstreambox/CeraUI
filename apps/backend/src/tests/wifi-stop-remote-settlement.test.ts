@@ -4,7 +4,10 @@ import {
 	resetStatusRelay,
 	setControlChannel,
 } from "../modules/remote-control/status-relay.ts";
-import type { StatusResponseMessage } from "../modules/ui/status.ts";
+import {
+	type StatusResponseMessage,
+	sendInitialStatus,
+} from "../modules/ui/status.ts";
 import { rememberHotspotCredentials } from "../modules/wifi/hotspot-credentials.ts";
 import { broadcastWifiState, wifiBuildMsg } from "../modules/wifi/wifi.ts";
 import { cancelWifiAdapterReconciliation } from "../modules/wifi/wifi-adapter-reconcile-retry.ts";
@@ -21,7 +24,7 @@ import {
 } from "../modules/wifi/wifi-operation-binding.ts";
 import { radioIdentityReaders } from "../modules/wifi/wifi-radio-identity.ts";
 import { addClient, removeClient } from "../rpc/events.ts";
-import { statusClient } from "./helpers/status-client.ts";
+import { StubRemoteSocket, statusClient } from "./helpers/status-client.ts";
 import { firstAp, MAC } from "./helpers/wifi-first-ap-fixture.ts";
 import {
 	connectRemoteWifiStatus,
@@ -130,6 +133,16 @@ test.each([false, true])(
 				["station", undefined],
 				["station", undefined],
 				...(guarded ? [] : [["station", undefined]]),
+			]);
+			// A local page that signs in now hydrates the settled row.
+			const fresh = new StubRemoteSocket();
+			sendInitialStatus(fresh as never);
+			const hydrated = wifiStatusFrames(fresh.sent);
+			expect(hydrated).toHaveLength(1);
+			const freshRow = JSON.parse(hydrated[0] ?? "{}").status.wifi?.["0"];
+			expect([freshRow?.mode, freshRow?.transition]).toEqual([
+				"station",
+				undefined,
 			]);
 			expect(f.row.hotspot.transition).toBeUndefined();
 			expect(
