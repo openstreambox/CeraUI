@@ -34,7 +34,12 @@ import CollisionBands from './network/CollisionBands.svelte';
 import { activeSimLock, isBlockingSimLock } from './network/cellular-row';
 import EthernetSection from './network/EthernetSection.svelte';
 import HotspotSection from './network/HotspotSection.svelte';
-import { chooseHotspotRadio } from './network/hotspot-radio-target';
+import {
+	chooseHotspotRadio,
+	expireHotspotChoice,
+	type HotspotRadioChoice,
+	pickHotspotRadio,
+} from './network/hotspot-radio-target';
 import { MutationRecovery } from './network/mutation-recovery.svelte';
 import RemoteNetworkStatus from './network/RemoteNetworkStatus.svelte';
 import SharingSection from './network/SharingSection.svelte';
@@ -85,12 +90,30 @@ const isLoading = $derived(
 const wifiEntries = $derived(Object.entries(wifi ?? {}) as [string, WifiInterface][]);
 const hotspotInterfaces = $derived(wifiEntries.filter(([id, iface]) => hotspotIsActive(iface)));
 
-// Preserve an explicit radio selection across roster changes; otherwise prefer
-// an active hotspot, then an idle AP-capable radio.
-let selectedHotspotRadio = $state<string>();
-const hotspotTarget = $derived(chooseHotspotRadio(wifiEntries, selectedHotspotRadio));
+// The hotspot radio pick is `[id, incarnation]` and expires with that radio
+// lifetime (backend restart, replug, degraded row). Several capable radios need
+// an explicit pick; an expired one never falls through to another radio.
+let hotspotRadioChoice = $state.raw<HotspotRadioChoice>({});
+$effect(() => {
+	const next = expireHotspotChoice(wifiEntries, hotspotRadioChoice);
+	if (next !== hotspotRadioChoice) hotspotRadioChoice = next;
+});
+const hotspotTarget = $derived(chooseHotspotRadio(wifiEntries, hotspotRadioChoice));
 
+// The dialog keeps the radio it was opened for: a later pick or an expired one
+// never retargets it. It follows that row's live state by id, where the
+// dialog's own binding rules handle a changed incarnation.
+let hotspotDialogDevice = $state<string>();
+const hotspotDialogIface = $derived(
+	hotspotDialogDevice === undefined ? undefined : wifi?.[hotspotDialogDevice],
+);
 let hotspotDialogOpen = $state(false);
+
+function openHotspotDialog() {
+	if (!hotspotTarget) return;
+	hotspotDialogDevice = hotspotTarget[0];
+	hotspotDialogOpen = true;
+}
 let wifiCountryOpen = $state(false);
 
 const modemEntries = $derived(Object.entries(modems ?? {}) as [string, Modem][]);
@@ -295,8 +318,9 @@ function openModemConfig(id: string) {
 			{hotspotInterfaces}
 			{hotspotTarget}
 			radios={wifiEntries}
-			onSelect={(id) => { selectedHotspotRadio = id; }}
-			onSetup={() => (hotspotDialogOpen = true)}
+			selectionLost={hotspotRadioChoice.lost !== undefined}
+			onSelect={(id) => { hotspotRadioChoice = pickHotspotRadio(wifiEntries, id); }}
+			onSetup={openHotspotDialog}
 		/>
 		<BluetoothSection status={bluetooth} {audioBackend} />
 	{/if}
@@ -320,12 +344,12 @@ function openModemConfig(id: string) {
 	/>
 {/if}
 
-{#if hotspotTarget}
+{#if hotspotDialogDevice !== undefined}
 	<LazyDialog
 		dialog={HotspotDialog}
 		bind:open={hotspotDialogOpen}
-		deviceId={hotspotTarget[0]}
-		iface={hotspotTarget[1]}
+		deviceId={hotspotDialogDevice}
+		iface={hotspotDialogIface}
 	/>
 {/if}
 
