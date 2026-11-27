@@ -28,6 +28,7 @@ import type {
 	EventBootRecord,
 	EventListInput,
 	EventListOutput,
+	FastStallGateOutput,
 	FccUnlockOptionsInput,
 	FccUnlockOptionsOutput,
 	GetEngineOutput,
@@ -1190,6 +1191,9 @@ export interface TypedRPC {
 		getCloudProviders: () => Promise<unknown>;
 		setRemoteConfig: (input: RemoteConfigInput) => Promise<SuccessResponse>;
 		setAutostart: (input: { autostart: boolean }) => Promise<AutostartOutput>;
+		setFastStallGate: (input: {
+			enabled: boolean;
+		}) => Promise<FastStallGateOutput>;
 		kioskStatus: () => Promise<KioskStatus>;
 		kioskStart: () => Promise<KioskToggleOutput>;
 		kioskStop: () => Promise<KioskToggleOutput>;

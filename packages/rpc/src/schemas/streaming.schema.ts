@@ -1043,6 +1043,8 @@ export const configMessageSchema = z.object({
 	bitrate_overlay: z.boolean().optional(),
 	captive_portal_enabled: z.boolean().optional(),
 	autostart: z.boolean().optional(),
+	// Fast stall gate for the sender; absent = off. Applies at the next start.
+	srtla_fast_stall_gate: z.boolean().optional(),
 	srtla_addr: z.string().optional(),
 	srtla_port: z.number().optional(),
 	srt_streamid_configured: z.boolean().optional(),

@@ -52,6 +52,7 @@ import { cn } from '$lib/utils';
 import PhoneBoxHealth from './PhoneBoxHealth.svelte';
 
 import DeviceStatsSection from './settings/DeviceStatsSection.svelte';
+import FastStallGateSetting from './settings/FastStallGateSetting.svelte';
 import PortalSetting from './settings/PortalSetting.svelte';
 import RemoteControlStatus from './settings/RemoteControlStatus.svelte';
 import ThermalNotice from './settings/ThermalNotice.svelte';
@@ -419,6 +420,7 @@ let now = $state(Date.now());
 									/>
 								</span>
 							</div>
+							<FastStallGateSetting />
 						{/if}
 						<!-- Row titles and descriptions wrap instead of truncating: at 390 px a
 						     one-line description cut most of them mid-sentence ("Set the password

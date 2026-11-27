@@ -9,6 +9,8 @@ import {
 	autostartInputSchema,
 	autostartOutputSchema,
 	cloudProviderEndpointSchema,
+	fastStallGateInputSchema,
+	fastStallGateOutputSchema,
 	installUpdatesNowInputSchema,
 	kioskConfigureInputSchema,
 	kioskConfigureOutputSchema,
@@ -160,6 +162,11 @@ export const systemContract = oc.router({
 	 * Set autostart configuration
 	 */
 	setAutostart: oc.input(autostartInputSchema).output(autostartOutputSchema),
+
+	/**
+	 * Fast stall gate for the sender (applies at the next stream start)
+	 */
+	setFastStallGate: oc.input(fastStallGateInputSchema).output(fastStallGateOutputSchema),
 
 	/**
 	 * Get the live kiosk status (persisted toggle + live polled state — DC-2)

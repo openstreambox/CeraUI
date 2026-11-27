@@ -69,6 +69,7 @@ import {
 
 test.each([
 	"accepted",
+	"accepted with fast stall gate",
 	"refused",
 	"listener exit",
 	"stderr end",
@@ -124,11 +125,14 @@ test.each([
 	};
 	let sender: { exitListeners: Array<() => void> } | undefined;
 	let spawned = 0;
+	let spawnedArgs: string[] = [];
+	const fastStallGate = scenario === "accepted with fast stall gate";
 	const deps: Parameters<typeof runForwardAttempt>[1] = {
 		getConfig: () => ({
 			srtla_addr: "127.0.0.1",
 			srtla_port: 19403,
 			srt_streamid: "test",
+			...(fastStallGate ? { srtla_fast_stall_gate: true } : {}),
 		}),
 		getRelays: () => ({}),
 		resolveSrtla: async () => "127.0.0.1",
@@ -139,8 +143,9 @@ test.each([
 		},
 		resolveBindMapArgs: async () =>
 			scenario === "capable empty refresh" ? ["--allow-empty-bond"] : [],
-		spawnForwardLoop: () => {
+		spawnForwardLoop: (_exec, args) => {
 			spawned++;
+			spawnedArgs = args;
 			sender = { exitListeners: [] };
 			return { ...sender, proc: fakeProc } as never;
 		},
@@ -209,7 +214,11 @@ test.each([
 			}
 			return;
 		}
-		if (scenario !== "accepted" && scenario !== "shutdown failure") {
+		if (
+			scenario !== "accepted" &&
+			scenario !== "accepted with fast stall gate" &&
+			scenario !== "shutdown failure"
+		) {
 			if (scenario === "spawn failure")
 				await expect(running).rejects.toThrow("startup");
 			else await running;
@@ -219,6 +228,17 @@ test.each([
 			return;
 		}
 		while (!spawned) await Bun.sleep(1);
+		// The forwarding sender follows the same per-box stall gate setting.
+		const stallArgs = spawnedArgs.filter((arg) => arg.startsWith("--stall-"));
+		if (fastStallGate) {
+			const at = spawnedArgs.indexOf("--stall-min-in-flight");
+			expect(spawnedArgs.slice(at, at + 4)).toEqual([
+				"--stall-min-in-flight",
+				"4",
+				"--stall-ack-stale-ms",
+				"250",
+			]);
+		} else expect(stallArgs).toEqual([]);
 		expect(getCarryingLiveness()).not.toBe("streaming");
 		expect(currentLifecycleHolder()).toBe("streaming");
 		emit("SRT target connected");
