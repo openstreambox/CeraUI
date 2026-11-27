@@ -98,7 +98,7 @@ describe("ModemManager 1.24 and NetworkManager 1.52 formats", () => {
 describe("backend messages are bounded to the code's own texts", () => {
 	test.each([
 		[
-			"nmConnect err: nmcli exited with code 10: Error: No network with SSID 'Bobs Home' found.",
+			"nmConnNew err: nmcli exited with code 10: Error: No network with SSID 'Bobs Home' found.",
 			"Bobs Home",
 		],
 		["Command timed out: nmcli -t connection up id Bobs iPhone", "Bobs iPhone"],
@@ -118,8 +118,8 @@ describe("backend messages are bounded to the code's own texts", () => {
 
 	test("a message from the code keeps its fixed text; every gap is [value]", () => {
 		expect(
-			exported(error("nmConnect err: nmcli exited with code 10: Error: x")),
-		).toContain('"msg":"nmConnect err: [value]"');
+			exported(error("nmConnNew err: nmcli exited with code 10: Error: x")),
+		).toContain('"msg":"nmConnNew err: [value]"');
 		expect(
 			exported(error("Failed to register modem 3: Jane Doe Mobile")),
 		).toContain('"msg":"Failed to register modem [value]: [value]"');
