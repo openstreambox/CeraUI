@@ -336,6 +336,9 @@ export const runtimeConfigSchema = z.object({
 	last_seen_devices: z.array(lastSeenDeviceSchema).optional(),
 	captive_portal_enabled: z.boolean().optional(),
 	autostart: z.boolean().optional(),
+	// Start the sender with the fast stall gate (sender-stall-gate.ts).
+	// Absent = off: the sender keeps its own defaults and gets no extra flag.
+	srtla_fast_stall_gate: z.boolean().optional(),
 
 	// Remote/cloud settings
 	remote_key: z.string().optional(),

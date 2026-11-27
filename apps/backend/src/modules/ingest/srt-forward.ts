@@ -27,6 +27,7 @@ import {
 	awaitRecoveryBarrier,
 	isRecoveryPending,
 } from "../streaming/recovery-barrier.ts";
+import { isFastStallGateEnabled } from "../streaming/sender-stall-gate.ts";
 import { getLastPublishedBond, resolveSrtla } from "../streaming/srtla.ts";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
@@ -263,6 +264,7 @@ export async function runForwardAttempt(
 						statsFile: stats,
 						controlSocket: socket,
 						execPath: setup.srtla_path,
+						fastStallGate: isFastStallGateEnabled(deps.getConfig()),
 					}),
 					...bind,
 				],

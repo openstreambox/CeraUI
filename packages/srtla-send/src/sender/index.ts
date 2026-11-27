@@ -46,6 +46,22 @@ export const CONN_TIMEOUT_MS = 15_000;
  */
 export const CAPABILITIES_JSON_FLAG = "--capabilities-json";
 
+/**
+ * The fast stall gate, emitted only when {@link SrtlaSendOptions.fastStallGate}
+ * is set. Without it the sender runs on its own defaults (32 packets in
+ * flight, a 3,000 ms ceiling on the delivery-proof window), which a stream of
+ * a few hundred kbit/s rarely reaches before the link is removed some other
+ * way. With it a link with 4 packets in flight and no delivery proof for
+ * 250 ms leaves the payload rotation.
+ *
+ * The sender never gates its last usable link (`apply_stall_gate` in
+ * srtla-core gates only while another link is healthy), so a single-link
+ * stream is unaffected. Both flags are accepted by every sender that has the
+ * stall guard (srtla_send 4.1.0 and later).
+ */
+export const FAST_STALL_MIN_IN_FLIGHT = 4;
+export const FAST_STALL_ACK_STALE_MS = 250;
+
 export const srtlaSendOptionsSchema = z.object({
 	listenPort: z
 		.number()
@@ -108,6 +124,14 @@ export const srtlaSendOptionsSchema = z.object({
 			"Disable upstream stall-deselect, which is ON by default in the " +
 				"hard-forked sender. Emits --no-stall-deselect.",
 		),
+	fastStallGate: z
+		.boolean()
+		.optional()
+		.describe(
+			"Gate a link out of the payload rotation sooner: emits " +
+				"--stall-min-in-flight 4 --stall-ack-stale-ms 250. Absent or false " +
+				"leaves the sender on its own defaults and adds no argument.",
+		),
 	execPath: z.string().optional(),
 });
 
@@ -150,6 +174,14 @@ export function buildSrtlaSendArgs(
 	}
 	if (options.noStallDeselect) {
 		args.push("--no-stall-deselect");
+	}
+	if (options.fastStallGate) {
+		args.push(
+			"--stall-min-in-flight",
+			String(FAST_STALL_MIN_IN_FLIGHT),
+			"--stall-ack-stale-ms",
+			String(FAST_STALL_ACK_STALE_MS),
+		);
 	}
 	return args;
 }

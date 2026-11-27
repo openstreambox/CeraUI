@@ -77,6 +77,7 @@ import {
 	recentRelaySession,
 	relaySessionKey,
 } from "../recent-relay-session.ts";
+import { isFastStallGateEnabled } from "../sender-stall-gate.ts";
 import { getLastPublishedBond } from "../srtla.ts";
 import { resolvePinnedLaunchAudio, type StartAudio } from "../start-audio.ts";
 import {
@@ -347,6 +348,7 @@ export async function startStream(
 			statsFile,
 			controlSocket,
 			execPath: setup.srtla_path,
+			fastStallGate: isFastStallGateEnabled(config),
 		}),
 		...bindMapArgs,
 	];

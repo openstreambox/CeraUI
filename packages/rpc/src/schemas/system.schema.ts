@@ -447,6 +447,21 @@ export const autostartOutputSchema = z.object({
 });
 export type AutostartOutput = z.infer<typeof autostartOutputSchema>;
 
+// Fast stall gate for the sender (`applied` = value persisted post-write).
+// Takes effect the next time the stream starts.
+export const fastStallGateInputSchema = z.object({
+	enabled: z.boolean(),
+});
+export type FastStallGateInput = z.infer<typeof fastStallGateInputSchema>;
+
+export const fastStallGateOutputSchema = z.object({
+	success: z.boolean(),
+	applied: z.object({
+		enabled: z.boolean(),
+	}),
+});
+export type FastStallGateOutput = z.infer<typeof fastStallGateOutputSchema>;
+
 // =============================================================================
 // Kiosk toggle state machine (DC-2 — docs/KIOSK_STATE_MACHINE.md)
 // =============================================================================

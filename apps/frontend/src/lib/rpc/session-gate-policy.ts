@@ -181,6 +181,7 @@ export const REFUSED_DURING_REAUTH: ReadonlySet<string> = new Set([
 	"system.poweroff",
 	"system.reboot",
 	"system.setAutostart",
+	"system.setFastStallGate",
 	"system.setPhoneWay",
 	"system.setRemoteConfig",
 	"system.setUpdateSettings",

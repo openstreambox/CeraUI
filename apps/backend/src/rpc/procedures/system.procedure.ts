@@ -8,6 +8,8 @@ import {
 	autostartInputSchema,
 	autostartOutputSchema,
 	cloudProviderEndpointSchema,
+	fastStallGateInputSchema,
+	fastStallGateOutputSchema,
 	installUpdatesNowInputSchema,
 	KIOSK_UNAVAILABLE_ERROR,
 	kioskConfigureInputSchema,
@@ -43,6 +45,7 @@ import {
 	getCloudProviders,
 	setRemoteConfig,
 } from "../../modules/remote/remote.ts";
+import { setFastStallGate } from "../../modules/streaming/sender-stall-gate.ts";
 import { setAutostart } from "../../modules/streaming/streamloop.ts";
 import { hasCapability } from "../../modules/system/board-capabilities.ts";
 import { DisruptiveActionRefusedError } from "../../modules/system/disruptive-action-error.ts";
@@ -488,6 +491,17 @@ export const setAutostartProcedure = authedProcedure
 	.handler(({ input }) => {
 		const autostart = setAutostart(input.autostart);
 		return { success: true, applied: { autostart } };
+	});
+
+/**
+ * Fast stall gate for the sender; applies at the next stream start.
+ */
+export const setFastStallGateProcedure = authedProcedure
+	.input(fastStallGateInputSchema)
+	.output(fastStallGateOutputSchema)
+	.handler(({ input }) => {
+		const enabled = setFastStallGate(input.enabled);
+		return { success: true, applied: { enabled } };
 	});
 
 /**

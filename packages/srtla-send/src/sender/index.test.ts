@@ -7,6 +7,8 @@ import {
 	CAPABILITIES_JSON_FLAG,
 	CONN_TIMEOUT_MS,
 	DEFAULT_SRTLA_SEND_PATH,
+	FAST_STALL_ACK_STALE_MS,
+	FAST_STALL_MIN_IN_FLIGHT,
 	getSrtlaSendExec,
 	spawnSrtlaSend,
 } from "./index";
@@ -140,6 +142,50 @@ describe("buildSrtlaSendArgs", () => {
 			expect(args[idx + 1]).toBe("15000");
 			expect(args.filter((arg) => arg === "--conn-timeout-ms")).toHaveLength(1);
 		}
+	});
+
+	// The fast stall gate is opt-in. Off (absent or false) must leave the vector
+	// byte-identical to a spawn that never heard of it; on appends exactly the
+	// two sender flags, after every other flag.
+	test("buildSrtlaSendArgs_fast_stall_gate_off_adds_nothing", () => {
+		const base = {
+			srtlaHost: "host",
+			statsFile: "/s",
+			controlSocket: "/c.sock",
+			bindMap: "/m.json",
+		};
+		const legacy = buildSrtlaSendArgs(base);
+		expect(buildSrtlaSendArgs({ ...base, fastStallGate: false })).toEqual(
+			legacy,
+		);
+		expect(legacy).not.toContain("--stall-min-in-flight");
+		expect(legacy).not.toContain("--stall-ack-stale-ms");
+	});
+
+	test("buildSrtlaSendArgs_fast_stall_gate_on_exact_vector", () => {
+		expect(FAST_STALL_MIN_IN_FLIGHT).toBe(4);
+		expect(FAST_STALL_ACK_STALE_MS).toBe(250);
+		const args = buildSrtlaSendArgs({
+			srtlaHost: "host",
+			controlSocket: "/c.sock",
+			noRehome: true,
+			fastStallGate: true,
+		});
+		expect(args).toEqual([
+			"5000",
+			"host",
+			"5001",
+			"/tmp/srtla_ips",
+			"--conn-timeout-ms",
+			"15000",
+			"--control-socket",
+			"/c.sock",
+			"--no-rehome",
+			"--stall-min-in-flight",
+			"4",
+			"--stall-ack-stale-ms",
+			"250",
+		]);
 	});
 
 	test("buildSrtlaSendArgs_verbose_only", () => {
