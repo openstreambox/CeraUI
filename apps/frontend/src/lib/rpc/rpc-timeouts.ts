@@ -33,6 +33,9 @@ export const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
 	"system.tailscaleJoin": 75_000,
 	"system.tailscaleSetEnabled": 75_000,
 	"system.tailscaleLogout": 75_000,
+	// The image oneshots wait out their own timeouts (60s and 300s).
+	"devices.retryPort": 70_000,
+	"devices.usb2": 320_000,
 };
 
 export function rpcCallTimeoutMs(path: string): number {
