@@ -880,3 +880,15 @@ measurements. Both 32 KiB absolute headrooms, the ratio, the initial-route and
 single-chunk limits and the federation budgets are unchanged; the displaced
 1,467,857/1,668,503 B baselines are kept in `SPA_DISPLACED_BASELINES`.
 Accepted debt under `TD-spa-i18n-catalog-size`, which remains open.
+
+### Bundle footprint acceptance — 2026-11-25
+
+The composed train build measures 1,550,753 B total SPA gzip and 1,751,441 B
+precache gzip, over the 2026-11-21 ceilings by 7,143 B and 7,203 B (41,959 B and
+42,019 B over the 2026-11-21 baselines). Most of the growth is the Devices view,
+which shows the USB port each device is plugged into (about 30.5 KiB gzip). The
+aggregate baselines move to those measurements. Both 32 KiB absolute headrooms,
+the ratio, the initial-route and single-chunk limits and the federation budgets
+are unchanged; the displaced 1,508,794/1,709,422 B baselines are kept in
+`SPA_DISPLACED_BASELINES`. Accepted debt under `TD-spa-i18n-catalog-size`,
+which remains open.
