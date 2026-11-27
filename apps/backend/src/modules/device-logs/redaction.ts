@@ -27,19 +27,246 @@ function isLocalIPv4(a: number, b: number): boolean {
 
 // SRT passphrase fields by name, as srt-secret-redaction.ts masks them, so a value
 // that is no longer held (changed, cleared or never loaded) stays out too.
-const NAMED_PASSPHRASES: readonly RegExp[] = [
-	/(?<=passphrase=)(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s&"']+)/gi,
-	/(?<=passphrase"\s*:\s*)"(?:[^"\\]|\\.)*"/gi,
-	/(?<=passphrase\\"\s*:\s*\\")(?:\\\\\\\\|\\\\\\"|\\\\[^"\\]|[^"\\])+(?=\\")/gi,
-];
+//
+// A small lexer reads the line: a double-quoted string is decoded with JSON
+// escapes and read again inside, recursively, so a JSON object, URI or prose
+// serialized into a string is read at its own level with its own delimiters.
+// At each level a `passphrase` key is a JSON field (a key string ending in
+// `passphrase`, a colon and a string value), a URI query assignment
+// (`?`/`&passphrase=`) or a prose assignment (`passphrase=`). A value is masked
+// only when its decoded content is exactly a marker, and only its own source
+// span, quotes included, is replaced. A value is one unit: nothing inside it is
+// read as another key.
 
-function namedPassphrase(match: string): string {
-	// Already masked upstream of the journal, possibly with trailing punctuation.
-	if (match === '""' || /^"?\[REDACTED(?::[a-z0-9_]+)?\]/.test(match))
-		return match;
-	return match.startsWith('"')
-		? '"[REDACTED:srt_passphrase]"'
-		: "[REDACTED:srt_passphrase]";
+/**
+ * Whether a JSON key or a `key=` assignment names a secret value: an SRT
+ * passphrase field such as `passphrase`, `srt_passphrase` or
+ * `relay_passphrase`. The one place this lexer decides it.
+ */
+export function isPassphraseKey(key: string): boolean {
+	return /passphrase$/i.test(key);
+}
+
+const MASKED_PASSPHRASE = /^\[REDACTED(?::[a-z0-9_]+)?\]$/;
+// Log prose may run a marker into the sentence's trailing punctuation.
+const MASKED_PROSE_PASSPHRASE = /^\[REDACTED(?::[a-z0-9_]+)?\][,.;:!?)]+$/;
+const REPLACEMENT = "[REDACTED:srt_passphrase]";
+const JSON_ESCAPES: Readonly<Record<string, string>> = {
+	'"': '"',
+	"\\": "\\",
+	"/": "/",
+	b: "\b",
+	f: "\f",
+	n: "\n",
+	r: "\r",
+	t: "\t",
+};
+
+/** Decoded text with, for each decoded character, its source range. */
+interface View {
+	/** The whole source line the offsets point into. */
+	readonly source: string;
+	readonly text: string;
+	/** Source offset where decoded character `index` starts, or undefined past the end. */
+	readonly from: (index: number) => number | undefined;
+	/** Source offset where decoded character `index` ends. */
+	readonly to: (index: number) => number | undefined;
+	/** Source offset of the end of the view, for an empty tail. */
+	readonly end: number;
+}
+
+export interface NamedSpan {
+	readonly start: number;
+	readonly end: number;
+	readonly marker: string;
+}
+
+function sourceView(input: string): View {
+	const inside = (index: number) => index >= 0 && index < input.length;
+	return {
+		source: input,
+		text: input,
+		from: (index) => (inside(index) ? index : undefined),
+		to: (index) => (inside(index) ? index + 1 : undefined),
+		end: input.length,
+	};
+}
+
+/** The string opening at `open`, decoded, and the index of its closing quote. */
+function decodeString(
+	view: View,
+	open: number,
+): { readonly content: View; readonly close: number } {
+	const { text } = view;
+	let decoded = "";
+	const from: number[] = [];
+	const to: number[] = [];
+	let index = open + 1;
+	while (index < text.length && text[index] !== '"') {
+		let length = 1;
+		let char = text.charAt(index);
+		if (char === "\\" && index + 1 < text.length) {
+			const escaped = text.charAt(index + 1);
+			const unicode = /^u[0-9a-f]{4}/i.exec(text.slice(index + 1, index + 6));
+			if (unicode) {
+				char = String.fromCharCode(Number.parseInt(unicode[0].slice(1), 16));
+				length = 6;
+			} else {
+				char = JSON_ESCAPES[escaped] ?? escaped;
+				length = 2;
+			}
+		}
+		decoded += char;
+		from.push(view.from(index) ?? view.end);
+		to.push(view.to(index + length - 1) ?? view.end);
+		index += length;
+	}
+	const close = index < text.length ? index : -1;
+	return {
+		content: {
+			source: view.source,
+			text: decoded,
+			from: (position) => from[position],
+			to: (position) => to[position],
+			end: close === -1 ? view.end : (view.from(close) ?? view.end),
+		},
+		close,
+	};
+}
+
+/** Source range of decoded `[start, end)`. */
+function sourceOf(view: View, start: number, end: number) {
+	return {
+		start: view.from(start) ?? view.end,
+		end:
+			end > start
+				? (view.to(end - 1) ?? view.end)
+				: (view.from(start) ?? view.end),
+	};
+}
+
+/** A `passphrase=` value at `start`; returns where reading resumes. */
+function readAssignment(
+	view: View,
+	start: number,
+	uri: boolean,
+	spans: NamedSpan[],
+): number {
+	const { text } = view;
+	const delimiter = uri ? /[\s&#]/ : /[\s&]/;
+	if (text[start] === '"' || text[start] === "'") {
+		let close = -1;
+		let content = "";
+		if (text[start] === '"') {
+			const string = decodeString(view, start);
+			close = string.close;
+			content = string.content.text;
+		} else {
+			close = text.indexOf("'", start + 1);
+			content = text.slice(start + 1, close);
+		}
+		if (close !== -1) {
+			let end = close + 1;
+			// A URI value runs to its delimiter even past a quote; prose ends there.
+			if (uri)
+				while (end < text.length && !delimiter.test(text.charAt(end))) end++;
+			if (end === close + 1 && MASKED_PASSPHRASE.test(content)) return end;
+			spans.push({
+				...sourceOf(view, start, end),
+				marker:
+					text[start] === '"' && end === close + 1
+						? `${sourceText(view, start)}${REPLACEMENT}${sourceText(view, close)}`
+						: REPLACEMENT,
+			});
+			return end;
+		}
+	}
+	let end = start;
+	while (end < text.length && !delimiter.test(text.charAt(end))) end++;
+	const value = text.slice(start, end);
+	if (value === "") return end;
+	const masked =
+		MASKED_PASSPHRASE.test(value) ||
+		(!uri &&
+			MASKED_PROSE_PASSPHRASE.test(value) &&
+			(end === text.length || /\s/.test(text.charAt(end))));
+	if (!masked)
+		spans.push({ ...sourceOf(view, start, end), marker: REPLACEMENT });
+	return end;
+}
+
+/** The source text of decoded character `index`, such as `\"` for a quote. */
+function sourceText(view: View, index: number): string {
+	const range = sourceOf(view, index, index + 1);
+	return view.source.slice(range.start, range.end);
+}
+
+function readView(view: View, spans: NamedSpan[]): void {
+	const { text } = view;
+	let index = 0;
+	while (index < text.length) {
+		if (text[index] === "=") {
+			let key = index;
+			while (key > 0 && /[\w.-]/.test(text.charAt(key - 1))) key--;
+			if (isPassphraseKey(text.slice(key, index))) {
+				index = readAssignment(
+					view,
+					index + 1,
+					key > 0 && "?&".includes(text.charAt(key - 1)),
+					spans,
+				);
+				continue;
+			}
+		}
+		if (text[index] !== '"') {
+			index++;
+			continue;
+		}
+		const string = decodeString(view, index);
+		if (string.close === -1) {
+			readView(string.content, spans);
+			return;
+		}
+		const next = string.close + 1;
+		if (isPassphraseKey(string.content.text)) {
+			// A JSON field: any JSON whitespace around the colon, then a string.
+			let cursor = next;
+			while (/[ \t\n\r]/.test(text.charAt(cursor))) cursor++;
+			if (text[cursor] === ":") {
+				cursor++;
+				while (/[ \t\n\r]/.test(text.charAt(cursor))) cursor++;
+				if (text[cursor] === '"') {
+					const value = decodeString(view, cursor);
+					const close = value.close === -1 ? text.length : value.close;
+					const content = value.content.text;
+					if (content !== "" && !MASKED_PASSPHRASE.test(content)) {
+						const range = sourceOf(view, cursor, close + 1);
+						spans.push({
+							...range,
+							marker:
+								value.close === -1
+									? `${sourceText(view, cursor)}${REPLACEMENT}`
+									: `${sourceText(view, cursor)}${REPLACEMENT}${sourceText(view, close)}`,
+						});
+					}
+					index = Math.min(close + 1, text.length);
+					continue;
+				}
+			}
+		}
+		readView(string.content, spans);
+		index = next;
+	}
+}
+
+/**
+ * Every value of a secret-bearing key in `input` that needs masking, in source
+ * order and not overlapping: the source range to replace and its masked form.
+ */
+export function namedPassphraseSpans(input: string): NamedSpan[] {
+	const spans: NamedSpan[] = [];
+	readView(sourceView(input), spans);
+	return spans;
 }
 
 /** Held values shorter than this are not matched: too many false hits. */
@@ -132,20 +359,21 @@ export function buildRedactor(
 		},
 		known(value: string) {
 			let redactions = 0;
-			let text =
+			const text =
 				exact === null
 					? value
 					: value.replace(exact, (match) => {
 							redactions++;
 							return literals.get(percentCase(match)) ?? "[REDACTED]";
 						});
-			for (const pattern of NAMED_PASSPHRASES)
-				text = text.replace(pattern, (match) => {
-					const next = namedPassphrase(match);
-					if (next !== match) redactions++;
-					return next;
-				});
-			return { text, redactions };
+			let position = 0;
+			let named = "";
+			for (const span of namedPassphraseSpans(text)) {
+				named += text.slice(position, span.start) + span.marker;
+				position = span.end;
+				redactions++;
+			}
+			return { text: named + text.slice(position), redactions };
 		},
 		text(value: string, exempt) {
 			const spans: Array<{
@@ -209,7 +437,8 @@ export function buildRedactor(
 				pattern: RegExp,
 				replacement: (
 					match: string,
-					address?: (typeof addresses)[number],
+					address: (typeof addresses)[number] | undefined,
+					index: number,
 				) => string,
 				addressContext = false,
 				ignore?: TextSpan,
@@ -229,7 +458,7 @@ export function buildRedactor(
 						if (address && address.start <= match.index && end <= address.end)
 							containing = address;
 					}
-					const next = replacement(text, containing);
+					const next = replacement(text, containing, match.index);
 					if (next !== text)
 						spans.push({
 							start: match.index,
@@ -292,7 +521,8 @@ export function buildRedactor(
 				/eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+/g,
 				() => "[REDACTED:token]",
 			);
-			for (const pattern of NAMED_PASSPHRASES) mask(pattern, namedPassphrase);
+			for (const span of namedPassphraseSpans(value))
+				spans.push({ ...span, known: false });
 			spans.sort((a, b) => a.start - b.start);
 			const merged: typeof spans = [];
 			for (const span of spans) {
