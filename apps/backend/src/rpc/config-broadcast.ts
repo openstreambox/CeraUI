@@ -19,12 +19,15 @@ import type { RuntimeConfig } from "../helpers/config-schemas.ts";
 import { onConfigSave } from "../modules/config-save-listeners.ts";
 import { excludedAudioInputs } from "../modules/streaming/audio-inputs.ts";
 import { broadcastMsg } from "./compat.ts";
+import { publicEventData } from "./events.ts";
 
 let sent = new Set<string>();
 
+// The keys of the frame clients get: its public form, where a stream id is a
+// `*_configured` flag that every frame carries.
 function carried(config: object): Set<string> {
 	return new Set(
-		Object.entries(config)
+		Object.entries(publicEventData("config", config) as object)
 			.filter(([, value]) => value !== undefined)
 			.map(([key]) => key),
 	);

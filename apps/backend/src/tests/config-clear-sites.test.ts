@@ -81,6 +81,7 @@ import {
 } from "../modules/system/kiosk.ts";
 import { persistWifiCountry } from "../modules/wifi/wifi-country.ts";
 import { broadcastConfig } from "../rpc/config-broadcast.ts";
+import { publicEventData } from "../rpc/events.ts";
 import { setAudioMixProcedure } from "../rpc/procedures/audio-mix.procedure.ts";
 import {
 	applySwitchInputFollow,
@@ -108,7 +109,9 @@ const named = () =>
 	);
 /** The last config the tab was sent, and the one the device holds. */
 const told = () => frames().findLast((frame) => "config" in frame)?.config;
-const stored = () => JSON.parse(JSON.stringify(getConfig()));
+// What a client is told is the public form: the train sends stream ids as flags.
+const stored = () =>
+	JSON.parse(JSON.stringify(publicEventData("config", getConfig())));
 const setConfig = (input: StreamingSetConfigInput) => () =>
 	call(setConfigProcedure, input, { context: makeRpcContext() });
 
@@ -278,7 +281,8 @@ describe("through the streaming writers", () => {
 			"srt_streamid: a relay account",
 			{ srt_streamid: "s" },
 			setConfig({ relay_account: "a" }),
-			cleared("srt_streamid"),
+			// The train sends the stream id as its flag, which every frame carries.
+			["config"],
 		],
 		[
 			"relay_account: a manual stream id",
@@ -438,7 +442,11 @@ describe("through the streaming writers", () => {
 				"srt_streamid, relay_streamid_override: stream ids",
 				{},
 				setConfig({ srt_streamid: "s", relay_streamid_override: "o" }),
-				{ srt_streamid: "s", relay_streamid_override: "o" },
+				// The train sends stream ids as flags.
+				{
+					srt_streamid_configured: true,
+					relay_streamid_override_configured: true,
+				},
 			],
 			[
 				"selected_ingest_endpoint: a managed slot",
@@ -460,7 +468,11 @@ describe("through the streaming writers", () => {
 						srtla_port: 5000,
 						srt_streamid: "s",
 					}),
-				{ srtla_addr: "127.0.0.1", srtla_port: 5000, srt_streamid: "s" },
+				{
+					srtla_addr: "127.0.0.1",
+					srtla_port: 5000,
+					srt_streamid_configured: true,
+				},
 			],
 			[
 				"resolution, framerate, audio_inputs: a start that carries them",
@@ -611,7 +623,8 @@ describe("through the streaming writers", () => {
 				await heardFrom(() =>
 					updateConfig({ relay_server: "r1", relay_account: "a1" }),
 				),
-			).toEqual(cleared("srtla_addr", "srtla_port", "srt_streamid"));
+				// The stream id goes as its flag, which every frame carries.
+			).toEqual(cleared("srtla_addr", "srtla_port"));
 			await updateCachedRelays(undefined);
 		} finally {
 			process.chdir(cwd);
@@ -833,7 +846,8 @@ describe("through the device's other writers", () => {
 				relay_streamid_override: "key9",
 			},
 			{},
-			cleared("relay_account", "relay_streamid_override"),
+			// The override goes as its flag, which every frame carries.
+			cleared("relay_account"),
 		],
 	] as const)
 		test(name, async () => {
@@ -881,7 +895,8 @@ describe("through the device's other writers", () => {
 						accounts: { a1: { name: "A", ingest_key: "key1" } },
 					} as Parameters<typeof handleRemoteRelays>[0]),
 				),
-			).toEqual(cleared("srtla_addr", "srtla_port", "srt_streamid"));
+				// The stream id goes as its flag, which every frame carries.
+			).toEqual(cleared("srtla_addr", "srtla_port"));
 			await updateCachedRelays(undefined);
 		} finally {
 			process.chdir(cwd);
@@ -1130,7 +1145,11 @@ describe("through the device's other writers", () => {
 						await reverted.promise;
 					}),
 				).toEqual([...heard]);
-				expect(told()).toEqual({ max_br: 5000 });
+				expect(told()).toEqual({
+					max_br: 5000,
+					relay_streamid_override_configured: false,
+					srt_streamid_configured: false,
+				});
 			} finally {
 				resetSelfFencingState();
 			}
