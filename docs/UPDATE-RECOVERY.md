@@ -1921,6 +1921,21 @@ be a stage nobody recorded. Any unreadable input is "not proven".
   confirmed. Rejection retains the unresolved notice; only an accepted transition
   clears it. A retained staged receipt prevents confirmation even with writer proof.
 
+**A stopped guard that systemd keeps loaded is released.** A loaded unit that
+orders itself against `ceralive-os-stage-guard.service` (an image's shutdown
+drain with the guard in `After=`) keeps systemd from unloading the stopped
+transient guard: after `systemctl stop` it reads loaded and inactive with the
+released invocation instead of `not-found`. Release used to demand `not-found`,
+so every successful stage on such an image settled `unsafe` with
+`rauc_recovery_unproven` after its receipt commit and left the job directory
+behind. Release now accepts that exact shape (inactive, clean exit, the
+invocation it released, an idle job queue and no lock holder in the kernel proof) and refuses any
+other loaded guard with `refusal: "guard-not-retired"`. The guard also orders
+itself `Before=ceralive-write-drain.service`, as the kernel stage does, which
+keeps the shutdown ordering without pinning the stopped unit. A unit still
+pinned from an older boot cannot be started again in that boot (`systemd-run`
+refuses an already loaded unit); acquisition reports `os_update_lock_held`.
+
 **A consumed staged receipt is retired [PARTIAL — host-proven, board re-drill owed].**
 `os-staged.json` records version, channel, `stagedAt` and the producer boot.
 New writes optionally record strict `installedImage` evidence read after successful
