@@ -171,24 +171,10 @@ function collectBondEntries(
 				? (networkInterface?.ipv6 ?? networkInterface?.ip)
 				: (networkInterface?.ip ?? networkInterface?.ipv6);
 		if (!networkInterface || !ip) continue;
-		if (isBondIdentityPending(name, networkInterface)) continue;
 		if (!accept(name, networkInterface)) continue;
 		const entry = describeBondEntry(name, ip);
-		if (requireMappableDuplicate) {
-			let owner = name;
-			if (isClatTunName(name)) {
-				const translation = clatTranslationFor(name, ip);
-				if (!translation) continue;
-				owner = translation.parent;
-			}
-			const parent = networkInterfaces[owner];
-			if (
-				isUsbReplacementPending(owner) ||
-				isHeldOutByModemBlock(owner, parent) ||
-				!admitEntry(networkInterface, entry)
-			)
-				continue;
-		}
+		if (requireMappableDuplicate && !admitEntry(networkInterface, entry))
+			continue;
 		entries.push(entry);
 	}
 	return oneEntryPerTranslatedModem(entries, preferIpv6);
@@ -238,6 +224,33 @@ export function genSrtlaBondEntries(): BondEntry[] {
 	return collectBondEntries(isBondCandidate, false);
 }
 
+function isLocalBondCandidate(
+	name: string,
+	int: NetworkInterface,
+	receiver: string,
+): boolean {
+	if (
+		!int.ip ||
+		!int.netmask ||
+		!isSameSubnet(receiver, int.ip, int.netmask) ||
+		isBondIdentityPending(name, int)
+	)
+		return false;
+	let owner = name;
+	let parent = int;
+	if (isClatTunName(name)) {
+		const translation = clatTranslationFor(name, int.ip);
+		if (!translation || !isBondLinkMappable(name, int.ip)) return false;
+		const currentParent = getNetworkInterfaces()[translation.parent];
+		if (!currentParent) return false;
+		owner = translation.parent;
+		parent = currentParent;
+	}
+	return (
+		!isUsbReplacementPending(owner) && !isHeldOutByModemBlock(owner, parent)
+	);
+}
+
 /**
  * The local-subnet variant, now equally interface-aware.
  *
@@ -250,10 +263,7 @@ export function genSrtlaBondEntriesForLocalIpAddress(
 	ipAddress: string,
 ): BondEntry[] {
 	return collectBondEntries(
-		(_name, int) =>
-			int.netmask !== undefined &&
-			int.ip !== undefined &&
-			isSameSubnet(ipAddress, int.ip, int.netmask),
+		(name, int) => isLocalBondCandidate(name, int, ipAddress),
 		true,
 	);
 }
@@ -278,6 +288,8 @@ export interface SrtlaReloadOptions {
 }
 
 export interface SrtlaPublishOptions extends SrtlaReloadOptions {
+	/** Keep local-subnet admission when a queued CLAT row is revalidated. */
+	readonly localReceiver?: string;
 	/** Requests the reload that a writer-started republication owes. */
 	readonly reload?: (publication: BindMapPublication) => Promise<unknown>;
 	/** Keys the telemetry registry on published rows (tests inject it). */
@@ -292,6 +304,7 @@ const isStreamingNow = async () =>
 export async function revalidateClatBondEntries(
 	entries: readonly BondEntry[],
 	read: typeof readClatTranslations = readClatTranslations,
+	localReceiver?: string,
 ): Promise<readonly BondEntry[]> {
 	if (!entries.some((e) => e.clatGeneration !== undefined)) return entries;
 	let fresh: Awaited<ReturnType<typeof readClatTranslations>>;
@@ -309,7 +322,10 @@ export async function revalidateClatBondEntries(
 			live.ipv4 === e.ip &&
 			describeBondEntry(e.iface, e.ip, false).linkId === e.linkId &&
 			int !== undefined &&
-			isBondCandidate(e.iface, int)
+			int.ip === e.ip &&
+			(localReceiver === undefined
+				? isBondCandidate(e.iface, int)
+				: isLocalBondCandidate(e.iface, int, localReceiver))
 		);
 	});
 }
@@ -342,7 +358,11 @@ export async function publishSrtlaBond(
 		prepareEntries: async (submitted) => {
 			const prepared =
 				(await writerDeps.prepareEntries?.(submitted)) ?? submitted;
-			return revalidateClatBondEntries(prepared);
+			return revalidateClatBondEntries(
+				prepared,
+				undefined,
+				options.localReceiver,
+			);
 		},
 		onSettled: (published, publication, origin) => {
 			writerDeps.onSettled?.(published, publication, origin);

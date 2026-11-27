@@ -33,6 +33,7 @@ export type SrtlaIpPreparationDeps = {
 	readonly bondedList: () => BondEntry[];
 	readonly writeList: (
 		entries: readonly BondEntry[],
+		localReceiver?: string,
 	) => Promise<BindMapPublication>;
 };
 
@@ -40,7 +41,12 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
 	isLocal: isLocalIp,
 	localList: genSrtlaBondEntriesForLocalIpAddress,
 	bondedList: genSrtlaBondEntries,
-	writeList: publishSrtlaBond,
+	writeList: (entries, localReceiver) =>
+		publishSrtlaBond(
+			entries,
+			undefined,
+			localReceiver === undefined ? undefined : { localReceiver },
+		),
 };
 
 /**
@@ -55,11 +61,10 @@ export async function prepareSrtlaIpAddresses(
 	deps: SrtlaIpPreparationDeps = defaultSrtlaIpPreparationDeps,
 	purpose: "launch" | "refresh" = "launch",
 ): Promise<BindMapPublication> {
-	const entries = deps.isLocal(srtlaAddr)
-		? deps.localList(srtlaAddr)
-		: deps.bondedList();
+	const local = deps.isLocal(srtlaAddr);
+	const entries = local ? deps.localList(srtlaAddr) : deps.bondedList();
 	if (purpose === "launch" && entries.length === 0) {
 		throw new Error("no_available_network_connections");
 	}
-	return deps.writeList(entries);
+	return deps.writeList(entries, local ? srtlaAddr : undefined);
 }
