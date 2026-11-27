@@ -100,6 +100,20 @@ vi.mock("$lib/helpers/NetworkHelper", () => ({
 	generateDeviceAccessQr: vi.fn(async () => ""),
 }));
 
+// Upstream shows a start failure once per attempt and reason for the page's
+// life. Each case here is a fresh page, so the shown set starts empty per case.
+const presented = vi.hoisted(() => new Set<string>());
+vi.mock(
+	"$lib/streaming/start-failure-presentation.svelte",
+	async (original) => ({
+		...(await original<
+			typeof import("$lib/streaming/start-failure-presentation.svelte")
+		>()),
+		claimStartFailurePresentation: (id: string) =>
+			!presented.has(id) && Boolean(presented.add(id)),
+	}),
+);
+
 // Stub the heavy peripherals so ONLY the idle cockpit subtree mounts for real.
 vi.mock("$main/live/LiveHeader.svelte", async () => ({
 	default: (await import("../tests/fixtures/Noop.svelte")).default,
@@ -137,6 +151,7 @@ import { setLiveStatus } from "../tests/fixtures/live-status.svelte.ts";
 import LiveView from "./LiveView.svelte";
 
 beforeEach(() => {
+	presented.clear();
 	Element.prototype.scrollIntoView = vi.fn();
 	destroyStreamingOptimism();
 	clearOperation(UNCONFIRMED_STOP_OPERATION);

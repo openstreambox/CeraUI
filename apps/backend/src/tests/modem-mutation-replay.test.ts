@@ -12,9 +12,8 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createUsbEnumerator } from "@ceralive/modem-control";
-
 import * as modemControl from "@ceralive/modem-control";
+import { createUsbEnumerator } from "@ceralive/modem-control";
 import {
 	MODEM_MUTATION_JOURNAL_VERSION,
 	type ModemMutationEntry,

@@ -444,6 +444,8 @@ describe.each([
 		const callers = (readdirSync(root, { recursive: true }) as string[])
 			.filter((file) => /^(lib|main)\/.*\.(ts|svelte)$/.test(file))
 			.filter((file) => !file.endsWith(".test.ts"))
+			// The train's per-procedure session gate table names every procedure.
+			.filter((file) => file !== "lib/rpc/session-gate-policy.ts")
 			.filter((file) =>
 				readFileSync(join(root, file), "utf8").includes("reloadAudioDelay"),
 			);
