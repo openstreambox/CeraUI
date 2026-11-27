@@ -67,6 +67,10 @@ import {
 	getUpdateState,
 } from "../../modules/system/software-updates.ts";
 import { getCachedSshStatus, getSshStatus } from "../../modules/system/ssh.ts";
+import {
+	getCachedTailscaleStatus,
+	getTailscaleStatus,
+} from "../../modules/system/tailscale.ts";
 import { getOrchestratorWireState } from "../../modules/system/update-orchestrator/runtime.ts";
 import { getPersistentNotifications } from "../../modules/ui/notifications.ts";
 import { wifiBuildMsg } from "../../modules/wifi/wifi.ts";
@@ -93,6 +97,7 @@ export const getStatusProcedure = authedProcedure
 	.output(statusResponseSchema)
 	.handler(() => {
 		void getSshStatus();
+		void getTailscaleStatus();
 		return {
 			is_streaming: getIsStreaming(),
 			audio_mix_active: getAudioMixActive(),
@@ -108,6 +113,7 @@ export const getStatusProcedure = authedProcedure
 			update_state: getUpdateState(),
 			update_orchestrator: getOrchestratorWireState(),
 			ssh: getCachedSshStatus(),
+			tailscale: getCachedTailscaleStatus(),
 			wifi: wifiBuildMsg(),
 			modems: modemListSchema.parse(buildModemsWireMessage()),
 			asrcs: Object.keys(getAudioDevices()),
@@ -147,6 +153,7 @@ export const getRelaysProcedure = authedProcedure
 export function buildInitialStatus() {
 	const config = getConfig();
 	void getSshStatus();
+	void getTailscaleStatus();
 	return {
 		config,
 		pipelines: getPipelinesMessage(),
@@ -166,6 +173,7 @@ export function buildInitialStatus() {
 			update_state: getUpdateState(),
 			update_orchestrator: getOrchestratorWireState(),
 			ssh: getCachedSshStatus(),
+			tailscale: getCachedTailscaleStatus(),
 			wifi: wifiBuildMsg(),
 			modems: modemListSchema.parse(buildModemsWireMessage()),
 			asrcs: Object.keys(getAudioDevices()),
