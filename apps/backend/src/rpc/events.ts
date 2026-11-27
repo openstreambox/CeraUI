@@ -2,9 +2,9 @@
  * RPC Event System
  * Manages subscriptions and broadcasts for real-time data
  */
+
+import { publicLocalConfig } from "../helpers/local-config-projection.ts";
 import { logger } from "../helpers/logger.ts";
-import { publicSrtConfig } from "../helpers/srt-secret-redaction.ts";
-import { publicStreamIds } from "../helpers/stream-id-secret.ts";
 import { isDevelopment } from "../mocks/mock-config.ts";
 import {
 	type CoalesceState,
@@ -339,14 +339,7 @@ export function buildMessage(
 	return JSON.stringify(obj);
 }
 
+/** The local wire form of an event; a `config` frame never carries a secret. */
 export function publicEventData(type: string, data: unknown): unknown {
-	if (type === "config") data = publicSrtConfig(data);
-	if (
-		type !== "config" ||
-		typeof data !== "object" ||
-		data === null ||
-		Array.isArray(data)
-	)
-		return data;
-	return publicStreamIds(data);
+	return type === "config" ? publicLocalConfig(data) : data;
 }

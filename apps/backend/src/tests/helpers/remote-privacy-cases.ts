@@ -64,8 +64,9 @@ export function object(value: unknown): value is Record<string, unknown> {
 
 /**
  * Independent expected config projection; preserve all unrelated frame bytes.
- * Local frames carry `*_configured` flags instead of Stream IDs. Remote frames
- * carry neither, and no pairing seed.
+ * Local frames carry `*_configured` flags instead of Stream IDs, and no pairing
+ * seed or password field at any depth; the owner's `ssh_pass` and `remote_key`
+ * stay at the top level. Remote frames carry no flags either.
  */
 export function expectedBytes(
 	frame: unknown,
@@ -86,8 +87,9 @@ export function expectedBytes(
 				Reflect.deleteProperty(ordinary, key);
 			return ordinary;
 		}
+		Reflect.deleteProperty(ordinary, "pairing_secret");
 		return {
-			...ordinary,
+			...withoutNestedPasswords(ordinary),
 			srt_streamid_configured:
 				srt_streamid === undefined
 					? (ordinary.srt_streamid_configured ?? false)
@@ -98,6 +100,26 @@ export function expectedBytes(
 					: Boolean(relay_streamid_override),
 		};
 	});
+}
+
+// Hand-written, not the backend's key rule: the cases nest only `password`.
+function withoutNestedPasswords(
+	config: Record<string, unknown>,
+): Record<string, unknown> {
+	const strip = (value: unknown): unknown => {
+		if (Array.isArray(value)) return value.map(strip);
+		if (!object(value)) return value;
+		const { password: _password, ...rest } = value;
+		return Object.fromEntries(
+			Object.entries(rest).map(([key, item]) => [key, strip(item)]),
+		);
+	};
+	return Object.fromEntries(
+		Object.entries(config).map(([key, item]) => [
+			key,
+			object(item) ? strip(item) : item,
+		]),
+	);
 }
 
 export function expectNoPairingSecret(bytes: string): void {

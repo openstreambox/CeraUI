@@ -1178,6 +1178,7 @@ describe("through the device's other writers", () => {
 			addClient(ws);
 			getConfig().password = "legacy";
 			broadcastConfig(getConfig());
+			await Bun.write("first.json", JSON.stringify(sent));
 			sent = [];
 			await call(setPasswordProcedure, { password: "a-new-password" }, { context: createContext(ws) });
 			const heard = sent.map((m) => JSON.parse(m)).filter((f) => "config" in f || "config_clear" in f)
@@ -1201,9 +1202,12 @@ describe("through the device's other writers", () => {
 		const stderr = await new Response(child.stderr).text();
 		expect(await child.exited, stderr).toBe(0);
 
-		expect(await Bun.file(join(tab.directory, "heard.json")).json()).toEqual([
-			"config",
-			{ keys: ["password"] },
-		]);
+		// A tab is never sent the legacy password, so clearing it publishes nothing.
+		const first = await Bun.file(join(tab.directory, "first.json")).text();
+		expect(first).toContain("config");
+		expect(first).not.toContain("legacy");
+		expect(await Bun.file(join(tab.directory, "heard.json")).json()).toEqual(
+			[],
+		);
 	});
 });

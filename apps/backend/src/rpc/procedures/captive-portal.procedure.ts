@@ -1,5 +1,6 @@
 import { portalWindowInputSchema } from "@ceraui/rpc/schemas";
 import { os } from "@orpc/server";
+import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { authMiddleware } from "../middleware/auth.middleware.ts";
 import type { RPCContext } from "../types.ts";
 
@@ -82,6 +83,12 @@ export const captivePortalProcedure = createCaptivePortalProcedure({
 		(await import("../../modules/wifi/captive-portal-runtime.ts")).signInWindow,
 	settings: async () => ({
 		...(await import("../../modules/config.ts")),
-		broadcastConfig: (await import("../config-broadcast.ts")).broadcastConfig,
+		broadcastConfig: await import("../config-broadcast.ts").then(
+			({ broadcastConfigFields }) =>
+				(config: object) =>
+					broadcastConfigFields(config as RuntimeConfig, [
+						"captive_portal_enabled",
+					]),
+		),
 	}),
 });
