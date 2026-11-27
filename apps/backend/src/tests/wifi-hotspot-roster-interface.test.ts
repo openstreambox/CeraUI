@@ -141,8 +141,7 @@ describe("wifiBuildMsg hotspot client interface", () => {
 			}),
 		);
 
-		expect(entry?.hotspot?.clients).toBeUndefined();
-		expect(entry?.hotspot?.name).toBe("CERALIVE_test");
+		expect(entry?.hotspot).toBeUndefined();
 		expect(calls).toEqual([]);
 	});
 });

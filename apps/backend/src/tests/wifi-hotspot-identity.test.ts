@@ -39,8 +39,8 @@ import {
 	removeWifiInterface,
 } from "../modules/wifi/wifi-connections.ts";
 import {
-	startHotspotForInterface as activatePreparedHotspot,
 	prepareHotspotForInterface,
+	startHotspotForInterface,
 } from "../modules/wifi/wifi-hotspot-activation.ts";
 import {
 	findHotspotConnForAdapter,
@@ -228,11 +228,11 @@ describe("permanent MAC resolution", () => {
 // ─── 2. a restart reuses the identity instead of minting a new one ───────────
 
 describe("hotspot start — identity reuse", () => {
-	test("first-ever setup generates from the permanent MAC and persists it", async () => {
+	test("first-ever start generates from the permanent MAC and persists it", async () => {
 		const rec = makeRecorder();
 		const iface = makeHotspotIface();
 
-		const result = await prepareAndStartHotspot(PERM_MAC, iface, rec.deps);
+		const result = await startHotspotForInterface(PERM_MAC, iface, rec.deps);
 
 		expect(result.success).toBe(true);
 		expect(rec.created).toHaveLength(1);
@@ -244,7 +244,7 @@ describe("hotspot start — identity reuse", () => {
 
 	test("a backend restart reuses the SAME ssid/password and creates NO new profile", async () => {
 		const first = makeRecorder();
-		await prepareAndStartHotspot(PERM_MAC, makeHotspotIface(), first.deps);
+		await startHotspotForInterface(PERM_MAC, makeHotspotIface(), first.deps);
 
 		const persisted = first.store.get(PERM_MAC);
 		expect(persisted).toBeDefined();
@@ -268,7 +268,7 @@ describe("hotspot start — identity reuse", () => {
 		});
 
 		const restarted = makeHotspotIface();
-		const result = await prepareAndStartHotspot(
+		const result = await startHotspotForInterface(
 			PERM_MAC,
 			restarted,
 			second.deps,
@@ -290,7 +290,7 @@ describe("hotspot start — identity reuse", () => {
 			conn: "deleted-uuid",
 		});
 
-		const result = await prepareAndStartHotspot(
+		const result = await startHotspotForInterface(
 			PERM_MAC,
 			makeHotspotIface(),
 			rec.deps,
@@ -327,13 +327,17 @@ describe("hotspot start — identity reuse", () => {
 			ssid: "CERALIVE_9ca7",
 			password: "old-secret",
 		});
-		await prepareAndStartHotspot(PERM_MAC, makeHotspotIface(), rec.deps);
+		await startHotspotForInterface(PERM_MAC, makeHotspotIface(), rec.deps);
 
 		// NetworkManager matches mac-address against the PERMANENT address, so the
 		// repair has to land before the activation it would otherwise reject —
 		// while autoconnect must wait until the hotspot is proven to come up, or
 		// NetworkManager races its own auto-activation against the explicit up.
-		expect(order).toEqual([`bind:orphan-uuid:${PERM_MAC}`, "up:orphan-uuid"]);
+		expect(order).toEqual([
+			`bind:orphan-uuid:${PERM_MAC}`,
+			"up:orphan-uuid",
+			"autoconnect:orphan-uuid",
+		]);
 	});
 
 	test("autoconnect is never armed on a profile that failed to come up", async () => {
@@ -357,7 +361,7 @@ describe("hotspot start — identity reuse", () => {
 			ssid: "CERALIVE_9ca7",
 			password: "old-secret",
 		});
-		await prepareAndStartHotspot(PERM_MAC, makeHotspotIface(), rec.deps);
+		await startHotspotForInterface(PERM_MAC, makeHotspotIface(), rec.deps);
 
 		expect(armed).toEqual([]);
 	});
@@ -378,7 +382,7 @@ describe("hotspot start — identity reuse", () => {
 			ssid: "CERALIVE_9ca7",
 			password: "old-secret",
 		});
-		const result = await prepareAndStartHotspot(
+		const result = await startHotspotForInterface(
 			PERM_MAC,
 			makeHotspotIface(),
 			rec.deps,
@@ -415,7 +419,7 @@ describe("hotspot prepare — credentials before activation", () => {
 		expect(rec.activated).toHaveLength(0);
 		expect(rec.store.get(PERM_MAC)?.password).toBe(shown.password);
 
-		await prepareAndStartHotspot(PERM_MAC, iface, rec.deps);
+		await startHotspotForInterface(PERM_MAC, iface, rec.deps);
 		expect(rec.created).toEqual([
 			{ ssid: shown.name, password: shown.password },
 		]);
@@ -504,13 +508,7 @@ describe("hotspot prepare — credentials before activation", () => {
 			conn: "profile-uuid",
 		});
 
-		rec.deps.findHotspotConn = async () => ({
-			uuid: "profile-uuid",
-			ssid: rec.store.get(PERM_MAC)?.ssid ?? "",
-			password: rec.store.get(PERM_MAC)?.password ?? "",
-			channel: "auto",
-		});
-		await prepareAndStartHotspot(PERM_MAC, iface, rec.deps);
+		await startHotspotForInterface(PERM_MAC, iface, rec.deps);
 		expect(rec.created).toHaveLength(0);
 		expect(rec.activated).toEqual(["profile-uuid"]);
 		expect(iface.hotspot.password).toBe("my own pass");
@@ -553,7 +551,7 @@ describe("hotspot prepare — credentials before activation", () => {
 			{ name: "Rig Cam", password: "my own pass" },
 			rec.deps,
 		);
-		await prepareAndStartHotspot(PERM_MAC, iface, rec.deps);
+		await startHotspotForInterface(PERM_MAC, iface, rec.deps);
 		expect(rec.created).toEqual([{ ssid: "Rig Cam", password: "my own pass" }]);
 	});
 
@@ -604,8 +602,8 @@ describe("hotspot identity — multiple adapters", () => {
 	test("two adapters keep two independent, non-colliding identities", async () => {
 		const rec = makeRecorder();
 
-		await prepareAndStartHotspot(PERM_MAC, makeHotspotIface(), rec.deps);
-		await prepareAndStartHotspot(
+		await startHotspotForInterface(PERM_MAC, makeHotspotIface(), rec.deps);
+		await startHotspotForInterface(
 			SECOND_PERM_MAC,
 			makeHotspotIface({ ifname: "wlan1" }),
 			rec.deps,
@@ -635,7 +633,7 @@ describe("hotspot identity — multiple adapters", () => {
 		const rec = makeRecorder();
 
 		for (const [index, mac] of PASSWORD_PROOF_MACS.entries()) {
-			await prepareAndStartHotspot(
+			await startHotspotForInterface(
 				mac,
 				makeHotspotIface({ ifname: `wlan${index}` }),
 				rec.deps,
@@ -686,7 +684,7 @@ describe("hotspot identity — multiple adapters", () => {
 		const rec = makeRecorder();
 		try {
 			for (const [index, mac] of PASSWORD_PROOF_MACS.entries()) {
-				await prepareAndStartHotspot(
+				await startHotspotForInterface(
 					mac,
 					makeHotspotIface({ ifname: `wlan${index}` }),
 					rec.deps,
@@ -709,8 +707,8 @@ describe("hotspot identity — multiple adapters", () => {
 		const first = "dc:a6:32:00:79:1c";
 		const second = "58:02:05:11:79:1c";
 
-		await prepareAndStartHotspot(first, makeHotspotIface(), rec.deps);
-		await prepareAndStartHotspot(
+		await startHotspotForInterface(first, makeHotspotIface(), rec.deps);
+		await startHotspotForInterface(
 			second,
 			makeHotspotIface({ ifname: "wlan1" }),
 			rec.deps,
@@ -725,8 +723,8 @@ describe("hotspot identity — multiple adapters", () => {
 
 	test("both identities survive a restart, each adapter keeping its own", async () => {
 		const rec = makeRecorder();
-		await prepareAndStartHotspot(PERM_MAC, makeHotspotIface(), rec.deps);
-		await prepareAndStartHotspot(
+		await startHotspotForInterface(PERM_MAC, makeHotspotIface(), rec.deps);
+		await startHotspotForInterface(
 			SECOND_PERM_MAC,
 			makeHotspotIface({ ifname: "wlan1" }),
 			rec.deps,
@@ -748,8 +746,8 @@ describe("hotspot identity — multiple adapters", () => {
 
 		const ifaceA = makeHotspotIface();
 		const ifaceB = makeHotspotIface({ ifname: "wlan1" });
-		await prepareAndStartHotspot(PERM_MAC, ifaceA, after.deps);
-		await prepareAndStartHotspot(SECOND_PERM_MAC, ifaceB, after.deps);
+		await startHotspotForInterface(PERM_MAC, ifaceA, after.deps);
+		await startHotspotForInterface(SECOND_PERM_MAC, ifaceB, after.deps);
 
 		expect(after.created).toHaveLength(0);
 		expect(ifaceA.hotspot.name).toBe(before.get(PERM_MAC)?.ssid);
@@ -1929,44 +1927,3 @@ describe("hotspot credentials store — version-1 migration", () => {
 		expect(written.adapters[key].previousConns).toEqual(["old"]);
 	});
 });
-
-/** Exercise explicit setup followed by activation; Start itself cannot create profiles. */
-async function prepareAndStartHotspot(
-	mac: string,
-	iface: WifiInterfaceWithHotspot,
-	deps: HotspotActivationDeps,
-) {
-	if (!iface.hotspot.conn) {
-		const prepareDeps = {
-			...deps,
-			configureProfile: async (
-				_mac: string,
-				settings: Record<string, string>,
-			) => {
-				const uuid = await deps.nmHotspot(
-					iface.ifname,
-					settings["802-11-wireless.ssid"] ?? "",
-					settings["802-11-wireless-security.psk"] ?? "",
-				);
-				if (!uuid) throw new Error("setup failed");
-				return uuid;
-			},
-		};
-		const suggestion = await prepareHotspotForInterface(
-			mac,
-			iface,
-			{},
-			prepareDeps,
-		);
-		if (!suggestion.success) return suggestion;
-		if (iface.hotspot.conn) return activatePreparedHotspot(mac, iface, deps);
-		const configured = await prepareHotspotForInterface(
-			mac,
-			iface,
-			{ name: suggestion.name, password: suggestion.password },
-			prepareDeps,
-		);
-		if (!configured.success) return configured;
-	}
-	return activatePreparedHotspot(mac, iface, deps);
-}
