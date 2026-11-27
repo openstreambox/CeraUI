@@ -43,10 +43,11 @@
  * `isConnected()` exported here.
  */
 
-import WebSocket, { type RawData } from "ws";
+import type { RawData } from "ws";
 
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { logger } from "../../helpers/logger.ts";
+import { openOutboundWebSocket } from "../../helpers/outbound-websocket.ts";
 import { getConfig } from "../config.ts";
 import { canDialControlChannel } from "../identity/index.ts";
 import { verifyDeviceControlToken } from "../pairing/device-token.ts";
@@ -146,10 +147,10 @@ export interface ControlChannelDeps {
 function defaultCreateSocket(url: string, authToken?: string): ControlSocket {
 	const ws =
 		authToken !== undefined
-			? new WebSocket(url, {
+			? openOutboundWebSocket(url, {
 					headers: { Authorization: `Bearer ${authToken}` },
 				})
-			: new WebSocket(url);
+			: openOutboundWebSocket(url);
 	return {
 		send: (data) => ws.send(data),
 		ping: () => ws.ping(),
