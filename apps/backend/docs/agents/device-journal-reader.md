@@ -49,18 +49,19 @@ applies the logger's key rules again before clipping. A parsed backend record's
 metadata first gets the write-time rules an older build lacked (a `config
 loaded` record keeps only the allowlisted config fields; an RPC trace of a
 procedure whose arguments are never logged loses them), then goes through
-`redactSensitiveKeys` (key rules only, no held-value
-matchers, so a scan stays within its budget), and every message text,
-including split or unparseable records and other units' lines, goes through
-`redactKeyValueText`. That one reads `"key": value` pairs with the JSON escape
-rules of their own level, plain or escaped once inside another string, and
-masks a sensitive key's string or number value, to the end of the text when the
-value is cut off. SRT passphrase fields are left to their typed rules. The
-export and the bundle then apply their own redactors; the viewer (query,
+`redactSensitiveKeys` (key rules only, no held-value matchers, so a scan stays
+within its budget). Every message text, split or unparseable records and other
+units' lines included, goes through `redactJsonKeyValueText`: the shared lexer
+in `helpers/secret-text-lexer.ts`, reading JSON fields only. It decodes each
+string with its own escapes, recursively, and masks a sensitive key's string or
+number value, to the end of the text when the value is cut off. URI and prose
+`key=` assignments are left to the next stage, so the export's and the
+bundle's typed held-secret markers aren't pre-empted. The viewer (query,
 around, follow) projects with `toViewerEntry`, which adds the logger's typed
-SRT passphrase and stream-id scrubbers once per record. Not covered: a split
-piece that starts inside a value, and an object or array under a sensitive
-key in unparsed text. Both are rare at journald's 48 KiB line limit.
+SRT passphrase and stream-id scrubbers and the full text rule, assignments
+included, once per record. Not covered: a split piece that starts inside a
+value, and an object or array under a sensitive key in unparsed text. Both are
+rare at journald's 48 KiB line limit.
 Classifier fields `messageId`, `unitField` and `pid` stay internal;
 `toLogEntry` removes them at the wire boundary.
 

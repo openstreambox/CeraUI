@@ -4,6 +4,7 @@ import { configLogView } from "../../helpers/config-log-view.ts";
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import {
 	REDACTED,
+	redactJsonKeyValueText,
 	redactKeyValueText,
 	redactSensitiveKeys,
 } from "../../helpers/logger.ts";
@@ -136,7 +137,7 @@ export function parseRecord(input: unknown): RawJournalRecord | null {
 	// credential an older build logged: structurally on a parsed record's
 	// metadata above, and as text on everything (a split or unparseable
 	// record, a message that embedded JSON, another unit's line).
-	text = redactKeyValueText(text);
+	text = redactJsonKeyValueText(text);
 	const clipped = clipJournalMessage(text);
 	truncated ||= clipped !== text;
 	const messageId = stringField(obj.MESSAGE_ID);
@@ -202,12 +203,13 @@ export function toLogEntry(record: RawJournalRecord): LogEntry {
  * The entry the log viewer shows (query, around, follow). The export and the
  * bundle project records with their own redactors and typed markers; the viewer
  * has no later stage, so the logger's typed SRT passphrase and stream-id
- * scrubbers run here, once per record.
+ * scrubbers and the full text rule (URI and prose `key=` assignments too) run
+ * here, once per record.
  */
 export function toViewerEntry(record: RawJournalRecord): LogEntry {
 	const entry = toLogEntry(record);
 	const message = clipJournalMessage(
-		redactStreamIdText(redactSrtPassphrases(entry.message)),
+		redactKeyValueText(redactStreamIdText(redactSrtPassphrases(entry.message))),
 	);
 	return message === entry.message ? entry : { ...entry, message };
 }

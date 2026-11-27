@@ -2,6 +2,7 @@
 import { Writable } from "node:stream";
 import winston from "winston";
 import { isDevelopment } from "../mocks/mock-config.ts";
+import { maskSecretValues, type SecretTextRules } from "./secret-text-lexer.ts";
 import { redactSrtPassphrases } from "./srt-secret-redaction.ts";
 import { isStreamIdKey, redactStreamIdText } from "./stream-id-secret.ts";
 
@@ -320,103 +321,37 @@ export function isSensitiveKey(key: string): boolean {
 }
 
 /**
- * The key rules applied to JSON that is already TEXT: a template message that
- * interpolated `JSON.stringify(...)`, or a journal record that journald split
- * or that no longer parses. A `"key": value` pair whose key {@link
- * isSensitiveKey} matches keeps its key and loses its value, in plain JSON and
- * in JSON escaped once inside another JSON string (`\"key\":\"value\"`).
- * String values are read with the JSON escape rules of their own level, so an
- * escaped quote inside the value doesn't end it, and a value cut off by the end
- * of the text (even right after a backslash) is masked to the end. Numbers are
- * masked too; `true`, `false`, `null`, objects and arrays are left as they are.
- */
-const PAIR_KEY_RE = /(\\?)"([A-Za-z0-9_.\- ]{1,128})\1"(\s*:\s*)/g;
-const PAIR_NUMBER_RE = /-?\d[\d.eE+-]*/y;
-
-/** End of a plain JSON string body starting at `from`: index of its closing quote, or the text length. */
-function plainStringEnd(
-	text: string,
-	from: number,
-): { end: number; closed: boolean } {
-	for (let i = from; i < text.length; i++) {
-		const c = text[i];
-		if (c === "\\") i++;
-		else if (c === '"') return { end: i, closed: true };
-	}
-	return { end: text.length, closed: false };
-}
-
-/**
- * End of a string body that sits escaped inside an outer JSON string: decodes
- * the outer escapes (`\\` is a backslash, `\"` a quote) and applies the inner
- * escape rules to the result. Returns the index of the closing `\"`, or where
- * the outer string or the text ends.
- */
-function escapedStringEnd(
-	text: string,
-	from: number,
-): { end: number; closed: boolean } {
-	let innerEscape = false;
-	let i = from;
-	while (i < text.length) {
-		const start = i;
-		let inner: string;
-		if (text[i] === "\\") {
-			if (i + 1 >= text.length) return { end: text.length, closed: false };
-			const next = text[i + 1];
-			inner = next === "\\" ? "\\" : next === '"' ? '"' : "x";
-			i += 2;
-		} else if (text[i] === '"') {
-			// An unescaped quote ends the outer string, and the value with it.
-			return { end: i, closed: false };
-		} else {
-			inner = "x";
-			i += 1;
-		}
-		if (innerEscape) innerEscape = false;
-		else if (inner === "\\") innerEscape = true;
-		else if (inner === '"') return { end: start, closed: true };
-	}
-	return { end: text.length, closed: false };
-}
-
-/**
  * SRT passphrase fields are left to their own typed masking (`redactSrtPassphrases`
  * at write time and in the viewer, the named-passphrase rules of the export and
  * the bundle), which keeps the `[REDACTED:srt_passphrase]` markers and the
  * bundle's counts.
  */
-function masksTextPair(key: string): boolean {
-	return isSensitiveKey(key) && !/passphrase/i.test(key);
+const TEXT_RULES: SecretTextRules = {
+	isSecretKey: (key) => isSensitiveKey(key) && !/passphrase/i.test(key),
+	marker: () => REDACTED,
+};
+
+/**
+ * The key rules applied to JSON and assignments that are already TEXT: a
+ * template message that interpolated `JSON.stringify(...)`, a `key=value`
+ * phrase, or a journal record that journald split or that no longer parses.
+ * Read with the shared lexer (`secret-text-lexer.ts`), so escapes, nested
+ * strings, URI queries and cut-off values follow the same rules everywhere.
+ */
+export function redactKeyValueText(text: string): string {
+	return maskSecretValues(text, TEXT_RULES);
 }
 
-export function redactKeyValueText(text: string): string {
-	if (!text.includes('"') || !text.includes(":")) return text;
-	let out = "";
-	let last = 0;
-	PAIR_KEY_RE.lastIndex = 0;
-	for (let m = PAIR_KEY_RE.exec(text); m; m = PAIR_KEY_RE.exec(text)) {
-		const [, slash = "", key = ""] = m;
-		const valueStart = m.index + m[0].length;
-		if (!masksTextPair(key)) continue;
-		const quote = `${slash}"`;
-		let valueEnd: number;
-		if (text.startsWith(quote, valueStart)) {
-			const body = valueStart + quote.length;
-			const { end, closed } = slash
-				? escapedStringEnd(text, body)
-				: plainStringEnd(text, body);
-			valueEnd = closed ? end + quote.length : end;
-		} else {
-			PAIR_NUMBER_RE.lastIndex = valueStart;
-			if (!PAIR_NUMBER_RE.test(text)) continue;
-			valueEnd = PAIR_NUMBER_RE.lastIndex;
-		}
-		out += `${text.slice(last, valueStart)}${quote}${REDACTED}${quote}`;
-		last = valueEnd;
-		PAIR_KEY_RE.lastIndex = Math.max(valueEnd, PAIR_KEY_RE.lastIndex);
-	}
-	return last === 0 ? text : out + text.slice(last);
+const JSON_TEXT_RULES: SecretTextRules = { ...TEXT_RULES, assignments: false };
+
+/**
+ * {@link redactKeyValueText} for JSON fields only. The journal read side uses
+ * it on every record: the export and the bundle mask `key=` assignments of
+ * held secrets themselves with typed markers, which a generic marker written
+ * first would pre-empt.
+ */
+export function redactJsonKeyValueText(text: string): string {
+	return maskSecretValues(text, JSON_TEXT_RULES);
 }
 
 const KEY_WALK_MAX_DEPTH = 16;
@@ -429,7 +364,7 @@ const KEY_WALK_MAX_DEPTH = 16;
  * {@link KEY_WALK_MAX_DEPTH} levels is masked whole.
  */
 export function redactSensitiveKeys(value: unknown, depth = 0): unknown {
-	if (typeof value === "string") return redactKeyValueText(value);
+	if (typeof value === "string") return redactJsonKeyValueText(value);
 	if (value === null || typeof value !== "object") return value;
 	if (depth >= KEY_WALK_MAX_DEPTH) return REDACTED;
 	if (Array.isArray(value))
