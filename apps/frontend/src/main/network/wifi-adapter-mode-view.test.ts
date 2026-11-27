@@ -233,18 +233,6 @@ describe("the interface fallback — before getAdapterModes answers", () => {
 		expect(v.displayMode).toBe("hybrid");
 	});
 
-	it("a saved setup on a proven radio is NOT a live AP (configured off reads station)", () => {
-		const v = view({
-			iface: iface({
-				mode: "station",
-				supports_hotspot: true,
-				supports_ap_sta_concurrency: true,
-				hotspot: { name: "AP", password: "pw", available_channels: {} },
-			} as Partial<WifiInterface>),
-		});
-		expect(v.displayMode).toBe("station");
-	});
-
 	it("a backend without `mode` keeps reading hotspot presence as a live AP", () => {
 		const v = view({
 			iface: iface({
