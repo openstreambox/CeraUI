@@ -26,6 +26,7 @@ import pkg from "../package.json" with { type: "json" };
 import {
 	backendSingletonApplies,
 	enforceBackendSingleton,
+	holdsBackendSingletonLease,
 } from "./helpers/backend-singleton.ts";
 import {
 	APP_NAME,
@@ -186,6 +187,7 @@ import {
 import { hasCapability } from "./modules/system/board-capabilities.ts";
 import { initCeraliveUpdateNotice } from "./modules/system/ceralive-update-notice.ts";
 import { initCpu } from "./modules/system/cpu.ts";
+import { wipePrivateCurlConfigs } from "./modules/system/curl-private-url.ts";
 import {
 	detectHardwareKindFromDeviceTree,
 	observeRealDeviceAtBoot,
@@ -208,6 +210,7 @@ import {
 import {
 	periodicCheckForSoftwareUpdates,
 	recoverSoftwareUpdateIfRunning,
+	retireCeraliveOfferOnImageSource,
 } from "./modules/system/software-updates.ts";
 import {
 	ensureSshPasswordProvisioned,
@@ -391,6 +394,12 @@ if (!configAvailableAtBind) {
 //     failure is logged, flags the device readiness-reduced (surfaced on
 //     /api/health via the boot-readiness rollup), and is swallowed so boot never
 //     crashes and the WS server (bound above) stays reachable. ---
+
+// Before anything can probe: private curl configs an earlier process left
+// (each holds the image apt source's access token) go with their directory.
+await guardNonCritical("private-curl-configs", () =>
+	wipePrivateCurlConfigs(holdsBackendSingletonLease()),
+);
 
 // Recovery must finish before an update may install any new UID routing rule.
 const deviceAtBoot = observeRealDeviceAtBoot(bondDisableSimulationSelected());
@@ -597,6 +606,8 @@ await guardNonCritical("apt-channel-reconcile", async () => {
 // Loads the stored CeraLive offer before recovery takes an update against it; only this
 // process's own conclusive check announces or withdraws the notice.
 initCeraliveUpdateNotice();
+// An image with its own apt source has no CeraLive offer: retire a stored one now.
+retireCeraliveOfferOnImageSource();
 // Todo 36: the packages+OS+slot-sync orchestrator. Its own resume path (G17)
 // is the ONLY thing that reattaches to a persisted `committing` phase's
 // detached apt unit on this boot — running it BEFORE the general standalone

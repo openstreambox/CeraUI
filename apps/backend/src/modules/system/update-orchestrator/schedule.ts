@@ -12,7 +12,11 @@
  * Keep the top-level update cadence separate from the legacy refresh retry loop.
  */
 
-import type { OrchestratorPhase, OrchestratorScheduleClock } from "./types.ts";
+import {
+	type OrchestratorPhase,
+	type OrchestratorScheduleClock,
+	PACKAGE_INSTALL_REFUSED,
+} from "./types.ts";
 
 export const PACKAGE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 export const PACKAGE_CHECK_JITTER_MS = 30 * 60 * 1000;
@@ -110,8 +114,17 @@ export function shouldAttemptScheduledCheck(input: {
 	return scheduledCheckDue(input);
 }
 
-export function canStartManualCheck(phase: OrchestratorPhase): boolean {
-	return phase === "idle" || phase === "available" || phase === "os-available";
+export function canStartManualCheck(
+	phase: OrchestratorPhase,
+	failureReason: string | null = null,
+): boolean {
+	return (
+		phase === "idle" ||
+		phase === "available" ||
+		phase === "os-available" ||
+		// An image-source install that never launched: a check leaves it.
+		(phase === "failed" && failureReason === PACKAGE_INSTALL_REFUSED)
+	);
 }
 
 export function canStartManualInstall(

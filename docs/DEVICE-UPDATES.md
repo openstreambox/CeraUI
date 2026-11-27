@@ -542,6 +542,8 @@ gaps for overlap with the independent legacy launcher. Transition table from
 | `downloading` | `DOWNLOAD_FAILED` | `failed` |
 | `downloading` | `DOWNLOAD_ABORTED_FOR_STREAM` | `available` |
 | `downloading` | `DOWNLOAD_RESUME_UNIT_ABSENT` | `idle` with the package check due now (resume only, when a probe proved the install unit gone) |
+| `downloading` | `DOWNLOAD_FAILED` with `package_install_refused` | `failed` with the package check due now (image apt source only: the install ended before its apt unit launched) |
+| `failed` (`package_install_refused` only) | `PACKAGE_CHECK_STARTED` / `OS_CHECK_STARTED` | `checking`, as from `idle` |
 | `committing` | `COMMIT_PROGRESS` | `committing` |
 | `committing` | `COMMIT_SUCCEEDED` | `restarting-services` |
 | `committing` | `COMMIT_FAILED` | `quarantined` |
@@ -1385,6 +1387,149 @@ unknown unless every first-party row of the plan is either checked or withheld.
 Other packages are offered as before. The unit's download stage still fetches
 every upgradable archive, so a withheld package's archive can be downloaded
 without being installed.
+
+An image can instead ship its own signed apt source and record it in
+`/usr/lib/ceralive/image-apt-source.json` (schema 1: the deb822 `sourcesFile`
+under `/etc/apt/sources.list.d/`, its `host`, `origin` and `label`
+`OpenStreamBox`, and the suites `<board>-<YYYY.M.N>` and the same plus
+`-emergency`). `image-apt-source.ts` reads the record and that one file
+strictly. With a valid record:
+
+- CeraUI never writes `ceralive.sources`. The source file is parsed once, by
+  the record's validator (`image-apt-source.ts`), and everything that probes
+  the source uses that parsed result: the unbound reachability probe, the
+  per-uplink transport probe and selection, and the pinned transport built
+  on it. No second parser reads the file in this mode, so a shape the
+  validator accepts (folded values, comment lines, trailing whitespace)
+  cannot be read differently by a probe. Images without the record parse
+  their sources as before. The first-party archive's own probe (the client certificate,
+  `/__tls-probe`) is never used, also when the image's source lives on
+  `apt.ceralive.tv`: its host is probed at its `InRelease` like any image
+  host. A repository HTTP error from that host over verified TLS reads as
+  unreachable, never as a captive portal.
+- Every package-update apt run (refresh, `apt-cache policy`, simulations, the
+  space probe, the download and the detached unit's download and install
+  stages) carries `-o Dir::Etc::SourceList=<sourcesFile> -o
+  Dir::Etc::SourceParts=/dev/null`, whatever the ambient apt configuration
+  says. The unit's launch and adoption checks accept exactly that pair, in that
+  place, and only on such an image.
+- Only that URI, host and the two suites released as OpenStreamBox are an
+  installable origin. Image-owned names from it are offered: that source carries
+  only what the image's maker put there. From anywhere else they stay withheld.
+- The CeraLive update notice stays silent. A stored offer is withdrawn at
+  startup and on every check, whether or not discovery can run.
+- The URI's first path segment is an access token of at least 20 characters;
+  a source with a shorter one is refused as invalid, since a short token
+  could not be told from ordinary text when apt echoes it. Every bare copy
+  of the token is removed wherever apt's text is published. Transport findings, the
+  update state, the `updating.result` status frame, refusal diagnostics and
+  logged apt output show the source by host only. The reachability and
+  transport probes never put the URL on curl's command line, where any local
+  process could read it: curl reads it from a config file only the backend's
+  user can read (mode 0600, in the service's own 0700 directory), removed by
+  its exact path as soon as curl has exited. The detached unit's output is
+  redacted line by line as the backend reads it; apt itself still writes it to
+  the root-only `/run/ceralive/software-update.{stdout,stderr}` spool. That
+  spool outlasts the unit's cleanup (a restarted backend re-reads it to
+  reattach) and is kept until the next install recreates it, or a reboot
+  clears `/run`.
+- Package checks wait until the image's clock gate wrote
+  `/run/ceralive/clock-gate-open`: apt refuses a Release signed in the box
+  clock's future, which a cold boot without RTC is. Until then the check has not
+  run, which is no failure, and the image check still runs.
+- A check needs a refresh that fetched or hit both suites' Release files with no
+  failed index. apt exits 0 when it keeps old lists after a failed fetch; that
+  is `refresh_failed`, and discovery never reads cached lists. A captive portal
+  is still reported as one.
+- While dpkg's journal (`/var/lib/dpkg/updates`) holds an unfinished run, checks
+  and installs are refused (`dpkg_interrupted`). The operator repairs it with
+  `dpkg --configure -a`; CeraUI does not run it, because maintainer scripts may
+  restart the backend. The next check after the repair runs normally.
+- Installs are manual only, whatever `packagesAuto` says. A plan persisted
+  from an earlier process is not a request: at startup it goes back to `idle`
+  with the package check due. In this mode the unit is never launched without
+  the source pair, and the legacy roster upgrade is refused.
+- An install that ends before its apt unit launched (clock, dpkg, refresh,
+  unreachable or captive repository, discovery, nothing installable, pinned
+  recheck, space preflight, failed download, any stream before launch, a start
+  systemd refused outright) shows "Update failed" with its reason, once. The
+  orchestrator records it as `failed` with `package_install_refused` and makes
+  the package check due at once. The scheduled tick runs that check (still
+  under the cellular rule) and the image check from it, and Check now starts
+  from it as from `idle`. A successful discovery clears the failure, so the
+  offer comes back at the next check; no offer is restored in place. The
+  pending package list stays until that check clears it (nothing reached
+  dpkg; quarantine records only a failed commit). An uncertain `systemd-run`
+  (client error or timeout) is not a refusal: the fixed unit is inspected and,
+  if it exists or cannot be read, observed as launched. Any stream before the
+  unit launched (stream admission, the pinned transfer's own abort, a delayed
+  start) cancels the install the same way; only a stream after launch stops
+  the unit and returns to the offer as before. The legacy periodic loop does
+  not run on these images, and the unpinned reachability probe reads an HTTP
+  error from the image host as unreachable. The path table is in
+  [the update-system contract](agents/the-device-update-system.md#image-apt-source-every-way-an-install-ends-before-launch).
+- "Launched" is decided in one place, the launch fence
+  (`install-launch-fence.ts`). The launcher submits the unit inside one
+  serialized section; a stream start and the "updates still on" recheck pass
+  through the same section, for an install started through the orchestrator
+  or through the start RPC alike. Whoever enters first decides: a stream
+  before `systemd-run` was called ends the install as a refusal and nothing
+  is submitted afterwards, a stream that arrives while `systemd-run` is in
+  flight waits for its result and then meets a launched unit, and updates
+  turned off before the submission end the install too. Nothing sees an
+  install between "can still be cancelled" and "submitted". An install the
+  Packages card starts through the start RPC (it does so whenever the
+  orchestrator is not holding the package offer, as after the card's own
+  check) is not one the orchestrator started: when it ends before launch the
+  card shows the failure and the orchestrator keeps its phase, until the next
+  package check clears the failure and brings the two back in line: Check
+  now, or the scheduled package check when the orchestrator is idle and
+  automatic package updates are on. No tick checks packages only because the
+  two disagree, and image checks keep their schedule meanwhile. Once such a
+  unit launched, a stream stops it exactly as it stops one the orchestrator
+  started.
+- Before launch, everything an install does it does as the pending attempt,
+  and that is enforced where the work leaves the process
+  (`helpers/effect-owner.ts`): both command runners refuse to start a
+  command for an install that has ended, and the files and published state
+  written for it (the unit's output files, a probe's private files, the
+  routing journal, the published transport selection, the reachability
+  cache) refuse likewise. A command already running is not killed; it
+  finishes and its result goes nowhere. An ended install may only take down
+  what it set up: the routing rule and routes of a pinned run, their journal
+  entries, a private file. It logs nothing more. Until its last wait has
+  returned, the updater is not free: a new install is refused and a check
+  waits.
+- Updates turned off and a stream are looked at right before each of those
+  effects, so the install ends there rather than at its next checkpoint.
+- No install on these images asks for the host's gateway election: changing
+  the device's default route is the network module's business. A pinned run
+  uses its own routing table, and an unbound one goes by a fresh probe of
+  the route as it is and is refused when that finds nothing. A package check
+  with no install behind it asks for the repair as on every image.
+- Where an install's work fans out (probes per uplink, per address family),
+  every branch that was started is waited for before the updater is free
+  again, also when one of them is refused first.
+- A probe's private curl config is written only in the service's own
+  directory (`/run/ceralive/curl-private`, 0700) and removed by its exact
+  path when the probe ends. A removal that fails is logged as a security
+  line, whoever the probe was for. That one directory is wiped when the
+  backend starts, by the process that actually holds the single-instance
+  lock at that moment. An instance without that lock keeps its configs in a
+  directory of its own instead, removed when that process exits.
+- While a stream is live a scheduled package check waits on these images
+  instead of being refused as busy: no failed check is counted, and the
+  image check that is due runs on that tick. One look decides, after the
+  check's own waits and right before it is dispatched, and it defers for
+  an ended install that still drains as it does for a stream.
+- A failure before launch is published when it is known: a failed download
+  under the pin before its routing is taken down, and before any archive
+  cleanup, which the next install's preflight does. A start that is refused
+  afterwards leaves that failure showing; the offer returns with a check.
+
+A record that is present but does not validate refuses package checks and
+installs (`discovery_failed`), and never falls back to the first-party
+archive. Without the record nothing above applies.
 The dialog states the waiting reason, shows overdue checks as "as soon as
 possible", and hides the next-check line when automation is off. An open row
 wakes at its future deadline to replace the timestamp without waiting

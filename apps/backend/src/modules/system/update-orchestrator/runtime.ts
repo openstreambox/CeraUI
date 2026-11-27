@@ -46,16 +46,26 @@ import {
 } from "../disruptive-action-reservation.ts";
 import { withServiceReservation } from "../disruptive-service-reservation.ts";
 import { getIdleStatus } from "../idle-activity.ts";
+import { imageAptSourceInUse } from "../image-apt-source.ts";
+import type {
+	InstallAttempt,
+	StreamFenceVerdict,
+} from "../install-launch-fence.ts";
 import {
+	admitStreamAtPackageLaunch,
 	aptUpdatesEnabled,
 	getLastInstallUnitVerdict,
 	getUpdateState,
 	type InstallUnitVerdict,
+	imageSourceClockWaits,
 	isAptAllDiscovery,
+	packageInstallAttempt,
+	packageInstallDraining,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
 	type SoftwareUpdateError,
 	startSoftwareUpdate,
+	takePackageAttemptEnd,
 	type UpdateStartOutcome,
 } from "../software-updates.ts";
 import { isStreamConfirmedIdle } from "../stream-liveness-source.ts";
@@ -265,6 +275,7 @@ import {
 	type OrchestratorEvent,
 	type OrchestratorPhase,
 	type OrchestratorState,
+	PACKAGE_INSTALL_REFUSED,
 } from "./types.ts";
 import { armUpdateAdmissionDeadline } from "./update-admission-deadline.ts";
 
@@ -288,6 +299,28 @@ export interface OrchestratorRuntimeDeps {
 	readonly runPackageCheck: () => Promise<SoftwareUpdateError>;
 	readonly startPackageInstall: () => UpdateStartOutcome;
 	readonly getPackageInstallWireState: () => UpdateState;
+	/**
+	 * Image apt source: the install in progress right after a start was
+	 * accepted. The orchestrator keeps the one it started.
+	 */
+	readonly packageInstallAttempt: () => InstallAttempt | null;
+	/**
+	 * Image apt source: the terminal state of that install if it ended before
+	 * its unit launched, kept with it until taken here (once). A recheck by
+	 * the Packages card may have cleared what the wire shows meanwhile, and a
+	 * later start may have taken its place as the install in progress.
+	 */
+	readonly takePackageAttemptEnd: (
+		attempt: InstallAttempt,
+	) => UpdateState | null;
+	/** Image apt source: an install that ended still has a wait in flight. */
+	readonly packageInstallDraining: () => boolean;
+	/**
+	 * Image apt source: a stream start meets the package install's launch
+	 * fence. It ends an install whose unit is not submitted yet, and says how
+	 * the install was decided (install-launch-fence.ts).
+	 */
+	readonly admitStreamAtPackageLaunch: () => Promise<StreamFenceVerdict>;
 	readonly stopPackageInstallUnit: () => Promise<void>;
 	readonly killAndRestartRaucForStream: () => Promise<void>;
 	readonly isCommitStageRunning: () => Promise<boolean>;
@@ -423,6 +456,10 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	runPackageCheck: runSoftwareUpdateCheck,
 	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
 	getPackageInstallWireState: getUpdateState,
+	packageInstallAttempt,
+	takePackageAttemptEnd,
+	packageInstallDraining,
+	admitStreamAtPackageLaunch,
 	stopPackageInstallUnit: stopPackageInstallUnitForStream,
 	killAndRestartRaucForStream,
 	isCommitStageRunning: async () =>
@@ -548,6 +585,17 @@ let activeOsStage:
 setOsStageLiveProducerProbe(() => activeOsStage?.attemptId ?? null);
 let raucStreamAbortInProcess = false;
 let packageInstallStarting = false;
+// Image apt source: the install this orchestrator started, to take its
+// terminal state from if it ends before launch.
+let startedPackageAttempt: InstallAttempt | null = null;
+const takeStartedPackageAttemptEnd = (): UpdateState | null =>
+	startedPackageAttempt === null
+		? null
+		: deps.takePackageAttemptEnd(startedPackageAttempt);
+// Image apt source: an install launches only for a request made in this
+// process (installUpdatesNow); a queued or persisted plan is not one.
+let manualPackageAdmission = false;
+
 let packageHoldAttempt: DownloadInterruption | undefined;
 let updateAdmissionProbe: Promise<boolean> | undefined;
 let osForceActivated = false;
@@ -695,6 +743,8 @@ export function setOrchestratorRuntimeDepsForTest(
 
 export function resetOrchestratorRuntimeForTest(): void {
 	kernelRuntime.reset();
+	manualPackageAdmission = false;
+	startedPackageAttempt = null;
 	deps.downloadNotices?.dispose();
 	packageHoldAttempt = undefined;
 	resetDisruptiveActionReservationForTest();
@@ -934,11 +984,17 @@ export async function checkUpdatesNow(): Promise<ManualCheckOutcome> {
 		await maybeMigrateLegacyOsFailure();
 		await maybeConfirmOsStageRecovery();
 	}
-	if (!canStartManualCheck(state.phase))
+	if (!canStartManualCheck(state.phase, state.failureReason))
 		return { started: false, reason: "busy" };
 	await runPackageCheckCycle();
-	// Found packages must not hide a system image either.
-	if (state.phase === "idle" || state.phase === "available") {
+	// Found packages must not hide a system image either, and neither does an
+	// image-source install that never launched (the package check may not
+	// have run: clock gate shut, updates off).
+	if (
+		state.phase === "idle" ||
+		state.phase === "available" ||
+		refusedInstallPending()
+	) {
 		const ticket = besideOfferTicket();
 		const capabilities = await deps.loadCapabilities();
 		if (
@@ -1067,6 +1123,7 @@ export async function installUpdatesNow(
 	}
 	// Starting-stream window: root AGENTS.md D8 Known gaps (f).
 	if (deps.isStreamLive()) return { started: false, reason: "stream_active" };
+	manualPackageAdmission = true;
 	if (state.phase === "available")
 		dispatch({ type: "AWAIT_IDLE_FOR_INSTALL", now: deps.now() });
 	const launch = await maybeStartPackageInstall({
@@ -1153,6 +1210,61 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 	const cached = admitStreamStart(state);
 	if (!cached.allowed) return cached;
 
+	// Image apt source: the launch fence decides between this stream and a
+	// package install, whoever started it (the orchestrator or the standalone
+	// start). An install whose unit is not submitted yet ends here, as a
+	// refusal: no offer is restored, the next check brings it back. One whose
+	// submission is in flight is waited for; once submitted it is the unit's,
+	// and the stream takes the path below.
+	if (imageAptSourceInUse()) {
+		const fenced = await deps.admitStreamAtPackageLaunch();
+		// The install this orchestrator started: its own terminal state if it
+		// ended before launch, whatever the fence says of the install in
+		// progress now. The wire may show a later recheck's offer, and the
+		// fence a later install of the Packages card's, even a launched one.
+		const ended =
+			state.phase === "downloading" ? takeStartedPackageAttemptEnd() : null;
+		if (
+			state.phase === "downloading" &&
+			(ended !== null || fenced === "cancelled" || fenced === "ended")
+		) {
+			const wire = ended ?? deps.getPackageInstallWireState();
+			dispatch({
+				type: "DOWNLOAD_FAILED",
+				now: deps.now(),
+				reason: PACKAGE_INSTALL_REFUSED,
+				...(wire.kind === "failed" && wire.failure_id !== undefined
+					? { failureId: wire.failure_id }
+					: {}),
+			});
+			// A unit a later start launched is not this refusal's: the stream
+			// goes on to stop it, as one this orchestrator did not start.
+			if (fenced !== "submitted") return { allowed: true };
+		}
+		// The wait may have let the pipeline move on: decide on what is there now.
+		if (isDisruptiveActionPending() || pendingPackageSuccess.pending)
+			return COMMIT_STAGE_REFUSAL;
+		const settled = admitStreamStart(state);
+		if (!settled.allowed) return settled;
+		// A launched unit this orchestrator did not start (the start RPC): the
+		// stream stops it exactly as it stops one of its own, behind the same
+		// fresh read and commit-stage probe. There is no plan to return to an
+		// offer, so nothing is dispatched.
+		if (fenced === "submitted" && state.phase !== "downloading") {
+			const freshWire = deps.getPackageInstallWireState();
+			if (freshWire.kind === "installing" || freshWire.kind === "success")
+				return COMMIT_STAGE_REFUSAL;
+			if (freshWire.kind === "downloading") {
+				if (await commitStageRunning()) return COMMIT_STAGE_REFUSAL;
+				if (pendingPackageSuccess.pending) return COMMIT_STAGE_REFUSAL;
+				await deps.stopPackageInstallUnit();
+				if (pendingPackageSuccess.pending) return COMMIT_STAGE_REFUSAL;
+				const after = admitStreamStart(state);
+				if (!after.allowed) return after;
+			}
+		}
+	}
+
 	const action = onStreamStart(state);
 	if (state.phase === "kernel-downloading") {
 		kernelRuntime.cancelDownload();
@@ -1233,14 +1345,79 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 
 // ─── package check cycle ───────────────────────────────────────────────────
 
-async function runPackageCheckCycle(): Promise<void> {
-	if (osSettlementPersistence.pending || !aptUpdatesEnabled()) return;
+/**
+ * `waitsOutStream`: the scheduled check on an image with its own apt source.
+ * Resolves true when no check ran for it: nothing was dispatched (a stream is
+ * live, an ended install drains, admission closed or the cleanup failed
+ * during its waits), and the caller treats the check as deferred.
+ */
+async function runPackageCheckCycle(waitsOutStream = false): Promise<boolean> {
+	// Whether a package check may start at all, on what is there right now.
+	const admitted = () =>
+		!osSettlementPersistence.pending &&
+		aptUpdatesEnabled() &&
+		// Not checked yet, not a failure: the image's own source needs a usable clock.
+		!imageSourceClockWaits();
+	if (!admitted()) return waitsOutStream;
+	const before = packageCheckGeneration;
+	if (refusedInstallPending()) {
+		try {
+			await deps.quarantine.clearPending();
+		} catch (error) {
+			if (!waitsOutStream) throw error;
+			// The package side's own fault: this check waits, the tick goes on.
+			logger.warn(
+				"update-orchestrator: clearing a refused install's pending list failed; the package check waits",
+				{ error },
+			);
+			return true;
+		}
+		// That was a wait. Updates turned off, another check or anything else
+		// that moved the phase during it means this check does not start: no
+		// dispatch, no event and no backoff for a check that never ran.
+		if (
+			!admitted() ||
+			!refusedInstallPending() ||
+			before !== packageCheckGeneration
+		)
+			return waitsOutStream;
+	}
+	// Waiting out a stream: everything that waits comes first (the cleanup
+	// above, the capability read), so the one look below is the last thing
+	// before the dispatch and apt's own admission. A stream that is live, or
+	// became live during either wait, defers the check. So does an install
+	// that ended and still drains: apt's admission would wait for it, and a
+	// stream starting in that wait would refuse the check as busy. And so
+	// does an install in progress, which apt would refuse the check for.
+	const phase = state.phase;
+	const regime = waitsOutStream ? await stageCapabilityRegime() : undefined;
+	if (waitsOutStream) {
+		if (
+			!admitted() ||
+			state.phase !== phase ||
+			before !== packageCheckGeneration
+		)
+			return true;
+		// An install somebody else started (the Packages card's start) that
+		// is under way holds the updater too.
+		const wire = deps.getPackageInstallWireState().kind;
+		if (
+			deps.isStreamLive() ||
+			deps.packageInstallDraining() ||
+			wire === "downloading" ||
+			wire === "installing"
+		)
+			return true;
+	}
 	const generation = ++packageCheckGeneration;
 	packageCheckDeferral = null;
 	const now = deps.now();
 	dispatch({ type: "PACKAGE_CHECK_STARTED", now });
+	// A capability read made before the look above reports its failure only
+	// now that the check really runs.
+	regime?.report();
 	const error =
-		(await readCapabilityRegime()) !== null
+		(regime ? regime.capabilities : await readCapabilityRegime()) !== null
 			? await deps.runPackageCheck()
 			: "discovery_failed";
 	const outcomeNow = deps.now();
@@ -1302,7 +1479,7 @@ async function runPackageCheckCycle(): Promise<void> {
 				// Even a newer check whose announcement was deduped supersedes this proof.
 				() => generation === packageCheckGeneration,
 			);
-		return;
+		return false;
 	}
 	const rateLimited =
 		error === "captive_portal" ? false : isRateLimitedError(error);
@@ -1332,6 +1509,7 @@ async function runPackageCheckCycle(): Promise<void> {
 		id: `packages:${String(error)}`,
 		reason: String(error),
 	});
+	return false;
 }
 
 // Best-effort mirror-status detection affects cadence, not the update verdict.
@@ -1352,16 +1530,29 @@ function isRateLimitedError(error: SoftwareUpdateError): boolean {
 // ─── package install (awaiting-idle -> downloading -> committing) ─────────
 
 async function readCapabilityRegime(): Promise<UpdateCapabilities | null> {
+	const regime = await stageCapabilityRegime();
+	regime.report();
+	return regime.capabilities;
+}
+
+/** The same read, with the refusal it would announce held for the caller. */
+async function stageCapabilityRegime(): Promise<{
+	readonly capabilities: UpdateCapabilities | null;
+	readonly report: () => void;
+}> {
 	try {
-		return await deps.loadCapabilities();
+		return {
+			capabilities: await deps.loadCapabilities(),
+			report: () => undefined,
+		};
 	} catch (error) {
 		if (!(error instanceof UpdateCapabilityReadError)) throw error;
-		notifyUpdate({
-			kind: "refused",
-			id: "package-capabilities",
-			reason: error.reason,
-		});
-		return null;
+		const reason = error.reason;
+		return {
+			capabilities: null,
+			report: () =>
+				notifyUpdate({ kind: "refused", id: "package-capabilities", reason }),
+		};
 	}
 }
 
@@ -1370,6 +1561,8 @@ async function maybeStartPackageInstall(opts: {
 	readonly isCurrent?: () => boolean;
 }): Promise<UpdateStartOutcome | undefined> {
 	if (state.phase !== "awaiting-idle") return;
+	if (imageAptSourceInUse() && !manualPackageAdmission)
+		return { started: false, reason: "check_unavailable" };
 	if (isDisruptiveActionPending())
 		return { started: false, reason: "already_updating" };
 	if (deps.isStreamLive()) return { started: false, reason: "streaming" };
@@ -1429,6 +1622,10 @@ async function maybeStartPackageInstall(opts: {
 			await deps.quarantine.clearPending();
 			return result; // stays awaiting-idle; retried next tick
 		}
+		manualPackageAdmission = false;
+		startedPackageAttempt = imageAptSourceInUse()
+			? deps.packageInstallAttempt()
+			: null;
 		const previousHold = packageHoldAttempt;
 		packageHoldAttempt = packageDownloadAttempt(available);
 		dispatch({
@@ -1458,6 +1655,26 @@ async function pollPackageInstallProgress(): Promise<void> {
 	if (state.phase !== "downloading" && state.phase !== "committing") return;
 	const wire = deps.getPackageInstallWireState();
 	const now = deps.now();
+	// Image apt source: an install that ended before its unit launched is one
+	// failure origin. Nothing reached dpkg, so nothing is quarantined, and the
+	// next package or image check leaves it. Its terminal state is read from
+	// where the package code keeps it for this poll, not from the wire: the
+	// Packages card's own recheck may have cleared the wire's failure already.
+	const ended =
+		state.phase === "downloading" && imageAptSourceInUse()
+			? takeStartedPackageAttemptEnd()
+			: null;
+	if (ended !== null) {
+		dispatch({
+			type: "DOWNLOAD_FAILED",
+			now,
+			reason: PACKAGE_INSTALL_REFUSED,
+			...(ended.kind === "failed" && ended.failure_id !== undefined
+				? { failureId: ended.failure_id }
+				: {}),
+		});
+		return;
+	}
 	if (wire.kind === "downloading") {
 		if (state.phase === "committing") return; // never regress commit->download
 		dispatch({
@@ -2927,45 +3144,7 @@ export async function runOrchestratorTick(): Promise<void> {
 			scheduleNextTick();
 			return;
 		}
-		// Taken before the reads below: a check started meanwhile (Check now)
-		// makes this tick's settings stale, so it must not start an image check.
-		const ticket = besideOfferTicket();
-		const settings = await deps.loadSettings();
-		const capabilities = await readCapabilityRegime();
-		if (capabilities === null) {
-			scheduleNextTick();
-			return;
-		}
-		const now = deps.now();
-		const osClock = osScheduleClock();
-		let packageCheckRan = false;
-		if (
-			aptUpdatesEnabled() &&
-			shouldAttemptScheduledCheck({
-				now,
-				phase: state.phase,
-				clock: state.packageCheck,
-				kind: "packages",
-				settings,
-			})
-		) {
-			packageCheckRan =
-				(await runPackageCheckAfterCellularGate(settings)) === "ran";
-		}
-		if (
-			!packageCheckRan &&
-			capabilities.mode === "capable" &&
-			capabilities.features.includes("rauc-verity-streaming") &&
-			shouldAttemptScheduledCheck({
-				now,
-				phase: state.phase,
-				clock: osClock,
-				kind: "os",
-				settings,
-			})
-		) {
-			await runOsCheckAfterCellularGate(settings, ticket);
-		}
+		await runScheduledChecks();
 	} else if (state.phase === "available") {
 		// Taken before any read, so a check started meanwhile (Check now) wins.
 		const ticket = besideOfferTicket();
@@ -2974,8 +3153,13 @@ export async function runOrchestratorTick(): Promise<void> {
 			ticket,
 		);
 		// The image check can take a while; queue only on the current switch,
-		// and only if no newer check has spoken for this offer since.
-		if (after && getOrchestratorState().phase === "available") {
+		// and only if no newer check has spoken for this offer since. An image
+		// with its own apt source installs packages only when asked.
+		if (
+			after &&
+			getOrchestratorState().phase === "available" &&
+			!imageAptSourceInUse()
+		) {
 			const { packagesAuto } = await deps.loadSettings();
 			if (
 				packagesAuto &&
@@ -3018,6 +3202,12 @@ export async function runOrchestratorTick(): Promise<void> {
 		await maybeCheckPackagesWhileOsWaits();
 	} else if (state.phase === "os-staging" && !osStageInProcess) {
 		await settleInterruptedOsStage();
+	} else if (
+		state.phase === "failed" &&
+		state.failureReason === PACKAGE_INSTALL_REFUSED
+	) {
+		// Never stranded: the due package check (immediately) and image check run.
+		await runScheduledChecks();
 	} else if (state.phase === "failed") {
 		if (!(await maybeRecoverFailedUpdate()))
 			await maybeMigrateLegacyOsFailure();
@@ -3041,11 +3231,80 @@ export async function runOrchestratorTick(): Promise<void> {
 	scheduleNextTick();
 }
 
+/**
+ * Leaving an image-source install that never launched: nothing reached dpkg,
+ * so its pending vector goes (quarantine records only a failed commit). Only
+ * then is there an await before the check's own dispatch.
+ */
+function refusedInstallPending(): boolean {
+	return (
+		state.phase === "failed" && state.failureReason === PACKAGE_INSTALL_REFUSED
+	);
+}
+
+/**
+ * The due scheduled package check, then the due image check, as from `idle`.
+ * Also run from an image-source install that never launched (`failed` with
+ * PACKAGE_INSTALL_REFUSED), which a check leaves as it would leave `idle`.
+ */
+async function runScheduledChecks(): Promise<void> {
+	// Taken before the reads below: a check started meanwhile (Check now)
+	// makes this tick's settings stale, so it must not start an image check.
+	const ticket = besideOfferTicket();
+	const settings = await deps.loadSettings();
+	const capabilities = await readCapabilityRegime();
+	if (capabilities === null) return;
+	const now = deps.now();
+	const osClock = osScheduleClock();
+	// The phase as it is now, after the waits above: a manual install may have
+	// started meanwhile. Only an install that never launched counts as idle.
+	const phase = (): OrchestratorPhase =>
+		refusedInstallPending() ? "idle" : state.phase;
+	let packageCheckRan = false;
+	if (
+		aptUpdatesEnabled() &&
+		shouldAttemptScheduledCheck({
+			now,
+			phase: phase(),
+			clock: state.packageCheck,
+			kind: "packages",
+			settings,
+		})
+	) {
+		packageCheckRan =
+			(await runPackageCheckAfterCellularGate(settings)) === "ran";
+	}
+	if (
+		!packageCheckRan &&
+		capabilities.mode === "capable" &&
+		capabilities.features.includes("rauc-verity-streaming") &&
+		shouldAttemptScheduledCheck({
+			now,
+			phase: phase(),
+			clock: osClock,
+			kind: "os",
+			settings,
+		})
+	) {
+		await runOsCheckAfterCellularGate(settings, ticket);
+	}
+}
+
 async function runPackageCheckAfterCellularGate(
 	settings: UpdateSettings,
 ): Promise<"ran" | "deferred"> {
+	const phase = state.phase;
+	const generation = packageCheckGeneration;
 	const onlyMetered = await deps.onlyMeteredCandidateExists();
 	if (osSettlementPersistence.pending || !aptUpdatesEnabled())
+		return "deferred";
+	// Image apt source: that was a wait. A check or an install that began
+	// during it (Check now, then Install now) owns the plan: this scheduled
+	// check dispatches nothing over it.
+	if (
+		imageAptSourceInUse() &&
+		(state.phase !== phase || generation !== packageCheckGeneration)
+	)
 		return "deferred";
 	const gate = decideCellularGate({
 		onlyMeteredCandidateExists: onlyMetered,
@@ -3060,8 +3319,18 @@ async function runPackageCheckAfterCellularGate(
 		packageCheckDeferral = { reason: "metered_only", at: deps.now() };
 		return "deferred";
 	}
-	await runPackageCheckCycle();
-	return "ran";
+	// The image check still runs on this tick.
+	if (imageSourceClockWaits()) return "deferred";
+	// On an image with its own apt source a scheduled package check waits out
+	// a live stream, and an ended install that still drains: apt would refuse
+	// it as busy, and a check that could not run is not a failed one. That is
+	// the retry after an install a stream ended, on this tick and on those
+	// after the image check moved the plan on. The one look is taken inside,
+	// after the check's own waits. No dispatch, no event, no backoff; the
+	// image check that is due runs on this tick.
+	return (await runPackageCheckCycle(imageAptSourceInUse()))
+		? "deferred"
+		: "ran";
 }
 
 // The image check's clock, brought forward to an automatic restage's retry.
@@ -3151,7 +3420,9 @@ async function runOsCheckAfterCellularGate(
 	// The phase this check was admitted from; the uplink read below can outlive it.
 	const startPhase = state.phase;
 	// Only a resting phase starts one; never beside a planned or running install.
-	if (!OS_CHECK_START_PHASES.includes(startPhase)) return undefined;
+	// An image-source install that never launched rests too: a check leaves it.
+	if (!OS_CHECK_START_PHASES.includes(startPhase) && !refusedInstallPending())
+		return undefined;
 	if (ticket && !ticketCurrent(ticket)) return undefined;
 	const besidePackageOffer = PACKAGES_WAITING.includes(startPhase);
 	// This attempt, and the package check whose offer it sits beside: a newer
@@ -3189,6 +3460,22 @@ async function runOsCheckAfterCellularGate(
 		candidateId: "",
 	});
 	if (!gate.allowed) return attempt;
+	if (refusedInstallPending()) {
+		try {
+			await deps.quarantine.clearPending();
+		} catch (error) {
+			// Not a condition of reading the manifest: the fault is logged and
+			// the image check goes on. That check moves the plan out of the
+			// refused state, so this cleanup is not tried again on its account.
+			logger.warn(
+				"update-orchestrator: clearing a refused install's pending list failed; the image check goes on",
+				{ error },
+			);
+		}
+		// That was a wait: a check that started during it stands this one down.
+		if (getOrchestratorState().phase !== startPhase || superseded())
+			return attempt;
+	}
 	const now = deps.now();
 	dispatch({ type: "OS_CHECK_STARTED", now });
 	const result = await deps.checkOsManifest(settings.channel);
@@ -3385,7 +3672,9 @@ async function startOrchestratorRuntime(
 	} else {
 		adoptState(await resumeOrchestratorState(baseline, resumeDeps()));
 	}
-	adoptState(normalizeStartupDiscovery(state, deps.now()));
+	adoptState(
+		normalizeStartupDiscovery(state, deps.now(), imageAptSourceInUse()),
+	);
 	await kernelRuntime.reconcile();
 	if (
 		baseline.phase === "committing" &&

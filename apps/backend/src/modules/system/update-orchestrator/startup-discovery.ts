@@ -4,7 +4,18 @@ import type { OrchestratorState } from "./types.ts";
 export function normalizeStartupDiscovery(
 	state: OrchestratorState,
 	now: number,
+	// Image apt source: installs launch only for a request in this process.
+	imageSource = false,
 ): OrchestratorState {
+	// A queued plan from an earlier process is not a request: discovery again.
+	if (imageSource && state.phase === "awaiting-idle")
+		return {
+			...state,
+			phase: "idle",
+			enteredAt: now,
+			progress: null,
+			packageCheck: { ...state.packageCheck, nextAttemptAt: now },
+		};
 	switch (state.phase) {
 		case "checking":
 			return {

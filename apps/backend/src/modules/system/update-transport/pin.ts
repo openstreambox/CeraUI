@@ -1,3 +1,7 @@
+import {
+	type EffectOwner,
+	OwnerEndedError,
+} from "../../../helpers/effect-owner.ts";
 import { RunAbortError, RunTimeoutError, run } from "../../../helpers/run.ts";
 import type {
 	AptRoutingLease,
@@ -86,6 +90,8 @@ function uidFor(job: UpdateJob, file: CapabilityFile): number {
 type Step<T> = (
 	transport: RankedTransport,
 	aptFlags: readonly string[],
+	/** `last`: no other transport would be tried if this one fails. */
+	attempt: { readonly last: boolean },
 ) => Promise<T>;
 
 export type UpdateStepControl = {
@@ -93,6 +99,12 @@ export type UpdateStepControl = {
 	readonly cleanup?: () => RoutingCleanup;
 	readonly refreshSelection?: () => Promise<TransportSelection>;
 	readonly checkCancelled?: () => void;
+	/**
+	 * Whom the step is run for. Every routing command of it, and its routing
+	 * lease, carry that owner: once it has ended nothing more is set up, and
+	 * what was set up is still torn down (effect-owner.ts).
+	 */
+	readonly owner?: EffectOwner;
 	readonly approveMetered?: (transport: RankedTransport) => boolean;
 };
 
@@ -129,8 +141,12 @@ export function createUpdatePinController(overrides: Partial<PinDeps> = {}) {
 			const file = await deps.readCapabilities();
 			if (!file) throw new UpdatePinError("capabilities-unavailable");
 			const uid = uidFor(job, file);
+			const owner = control.owner;
+			const runner: typeof run = owner
+				? (bin, args, opts) => deps.run(bin, args, { ...opts, owner })
+				: deps.run;
 			if (job === "apt")
-				aptLease = await control.aptOwnership?.acquire(deps.run, uid);
+				aptLease = await control.aptOwnership?.acquire(runner, uid, owner);
 			const attempted = new Set<string>();
 			let ranking = selection;
 			let lastFailure: UpdateTransferError | undefined;
@@ -140,18 +156,21 @@ export function createUpdatePinController(overrides: Partial<PinDeps> = {}) {
 					ranking = await control.refreshSelection();
 					control.checkCancelled?.();
 				}
-				const candidate = ranking.ranked.find(
-					(row) =>
-						row.healthy &&
-						!attempted.has(key(row.candidate.ifname, row.family)) &&
-						!unhealthyUntil(row.candidate.ifname, row.family) &&
-						(row.candidate.metered === false ||
-							!control.approveMetered ||
-							control.approveMetered(row)),
-				);
+				const eligible = (row: RankedTransport) =>
+					row.healthy &&
+					!attempted.has(key(row.candidate.ifname, row.family)) &&
+					!unhealthyUntil(row.candidate.ifname, row.family) &&
+					(row.candidate.metered === false ||
+						!control.approveMetered ||
+						control.approveMetered(row));
+				const candidate = ranking.ranked.find(eligible);
 				if (!candidate) break;
 				control.checkCancelled?.();
 				attempted.add(key(candidate.candidate.ifname, candidate.family));
+				// Whether a failure of this transport is the transfer's last word.
+				const last =
+					!control.refreshSelection &&
+					(attempted.size >= MAX_ATTEMPTS || !ranking.ranked.some(eligible));
 				try {
 					return await runPinnedStep({
 						job,
@@ -159,9 +178,9 @@ export function createUpdatePinController(overrides: Partial<PinDeps> = {}) {
 						transport: candidate,
 						step: (transport, flags) => {
 							control.checkCancelled?.();
-							return step(transport, flags);
+							return step(transport, flags, { last });
 						},
-						runner: aptLease?.runner ?? deps.run,
+						runner: aptLease?.runner ?? runner,
 						...(job === "os" && control.cleanup
 							? { cleanup: control.cleanup }
 							: {}),
@@ -171,6 +190,10 @@ export function createUpdatePinController(overrides: Partial<PinDeps> = {}) {
 					if (!transfer) throw error;
 					// runPinnedStep has already cleaned up; an AggregateError is never classified.
 					control.checkCancelled?.();
+					// The cooldown is shared with every later transfer: a failure
+					// of an owner that has ended does not put the uplink on it.
+					if (control.owner?.ended())
+						throw new OwnerEndedError("the uplink's cooldown");
 					unhealthy.set(
 						key(candidate.candidate.ifname, candidate.family),
 						deps.now() + UPDATE_TRANSPORT_HOLD_MS,

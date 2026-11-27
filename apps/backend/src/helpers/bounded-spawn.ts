@@ -1,4 +1,5 @@
 import type { Subprocess } from "bun";
+import type { EffectOwner } from "./effect-owner.ts";
 import { logger } from "./logger.ts";
 
 export class SpawnTimeoutError extends Error {
@@ -32,6 +33,12 @@ interface PipeReader {
 export interface BoundedSpawnOptions {
 	readonly timeoutMs?: number;
 	readonly signal?: AbortSignal;
+	/**
+	 * Whom the command is run for. Once that owner has ended the command is
+	 * refused before it starts (effect-owner.ts); a running one is never killed
+	 * for it.
+	 */
+	readonly owner?: EffectOwner | undefined;
 	readonly env?: Readonly<Record<string, string | undefined>>;
 	readonly maxBuffer?: number;
 	/** Require EOF on both streams before returning collected output. */
