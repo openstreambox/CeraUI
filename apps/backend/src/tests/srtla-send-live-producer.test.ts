@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import {
@@ -118,6 +118,43 @@ async function requireCapabilities(
 		);
 	}
 	return doc;
+}
+
+/*
+  The stats file is NOT proof that the sender can take a SIGTERM yet. Released
+  senders (4.1.0 and 4.2.0 at least) publish the first snapshot before they
+  register their signal handlers, so a SIGTERM sent straight off the file can
+  meet the default action: the process dies by signal and the file stays behind.
+  That is a sender startup-order bug, not the shutdown contract this file pins,
+  and it made the SIGTERM case below fail now and then under CPU load. A sender
+  that registers its handlers first passes this wait at once.
+
+  `SigCgt` in /proc/<pid>/status is the kernel's own mask of caught signals, so
+  waiting for the SIGTERM bit there closes the gap without a guessed sleep. The
+  wait is bounded by READY_TIMEOUT_MS; a sender that never catches SIGTERM fails
+  here, which is itself a contract break. Off Linux there is no /proc to read and
+  the case signals straight off the stats file, as it did before.
+*/
+const SIGTERM_BIT = 1n << 14n; // signal 15, bit (15 - 1)
+
+function sigtermCaught(pid: number): boolean | null {
+	let status: string;
+	try {
+		status = readFileSync(`/proc/${pid}/status`, "utf8");
+	} catch {
+		return null;
+	}
+	const mask = /^SigCgt:\s*([0-9a-f]+)$/m.exec(status)?.[1];
+	return mask === undefined ? null : (BigInt(`0x${mask}`) & SIGTERM_BIT) !== 0n;
+}
+
+async function waitForSigtermHandler(proc: Spawned): Promise<void> {
+	if (process.platform !== "linux") return;
+	await waitFor(
+		async () => sigtermCaught(proc.pid) === true,
+		READY_TIMEOUT_MS,
+		"the sender to install its SIGTERM handler",
+	);
 }
 
 async function startSender(bin: string): Promise<Spawned> {
@@ -247,6 +284,7 @@ describe.skipIf(!SENDER_BIN)(
 			async () => {
 				const proc = await startSender(SENDER_BIN as string);
 				expect(await Bun.file(STATS_FILE).exists()).toBe(true);
+				await waitForSigtermHandler(proc);
 
 				proc.kill("SIGTERM");
 				const exited = await Promise.race([
@@ -255,6 +293,10 @@ describe.skipIf(!SENDER_BIN)(
 				]);
 				expect(exited).not.toBe("timeout");
 				child = null;
+				// Clean means the sender's own handler ran: exit 0, not a death by
+				// the signal's default action.
+				expect(proc.signalCode).toBeNull();
+				expect(proc.exitCode).toBe(0);
 
 				await waitFor(
 					async () => !(await Bun.file(STATS_FILE).exists()),
