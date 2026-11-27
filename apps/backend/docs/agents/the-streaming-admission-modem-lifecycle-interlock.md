@@ -4,6 +4,9 @@
 
 `modules/streaming/lifecycle-admission.ts` is a process-wide, fail-fast lease with
 exactly two mutually-exclusive holders — `"streaming"` and `"modem-transition"`.
+Acquisition never waits. The one waiter sits outside it: a Stream Start waits,
+within a budget, for a dead-bearer link teardown to release before it asks (see
+below).
 A USB-composition switch re-enumerates a modem and tears its bond link down
 mid-flight, so it must never overlap a stream, in EITHER order.
 
@@ -44,8 +47,58 @@ guard covers the rest. Nothing else changes: `modems.setUsbMode`'s existing
 
 **The `"modem-transition"` holder is now acquired by `modems.setUsbMode`**
 (`rpc/procedures/modems.procedure.ts`, gate 4 — see USB-COMPOSITION SWITCH above).
-Both directions are therefore live in production. No autonomous cellular recovery
-loop acquires it, and none is wired anywhere.
+Both directions are therefore live in production.
+
+**The dead-bearer reconnect takes it across its `down`** (`tryAcquireLinkTeardown`,
+called from `modules/modems/dead-bearer-recovery.ts`). The reconnect's own
+background lease (`withBackgroundModemLease`) is a journal-only key, which this
+interlock does not count, and its owner reads await; without the hold, a Start
+admitted during those reads launched onto a link that went down a moment later.
+
+- **Before the `down`**, with no await in between, the reconnect checks that the
+  stream state and the stream admission count (`streamingAdmissionCount`) are
+  still what its reads began with, takes the interlock and marks the link pending
+  in `network/link-teardown-pending.ts`, which `isBondCandidate` refuses (a CLAT
+  TUN through its modem). A changed stream or a held interlock skips this poll.
+- **Until it settles.** The hold lasts until NetworkManager shows the device has
+  let go of the connection (disconnected, or carrying another one), at most
+  `LINK_TEARDOWN_MAX_HOLD_MS` (6 s), and releases itself at that bound whatever is
+  still awaited. A device still activated with this connection counts as "the
+  `down` did not take" only at the bound, because an `nmcli` that gave up
+  (exit 3) can leave NetworkManager about to deactivate. Settled or not taken:
+  the pending mark is lifted. Not settled (an `nmcli` timeout, a device stuck
+  deactivating, an unreadable device): the link is re-marked at the outcome, no
+  `up` follows, and a status poll lifts the mark only once it reads the device no
+  longer deactivating. Status polls are not serialized, so a poll skips links
+  whose teardown is still in flight, and keeps watching an unsettled teardown's
+  link on every poll, re-marking it while the device reads deactivating. A
+  failed device lookup or state read keeps the mark (`findModemNmDeviceForConnection`
+  tells "no device" from "unreadable"). A poll lifts marks no profiled modem owns
+  (re-enumerated without a profile, or gone) and marks whose profile
+  NetworkManager says no device carries. Accepted residual: a profile-less modem
+  that re-enumerates on the same interface name loses the mark. At startup, right after modem discovery, a scan marks
+  any modem link NetworkManager still shows deactivating, so a backend that
+  restarted mid-teardown does not offer it to the bond either. Accepted residual:
+  a Start in the seconds before that scan finishes at boot.
+- **The `up`** follows only onto a free device (disconnected, no active
+  connection), checked right before; another profile that activated after the
+  `down` is left alone, as is a device that is not yet free. The `up` itself is
+  not held: it is an ordinary background dial. Accepted residual: an NM
+  autoconnect between that check and the `up`.
+- **The outage hold** restarts after a skip caused by stream activity and
+  whenever a stream was admitted since the outage began, so a stream that came
+  and went between two polls is not counted as quiet time. A skip because another
+  modem change holds the interlock (`linkTeardownRefusal() === "transition"`)
+  neither restarts nor counts. At most `DEAD_BEARER_MAX_HOLD_RESTARTS` (3) restarts
+  per outage, counted afresh when the outage ends: a stream flapping at every
+  eligible poll would otherwise keep a dead link dead. Past the cap only the
+  checks before the `down` still apply.
+- **A waiting Start.** A Stream Start that meets the hold waits for it
+  (`linkTeardownSettled`, budgeted, see START-LIFECYCLE.md) rather than failing,
+  because no start origin retries the refusal, and no new teardown begins while
+  it waits. Engine-less forwarding is refused for the span and retried by the
+  forwarding listener's backoff. Every other journal-only holder keeps its
+  semantics: it never refuses a Start.
 
 **The refusal has its OWN failure class and its own operator copy.**
 `MODEM_TRANSITION_ACTIVE` used to ride the generic `start_invalid` class, which the
@@ -63,5 +116,17 @@ table and both exclusion directions, race order A (a start during a transition i
 refused and NEVER launches), race order B (a transition during an admitted start
 is refused until it settles), the duplicate-start ordering lock, finally-release
 under a throw, the idempotent/stale release, and the production `streaming.start`
-wiring driven through the REAL procedure.
+wiring driven through the REAL procedure. The same suite pins that a Start during a
+link teardown waits and is then admitted, that it asks again after every wake,
+that no teardown begins while it waits, that a spent budget refuses it as
+`modem_transition_active`, that a wall-clock step does not end the wait, that a hold
+releases itself at its bound, that the test
+reset wakes waiters, that a teardown is refused during an admission, and that an
+operator Stop during the wait cancels the Start.
+`modules/modems/dead-bearer-recovery.test.ts` pins a Start admitted, a stream gone
+live, ended, or admitted and ended during the owner reads, restoration during the
+`down`, release after a throwing `down` or failed bookkeeping, the hold until the
+device settles, the bond exclusion for an unsettled or unreadable device and after
+a restart, the free-device check before the `up`, and the capped hold restarts.
+`modules/network/link-teardown-pending.test.ts` pins the bond refusal.
 

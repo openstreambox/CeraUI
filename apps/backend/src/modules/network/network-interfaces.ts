@@ -96,6 +96,10 @@ import {
 	refreshDongleMetadata,
 } from "./dongle-metadata.ts";
 import { ethernetRoleForWire, isSharedLanPort } from "./ethernet-role.ts";
+import {
+	isLinkTeardownPending,
+	onLinkTeardownPendingChange,
+} from "./link-teardown-pending.ts";
 import { shouldUseMockMonitor } from "./monitor/mock-monitor.ts";
 import {
 	hasNetdevWitness,
@@ -560,6 +564,7 @@ function admitsBondLink(
 			return false;
 		owner = translation.parent;
 	}
+	if (isLinkTeardownPending(owner)) return false;
 	if (
 		isUsbReplacementPending(owner) ||
 		isHeldOutByModemBlock(owner, owner === name ? int : netif[owner])
@@ -923,6 +928,8 @@ function syncNetifState(): void {
 
 // A modem blocked or released changes the bond's members on the next publish.
 onMutationBlocksChange(() => triggerNetworkInterfacesChange());
+
+onLinkTeardownPendingChange(() => triggerNetworkInterfacesChange());
 
 export function triggerNetworkInterfacesChange() {
 	// Reconcile + broadcast on any state mutation (poll, UI toggle, hotspot
