@@ -11,14 +11,17 @@ import {
 } from "./config-change-bridge.ts";
 import { requestEngineReachabilityCheck } from "./engine-control-loss.ts";
 import { queryEngineRuntimeStreaming } from "./engine-runtime-state.ts";
+import { engineUnitStopped } from "./engine-unit-state.ts";
 import {
 	globalStreamHold,
 	tryAcquireLifecycle,
 } from "./lifecycle-admission.ts";
 import {
+	adoptOtaStreamingMarker,
 	claimOtaMarkerForLaunch,
 	clearOtaStreamingMarker,
 	encoderOtaStreamLiveness,
+	otaMarkerAwaitsIdleWitness,
 	setOtaStreamingMarker,
 } from "./ota-streaming-marker.ts";
 import { awaitRecoveryBarrier, isRecoveryPending } from "./recovery-barrier.ts";
@@ -136,6 +139,9 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	admitUpdate: admitAndPrepareStreamStart,
 	markStreamingForOta: setOtaStreamingMarker,
 	unmarkStreamingForOta: clearOtaStreamingMarker,
+	confirmStreamingForOta: adoptOtaStreamingMarker,
+	awaitsIdleWitness: otaMarkerAwaitsIdleWitness,
+	engineStopped: () => engineUnitStopped(),
 	onStreamStopped: (cause) => {
 		noteStreamStopped(cause);
 		recordEvent(() =>

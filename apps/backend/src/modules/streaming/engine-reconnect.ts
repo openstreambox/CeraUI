@@ -87,6 +87,7 @@ import {
 	reportEngineRecovery,
 	reportEngineState,
 } from "./lifecycle-indicators.ts";
+import { otaMarkerAwaitsIdleWitness } from "./ota-streaming-marker.ts";
 import { getPipelinesMessage, initPipelines } from "./pipelines.ts";
 import {
 	type EngineDeviceCacheDeps,
@@ -164,6 +165,14 @@ export interface EngineReconnectDeps {
 	 * unreachable→reachable transition toasts.
 	 */
 	reportEngineState: (reachable: boolean, streaming: boolean) => void;
+	/**
+	 * True while a carrying line an earlier backend process left waits for
+	 * engine evidence. Only a reconciliation can settle it, and an engine that
+	 * stays unreachable never triggers one; one whose unit then has no process
+	 * settles it, so each failed recheck reconciles while the line waits.
+	 */
+	awaitsIdleWitness: () => boolean;
+	reconcileSession: (current: () => boolean) => Promise<unknown>;
 	logger: EngineReconnectLogger;
 	random: () => number;
 	setTimer: (fn: () => void, ms: number) => TimerHandle;
@@ -293,6 +302,8 @@ function defaultDeps(
 			broadcastMsg("capabilities", getLastCapabilities()),
 		reportEngineState: (reachable, streaming) =>
 			reportEngineState({ isStreaming: streaming, reachable }),
+		awaitsIdleWitness: otaMarkerAwaitsIdleWitness,
+		reconcileSession: reconcileStreamSession,
 		logger: defaultLogger,
 		random: Math.random,
 		setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -556,6 +567,22 @@ async function tickRecheck(): Promise<void> {
 		state.offlineAnnounced = false;
 	}
 	announceOffline();
+	// Still unreachable. The same tick lets a waiting carrying line be judged
+	// again, so an engine whose unit has since lost its process releases the
+	// marker and the inhibitor without waiting for a reboot. Boot recovery only:
+	// a re-armed loop leaves the session to its loss reconciliation.
+	if (!owner.rearmed && state.deps.awaitsIdleWitness()) {
+		try {
+			await state.deps.reconcileSession(
+				() => state === owner && !owner.stopped,
+			);
+		} catch (err) {
+			state.deps.logger.warn(
+				`engine reconnect: reconciliation for a waiting carrying line failed: ${errMessage(err)}`,
+			);
+		}
+		if (state !== owner || owner.stopped) return;
+	}
 	scheduleRecheck();
 }
 
