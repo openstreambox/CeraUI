@@ -956,6 +956,8 @@ export class CerastreamBackend implements StreamingBackend {
 		let startConfirmed = false;
 		let confirmedIdle = false;
 		let clientReleased = false;
+		// The launch deadline's Stop for this attempt, when it sent one.
+		let timeoutStop: Promise<void> | undefined;
 		let acquiredClient: CerastreamClient | undefined;
 		let acquiredSubscription: Subscription | undefined;
 		const launchTransaction =
@@ -1036,6 +1038,8 @@ export class CerastreamBackend implements StreamingBackend {
 				assertStreamLaunchOwnership();
 				this.subscription = subscription;
 				launchTransaction.register(async () => {
+					// A Start refused before admission opened nothing; a Stop here would
+					// end the session that caused the refusal, which may not be ours.
 					if (refusedBeforeAdmission) return;
 					if (scoped) {
 						if (attempt !== undefined)
@@ -1051,6 +1055,18 @@ export class CerastreamBackend implements StreamingBackend {
 						return;
 					}
 					if (!dispatched) return;
+					// The launch deadline already Stopped this attempt; a second
+					// global Stop could only end a later session.
+					if (
+						timeoutStop !== undefined &&
+						(await timeoutStop.then(
+							() => true,
+							() => false,
+						))
+					) {
+						confirmedIdle = true;
+						return;
+					}
 					try {
 						// A session request can still occupy the engine connection.
 						await this.stopOnFreshConnection(client);
@@ -1155,7 +1171,12 @@ export class CerastreamBackend implements StreamingBackend {
 							});
 						}
 						dispatched = true;
-						registerLaunchRollback({ kind: "legacy-dispatched" });
+						registerLaunchRollback({
+							kind: "legacy-dispatched",
+							timeoutStop: (stop) => {
+								timeoutStop = stop;
+							},
+						});
 						return this.dispatchStart(client, startParams);
 					},
 					(error) => {
