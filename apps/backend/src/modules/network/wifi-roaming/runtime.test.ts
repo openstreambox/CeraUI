@@ -88,6 +88,8 @@ function fakeDeps(over: Partial<RuntimeDeps> = {}) {
 						reserved: false,
 						link: { bssid: "aa:00:00:00:00:01", ssid: "venue", signalDbm: -55 },
 						seenBssids: 1,
+						scanRule: "rare",
+						addresses: ["192.0.2.11"],
 					},
 				],
 				skipped: [],
@@ -110,6 +112,7 @@ function fakeDeps(over: Partial<RuntimeDeps> = {}) {
 			watched.push(radios.map((r) => r.ifname));
 		},
 		tick: async () => {},
+		settled: async () => {},
 		drain: () => lossEvents.splice(0),
 		dropped: () => 0,
 		status: () => null,
@@ -271,6 +274,36 @@ describe("the dead-link watch", () => {
 });
 
 describe("losses at stop", () => {
+	test("a loss a tick in flight finishes during stop is joined before the drain", async () => {
+		const f = fakeDeps();
+		const finishing = Promise.withResolvers<void>();
+		f.deps.loss = {
+			...f.deps.loss,
+			// The tick in flight ends only now, with a loss it found.
+			settled: async () => {
+				await finishing.promise;
+				f.lossEvents.push({
+					at: 6_000,
+					radio: "02:00:00:00:f0:01",
+					id: "02:00:00:00:f0:01/1:1:p",
+					ifname: "wlan1",
+					event: "ap-lost",
+					bssid: null,
+					lostAt: 5_900,
+					outcome: "left-bond",
+					durationMs: 100,
+				});
+			},
+		};
+		const rt = createObserverRuntime(f.deps);
+		await rt.round();
+		const stopping = rt.stop();
+		await Bun.sleep(20);
+		finishing.resolve();
+		await stopping;
+		expect(f.journal.map((l) => JSON.parse(l).event)).toContain("ap-lost");
+	});
+
 	test("a loss that ended since the last round still reaches the journal", async () => {
 		const f = fakeDeps();
 		const rt = createObserverRuntime(f.deps);
@@ -323,6 +356,8 @@ describe("bounded writes", () => {
 					reserved: false,
 					link: null,
 					seenBssids: null,
+					scanRule: null,
+					addresses: [],
 				},
 			],
 			skipped: [],

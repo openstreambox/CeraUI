@@ -130,7 +130,7 @@ const ALLOWED_IMPORTS = new Set([
 	"../../../helpers/logger.ts",
 	"../../../helpers/run.ts",
 	"../../streaming/continuity-observer.ts",
-	"../../streaming/srtla.ts",
+	"../../setup.ts",
 	"../../wifi/wifi-adapter-admission.ts",
 	"../../wifi/wifi-connections.ts",
 	"../../wifi/wifi-interfaces.ts",
@@ -153,7 +153,7 @@ const ALLOWED_SYMBOLS: Record<string, string[]> = {
 		"OwnedSender",
 		"ownedSenderLifetime",
 	],
-	"../../streaming/srtla.ts": ["getLastWrittenBond"],
+	"../../setup.ts": ["setup"],
 	"../../wifi/wifi-adapter-admission.ts": [
 		"WifiAdapterAdmission",
 		"admitWifiAdapter",
@@ -422,14 +422,14 @@ describe("the runner, read from the syntax tree", () => {
 });
 
 describe("the one NetworkManager read", () => {
-	test("nmcli appears once, reading only the seen-bssids property of one profile", () => {
+	test("nmcli appears once, reading only three non-secret properties of one profile", () => {
 		const hits = sources.flatMap((file) =>
 			[...code(read(file)).matchAll(/\bnmcli\b/g)].map(() => file),
 		);
 		expect(hits).toEqual(["radio-port.ts"]);
 		const text = code(read("radio-port.ts")).replace(/\s+/g, " ");
 		expect(text).toContain(
-			'deps.run( "nmcli", [ "-g", "802-11-wireless.seen-bssids", "connection", "show", "uuid", argMatch(UUID_RE, uuid), ], { timeout: READ_TIMEOUT_MS, quiet: true }, )',
+			'deps.run( "nmcli", [ "-g", "802-11-wireless.seen-bssids,802-11-wireless.bssid,802-11-wireless-security.key-mgmt", "connection", "show", "uuid", argMatch(UUID_RE, uuid), ], { timeout: READ_TIMEOUT_MS, quiet: true }, )',
 		);
 	});
 });

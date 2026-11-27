@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setup } from "../../setup.ts";
 import {
+	defaultLossWatchDeps,
+	ipListAddresses,
 	LOSS_TICK_MS,
 	LOSS_TIMEOUT_MS,
 	LossWatch,
@@ -12,12 +18,19 @@ const A: WatchedRadio = {
 	permanentMac: "02:00:00:00:b0:01",
 	ifname: "wlan1",
 	bssid: "aa:00:00:00:00:01",
+	addresses: ["192.0.2.11"],
 };
 const B: WatchedRadio = {
 	id: "02:00:00:00:b0:02/61:6:p6",
 	permanentMac: "02:00:00:00:b0:02",
 	ifname: "wlan2",
 	bssid: "aa:00:00:00:00:02",
+	addresses: ["192.0.2.12"],
+};
+
+const OWNER_OF: Record<string, string> = {
+	"192.0.2.11": "wlan1",
+	"192.0.2.12": "wlan2",
 };
 
 /** Carrier and bond membership per interface, on a hand-driven clock. */
@@ -30,7 +43,11 @@ function world() {
 	const deps: LossWatchDeps = {
 		now: () => w.now,
 		carrier: async (ifname) => w.carrier.get(ifname),
-		inBond: (ifname) => (w.bond ? w.bond.has(ifname) : undefined),
+		// The IP list on disk, by the interface each address belongs to.
+		inBond: async (addresses) =>
+			w.bond
+				? addresses.some((a) => w.bond?.has(OWNER_OF[a] ?? ""))
+				: undefined,
 	};
 	return { w, watch: new LossWatch(deps) };
 }
@@ -222,7 +239,7 @@ describe("losses the order or the radio of which is uncertain", () => {
 				if (w.hold) await gate.promise;
 				return w.carrier;
 			},
-			inBond: () => true,
+			inBond: async () => true,
 		});
 		watch.watch([A]);
 		w.now = 100;
@@ -265,5 +282,97 @@ describe("losses the order or the radio of which is uncertain", () => {
 		}
 		expect(watch.drain()).toHaveLength(256);
 		expect(watch.dropped()).toBe(44);
+	});
+});
+
+describe("what the window is measured against", () => {
+	test("a replacement listed while the old radio's carrier is read never recovers the old loss", async () => {
+		const gate = Promise.withResolvers<void>();
+		const w = { now: 0, carrier: true as boolean, hold: false };
+		const watch = new LossWatch({
+			now: () => w.now,
+			carrier: async () => {
+				if (w.hold) await gate.promise;
+				return w.carrier;
+			},
+			inBond: async () => true,
+		});
+		watch.watch([A]);
+		w.now = 100;
+		await watch.tick();
+		w.carrier = false;
+		w.now = 200;
+		await watch.tick();
+		expect(watch.status(A.id)?.lostSince).toBe(200);
+		// The next read is held; meanwhile a replacement takes the name, carrier up.
+		w.hold = true;
+		w.carrier = true;
+		w.now = 300;
+		const ticking = watch.tick();
+		const replacement = { ...A, id: "02:00:00:00:b0:09/53:5:p5" };
+		watch.watch([replacement]);
+		gate.resolve();
+		await ticking;
+		expect(watch.drain()).toMatchObject([
+			{ id: A.id, outcome: "radio-replaced" },
+		]);
+	});
+
+	test("during a loss the record keeps the access point that went and the addresses the sender had", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		// A round mid-loss: reassociated elsewhere, no address yet.
+		watch.watch([{ ...A, bssid: "aa:00:00:00:00:77", addresses: [] }]);
+		await run(watch, w, 100);
+		w.bond?.delete("wlan1");
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "left-bond", bssid: A.bssid },
+		]);
+	});
+
+	test("an IP list that cannot be read mid-loss ends nothing", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		w.bond = undefined;
+		await run(watch, w, 500);
+		expect(watch.drain()).toEqual([]);
+		expect(watch.status(A.id)?.lostSince).not.toBeNull();
+	});
+});
+
+describe("the IP list file", () => {
+	test("one address per line, blank lines ignored", () => {
+		expect([...ipListAddresses("192.0.2.1\n\n2001:db8::1\n")]).toEqual([
+			"192.0.2.1",
+			"2001:db8::1",
+		]);
+	});
+
+	test("the production read judges by what is on disk", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "wifi-roaming-ips-"));
+		const saved = setup.ips_file;
+		try {
+			setup.ips_file = join(dir, "ips");
+			const deps = defaultLossWatchDeps(() => 0);
+			expect(await deps.inBond(["192.0.2.11"])).toBeUndefined();
+			await writeFile(setup.ips_file, "192.0.2.11\n192.0.2.30\n");
+			expect(await deps.inBond(["192.0.2.11"])).toBe(true);
+			expect(await deps.inBond(["192.0.2.99"])).toBe(false);
+			expect(await deps.inBond([])).toBeUndefined();
+		} finally {
+			setup.ips_file = saved;
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 });

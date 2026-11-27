@@ -4,11 +4,13 @@
  *
  * Read-only and in-process. Every 100 ms, for each watched radio: its kernel
  * carrier (`/sys/class/net/<if>/carrier`; cfg80211 drops it when the station
- * disconnects) and whether the interface is in the last bond whose IP list
- * reached disk (`getLastWrittenBond`: what the sender reads; a failed write
- * leaves the previous list). A loss starts when the carrier goes from up to
- * down and ends when one of these happens first:
- * - `left-bond`: the written bond no longer has the interface; the window is
+ * disconnects) and whether one of the radio's addresses is in the IP list on
+ * disk (`setup.ips_file`): the file the sender itself reads on reload, so a
+ * failed write, a timed-out sidecar or anything else in between is judged by
+ * what actually reached it. The radio's addresses are the ones the rounds
+ * saw while it was associated, kept through the loss. A loss starts when the
+ * carrier goes from up to down and ends when one of these happens first:
+ * - `left-bond`: the IP list no longer has the radio's address; the window is
  *   from the loss to that write (the sender applies it on its next reload,
  *   which this does not include);
  * - `recovered`: the carrier came back while the interface was still in the
@@ -17,7 +19,8 @@
  *   which came first is unknown (the window is under 100 ms either way);
  * - `not-in-bond`: the interface was not in the bond when the loss began;
  * - `radio-replaced`: another physical radio took over the interface name
- *   before the loss ended (the carrier then belongs to that radio);
+ *   before the loss ended, or while its carrier was being read (the carrier
+ *   then belongs to that radio);
  * - `timeout`: none of these within 30 s.
  *
  * Radios are keyed by the physical radio id. A radio a round no longer lists
@@ -28,7 +31,7 @@
 
 import { readFile } from "node:fs/promises";
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
-import { getLastWrittenBond } from "../../streaming/srtla.ts";
+import { setup } from "../../setup.ts";
 
 export const LOSS_TICK_MS = 100;
 export const LOSS_TIMEOUT_MS = 30_000;
@@ -63,14 +66,19 @@ export type WatchedRadio = Readonly<{
 	ifname: string;
 	/** The access point the round saw it on, `null` when not associated. */
 	bssid: string | null;
+	/** Its source addresses as the IP list writes them; empty when it has none. */
+	addresses: readonly string[];
 }>;
 
 export type LossWatchDeps = Readonly<{
 	now(): number;
 	/** The kernel carrier, `undefined` when it could not be read. */
 	carrier(ifname: string): Promise<boolean | undefined>;
-	/** In the last published bond; `undefined` when nothing was published. */
-	inBond(ifname: string): boolean | undefined;
+	/**
+	 * Whether any of `addresses` is in the IP list on disk; `undefined` when
+	 * the list could not be read or there is no address to look for.
+	 */
+	inBond(addresses: readonly string[]): Promise<boolean | undefined>;
 }>;
 
 type State = {
@@ -78,8 +86,10 @@ type State = {
 	carrier: boolean | undefined;
 	/** In the written bond at the previous look. */
 	inBond: boolean | undefined;
-	/** Last access point seen. */
+	/** Last access point seen; frozen while a loss is in progress. */
 	bssid: string | null;
+	/** Last addresses seen; kept through a loss, when the radio has none. */
+	addresses: readonly string[];
 	lostAt: number | null;
 	/** Listed by the last round; an unlisted radio is kept only mid-loss. */
 	listed: boolean;
@@ -113,13 +123,19 @@ export class LossWatch {
 			if (state) {
 				state.radio = r;
 				state.listed = true;
-				if (r.bssid !== null) state.bssid = r.bssid;
+				// During a loss the record keeps the access point that went, and
+				// the addresses the sender was given.
+				if (state.lostAt === null) {
+					if (r.bssid !== null) state.bssid = r.bssid;
+					if (r.addresses.length > 0) state.addresses = r.addresses;
+				}
 			} else
 				this.#radios.set(r.id, {
 					radio: r,
 					carrier: undefined,
 					inBond: undefined,
 					bssid: r.bssid,
+					addresses: r.addresses,
 					lostAt: null,
 					listed: true,
 					last: null,
@@ -130,6 +146,11 @@ export class LossWatch {
 		// them, so the tick removes them once no loss is in progress.
 		for (const [id, state] of this.#radios)
 			if (!listed.has(id)) state.listed = false;
+	}
+
+	/** The tick in flight, if any, settled. */
+	settled(): Promise<void> {
+		return this.#ticking ?? Promise.resolve();
 	}
 
 	/** One look at every watched radio; ticks never overlap. */
@@ -159,8 +180,16 @@ export class LossWatch {
 				this.#end(state, state.lostAt, now, "radio-replaced");
 			} else if (state.listed || state.lostAt !== null) {
 				const carrier = await this.#deps.carrier(state.radio.ifname);
+				const inBond = await this.#deps.inBond(state.addresses);
 				const now = this.#deps.now();
-				const inBond = this.#deps.inBond(state.radio.ifname);
+				// The reads awaited: if another radio took the name meanwhile, the
+				// sample is that radio's, not this one's.
+				if (!state.listed && this.#replaced(state)) {
+					if (state.lostAt !== null)
+						this.#end(state, state.lostAt, now, "radio-replaced");
+					this.#radios.delete(id);
+					continue;
+				}
 				if (state.lostAt === null) {
 					if (state.carrier === true && carrier === false) {
 						if (inBond === true) state.lostAt = now;
@@ -169,7 +198,7 @@ export class LossWatch {
 							this.#end(state, now, now, "unordered");
 						else this.#end(state, now, now, "not-in-bond");
 					}
-				} else if (inBond === false || inBond === undefined)
+				} else if (inBond === false)
 					this.#end(state, state.lostAt, now, "left-bond");
 				else if (carrier === true)
 					this.#end(state, state.lostAt, now, "recovered");
@@ -224,7 +253,17 @@ export class LossWatch {
 	}
 }
 
-/** The production reads: sysfs carrier and the last published bond. */
+/** The addresses an IP list file names, one per line. */
+export function ipListAddresses(text: string): Set<string> {
+	return new Set(
+		text
+			.split("\n")
+			.map((l) => l.trim())
+			.filter((l) => l !== ""),
+	);
+}
+
+/** The production reads: sysfs carrier and the IP list on disk. */
 export function defaultLossWatchDeps(now: () => number): LossWatchDeps {
 	return {
 		now,
@@ -242,9 +281,16 @@ export function defaultLossWatchDeps(now: () => number): LossWatchDeps {
 				return undefined;
 			}
 		},
-		inBond: (ifname) => {
-			const bond = getLastWrittenBond();
-			return bond ? bond.entries.some((e) => e.iface === ifname) : undefined;
+		inBond: async (addresses) => {
+			const file = setup.ips_file;
+			if (!file || addresses.length === 0) return undefined;
+			try {
+				const listed = ipListAddresses(await readFile(file, "utf8"));
+				return addresses.some((a) => listed.has(a));
+			} catch {
+				// No list on disk (no stream yet): nothing is in the bond.
+				return undefined;
+			}
 		},
 	};
 }

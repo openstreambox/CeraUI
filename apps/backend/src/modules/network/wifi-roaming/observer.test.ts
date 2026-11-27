@@ -51,6 +51,8 @@ const radio = (over: Partial<RadioView> = {}): RadioView => ({
 	reserved: false,
 	link: { bssid: AP1, ssid: "venue", signalDbm: -60 },
 	seenBssids: 2,
+	scanRule: "normal",
+	addresses: ["192.0.2.11"],
 	...over,
 });
 
@@ -446,7 +448,15 @@ describe("a span under one mapping", () => {
 });
 
 describe("which access point each radio is on", () => {
-	const two = (bssid2: string, seen2: number | null = 2): RoundInput => ({
+	const two = (
+		bssid2: string,
+		seen2: number | null = 2,
+		rule2: RadioView["scanRule"] = seen2 === null
+			? null
+			: seen2 < 2
+				? "rare"
+				: "normal",
+	): RoundInput => ({
 		at: 1_000,
 		radios: [
 			radio(),
@@ -456,6 +466,7 @@ describe("which access point each radio is on", () => {
 				ifname: "wlan2",
 				link: { bssid: bssid2, ssid: "venue", signalDbm: -58 },
 				seenBssids: seen2,
+				scanRule: rule2,
 			}),
 		],
 		skipped: [],
@@ -513,9 +524,9 @@ describe("which access point each radio is on", () => {
 		const o = new RoamingObserver();
 		const first = o.round(two(AP2, 1));
 		const st = o.status()?.radios;
-		expect(st?.map((r) => [r.seenBssids, r.rareBackgroundScan])).toEqual([
-			[2, false],
-			[1, true],
+		expect(st?.map((r) => [r.seenBssids, r.scanRule])).toEqual([
+			[2, "normal"],
+			[1, "rare"],
 		]);
 		expect(first.filter((e) => e.event === "seen-bssids")).toHaveLength(2);
 		expect(
@@ -528,7 +539,7 @@ describe("which access point each radio is on", () => {
 			{ ifname: "wlan2", count: 2 },
 		]);
 		const unknown = o.round({ ...two(AP2, null), at: 4_000 });
-		expect(o.status()?.radios[1]?.rareBackgroundScan).toBeNull();
+		expect(o.status()?.radios[1]?.scanRule).toBeNull();
 		expect(unknown.filter((e) => e.event === "seen-bssids")).toMatchObject([
 			{ ifname: "wlan2", count: null },
 		]);

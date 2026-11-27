@@ -20,6 +20,7 @@ import {
 	createRadioPort,
 	parseIwDev,
 	parseIwLink,
+	parseProfileScan,
 	type RadioPortDeps,
 } from "./radio-port.ts";
 
@@ -118,6 +119,7 @@ describe("radios as the observer reads them", () => {
 			rows: getWifiInterfacesByMacAddress,
 			admit: (key) => admitWifiAdapter(key),
 			exclude,
+			addressesOf: (ifname) => (ifname === "wlan1" ? ["192.0.2.11"] : []),
 			...over,
 		});
 
@@ -141,7 +143,7 @@ describe("radios as the observer reads them", () => {
 		expect(iw.calls).toEqual([
 			"iw dev",
 			"iw dev wlan1 link",
-			`nmcli -g 802-11-wireless.seen-bssids connection show uuid ${CONN}`,
+			`nmcli -g 802-11-wireless.seen-bssids,802-11-wireless.bssid,802-11-wireless-security.key-mgmt connection show uuid ${CONN}`,
 		]);
 		expect(iw.loud).toEqual([]);
 	});
@@ -156,9 +158,10 @@ describe("radios as the observer reads them", () => {
 				} as Partial<WifiInterface>,
 			}),
 		]);
-		const SEEN = `nmcli -g 802-11-wireless.seen-bssids connection show uuid ${CONN}`;
+		const SEEN = `nmcli -g 802-11-wireless.seen-bssids,802-11-wireless.bssid,802-11-wireless-security.key-mgmt connection show uuid ${CONN}`;
 		const iw = fakeIw({
-			[SEEN]: "AA\\:00\\:00\\:00\\:00\\:01,AA\\:00\\:00\\:00\\:00\\:02\n",
+			[SEEN]:
+				"AA\\:00\\:00\\:00\\:00\\:01,AA\\:00\\:00\\:00\\:00\\:02\n\nwpa-psk\n",
 		});
 		const p = port(iw);
 		clock = 0;
@@ -195,6 +198,72 @@ describe("radios as the observer reads them", () => {
 		expect(read.radios[0]?.seenBssids).toBeNull();
 	});
 
+	test("the scan rule follows the count, a fixed BSSID and 802.1X", () => {
+		expect(
+			parseProfileScan("AA\\:BB\\:CC\\:DD\\:EE\\:01\n\nwpa-psk\n"),
+		).toEqual({
+			seenBssids: 1,
+			scanRule: "rare",
+		});
+		expect(parseProfileScan("A,B\n\nwpa-psk\n")).toEqual({
+			seenBssids: 2,
+			scanRule: "normal",
+		});
+		expect(
+			parseProfileScan("A\nAA\\:BB\\:CC\\:DD\\:EE\\:01\nwpa-psk\n")?.scanRule,
+		).toBe("other");
+		expect(parseProfileScan("A\n\nwpa-eap\n")?.scanRule).toBe("other");
+		expect(parseProfileScan("\n\n\n")).toEqual({
+			seenBssids: 0,
+			scanRule: "rare",
+		});
+		expect(parseProfileScan("A\n")).toBeNull();
+	});
+
+	test("a profile change on one radio during another radio's read is caught at assembly", async () => {
+		const OTHER = "22222222-2222-4222-8222-222222222222";
+		const rows = await seed.publish([
+			station({
+				row: {
+					conn: CONN,
+					activeConn: CONN,
+					activeMode: "infrastructure",
+				} as Partial<WifiInterface>,
+			}),
+			station({
+				ifname: "wlan2",
+				mac: MAC2,
+				ifindex: 61,
+				phy: 6,
+				row: {
+					conn: CONN,
+					activeConn: CONN,
+					activeMode: "infrastructure",
+				} as Partial<WifiInterface>,
+			}),
+		]);
+		const first = Object.values(rows).find(
+			(r) => r.ifname === "wlan1",
+		) as WifiInterface;
+		const iw = fakeIw({
+			[`nmcli -g 802-11-wireless.seen-bssids,802-11-wireless.bssid,802-11-wireless-security.key-mgmt connection show uuid ${CONN}`]:
+				"A,B\n\nwpa-psk\n",
+		});
+		const read = await port(iw, new Set(), {
+			run: async (bin, args, opts) => {
+				const out = await iw.run(bin, args, opts);
+				// While wlan2's link is read, wlan1 changes profile.
+				if (args[1] === "wlan2") first.activeConn = OTHER;
+				return out;
+			},
+		}).read();
+		// wlan2 kept its profile: its reading stands.
+		expect(read.radios.find((r) => r.ifname === "wlan2")?.seenBssids).toBe(2);
+		const one = read.radios.find((r) => r.ifname === "wlan1");
+		expect(one?.seenBssids).toBeNull();
+		expect(one?.scanRule).toBeNull();
+	});
+
 	test("no active station profile, an unreadable property, or an empty one", async () => {
 		await seed.publish([station({ row: {} })]);
 		const iw = fakeIw();
@@ -202,7 +271,7 @@ describe("radios as the observer reads them", () => {
 		expect(iw.calls.some((c) => c.startsWith("nmcli"))).toBe(false);
 		await seed.publish([station()]);
 		const failing = fakeIw({
-			[`nmcli -g 802-11-wireless.seen-bssids connection show uuid ${CONN}`]:
+			[`nmcli -g 802-11-wireless.seen-bssids,802-11-wireless.bssid,802-11-wireless-security.key-mgmt connection show uuid ${CONN}`]:
 				new Error("nmcli failed"),
 		});
 		expect((await port(failing).read()).radios[0]?.seenBssids).toBeNull();

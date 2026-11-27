@@ -22,11 +22,14 @@
  * leave no debug trace per call.
  *
  * For each station's active profile, the number of access points it has
- * connected to (`802-11-wireless.seen-bssids`, a read-only `nmcli -g` of that
- * one property), at most once a minute per profile. Under two, NetworkManager
- * gives the radio its long background-scan interval above -70 dBm (once a
- * day), so the radio will not look for another access point by itself. Only
- * the count is kept, not the access points.
+ * connected to (`802-11-wireless.seen-bssids`), whether the profile fixes a
+ * BSSID and its key management, in one read-only `nmcli -g` of those three
+ * properties, at most once a minute per profile, and reported only while the
+ * same profile is still active when the round is assembled. Under two seen
+ * access points, a profile without a fixed BSSID and without 802.1X gets
+ * NetworkManager's long background-scan interval above -70 dBm (once a day),
+ * so the radio will not look for another access point by itself. Only the
+ * count and those two facts are kept, not the access points.
  */
 
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
@@ -38,6 +41,7 @@ import {
 } from "../../wifi/wifi-adapter-admission.ts";
 import { getWifiInterfacesByMacAddress } from "../../wifi/wifi-connections.ts";
 import type { WifiInterface } from "../../wifi/wifi-interfaces.ts";
+import { getNetworkInterfaces } from "../network-interfaces.ts";
 
 export type Runner = (
 	bin: string,
@@ -85,6 +89,15 @@ export type RadioView = Readonly<{
 	 * without an active station profile or when it could not be read.
 	 */
 	seenBssids: number | null;
+	/**
+	 * The profile's scan rule: `rare` is the once-a-day interval above -70 dBm
+	 * (under two seen access points, no fixed BSSID, no 802.1X), `normal` the
+	 * shorter one, `other` a profile with a fixed BSSID or 802.1X, whose
+	 * scanning follows other rules. `null` unknown.
+	 */
+	scanRule: "rare" | "normal" | "other" | null;
+	/** Its source addresses as the IP list writes them (IPv4, IPv6). */
+	addresses: readonly string[];
 }>;
 
 export type SkippedRadio = Readonly<{ ifname: string; reason: string }>;
@@ -101,6 +114,8 @@ export type RadioPortDeps = Readonly<{
 	admit(registryKey: string): WifiAdapterAdmission | undefined;
 	/** Permanent MACs the operator excluded, normalized. */
 	exclude: ReadonlySet<string>;
+	/** A radio's current source addresses (the network registry). */
+	addressesOf(ifname: string): readonly string[];
 }>;
 
 /** Parse `iw dev <if> link`. */
@@ -158,6 +173,30 @@ export function countSeenBssids(stdout: string): number {
 		.filter((b) => b !== "").length;
 }
 
+export type ProfileScan = Readonly<{
+	seenBssids: number;
+	scanRule: "rare" | "normal" | "other";
+}>;
+
+/** Key management values that make a profile 802.1X. */
+const EAP_KEY_MGMT = new Set(["wpa-eap", "wpa-eap-suite-b-192", "ieee8021x"]);
+
+/**
+ * Parse `nmcli -g 802-11-wireless.seen-bssids,802-11-wireless.bssid,
+ * 802-11-wireless-security.key-mgmt`: one line per property, in that order.
+ */
+export function parseProfileScan(stdout: string): ProfileScan | null {
+	const lines = stdout.replace(/\n$/, "").split("\n");
+	if (lines.length < 3) return null;
+	const [seen = "", bssid = "", keyMgmt = ""] = lines;
+	const seenBssids = countSeenBssids(seen);
+	const other = bssid.trim() !== "" || EAP_KEY_MGMT.has(keyMgmt.trim());
+	return {
+		seenBssids,
+		scanRule: other ? "other" : seenBssids < 2 ? "rare" : "normal",
+	};
+}
+
 /** Whether `ifname` or another interface on its phy is in AP mode. */
 export function apOnPhyOf(
 	devs: ReadonlyMap<string, { phy: string; type: string | null }>,
@@ -169,6 +208,13 @@ export function apOnPhyOf(
 		if (d.phy === own.phy && d.type === "AP")
 			return { phy: own.phy, apOnPhy: true };
 	return { phy: own.phy, apOnPhy: false };
+}
+
+/** The station profile NetworkManager has active on the row, if any. */
+function activeProfileOf(row: WifiInterface): string | null {
+	return row.activeMode === "infrastructure"
+		? (row.activeConn ?? row.conn ?? null)
+		: null;
 }
 
 function rowServesHotspot(row: WifiInterface): boolean {
@@ -188,19 +234,19 @@ export function createRadioPort(deps: RadioPortDeps) {
 			return undefined;
 		}
 	};
-	const seen = new Map<string, { at: number; count: number | null }>();
-	const readSeen = async (uuid: string): Promise<number | null> => {
+	const seen = new Map<string, { at: number; scan: ProfileScan | null }>();
+	const readSeen = async (uuid: string): Promise<ProfileScan | null> => {
 		const now = deps.now();
 		const kept = seen.get(uuid);
-		if (kept && now - kept.at < SEEN_BSSIDS_READ_MS) return kept.count;
-		let count: number | null = null;
+		if (kept && now - kept.at < SEEN_BSSIDS_READ_MS) return kept.scan;
+		let scan: ProfileScan | null = null;
 		try {
-			count = countSeenBssids(
+			scan = parseProfileScan(
 				await deps.run(
 					"nmcli",
 					[
 						"-g",
-						"802-11-wireless.seen-bssids",
+						"802-11-wireless.seen-bssids,802-11-wireless.bssid,802-11-wireless-security.key-mgmt",
 						"connection",
 						"show",
 						"uuid",
@@ -210,10 +256,10 @@ export function createRadioPort(deps: RadioPortDeps) {
 				),
 			);
 		} catch {
-			count = null;
+			scan = null;
 		}
-		seen.set(uuid, { at: now, count });
-		return count;
+		seen.set(uuid, { at: now, scan });
+		return scan;
 	};
 	let phys:
 		| {
@@ -273,23 +319,19 @@ export function createRadioPort(deps: RadioPortDeps) {
 						)
 					: undefined;
 			const links: (string | undefined)[] = [];
-			const seens: (number | null)[] = [];
+			const seens: { profile: string | null; scan: ProfileScan | null }[] = [];
 			for (const [, admission] of admitted) {
 				links.push(
 					await quiet(["dev", argMatch(ID_RE, admission.row.ifname), "link"]),
 				);
-				const row = admission.row;
-				const activeProfile = () =>
-					row.activeMode === "infrastructure"
-						? (row.activeConn ?? row.conn ?? null)
-						: null;
-				const profile = activeProfile();
-				const count =
-					profile !== null && UUID_RE.test(profile)
-						? await readSeen(profile)
-						: null;
-				// The read awaited: a count stands only for the profile still active.
-				seens.push(activeProfile() === profile ? count : null);
+				const profile = activeProfileOf(admission.row);
+				seens.push({
+					profile,
+					scan:
+						profile !== null && UUID_RE.test(profile)
+							? await readSeen(profile)
+							: null,
+				});
 			}
 			// Every read awaited: each radio must still be the admitted one,
 			// checked after all of them, not just after its own.
@@ -307,6 +349,13 @@ export function createRadioPort(deps: RadioPortDeps) {
 					return;
 				}
 				const row = admission.row;
+				// Every read awaited: a profile reading stands only for the
+				// profile still active now, at assembly.
+				const seenNow = seens[i];
+				const scan =
+					seenNow && seenNow.profile === activeProfileOf(row)
+						? seenNow.scan
+						: null;
 				const ap = devs === undefined ? null : apOnPhyOf(devs, ifname).apOnPhy;
 				const linkOut = links[i];
 				radios.push({
@@ -316,7 +365,9 @@ export function createRadioPort(deps: RadioPortDeps) {
 					station: row.conn !== null && row.activeMode === "infrastructure",
 					reserved: rowServesHotspot(row) ? true : ap,
 					link: linkOut === undefined ? undefined : parseIwLink(linkOut),
-					seenBssids: seens[i] ?? null,
+					seenBssids: scan?.seenBssids ?? null,
+					scanRule: scan?.scanRule ?? null,
+					addresses: deps.addressesOf(ifname),
 				});
 			});
 			return { radios, skipped };
@@ -336,5 +387,9 @@ export function defaultRadioPortDeps(
 		rows: getWifiInterfacesByMacAddress,
 		admit: (key) => admitWifiAdapter(key),
 		exclude,
+		addressesOf: (ifname) => {
+			const int = getNetworkInterfaces()[ifname];
+			return [int?.ip, int?.ipv6].filter((a): a is string => !!a);
+		},
 	};
 }

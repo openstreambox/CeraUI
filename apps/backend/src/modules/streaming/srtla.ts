@@ -377,7 +377,6 @@ export async function publishSrtlaBond(
 				(options.registerBond ?? registerSrtlaBond)(published);
 			}
 			lastBond = { entries: [...published], publication };
-			if (wroteIpList(publication)) lastWrittenBond = lastBond;
 			if (wroteIpList(publication) && publication.changed)
 				publicationSequence += 1;
 			if (
@@ -460,24 +459,13 @@ export interface PublishedBond {
 }
 
 let lastBond: PublishedBond | undefined;
-let lastWrittenBond: PublishedBond | undefined;
 
 export function getLastPublishedBond(): PublishedBond | undefined {
 	return lastBond;
 }
 
-/**
- * The last bond whose IP list reached disk: what the sender reads on its next
- * reload. A failed or timed-out write leaves the previous one in place, where
- * {@link getLastPublishedBond} already shows the attempt.
- */
-export function getLastWrittenBond(): PublishedBond | undefined {
-	return lastWrittenBond;
-}
-
 export function resetPublishedBond(): void {
 	lastBond = undefined;
-	lastWrittenBond = undefined;
 }
 
 export async function setSrtlaIpList(

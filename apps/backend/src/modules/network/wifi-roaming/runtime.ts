@@ -130,6 +130,7 @@ export function fileIo(
 		await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 		if (prepared || sealed) return;
 		await fs.chmod(dir, 0o700);
+		if (sealed) return;
 		await fs.chmod(journal, 0o600).catch(() => {
 			// No journal yet: it is created 0600.
 		});
@@ -191,6 +192,8 @@ export function fileIo(
 export type LossPort = Readonly<{
 	watch(radios: readonly WatchedRadio[]): void;
 	tick(): Promise<void>;
+	/** The tick in flight, if any, settled. */
+	settled(): Promise<void>;
 	drain(): LossEvent[];
 	dropped(): number;
 	status(id: string): LossStatus | null;
@@ -315,6 +318,7 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 					permanentMac: r.permanentMac,
 					ifname: r.ifname,
 					bssid: r.link ? r.link.bssid : null,
+					addresses: r.addresses,
 				})),
 		);
 		const events = observer.round({
@@ -369,7 +373,9 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 					(async () => {
 						await inFlight;
 						deps.sender.close();
-						// Losses that ended since the last round still reach the journal.
+						// Losses that ended since the last round, including one a tick
+						// in flight finishes now, still reach the journal.
+						await deps.loss.settled();
 						for (const event of deps.loss.drain())
 							journal(JSON.stringify(event));
 						await writeStatus("stopped");

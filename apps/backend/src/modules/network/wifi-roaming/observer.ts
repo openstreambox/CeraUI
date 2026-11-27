@@ -90,12 +90,14 @@ export type RadioStatus = Readonly<{
 	/** Access points the active profile has connected to; `null` unknown. */
 	seenBssids: number | null;
 	/**
-	 * Fewer than two: for a profile without a fixed BSSID or 802.1X,
-	 * NetworkManager scans this network only once a day above -70 dBm, so the
-	 * radio will not move by itself. It describes the profile at its next
-	 * activation, not the running association. `null` unknown.
+	 * NetworkManager's background-scan rule for the active profile, as it will
+	 * configure it at the profile's next activation (a running association
+	 * keeps the interval it started with): `rare` is once a day above -70 dBm
+	 * (fewer than two seen access points, no fixed BSSID, no 802.1X), so the
+	 * radio will not move by itself; `normal` the shorter interval; `other` a
+	 * profile with a fixed BSSID or 802.1X. `null` unknown.
 	 */
-	rareBackgroundScan: boolean | null;
+	scanRule: "rare" | "normal" | "other" | null;
 }>;
 
 export type SharedAccessPoint = Readonly<{
@@ -315,8 +317,7 @@ export class RoamingObserver {
 				...st,
 				sharesAccessPointWith: partners,
 				seenBssids: radio.seenBssids,
-				rareBackgroundScan:
-					radio.seenBssids === null ? null : radio.seenBssids < 2,
+				scanRule: radio.scanRule,
 			};
 		});
 		for (const [id, state] of this.#radios)
@@ -491,7 +492,7 @@ export class RoamingObserver {
 			roams: state.roams,
 			sharesAccessPointWith: [],
 			seenBssids: radio.seenBssids,
-			rareBackgroundScan: null,
+			scanRule: radio.scanRule,
 		};
 	}
 

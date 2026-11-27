@@ -31,7 +31,7 @@ directory or journal gets these modes back):
   (`sharedAccessPoints`), and per radio: physical radio id, permanent MAC,
   interface, SSID, BSSID, the radios it shares its access point with, level,
   slope, condition, decision, blockers, stayers, counts of would-nudges and of
-  the radio's own roams, `seenBssids` and `rareBackgroundScan`, and `loss`
+  the radio's own roams, `seenBssids` and `scanRule`, and `loss`
   (dead-link record, below). Radios left out are listed with the reason
   (`not-admitted`, `twin`, `excluded`, `changed-during-read`).
 - `journal.jsonl`: one line per event (`radio-added`, `radio-gone`,
@@ -86,29 +86,33 @@ when done.
 
 - **Which access point each radio is on, and whether they share one.** Two
   radios on one access point both go when it goes.
-- **`seen-bssids`**: how many access points the active profile has connected
-  to, read with `nmcli -g 802-11-wireless.seen-bssids connection show uuid
-  <uuid>` at most once a minute per profile (the count is kept, not the access
-  points), and reported only if the same profile is still active after the
-  read. Under two, NetworkManager gives a profile without a fixed BSSID and
-  without 802.1X its long background-scan interval above -70 dBm (once a
-  day): `rareBackgroundScan`. It describes the profile as NetworkManager will
-  configure it at its next activation; a running association keeps the
-  interval it started with, and a profile with a fixed BSSID or 802.1X follows
-  other rules.
+- **`seen-bssids` and the scan rule**: how many access points the active
+  profile has connected to, whether it fixes a BSSID, and its key management,
+  read with one `nmcli -g 802-11-wireless.seen-bssids,802-11-wireless.bssid,
+  802-11-wireless-security.key-mgmt connection show uuid <uuid>` at most once
+  a minute per profile (the count is kept, not the access points), and
+  reported only if the same profile is still active when the round is
+  assembled. `scanRule`: `rare` (fewer than two, no fixed BSSID, no 802.1X:
+  NetworkManager's once-a-day interval above -70 dBm, so the radio will not
+  look for another access point by itself), `normal`, or `other` (a fixed
+  BSSID or 802.1X, which follow other rules). It describes the profile as
+  NetworkManager will configure it at its next activation; a running
+  association keeps the interval it started with.
 - **The dead-link window** (`loss-watch.ts`): per access point loss, the time
   from the radio's kernel carrier going down (cfg80211 drops it when the
-  station disconnects) to the bond CeraUI publishes for the sender no longer
-  having the interface. Read every 100 ms from sysfs and the last bond whose
-  IP list reached disk (a failed write leaves the previous list, which the
-  sender still reads); the sender applies a new bond on its next reload, which
-  this does not include. Outcomes: `left-bond` (the window), `recovered` (the
-  carrier came back first), `unordered` (both changed within 100 ms),
-  `not-in-bond`, `radio-replaced` (another radio took the name first),
-  `timeout` (30 s). Each record names the access point the radio was last
-  seen on. Every admitted client radio is watched, associated or not, and a
-  loss in progress is followed to its end. At most 256 ended losses wait for
-  the journal; older ones are dropped and counted (`lossDropped`).
+  station disconnects) to the IP list on disk (`setup.ips_file`, the file the
+  sender reads on reload) no longer naming one of the radio's addresses. So a
+  failed write or a timed-out sidecar is judged by what actually reached the
+  file. Read every 100 ms from sysfs and that file; the sender applies a new
+  list on its next reload, which this does not include. Outcomes:
+  `left-bond` (the window), `recovered` (the carrier came back first),
+  `unordered` (both changed within 100 ms), `not-in-bond`, `radio-replaced`
+  (another radio took the name, also while its carrier was being read),
+  `timeout` (30 s). During a loss the record keeps the access point that went
+  and the addresses the sender had. Every admitted client radio is watched,
+  associated or not, and a loss in progress is followed to its end. At most
+  256 ended losses wait for the journal; older ones are dropped and counted
+  (`lossDropped`); stop joins a tick in flight before the last drain.
 - An unreadable link, the radio's own or a partner's, leaves the sharing as
   last known: it is no split.
 
