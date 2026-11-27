@@ -4,6 +4,7 @@ import { emitEvent } from "../../events/emit.ts";
 import { buildLinkTelemetry } from "../../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../../streaming/streaming.ts";
 import { broadcastMsg } from "../../ui/websocket-server.ts";
+import { portalHealthProbe } from "../../wifi/captive-portal-health.ts";
 import {
 	deviceBoundProbeExclusionReason,
 	eligibleProbeCandidates,
@@ -78,7 +79,9 @@ const defaultDeps: UplinkHealthRuntimeDeps = {
 	telemetry: buildLinkTelemetry,
 	resolveTarget: () => resolveUplinkHealthTarget(),
 	probe: async (iface, remoteAddr) => {
-		const result = await probeConnectivityViaDevice(remoteAddr, iface);
+		const result = await portalHealthProbe(iface, () =>
+			probeConnectivityViaDevice(remoteAddr, iface),
+		);
 		switch (result) {
 			case "reachable":
 				return "success";
