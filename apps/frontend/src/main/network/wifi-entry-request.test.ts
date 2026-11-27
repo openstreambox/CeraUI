@@ -22,8 +22,18 @@ const unobserved = {
 	reason: "current-unobserved",
 } as const;
 
-function owner(rebind = vi.fn(() => true)) {
-	return { signal: new AbortController().signal, current: () => true, rebind };
+function owner(
+	canRetry = vi.fn(() => true),
+	onReplacement = vi.fn(),
+	currentToken: () => string | undefined = () => "radio-A",
+) {
+	return {
+		signal: new AbortController().signal,
+		current: () => true,
+		currentToken,
+		canRetry,
+		onReplacement,
+	};
 }
 
 beforeEach(() => {
@@ -36,26 +46,44 @@ describe("the current-unobserved entry retry", () => {
 			.fn()
 			.mockResolvedValueOnce(unobserved)
 			.mockResolvedValueOnce({ success: true });
-		const rebind = vi.fn(() => true);
-		expect(await withWifiEntryRetry(binding, invoke, owner(rebind))).toEqual({
+		const canRetry = vi.fn(() => true);
+		expect(await withWifiEntryRetry(binding, invoke, owner(canRetry))).toEqual({
 			success: true,
 		});
 		expect(invoke.mock.calls.map(([token]) => token)).toEqual([
 			"radio-A",
 			"radio-A",
 		]);
-		expect(rebind).toHaveBeenCalledWith("radio-A");
+		expect(canRetry).toHaveBeenCalledOnce();
 	});
 
 	it("refuses a different token: the first refusal stands and nothing is resent", async () => {
 		next.row = { incarnation: "radio-B" };
 		const invoke = vi.fn().mockResolvedValue(unobserved);
-		const rebind = vi.fn(() => true);
-		expect(await withWifiEntryRetry(binding, invoke, owner(rebind))).toBe(
-			unobserved,
-		);
+		const canRetry = vi.fn(() => true);
+		const onReplacement = vi.fn();
+		expect(
+			await withWifiEntryRetry(binding, invoke, owner(canRetry, onReplacement)),
+		).toBe(unobserved);
 		expect(invoke).toHaveBeenCalledOnce();
-		expect(rebind).not.toHaveBeenCalled();
+		expect(canRetry).not.toHaveBeenCalled();
+		expect(onReplacement).toHaveBeenCalledOnce();
+	});
+
+	it("refuses a replacement already on screen without waiting for another frame", async () => {
+		const invoke = vi.fn().mockResolvedValue(unobserved);
+		const canRetry = vi.fn(() => true);
+		const onReplacement = vi.fn();
+		expect(
+			await withWifiEntryRetry(
+				binding,
+				invoke,
+				owner(canRetry, onReplacement, () => "radio-B"),
+			),
+		).toBe(unobserved);
+		expect(invoke).toHaveBeenCalledOnce();
+		expect(canRetry).not.toHaveBeenCalled();
+		expect(onReplacement).toHaveBeenCalledOnce();
 	});
 
 	it("sends nothing more when the next frame has no token", async () => {
