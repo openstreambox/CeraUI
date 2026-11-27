@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 import type { ManagedProcess, WatcherHandle } from "../helpers/spawn-policy.ts";
 import { resetEventEmitterForTest } from "../modules/events/emit.ts";
+import { mintLinkId } from "../modules/modems/physical-identity.ts";
 import { netdevPresence } from "../modules/network/netdev-lifetime.ts";
 import {
 	getNetworkInterfaces,
@@ -46,6 +47,7 @@ import type { BindMapPublication } from "../modules/streaming/bind-map-writer.ts
 import {
 	genSrtlaBondEntries,
 	genSrtlaBondEntriesForLocalIpAddress,
+	setBondIdentityResolverForTest,
 } from "../modules/streaming/srtla.ts";
 import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
 import { stopWifiUpdateLoopForTest } from "../modules/wifi/wifi-interfaces.ts";
@@ -174,6 +176,14 @@ beforeEach(() => {
 		appendEvent: () => undefined,
 		log: () => undefined,
 	});
+	// Fixture links resolve by name and register nothing in the identity registry.
+	setBondIdentityResolverForTest((ifname) => ({
+		identityKey: `ifname:${ifname}`,
+		anchor: "ifname",
+		linkId: mintLinkId(`ifname:${ifname}`),
+		ifname,
+		displayName: ifname,
+	}));
 	// Every fixture netdev answers with the ifindex its monitor lines carry.
 	spyOn(netdevPresence, "ifindex").mockReturnValue(3);
 	resetNetifSnapshotForTest();
@@ -196,6 +206,7 @@ afterEach(() => {
 	resetWifiCarrierLostForTest();
 	(netdevPresence.ifindex as unknown as { mockRestore(): void }).mockRestore();
 	resetEventEmitterForTest();
+	setBondIdentityResolverForTest(null);
 });
 
 describe("Wi-Fi carrier loss and the published bond", () => {

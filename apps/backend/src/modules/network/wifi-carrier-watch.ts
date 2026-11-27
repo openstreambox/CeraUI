@@ -156,6 +156,12 @@ export type WifiCarrierWatchDeps = {
 	readonly isOperational: (ifname: string) => boolean | Promise<boolean>;
 	readonly setLost: (ifname: string, lost: boolean, ifindex?: number) => void;
 	readonly setDown: (ifname: string, down: boolean, ifindex?: number) => void;
+	/**
+	 * The netdev under `ifname` now: `false` when sysfs says it is gone, its
+	 * ifindex when readable, `undefined` when unreadable. Lets the periodic
+	 * check retire a track whose deletion line was lost.
+	 */
+	readonly netdevNow?: (ifname: string) => number | false | undefined;
 	readonly now: () => number;
 	readonly setTimeout: (callback: () => void, ms: number) => Timer;
 	readonly clearTimeout: (timer: Timer) => void;
@@ -252,6 +258,7 @@ export class WifiCarrierWatch {
 			track.settle = undefined;
 		}
 		track.downSince = this.deps.now();
+		this.#armMarkCheck();
 		if (track.marked || track.hold !== undefined) return;
 		track.hold = this.deps.setTimeout(() => {
 			track.hold = undefined;
@@ -337,16 +344,29 @@ export class WifiCarrierWatch {
 		this.deps.setLost(ifname, false);
 	}
 
-	/** Every mark is checked against sysfs, so no lost line can strand one. */
+	/**
+	 * Every mark is checked against sysfs, so no lost line can strand one, and
+	 * every down or marked track against the netdev, so a lost deletion line
+	 * leaves nothing behind. Runs while any track is down or marked.
+	 */
 	#armMarkCheck(): void {
 		if (this.#markCheck !== undefined) return;
 		this.#markCheck = this.deps.setTimeout(() => {
 			this.#markCheck = undefined;
 			if (!this.#wanted) return;
-			let anyMarked = false;
-			for (const [ifname, track] of this.#links) {
-				if (!track.marked) continue;
-				anyMarked = true;
+			let anyLeft = false;
+			for (const [ifname, track] of [...this.#links]) {
+				// A netdev that went without its deletion line keeps no track.
+				const now = this.deps.netdevNow?.(ifname);
+				if (now === false || (now !== undefined && now !== track.ifindex)) {
+					this.#forget(ifname, track);
+					continue;
+				}
+				if (!track.marked) {
+					if (track.running === false) anyLeft = true;
+					continue;
+				}
+				anyLeft = true;
 				// An up line was seen: its settle decides, not this check.
 				if (track.running !== false) continue;
 				const edges = track.edges;
@@ -366,7 +386,7 @@ export class WifiCarrierWatch {
 						if (operational) clear();
 					});
 			}
-			if (anyMarked) this.#armMarkCheck();
+			if (anyLeft) this.#armMarkCheck();
 		}, MARK_CHECK_MS);
 	}
 

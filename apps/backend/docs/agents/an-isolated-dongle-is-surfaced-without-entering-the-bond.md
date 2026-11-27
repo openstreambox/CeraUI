@@ -1373,10 +1373,13 @@ to the writer directly. On a `refresh` it drops the entries the carrier watch
 marked (`network/wifi-carrier-lost.ts`, set by `network/wifi-carrier-watch.ts`
 when a station's kernel carrier stays down past the hold, bound to the netdev's
 ifindex), after the receiver's own selection, so a LAN receiver's subnet subset
-is judged as published. It drops them only while another entry can carry: one
-not marked, whose carrier is not down right now, and not a CLAT translator row
-(write-time revalidation may still drop those). Otherwise the list keeps every
-entry rather than publish an empty one. A `launch` ignores marks, because no
+is judged as published. It drops a marked entry only while another entry of the
+same address family is carrying: not marked, carrier not down right now (both
+states bound to the netdev's ifindex), a fresh sender telemetry row with
+`carrying: true`, and not a CLAT translator row (write-time revalidation may
+still drop those). Otherwise it keeps the marked entries of that family rather
+than leave the sender without a usable connection. Each entry is judged once per
+publication; a survivor's carrier coming back republishes while a mark is held. A `launch` ignores marks, because no
 refresh would bring a link left out there back. Marks never touch membership,
 netif rows or toggles; a mark change republishes through
 `triggerNetworkInterfacesChange`. Coverage: `tests/wifi-carrier-loss-bond.test.ts`.

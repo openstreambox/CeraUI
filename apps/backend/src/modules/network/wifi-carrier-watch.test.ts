@@ -520,6 +520,29 @@ describe("WifiCarrierWatch marks", () => {
 		h.watch.stop();
 	});
 
+	test("a netdev gone without its deletion line leaves no track behind", () => {
+		const h = harness();
+		const present = new Map<string, number | false>([["wlan1", 3]]);
+		const watch = new WifiCarrierWatch({
+			...h.deps,
+			netdevNow: (ifname) => present.get(ifname),
+		});
+		watch.start();
+		watch.handleLine(linkLine("wlan1", ASSOCIATED, "UP"));
+		h.carrier.set("wlan1", false);
+		watch.handleLine(linkLine("wlan1", NO_CARRIER, "DORMANT"));
+		h.advance(CARRIER_LOSS_HOLD_MS);
+		expect(h.lost.has("wlan1")).toBe(true);
+		// The USB radio is unplugged; the monitor's deletion line never comes.
+		present.set("wlan1", false);
+		h.advance(MARK_CHECK_MS);
+		expect(h.lost.has("wlan1")).toBe(false);
+		expect(h.down.has("wlan1")).toBe(false);
+		h.advance(MARK_CHECK_MS);
+		expect(h.pending()).toEqual([]);
+		watch.stop();
+	});
+
 	test("another netdev under the name does not inherit the mark", () => {
 		const h = harness();
 		h.watch.start();

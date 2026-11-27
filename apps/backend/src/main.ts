@@ -101,6 +101,7 @@ import {
 	createMonitorManager,
 	NmcliMonitorManager,
 } from "./modules/network/monitor/monitor-manager.ts";
+import { netdevPresence } from "./modules/network/netdev-lifetime.ts";
 import { startNetworkChangeSafety } from "./modules/network/network-change-runtime.ts";
 import {
 	buildGatewayProbe,
@@ -702,6 +703,10 @@ if (!shouldUseMocks())
 		isOperational: sysfsOperational,
 		setLost: setWifiCarrierLost,
 		setDown: setWifiCarrierDown,
+		netdevNow: (ifname) =>
+			netdevPresence.inSysfs(ifname) === false
+				? false
+				: netdevPresence.ifindex(ifname),
 	});
 
 // Hotspot NM-confirmation: flips station↔hotspot once NM reports the switch
