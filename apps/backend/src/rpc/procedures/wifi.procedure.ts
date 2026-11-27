@@ -15,9 +15,11 @@
  *
  * WHICH LAYER TAKES THE LOCK DIFFERS BY PROCEDURE, and it has to:
  *
- *  - The STATION procedures (connect, connectNew, disconnect, forget, scan) take
- *    it here via `runGuarded`, across dispatch only except fresh open joins,
- *    which hold it through AP verification, activation and binding.
+ *  - The STATION procedures take it here. Connect, connectNew and forget use
+ *    `runGuardedDetached`: the lock is held until the handler has finished its
+ *    nmcli work and sent its terminal frame, while the reply is sent as soon
+ *    as the lock is taken. Disconnect locks inside `wifiDisconnect`; scan holds
+ *    it across dispatch only (`runGuarded`).
  *  - The HOTSPOT procedures do NOT wrap their dispatch in `runGuarded`. The
  *    transaction acquires this same key itself and holds it for the full NM
  *    activation, so wrapping it here made it refuse ITSELF: the outer lock was
@@ -28,7 +30,7 @@
  *    keeps a dispatch ack and uses `adapterBusy` as an admission probe.
  *
  * ONE THING THIS CONTRACT STILL DOES NOT CLAIM: an adapter that does not RESOLVE
- * is not serialized. `runGuarded` runs `op` unguarded when the device id or
+ * is not serialized. Both guards run `op` unguarded when the device id or
  * connection uuid names no known radio — there is no adapter to contend for, and
  * refusing would be a lie in the other direction.
  *
@@ -68,7 +70,7 @@ import {
 	wifiStatusSchema,
 } from "@ceraui/rpc/schemas";
 import { os } from "@orpc/server";
-
+import { logger } from "../../helpers/logger.ts";
 import {
 	getMockState,
 	mockWifiRadios,
@@ -167,6 +169,47 @@ async function runGuarded(
 	return !result.success;
 }
 
+/*
+  Hold the adapter lock for the whole of a station operation and answer as soon
+  as it is taken. The handlers run nmcli for seconds, up to the 30 s process
+  deadline, so awaiting them here would hold the reply past the client's own
+  call timeout. Releasing the lock once they were merely started let a hotspot
+  start or a mode restore take the same radio while NetworkManager was still
+  activating the station, and NetworkManager applies whichever activation came
+  last: the operator's join was undone with no refusal.
+  Returns true when the lock rejected the call (busy).
+*/
+async function runGuardedDetached(
+	lockKey: WifiAdapterLockKey | undefined,
+	label: string,
+	op: () => Promise<void> | undefined,
+): Promise<boolean> {
+	const failed = (err: unknown) =>
+		logger.error(
+			`wifi ${label} failed: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	if (!lockKey) {
+		void op()?.catch(failed);
+		return false;
+	}
+	const admitted = Promise.withResolvers<boolean>();
+	let started = false;
+	void withWifiAdapterLock(lockKey, async () => {
+		started = true;
+		admitted.resolve(true);
+		await op();
+	}).then(
+		(result) => {
+			if (!result.success) admitted.resolve(false);
+		},
+		(err: unknown) => {
+			if (!started) admitted.reject(err);
+			else failed(err);
+		},
+	);
+	return !(await admitted.promise);
+}
+
 // Was the adapter busy at this instant? Acquires and releases immediately, so it
 // never becomes the lock a later transaction has to contend with.
 async function adapterBusy(
@@ -216,8 +259,8 @@ export const wifiConnectProcedure = authedProcedure
 		if (mockWifiBusy()) return { success: false, error: "DEVICE_BUSY" };
 		const ws = context.ws;
 		const lockKey = wifiAdapterLockKeyForConnectionUuid(input.uuid);
-		const busy = await runGuarded(lockKey, () => {
-			void handleWifi(ws, { connect: input.uuid });
+		const busy = await runGuardedDetached(lockKey, "connect", () => {
+			const work = handleWifi(ws, { connect: input.uuid });
 			if (shouldUseMocks()) {
 				const faults = getMockWifiFaults();
 				if (faults.savedConnectFails) {
@@ -237,6 +280,7 @@ export const wifiConnectProcedure = authedProcedure
 				// the frontend TTL valve flips it to timed_out.
 			}
 			broadcast("wifi", { connect: [input.uuid] });
+			return work;
 		});
 		if (busy) return { success: false, error: "DEVICE_BUSY" };
 		return { success: true };
@@ -265,7 +309,7 @@ export const wifiConnectNewProcedure = authedProcedure
 	.handler(async ({ input, context: { ws } }): Promise<MutationResult> => {
 		if (mockWifiBusy()) return { success: false, error: "DEVICE_BUSY" };
 		const lockKey = wifiAdapterLockKeyForDeviceId(input.device);
-		const busy = await runGuarded(lockKey, async () => {
+		const busy = await runGuardedDetached(lockKey, "join", async () => {
 			if (refuseLegacyOpenJoin(ws, input)) return;
 			if (!shouldUseMocks())
 				return handleWifi(ws, {
@@ -325,8 +369,8 @@ export const wifiForgetProcedure = authedProcedure
 		if (mockWifiBusy()) return { success: false, error: "DEVICE_BUSY" };
 		const ws = context.ws;
 		const lockKey = wifiAdapterLockKeyForConnectionUuid(input.uuid);
-		const busy = await runGuarded(lockKey, () => {
-			void handleWifi(ws, { forget: input.uuid });
+		const busy = await runGuardedDetached(lockKey, "forget", () => {
+			const work = handleWifi(ws, { forget: input.uuid });
 			if (shouldUseMocks()) {
 				const ssid = mockWifiSsidForUuid(input.uuid);
 				if (ssid) {
@@ -342,6 +386,7 @@ export const wifiForgetProcedure = authedProcedure
 					});
 				}
 			}
+			return work;
 		});
 		if (busy) return { success: false, error: "DEVICE_BUSY" };
 		return { success: true };

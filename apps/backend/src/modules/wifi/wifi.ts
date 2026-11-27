@@ -64,6 +64,7 @@ import {
 	nmcliParseSep,
 	parseNmConnActivated,
 	parseNmConnAddUuid,
+	readNmDeviceActivation,
 } from "../network/network-manager.ts";
 import type { ProfileWriteAdmission } from "../network/profile-write-permit.ts";
 import type { MessageSocket } from "../ui/message-socket.ts";
@@ -866,7 +867,17 @@ export type NmcliRun = {
 	readonly stdout: string;
 	readonly stderr: string;
 	readonly exitCode: number;
+	/** The process deadline killed nmcli before it answered. */
+	readonly timedOut?: boolean;
 };
+
+/*
+  nmcli exits 3 when its own `-w` deadline expires. Neither that nor the
+  process deadline cancels the request: NetworkManager keeps activating.
+*/
+const NMCLI_TIMEOUT_EXIT = 3;
+const nmcliGaveUp = (run: NmcliRun) =>
+	run.timedOut === true || run.exitCode === NMCLI_TIMEOUT_EXIT;
 
 export type WifiJoinNmcliRunner = (args: string[]) => Promise<NmcliRun>;
 
@@ -879,7 +890,9 @@ async function spawnJoinNmcli(args: string[]): Promise<NmcliRun> {
 		// bounded-command (spawn-policy): cap a hung nmcli connect at the
 		// wall-clock budget so a stuck join never leaves the request pending
 		// forever.
+		let timedOut = false;
 		const killTimer = setTimeout(() => {
+			timedOut = true;
 			try {
 				proc.kill();
 			} catch {
@@ -892,7 +905,9 @@ async function spawnJoinNmcli(args: string[]): Promise<NmcliRun> {
 		]);
 		const exitCode = await proc.exited;
 		clearTimeout(killTimer);
-		return { stdout, stderr, exitCode };
+		return timedOut
+			? { stdout, stderr, exitCode, timedOut }
+			: { stdout, stderr, exitCode };
 	} catch (err) {
 		// A missing/unspawnable nmcli must reach the operator as a failed join
 		// rather than an unhandled rejection on this `void`-dispatched path.
@@ -917,17 +932,21 @@ type WifiJoinOutcome = {
 	readonly ok: boolean;
 	readonly uuid?: string;
 	readonly authFailed: boolean;
+	/** nmcli gave up on the activation; NetworkManager may still complete it. */
+	readonly abandoned?: boolean;
 };
 
 const wantedSecrets = (output: string) =>
 	output.includes("Secrets were required, but not provided");
 
 async function joinViaNmAuto(args: string[]): Promise<WifiJoinOutcome> {
-	const { stdout, stderr, exitCode } = await joinNmcliRunner(args);
+	const result = await joinNmcliRunner(args);
+	const { stdout, stderr, exitCode } = result;
 	if (exitCode !== 0 || /^Error:/.test(stdout)) {
 		return {
 			ok: false,
 			authFailed: wantedSecrets(`${stdout}\n${stderr}`),
+			...(nmcliGaveUp(result) ? { abandoned: true } : {}),
 		};
 	}
 	const success = stdout.match(/successfully activated with '(.+)'/);
@@ -965,7 +984,7 @@ async function retrySavedJoin(
 		uuid,
 		...(ifname ? ["ifname", ifname] : []),
 	]);
-	return activated.ok ? { ...activated, uuid } : activated;
+	return { ...activated, uuid };
 }
 
 /**
@@ -1004,6 +1023,7 @@ async function joinViaNewProfile(
 			ok: false,
 			uuid,
 			authFailed: wantedSecrets(`${activated.stdout}${activated.stderr}`),
+			...(nmcliGaveUp(activated) ? { abandoned: true } : {}),
 		};
 	}
 	return {
@@ -1011,6 +1031,39 @@ async function joinViaNewProfile(
 		uuid,
 		authFailed: false,
 	};
+}
+
+/*
+  A join or connect whose nmcli gave up has not been cancelled: NetworkManager
+  can still complete it after the operator was told it failed, and after the
+  adapter lock was released, so it would undo whatever took the radio next.
+  Called while the request still holds the adapter lock. An activation of the
+  requested network still pending on this radio is taken down by its active
+  path; one that completed meanwhile is returned so it can be reported as
+  joined. Deactivating it also blocks that profile's autoconnect until it is
+  activated again, which is what keeps the refused join from coming back.
+*/
+async function settleAbandonedStationActivation(
+	ifname: string,
+	requested: (uuid: ConnectionUUID) => Promise<boolean> | boolean,
+): Promise<ConnectionUUID | undefined> {
+	try {
+		const active = await readNmDeviceActivation(ifname);
+		const uuid = active?.uuid;
+		if (!uuid || !(await requested(uuid))) return undefined;
+		const receipt = await observeHotspotActivation(uuid, ifname);
+		if (!receipt) return undefined;
+		if (receipt.connected) return uuid;
+		if (!(await nmDisconnectActivation(uuid, receipt)))
+			logger.warn(
+				`Wi-Fi: the abandoned activation on ${ifname} could not be cancelled`,
+			);
+	} catch (err) {
+		logger.warn(
+			`Wi-Fi: settling the abandoned activation on ${ifname} failed: ${errorText(err)}`,
+		);
+	}
+	return undefined;
 }
 
 function wifiNew(conn: MessageSocket, msg: WifiNewMessage["new"]) {
@@ -1073,7 +1126,7 @@ function wifiNew(conn: MessageSocket, msg: WifiNewMessage["new"]) {
 	// The diversity check leaves this radio alone until the join has settled
 	// and the operator's choice is recorded.
 	const choice = beginWifiOperatorChoice(macAddress);
-	void runWifiNew(
+	return runWifiNew(
 		conn,
 		msg,
 		macAddress,
@@ -1124,6 +1177,22 @@ async function runWifiNew(
 			savedUuid && msg.password && keyMgmt === "wpa-psk"
 				? await retrySavedJoin(savedUuid, msg.password, plan.connectArgs)
 				: await joinViaNmAuto(plan.connectArgs);
+	}
+
+	const ifname = getWifiInterfaceByMacAddress(macAddress)?.ifname;
+	if (!outcome.ok && outcome.abandoned && ifname) {
+		const requestedUuid = outcome.uuid;
+		const joined = await settleAbandonedStationActivation(ifname, (active) =>
+			requestedUuid !== undefined
+				? active === requestedUuid
+				: nmConnGetFields(
+						active,
+						["802-11-wireless.ssid"] as const,
+						undefined,
+						false,
+					).then((fields) => fields?.[0] === msg.ssid),
+		);
+		if (joined) outcome = { ok: true, uuid: joined, authFailed: false };
 	}
 
 	if (!outcome.ok) {
@@ -1203,8 +1272,20 @@ async function wifiConnect(conn: MessageSocket, uuid: ConnectionUUID) {
 	// The diversity check leaves this radio alone until the connect has settled
 	// and the operator's choice is recorded.
 	const choice = macAddress ? beginWifiOperatorChoice(macAddress) : undefined;
+	const ifname = macAddress
+		? getWifiInterfaceByMacAddress(macAddress)?.ifname
+		: undefined;
 	try {
-		const success = await nmConnect(uuid);
+		let abandoned = false;
+		let success = await nmConnect(uuid, undefined, undefined, () => {
+			abandoned = true;
+		});
+		if (!success && abandoned && ifname)
+			success =
+				(await settleAbandonedStationActivation(
+					ifname,
+					(active) => active === uuid,
+				)) === uuid;
 		await wifiUpdateScanResult();
 		conn.send(
 			buildMsg("wifi", { connect: success, device: deviceId }, senderId),
@@ -1223,11 +1304,13 @@ export function handleWifi(
 	conn: MessageSocket,
 	msg: WifiMessage["wifi"],
 ): Promise<void> | undefined {
+	// The station work a caller holds the adapter lock for, and hotspot
+	// configuration's completion (see the `hotspot` arm).
 	let configuration: Promise<void> | undefined;
 	for (const type in msg) {
 		switch (type) {
 			case "connect":
-				void wifiConnect(
+				configuration = wifiConnect(
 					conn,
 					extractMessage<WifiConnectMessage, typeof type>(msg, type),
 				);
@@ -1261,7 +1344,7 @@ export function handleWifi(
 				break;
 
 			case "forget":
-				void wifiForget(
+				configuration = wifiForget(
 					extractMessage<WifiForgetMessage, typeof type>(msg, type),
 				);
 				break;
