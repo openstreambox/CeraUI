@@ -4,7 +4,8 @@
  * its exact expected output: the same line with every credential's own source
  * span replaced by its masked form. Credential values are SECRET<n> tokens,
  * sometimes behind a redaction marker, punctuation, quotes, backslashes, spaces
- * or control characters, and sometimes exactly a marker (left as it is). Every
+ * or control characters, and sometimes exactly a marker (left as it is; a
+ * marker followed by punctuation is masked again). Every
  * generated line is well formed for its wrapper: quoted values are escaped as
  * the wrapper escapes them, and unquoted ones hold no delimiter. Both the log
  * export (`known`) and the support bundle (`text`) must produce the expected
@@ -90,8 +91,10 @@ function generateLine(random: ReturnType<typeof generator>): Piece {
 		const shape = random.int(10);
 		if (shape === 0) return { value: random.pick(MARKERS), masked: true };
 		if (shape === 1 && context === "prose") {
+			// Only exactly a marker counts as masked: with anything after it,
+			// punctuation included, the value may be the start of a credential.
 			const punctuation = random.pick([",", ".", ";", "!", ")", ",."]);
-			return { value: `${random.pick(MARKERS)}${punctuation}`, masked: true };
+			return { value: `${random.pick(MARKERS)}${punctuation}`, masked: false };
 		}
 		if (shape === 2)
 			return {
@@ -131,10 +134,7 @@ function generateLine(random: ReturnType<typeof generator>): Piece {
 					value,
 					same("&latency=120"),
 				)
-			: cat(
-					same("srt://127.0.0.1:9000?streamid=s&latency=120&passphrase="),
-					value,
-				);
+			: cat(same("srt://127.0.0.1:9000?mode=s&latency=120&passphrase="), value);
 	};
 	const space = () => random.pick(["", " ", "\t", "\n", " \t"]);
 	const json = (fields: Array<[string, Piece]>): Piece => {

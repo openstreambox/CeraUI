@@ -4,7 +4,6 @@ import { configLogView } from "../../helpers/config-log-view.ts";
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import {
 	REDACTED,
-	redactJsonKeyValueText,
 	redactKeyValueText,
 	redactSensitiveKeys,
 } from "../../helpers/logger.ts";
@@ -131,13 +130,6 @@ export function parseRecord(input: unknown): RawJournalRecord | null {
 			if (!(error instanceof SyntaxError)) throw error;
 		}
 	}
-	// Records written before a key joined the logger's rules stay in the
-	// persistent journal for its whole retention. The key rules run again on
-	// every record read, so the viewer, export and bundle don't replay a
-	// credential an older build logged: structurally on a parsed record's
-	// metadata above, and as text on everything (a split or unparseable
-	// record, a message that embedded JSON, another unit's line).
-	text = redactJsonKeyValueText(text);
 	const clipped = clipJournalMessage(text);
 	truncated ||= clipped !== text;
 	const messageId = stringField(obj.MESSAGE_ID);

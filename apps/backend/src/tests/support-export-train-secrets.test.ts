@@ -158,11 +158,11 @@ beforeEach(() => {
 			}),
 			record(8, {
 				_SYSTEMD_UNIT: "srtla-send.service",
-				MESSAGE: `caller srt://127.0.0.1:9000?streamid=a&passphrase=${markerInQuery[0]}&latency=120 old srt://127.0.0.1:9000?passphrase=${markerInQuery[2]}&latency=120 srt://127.0.0.1:9000?streamid=b&passphrase=${markerInQuery[3]} srt://127.0.0.1:9000?passphrase=${markerInQuery[1]}`,
+				MESSAGE: `caller srt://127.0.0.1:9000?mode=a&passphrase=${markerInQuery[0]}&latency=120 old srt://127.0.0.1:9000?passphrase=${markerInQuery[2]}&latency=120 srt://127.0.0.1:9000?mode=b&passphrase=${markerInQuery[3]} srt://127.0.0.1:9000?passphrase=${markerInQuery[1]}`,
 			}),
 			record(9, {
 				_SYSTEMD_UNIT: "srtla-send.service",
-				MESSAGE: `caller srt://127.0.0.1:9000?streamid=c&passphrase=[REDACTED]'secret-99&latency=120 note passphrase=[REDACTED]'prose-98 end`,
+				MESSAGE: `caller srt://127.0.0.1:9000?mode=c&passphrase=[REDACTED]'secret-99&latency=120 note passphrase=[REDACTED]'prose-98 end`,
 			}),
 			record(10, {
 				_SYSTEMD_UNIT: "srtla.service",
@@ -191,7 +191,7 @@ beforeEach(() => {
 			}),
 			record(16, {
 				_SYSTEMD_UNIT: "srtla-send.service",
-				MESSAGE: `caller "srt://127.0.0.1:9000?passphrase=\\"two words-81\\"" caller "srt://127.0.0.1:9000?streamid=d&passphrase=oldend-82" five`,
+				MESSAGE: `caller "srt://127.0.0.1:9000?passphrase=\\"two words-81\\"" caller "srt://127.0.0.1:9000?mode=d&passphrase=oldend-82" five`,
 			}),
 			record(17, {
 				_SYSTEMD_UNIT: "srtla.service",
@@ -276,8 +276,8 @@ const EXPECTED = [
 	"already passphrase=[REDACTED] by the logger",
 	'restart ?passphrase=[REDACTED:srt_passphrase] cfg {"passphrase":"[REDACTED:srt_passphrase]"}',
 	'wrapped "{\\"passphrase\\":\\"[REDACTED:srt_passphrase]\\"}" cfg {"passphrase":"[REDACTED:srt_passphrase]"}',
-	"caller srt://127.0.0.1:9000?streamid=a&passphrase=[REDACTED:srt_passphrase]&latency=120 old srt://127.0.0.1:9000?passphrase=[REDACTED:srt_passphrase]&latency=120 srt://127.0.0.1:9000?streamid=b&passphrase=[REDACTED:srt_passphrase] srt://127.0.0.1:9000?passphrase=[REDACTED:srt_passphrase]",
-	"caller srt://127.0.0.1:9000?streamid=c&passphrase=[REDACTED:srt_passphrase]&latency=120 note passphrase=[REDACTED:srt_passphrase] end",
+	"caller srt://127.0.0.1:9000?mode=a&passphrase=[REDACTED:srt_passphrase]&latency=120 old srt://127.0.0.1:9000?passphrase=[REDACTED:srt_passphrase]&latency=120 srt://127.0.0.1:9000?mode=b&passphrase=[REDACTED:srt_passphrase] srt://127.0.0.1:9000?passphrase=[REDACTED:srt_passphrase]",
+	"caller srt://127.0.0.1:9000?mode=c&passphrase=[REDACTED:srt_passphrase]&latency=120 note passphrase=[REDACTED:srt_passphrase] end",
 	// The enclosing field wins: its neighbour and closing brace stay intact.
 	'cfg {"passphrase":"[REDACTED:srt_passphrase]","latency":120} done',
 	'cfg {"passphrase":"[REDACTED:srt_passphrase]","latency":121} next',
@@ -287,7 +287,7 @@ const EXPECTED = [
 	'cfg {"url":"srt://127.0.0.1:9000?passphrase=[REDACTED:srt_passphrase]","latency":122} three',
 	// Only the values change; delimiters and neighbours stay.
 	'cfg {"passphrase":"[REDACTED:srt_passphrase]","latency":123} {"srt_passphrase":"[REDACTED:srt_passphrase]","latency":124} four',
-	'caller "srt://127.0.0.1:9000?passphrase=\\"[REDACTED:srt_passphrase]\\"" caller "srt://127.0.0.1:9000?streamid=d&passphrase=[REDACTED:srt_passphrase]" five',
+	'caller "srt://127.0.0.1:9000?passphrase=\\"[REDACTED:srt_passphrase]\\"" caller "srt://127.0.0.1:9000?mode=d&passphrase=[REDACTED:srt_passphrase]" five',
 	`cfg ${tabbed("[REDACTED:srt_passphrase]")} six`,
 	'note passphrase="[REDACTED:srt_passphrase]",latency=126 seven',
 ];
@@ -310,8 +310,9 @@ test.each([
 		String.raw`wrapped "{\"passphrase\" : \"[REDACTED:srt_passphrase]\"}"`,
 	],
 	[
+		// Only exactly a marker counts as masked; the comma may start a credential.
 		"already passphrase=[REDACTED], retrying",
-		"already passphrase=[REDACTED], retrying",
+		"already passphrase=[REDACTED:srt_passphrase] retrying",
 	],
 	[
 		'already {"passphrase":"[REDACTED]"}',
@@ -319,24 +320,24 @@ test.each([
 	],
 	['empty {"passphrase":""}', 'empty {"passphrase":""}'],
 	[
-		"srt://h:1?streamid=a&passphrase=[REDACTED]&latency=120",
-		"srt://h:1?streamid=a&passphrase=[REDACTED]&latency=120",
+		"srt://h:1?mode=a&passphrase=[REDACTED]&latency=120",
+		"srt://h:1?mode=a&passphrase=[REDACTED]&latency=120",
 	],
 	[
 		"srt://h:1?passphrase=[REDACTED],&latency=120",
 		"srt://h:1?passphrase=[REDACTED:srt_passphrase]&latency=120",
 	],
 	[
-		"srt://h:1?streamid=a&passphrase=[REDACTED]; then",
-		"srt://h:1?streamid=a&passphrase=[REDACTED:srt_passphrase] then",
+		"srt://h:1?mode=a&passphrase=[REDACTED]; then",
+		"srt://h:1?mode=a&passphrase=[REDACTED:srt_passphrase] then",
 	],
 	[
 		'quoted passphrase=[REDACTED],"next"',
 		"quoted passphrase=[REDACTED:srt_passphrase]",
 	],
 	[
-		"srt://h:1?streamid=a&passphrase=[REDACTED]'tail&latency=120",
-		"srt://h:1?streamid=a&passphrase=[REDACTED:srt_passphrase]&latency=120",
+		"srt://h:1?mode=a&passphrase=[REDACTED]'tail&latency=120",
+		"srt://h:1?mode=a&passphrase=[REDACTED:srt_passphrase]&latency=120",
 	],
 	[
 		'srt://h:1?passphrase=[REDACTED]"tail#frag',
