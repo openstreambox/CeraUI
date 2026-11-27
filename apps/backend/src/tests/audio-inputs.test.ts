@@ -122,11 +122,16 @@ let releaseStart: (() => void) | undefined;
 let engineAppliedGain: number | undefined;
 let engineInputs: AudioInputConfig[];
 
+// What the fake engine answers to `get-capabilities`, kept equal to the
+// snapshot so a start's check against the receiving engine agrees with it.
+let engineCaps: GetCapabilitiesResult = caps;
+
 async function capabilities(supported = true) {
 	clearCapabilitiesCache();
+	engineCaps = supported ? caps : { ...caps, audio_mix: undefined };
 	await initPipelines({
 		fetchEngineCapabilities: async () => ({
-			caps: supported ? caps : { ...caps, audio_mix: undefined },
+			caps: engineCaps,
 			schemaVersion: SCHEMA_VERSION,
 		}),
 		fetchEngineDevices: async () => ({ devices: [] }),
@@ -190,6 +195,9 @@ beforeEach(async () => {
 								schema_version: "0.24.0",
 								engine_version: "test",
 							};
+							break;
+						case "get-capabilities":
+							result = engineCaps;
 							break;
 						case "subscribe-events":
 							if (JSON.stringify(request.params).includes("audio-level"))
