@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,7 @@ import {
 	readPrivateJson,
 	writePrivateJson,
 } from "../../helpers/private-json-state.ts";
+import { recordFsyncsPerTest } from "../../tests/helpers/recorded-fsync.ts";
 import { cellularHandoffSteps } from "../network/cellular-host-handoff.ts";
 import { resetRecoveryBarrier } from "../streaming/recovery-barrier.ts";
 import {
@@ -24,6 +26,8 @@ import {
 	planInternalContextAuthority,
 } from "./internal-context-authority.ts";
 
+// Real files, recorded fsyncs: no test waits on another process's writeback.
+const fsyncs = recordFsyncsPerTest();
 const unit = "a".repeat(64),
 	owner = "b".repeat(64),
 	epoch = "c".repeat(64),
@@ -186,6 +190,9 @@ test("whole-owner storage and startup census require its witnessed context basel
 		});
 		const meta = await stat(join(dir, `${key}.json`));
 		expect(meta.mode & 0o777).toBe(0o600);
+		// The committed record's directory and its new ancestry were acknowledged.
+		expect(fsyncs.synced).toContain(realpathSync(dir));
+		expect(fsyncs.synced).toContain(realpathSync(root));
 		expect((await listInternalCallAuthorities())[0]?.contextExpected).toBe(
 			false,
 		);

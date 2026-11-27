@@ -14,7 +14,10 @@ import {
 import { attemptIntent } from "./helpers/os-attempt-intent-fixture.ts";
 import { lifecycleFixture } from "./helpers/os-attempt-lifecycle-fixture.ts";
 import { record } from "./helpers/os-stage-startup-harness.ts";
+import { recordFsyncsPerTest } from "./helpers/recorded-fsync.ts";
 
+// Real files, recorded fsyncs: no test waits on another process's writeback.
+recordFsyncsPerTest();
 const fixtures: ReturnType<typeof lifecycleFixture>[] = [];
 afterEach(() => {
 	for (const f of fixtures.splice(0)) f.cleanup();
