@@ -29045,7 +29045,7 @@
     }
   ],
   "dependencies": {
-    "apps/backend/src/helpers/config-schemas.ts": "0b000a65929292aec789294fa84024c2c9e92db0c8ae842acaeef603cc906c0e",
+    "apps/backend/src/helpers/config-schemas.ts": "b018bacef01534d9904fe8b3fcf3d1b52d5bbedb6dbc70bec707475a04ca5290",
     "apps/backend/src/main.ts": "668d63bbbf4d7d6446ef8272b7c0bed8137f42148e0bc352141445ec0017f088",
     "apps/backend/src/mocks/mock-service.ts": "e7547acc0be1355d2310d9aa39457159a94093a48be13fcffad3239bfc36d19b",
     "apps/backend/src/mocks/providers/streaming.ts": "75b66fd2f9522b848218dba5f0338473434c0837c5878bab5d3747c12177c925",
@@ -29059,7 +29059,7 @@
     "apps/backend/src/modules/modems/modems-state.ts": "664049da3a73481068a483da604719cbea8abe290995f907a9e07eebc69cc3a5",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
     "apps/backend/src/modules/network/network-ingest.ts": "fcb33cbff26195a53375f9ae12c5f85bbb76cc2bbb7d63d76a90cf2562eb8e77",
-    "apps/backend/src/modules/network/network-interfaces.ts": "77fc460a585e4cd017260d9113b3bde759fd65eb8c2db6ed60d236e2cb52e0b3",
+    "apps/backend/src/modules/network/network-interfaces.ts": "a63f7d9b3e7c5c98e2e8a349ef59dd63c3b771d47a279ac2a580bf6b1922f138",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "2221782a8312e2ffddc545a6f4434e62cf53d0f82948d49987a5a9263fe60d26",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "59e35c76047fe4bfa5484cbbeaae996507cc0f1f778641eb83dc6248f72b6395",
@@ -29126,7 +29126,7 @@
     "packages/rpc/src/schemas/fan.schema.ts": "8f4ab6b8b302d408994350eb66089f8d0fb195e0bccfc498e2d1b333a3fde841",
     "packages/rpc/src/schemas/logs.schema.ts": "d56584362e084a92eeb4c5d91d753a317b9f29140b4909ebc3f714e05a723038",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
-    "packages/rpc/src/schemas/modems.schema.ts": "c5d1897ac132d539b8e6ed1bff5a9c17946083cbe34ae5e91097d6500e3b6245",
+    "packages/rpc/src/schemas/modems.schema.ts": "45b47ddb8c63923b4fcbdd164b78ee6686e7bd0a81c8a11ed291fd5f052c843b",
     "packages/rpc/src/schemas/network.schema.ts": "fd3ccb0b89bd33488e52125e541f4a68ad9a6d9eaa2119769972d58bf961220e",
     "packages/rpc/src/schemas/notifications.schema.ts": "6c13851bf6dbb6cdece71effbd24c48e4e5ee12fe45125eedb9aad8b135126fd",
     "packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",
