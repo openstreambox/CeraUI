@@ -880,13 +880,16 @@ and SSH handlers broadcast a refusal notice, and the remote path answers `ok:fal
 with the reason. The notice names what is still open. `streaming` and update work
 use `notifications.disruptiveActionClientTraffic` (a pending local action uses
 `network.os.deviceBusy`). `stream_liveness_unknown` reads the box's own session
-alone (`getOwnStreamLiveness()`): idle means only client traffic is still being
+alone (`getOwnStreamState()`): idle means only client traffic is still being
 checked, such as the two-minute window after a backend restart, so
 `notifications.disruptiveActionCarryingChecking` says to try again in a few
-minutes; otherwise `notifications.disruptiveActionStreamUnconfirmed` says the
-box's own stream is not yet confirmed stopped and points to Stop Stream. The
-choice is made after the decision and never changes it; admission reads only
-`getStreamLiveness()`. A remote confirm is the owner's intent, not
+minutes. When only the startup reconciliation is still open, or the box has no
+encoder (no Live page, so no Stop Stream), `notifications.disruptiveActionStillChecking`
+says to try again in a moment. Otherwise `notifications.disruptiveActionStreamUnconfirmed`
+says the box's own stream is not yet confirmed stopped and points to Stop Stream.
+These three unknown notices go to signed-in clients only, like the carrying status
+they refine. The choice is made after the decision and never changes it;
+admission reads only `getStreamLiveness()`. A remote confirm is the owner's intent, not
 idle evidence, so the gate is read on receipt and again at confirm. A remote
 reboot/factory-reset command that exits nonzero answers `ok:false` with its status.
 Local power likewise reports a failed native submission instead of starting the

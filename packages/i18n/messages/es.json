@@ -3427,6 +3427,7 @@
 	"notifications.disruptiveActionClientTraffic": "Esta acción no se ejecutó. Inténtalo de nuevo cuando la transmisión de la caja y el tráfico de transmisión de los dispositivos conectados estén inactivos y no haya una actualización en curso.",
 	"notifications.disruptiveActionCarryingChecking": "Esta acción no se ejecutó. La caja todavía está comprobando si los dispositivos conectados envían tráfico de transmisión a través de ella. Inténtalo de nuevo en unos minutos.",
 	"notifications.disruptiveActionStreamUnconfirmed": "Esta acción no se ejecutó. La caja aún no puede confirmar que su propia transmisión se haya detenido. Inténtalo de nuevo en un momento. Si sigue rechazándola, usa primero «Detener transmisión» en la página Live.",
+	"notifications.disruptiveActionStillChecking": "Esta acción no se ejecutó. La caja todavía está comprobando su propio estado. Inténtalo de nuevo en un momento.",
 	"hud.forwarding": "Reenviando",
 	"hud.checking": "Comprobando",
 	"carrying.active": "Transportando · tráfico del teléfono a través de este equipo",

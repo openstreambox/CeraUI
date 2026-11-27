@@ -3387,6 +3387,7 @@
 	"notifications.disruptiveActionClientTraffic": "Esta ação não foi executada. Tente novamente quando a transmissão da caixa e o tráfego de transmissão dos dispositivos conectados estiverem inativos e nenhuma atualização estiver em andamento.",
 	"notifications.disruptiveActionCarryingChecking": "Esta ação não foi executada. A caixa ainda está verificando se dispositivos conectados enviam tráfego de transmissão por ela. Tente novamente em alguns minutos.",
 	"notifications.disruptiveActionStreamUnconfirmed": "Esta ação não foi executada. A caixa ainda não consegue confirmar que a própria transmissão parou. Tente novamente em instantes. Se continuar recusando, use primeiro “Parar transmissão” na página Live.",
+	"notifications.disruptiveActionStillChecking": "Esta ação não foi executada. A caixa ainda está verificando o próprio estado. Tente novamente em instantes.",
 	"hud.forwarding": "Encaminhando",
 	"hud.checking": "Verificando",
 	"carrying.active": "Transportando · tráfego do telefone por esta caixa",

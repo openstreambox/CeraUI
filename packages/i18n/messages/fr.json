@@ -3387,6 +3387,7 @@
 	"notifications.disruptiveActionClientTraffic": "Cette action n’a pas été exécutée. Réessayez lorsque le flux de la box et le trafic de diffusion des appareils connectés sont inactifs et qu’aucune mise à jour n’est en cours.",
 	"notifications.disruptiveActionCarryingChecking": "Cette action n’a pas été exécutée. La box vérifie encore si des appareils connectés envoient du trafic de diffusion par son intermédiaire. Réessayez dans quelques minutes.",
 	"notifications.disruptiveActionStreamUnconfirmed": "Cette action n’a pas été exécutée. La box ne peut pas encore confirmer que sa propre diffusion est arrêtée. Réessayez dans un instant. Si elle refuse toujours, utilisez d’abord « Arrêter la diffusion » sur la page Live.",
+	"notifications.disruptiveActionStillChecking": "Cette action n’a pas été exécutée. La box vérifie encore son propre état. Réessayez dans un instant.",
 	"hud.forwarding": "Transmission",
 	"hud.checking": "Vérification",
 	"carrying.active": "Transport actif · trafic du téléphone via ce boîtier",

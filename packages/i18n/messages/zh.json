@@ -3152,6 +3152,7 @@
 	"notifications.disruptiveActionClientTraffic": "此操作未执行。请在盒子自身的推流和已连接设备的推流流量均处于空闲状态，且没有更新正在进行时重试。",
 	"notifications.disruptiveActionCarryingChecking": "此操作未执行。盒子仍在检查已连接设备是否通过它发送推流流量。请几分钟后重试。",
 	"notifications.disruptiveActionStreamUnconfirmed": "此操作未执行。盒子尚无法确认其自身的推流已停止。请稍后重试。如果仍被拒绝，请先在直播页面使用“停止直播”。",
+	"notifications.disruptiveActionStillChecking": "此操作未执行。盒子仍在检查自身状态。请稍后重试。",
 	"hud.forwarding": "转发中",
 	"hud.checking": "检查中",
 	"carrying.active": "正在承载 · 手机流量通过此设备",

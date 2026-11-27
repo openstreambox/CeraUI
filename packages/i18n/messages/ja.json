@@ -3152,6 +3152,7 @@
 	"notifications.disruptiveActionClientTraffic": "この操作は実行されませんでした。ボックス自身の配信と接続デバイスの配信トラフィックがアイドル状態になり、更新が進行していないときに、もう一度お試しください。",
 	"notifications.disruptiveActionCarryingChecking": "この操作は実行されませんでした。ボックスは、接続デバイスがボックス経由で配信トラフィックを送っているかをまだ確認しています。数分後にもう一度お試しください。",
 	"notifications.disruptiveActionStreamUnconfirmed": "この操作は実行されませんでした。ボックスは、自身の配信が停止したことをまだ確認できていません。少し待ってからもう一度お試しください。それでも拒否される場合は、先にライブページの「ストリーム停止」を使ってください。",
+	"notifications.disruptiveActionStillChecking": "この操作は実行されませんでした。ボックスは自身の状態をまだ確認しています。少し待ってからもう一度お試しください。",
 	"hud.forwarding": "転送中",
 	"hud.checking": "確認中",
 	"carrying.active": "転送中 · このボックス経由の電話通信",
