@@ -28,7 +28,10 @@ import {
 	wifiCarrierLostMark,
 } from "../../network/wifi-carrier-lost.ts";
 import type { BondEntry } from "../bind-map.ts";
-import type { BindMapPublication } from "../bind-map-writer.ts";
+import {
+	type BindMapPublication,
+	isBindMapWriterSettled,
+} from "../bind-map-writer.ts";
 import { bondRowClock, bondRowHeldSince } from "../bond-row-age.ts";
 import {
 	LINK_CARRYING_EVIDENCE_MS,
@@ -58,6 +61,8 @@ export type SrtlaIpPreparationDeps = {
 	readonly carryingIfaces?: () => ReadonlySet<string>;
 	/** The clock row ages are measured on (`bondRowClock`, monotonic). */
 	readonly now?: () => number;
+	/** The writer has nothing in flight, waiting or stale (`isBindMapWriterSettled`). */
+	readonly writerSettled?: () => boolean;
 };
 
 const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
@@ -101,8 +106,13 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
   Each entry's state is read once per publication, so one refresh cannot judge
   an entry two ways.
 
-  A launch (manual start, ingest forward without a live refresh, restoration)
-  ignores marks: nothing would bring a link left out there back.
+  The rule applies only to the stream session's own live refresh
+  (`carrierRule`), whose sender is reloaded right after the write settles. A
+  launch (manual start, restoration) ignores marks, because nothing would bring
+  a link left out there back, and so does the ingest forwarder's refresh,
+  whose sender is reloaded on its own schedule. While the writer is retrying
+  or has a publication in flight, nothing counts as a backup: settlement order
+  can still change which rows the sender holds.
 */
 function liveFor(
 	ifname: string,
@@ -154,6 +164,7 @@ function withoutDeafWifi(
 	carrierDown: (ifname: string) => boolean,
 	carryingIfaces: () => ReadonlySet<string>,
 	now: number,
+	writerSettled: () => boolean,
 ): BondEntry[] {
 	const state = new Map(
 		entries.map((entry) => [
@@ -164,6 +175,7 @@ function withoutDeafWifi(
 	const deaf = entries.filter((entry) => state.get(entry)?.lost);
 	if (deaf.length === 0) return entries;
 	const family = (entry: BondEntry) => isIP(entry.ip);
+	const settled = writerSettled();
 	const carrying = carryingIfaces();
 	const heldLongEnough = (entry: BondEntry) => {
 		const since = bondRowHeldSince(entry);
@@ -174,6 +186,7 @@ function withoutDeafWifi(
 			.filter((entry) => {
 				const s = state.get(entry);
 				return (
+					settled &&
 					entry.parentIface === undefined &&
 					!s?.lost &&
 					!s?.down &&
@@ -205,12 +218,13 @@ export async function prepareSrtlaIpAddresses(
 	srtlaAddr: string,
 	deps: SrtlaIpPreparationDeps = defaultSrtlaIpPreparationDeps,
 	purpose: "launch" | "refresh" = "launch",
+	options: { readonly carrierRule?: boolean } = {},
 ): Promise<BindMapPublication> {
 	const at = (deps.now ?? bondRowClock)();
 	const local = deps.isLocal(srtlaAddr);
 	const collected = local ? deps.localList(srtlaAddr) : deps.bondedList();
 	const entries =
-		purpose === "refresh"
+		purpose === "refresh" && options.carrierRule === true
 			? withoutDeafWifi(
 					collected,
 					deps.carrierLost ?? liveCarrierLost,
@@ -218,6 +232,7 @@ export async function prepareSrtlaIpAddresses(
 					deps.carryingIfaces ??
 						(() => carryingIfacesFrom(buildLinkTelemetry())),
 					at,
+					deps.writerSettled ?? isBindMapWriterSettled,
 				)
 			: collected;
 	if (purpose === "launch" && entries.length === 0) {

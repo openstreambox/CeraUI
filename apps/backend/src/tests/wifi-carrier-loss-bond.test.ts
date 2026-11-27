@@ -163,6 +163,7 @@ function bench() {
 				isLocal: (address) => address === LAN_RECEIVER,
 				localList: genSrtlaBondEntriesForLocalIpAddress,
 				bondedList: genSrtlaBondEntries,
+				writerSettled: () => true,
 				carryingIfaces: () => carrying,
 				// Every row has been held for longer than the carrying window.
 				now: () => clock + SURVIVOR_ROW_AGE_MS,
@@ -172,6 +173,7 @@ function bench() {
 				},
 			},
 			purpose,
+			{ carrierRule: true },
 		);
 		return written.map((entry) => entry.iface).sort();
 	};
@@ -466,9 +468,11 @@ describe("the carrier rule at publication", () => {
 				carrierLost:
 					typeof lost === "function" ? lost : (ifname) => lost.includes(ifname),
 				carrierDown: (ifname) => down.includes(ifname),
+				writerSettled: () => true,
 				carryingIfaces: () => new Set(carrying ?? entries.map((e) => e.iface)),
 			},
 			"refresh",
+			{ carrierRule: true },
 		);
 		return written.map((e) => e.iface);
 	};
@@ -559,10 +563,12 @@ describe("the carrier rule at publication", () => {
 					carrierLost: (ifname) => ifname === "wlan0",
 					carrierDown: (ifname) => ifname === "wlan0",
 					// eth0's interface-level evidence is still the old socket's.
+					writerSettled: () => true,
 					carryingIfaces: () => new Set(["eth0"]),
 					now: () => at,
 				},
 				"refresh",
+				{ carrierRule: true },
 			);
 			return written.map((e) => e.iface);
 		};
@@ -602,6 +608,39 @@ describe("the carrier rule at publication", () => {
 				.size,
 		).toBe(0);
 		expect(carryingIfacesFrom(null).size).toBe(0);
+	});
+
+	test("only the stream session's refresh applies the carrier rule", async () => {
+		let written: readonly BondEntry[] = [];
+		const run = (options?: { carrierRule?: boolean }, settled = true) =>
+			prepareSrtlaIpAddresses(
+				RECEIVER,
+				{
+					isLocal: () => false,
+					localList: () => [],
+					bondedList: () => [entry("wlan0"), entry("eth0")],
+					writeList: async (list) => {
+						written = list;
+						return { ok: true, changed: true } as unknown as BindMapPublication;
+					},
+					carrierLost: (ifname) => ifname === "wlan0",
+					carrierDown: (ifname) => ifname === "wlan0",
+					carryingIfaces: () => new Set(["eth0"]),
+					writerSettled: () => settled,
+					now: () => SURVIVOR_ROW_AGE_MS,
+				},
+				"refresh",
+				options,
+			).then(() => written.map((e) => e.iface));
+		resetBondRowAgesForTest();
+		setBondRowClockForTest(() => 0);
+		noteBondRowsWritten([entry("wlan0"), entry("eth0")]);
+		setBondRowClockForTest(null);
+		// The ingest forwarder's refresh (no carrier rule) publishes as before.
+		expect(await run()).toEqual(["wlan0", "eth0"]);
+		expect(await run({ carrierRule: true })).toEqual(["eth0"]);
+		// A writer still retrying or busy: nothing counts as a backup.
+		expect(await run({ carrierRule: true }, false)).toEqual(["wlan0", "eth0"]);
 	});
 
 	test("each entry's state is read once per publication", async () => {
