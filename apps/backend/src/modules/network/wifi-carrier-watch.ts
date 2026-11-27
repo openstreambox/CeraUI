@@ -16,8 +16,8 @@
 */
 
 /*
-  A Wi-Fi radio that loses its access point leaves the bond at once, not at the
-  next netif poll.
+  A Wi-Fi radio that loses its access point stops carrying the stream at once,
+  not at the next netif poll.
 
   WHY THE POLL WAS LATE. When an access point goes away, mac80211 drops the
   station's carrier the moment it handles the deauthentication or gives up on
@@ -25,43 +25,34 @@
   does NOT leave `activated` for that: it keeps the device connected while the
   supplicant looks for the network again, so `nmcli monitor` prints nothing.
   The only reader of RUNNING was the 5 s `ifconfig` backstop poll, so the link
-  stayed in the bond for 0–5 s after its radio had lost the AP, and the sender
+  stayed in the bond for 0-5 s after its radio had lost the AP, and the sender
   kept assigning packets to a socket bound to a radio that could not send them.
   On a two-radio box that cost frames even though the other radio was carrying.
 
   WHAT THIS DOES. It follows the kernel's link notifications (`ip -o monitor
-  link`, RTM_NEWLINK) for Wi-Fi station interfaces and, on an operational state
-  that stays down for {@link CARRIER_LOSS_HOLD_MS}, runs the same netif refresh
-  the poll runs. That refresh reads RUNNING itself and withdraws the row; bond
-  toggles, radio admission and identity, hotspot and modem gates all apply
-  exactly as on a poll, because nothing here decides membership. When the
-  carrier comes back on a radio that has no row, it refreshes again after
-  {@link READMIT_SETTLE_MS}, and the radio is readmitted by that same path.
+  link`, RTM_NEWLINK) for Wi-Fi station interfaces. A carrier that stays down
+  for {@link CARRIER_LOSS_HOLD_MS} marks the link (`wifi-carrier-lost.ts`), and
+  the live bond publication leaves a marked link out of the sender's list,
+  unless every link in that list is marked. When the carrier comes back and
+  has settled for {@link READMIT_SETTLE_MS}, the mark goes and the bond is
+  republished with the link. If the backstop poll withdrew the row meanwhile,
+  the same settle runs the poll's own refresh, so the radio comes back through
+  the existing readmission path (identity, toggles and gates included).
 
-  A TRIGGER, NOT DATA. The monitor line says only that a link changed. Whether
-  it may carry the stream stays the refresh's answer. The 5 s poll remains the
-  backstop whenever this watcher is down, so a missing `ip`, a dead child or a
-  dropped line cost the old latency, never a wrong bond.
+  A MARK, NOT A DECISION. Nothing here decides membership: bond toggles, radio
+  admission and identity, hotspot, shared-LAN and modem gates, and the netif
+  rows themselves are untouched. A mark is set only after sysfs confirms the
+  link is not operational, and a 5 s check clears any mark whose link sysfs
+  reports up again, so a dropped monitor line cannot strand a link outside the
+  bond. A dead child clears every mark it set; the poll covers the gap.
 
-  NOT A ROAM, NOT A BLIP. A roam within one network takes the carrier down for
-  the authentication and association with the next AP (and, with WPA, until
-  the handshake lets the supplicant mark the link up). That gap is short, and
-  the hold outlasts it: a carrier that returns within the hold cancels it and
-  nothing is refreshed. Each withdrawal therefore needs the carrier to stay
-  down for the whole hold, which bounds the bond changes one radio can cause.
-
-  NEVER THE LAST LINK. A live refresh publishes an empty bond when nothing is
-  left, and the sender then drops every connection and has to register from
-  nothing once a radio returns. When both radios sit on the access point that
-  goes, that is worse than the outage itself: they usually re-associate within
-  a second or two and their sockets carry on. So a hold that expires while no
-  other bond link has a carrier withdraws nothing and keeps the link, and the
-  backstop poll treats it as before. Once another radio's carrier is back and
-  has settled, a link still down is withdrawn then.
+  NOT A BLIP. A carrier that returns within the hold cancels it, so a
+  short blip changes nothing. A roam within one network also takes the
+  carrier down, for the authentication and association with the next AP; the
+  hold is sized from measured roams on the radios this runs on.
 
   ONLY WI-FI STATIONS. Cellular modems, Ethernet, tunnels, a hotspot's own AP
-  interface and the concurrent-AP netdev are ignored, and their membership
-  keeps following the NetworkManager events and the poll as before.
+  interface and the concurrent-AP netdev are ignored.
 */
 
 import { logger } from "../../helpers/logger.ts";
@@ -70,13 +61,17 @@ import {
 	type WatcherHandle,
 } from "../../helpers/spawn-policy.ts";
 
-/** How long a station's carrier must stay down before its link is withdrawn. */
-export const CARRIER_LOSS_HOLD_MS = 400;
-/** How long a returned carrier settles before the radio's link is readmitted. */
+/** How long a station's carrier must stay down before its link is marked. */
+export const CARRIER_LOSS_HOLD_MS = 1200;
+/** How long a returned carrier settles before the mark goes. */
 export const READMIT_SETTLE_MS = 250;
+/** How often marked links are checked against sysfs. */
+export const MARK_CHECK_MS = 5_000;
 
 export const RESTART_MIN_MS = 1_000;
 export const RESTART_MAX_MS = 60_000;
+/** A child that lived this long resets the restart delay. */
+export const HEALTHY_CHILD_MS = 30_000;
 
 export type LinkStateEvent = {
 	readonly ifname: string;
@@ -119,10 +114,11 @@ export type WifiCarrierWatchDeps = {
 	readonly spawn: (argv: string[]) => WatcherHandle;
 	/** A Wi-Fi station interface (not a hotspot AP, not the concurrent AP). */
 	readonly isWifiStation: (ifname: string) => boolean;
-	/** The interface has a row in the published netif map. */
-	readonly isPublished: (ifname: string) => boolean;
-	/** The interfaces the bond admits now (any kind). */
-	readonly bondMembers: () => readonly string[];
+	/** sysfs says the link is operational (`operstate` up). */
+	readonly isOperational: (ifname: string) => boolean;
+	readonly setLost: (ifname: string, lost: boolean) => void;
+	/** The link has no published netif row, or one without an address. */
+	readonly needsReadmit: (ifname: string) => boolean;
 	/** Run the netif refresh the backstop poll runs. */
 	readonly refresh: () => Promise<void> | void;
 	readonly now: () => number;
@@ -134,15 +130,15 @@ type LinkTrack = {
 	running: boolean | undefined;
 	downSince: number | undefined;
 	hold: Timer | undefined;
-	readmit: Timer | undefined;
-	/** The hold expired with no other link to carry, so the link was kept. */
-	kept: boolean;
+	settle: Timer | undefined;
+	marked: boolean;
 };
 
 export class WifiCarrierWatch {
 	#wanted = false;
 	#handle: WatcherHandle | undefined;
 	#restartTimer: Timer | undefined;
+	#markCheck: Timer | undefined;
 	#restartDelayMs = RESTART_MIN_MS;
 	readonly #links = new Map<string, LinkTrack>();
 
@@ -165,8 +161,7 @@ export class WifiCarrierWatch {
 			this.deps.clearTimeout(this.#restartTimer);
 			this.#restartTimer = undefined;
 		}
-		for (const track of this.#links.values()) this.#clearTimers(track);
-		this.#links.clear();
+		this.#forgetAll();
 		const handle = this.#handle;
 		this.#handle = undefined;
 		handle?.abort();
@@ -174,17 +169,15 @@ export class WifiCarrierWatch {
 
 	/** Act on one line of `ip -o monitor link`. Exported for the tests. */
 	handleLine(line: string): void {
+		if (!this.#wanted) return;
 		const event = parseLinkStateLine(line);
 		if (event === undefined) return;
 		const { ifname, running } = event;
 		if (!this.deps.isWifiStation(ifname)) {
-			// A name that stopped being a station (it became a hotspot) keeps no
-			// pending work from its station days.
+			// A name that stopped being a station (it became a hotspot, or the
+			// radio went) keeps no pending work or mark from its station days.
 			const stale = this.#links.get(ifname);
-			if (stale) {
-				this.#clearTimers(stale);
-				this.#links.delete(ifname);
-			}
+			if (stale) this.#forget(ifname, stale);
 			return;
 		}
 		let track = this.#links.get(ifname);
@@ -193,8 +186,8 @@ export class WifiCarrierWatch {
 				running: undefined,
 				downSince: undefined,
 				hold: undefined,
-				readmit: undefined,
-				kept: false,
+				settle: undefined,
+				marked: false,
 			};
 			this.#links.set(ifname, track);
 		}
@@ -207,30 +200,28 @@ export class WifiCarrierWatch {
 	}
 
 	#onCarrierDown(ifname: string, track: LinkTrack): void {
-		if (track.readmit !== undefined) {
-			this.deps.clearTimeout(track.readmit);
-			track.readmit = undefined;
+		if (track.settle !== undefined) {
+			this.deps.clearTimeout(track.settle);
+			track.settle = undefined;
 		}
 		track.downSince = this.deps.now();
-		// A link the bond does not hold has nothing to withdraw.
-		if (!this.deps.isPublished(ifname) || track.hold !== undefined) return;
+		if (track.marked || track.hold !== undefined) return;
 		track.hold = this.deps.setTimeout(() => {
 			track.hold = undefined;
 			if (!this.#wanted || track.running !== false) return;
-			// The backstop poll may have withdrawn it during the hold already.
-			if (!this.deps.isPublished(ifname)) return;
-			if (!this.#hasSurvivor(ifname)) {
-				track.kept = true;
-				logger.info("Wi-Fi station lost its carrier; kept as the last link", {
+			if (!this.deps.isWifiStation(ifname)) return;
+			// The monitor said down; the kernel must still agree.
+			if (this.deps.isOperational(ifname)) return;
+			track.marked = true;
+			logger.info(
+				"Wi-Fi station lost its carrier; leaving it out of the bond",
+				{
 					ifname,
-				});
-				return;
-			}
-			logger.info("Wi-Fi station lost its carrier; refreshing the bond", {
-				ifname,
-				down_ms: this.deps.now() - (track.downSince ?? this.deps.now()),
-			});
-			this.#refresh();
+					down_ms: this.deps.now() - (track.downSince ?? this.deps.now()),
+				},
+			);
+			this.deps.setLost(ifname, true);
+			this.#armMarkCheck();
 		}, CARRIER_LOSS_HOLD_MS);
 	}
 
@@ -244,54 +235,50 @@ export class WifiCarrierWatch {
 			});
 		}
 		track.downSince = undefined;
-		track.kept = false;
-		if (track.readmit !== undefined) return;
-		// Nothing to readmit and no kept link this one could now relieve.
-		if (this.deps.isPublished(ifname) && !this.#anyKept()) return;
-		track.readmit = this.deps.setTimeout(() => {
-			track.readmit = undefined;
+		if (track.settle !== undefined) return;
+		if (!track.marked && !this.deps.needsReadmit(ifname)) return;
+		track.settle = this.deps.setTimeout(() => {
+			track.settle = undefined;
 			if (!this.#wanted || track.running !== true) return;
-			const readmit = !this.deps.isPublished(ifname);
-			const relieved = this.#withdrawableKept();
-			if (!readmit && relieved.length === 0) return;
-			for (const name of relieved) {
-				const kept = this.#links.get(name);
-				if (kept) kept.kept = false;
-			}
-			logger.info("Wi-Fi station carrier is back; refreshing the bond", {
+			const readmit = this.deps.needsReadmit(ifname);
+			logger.info("Wi-Fi station carrier is back; returning it to the bond", {
 				ifname,
-				...(relieved.length > 0 ? { withdrawing: relieved } : {}),
+				...(readmit ? { refresh: true } : {}),
 			});
-			this.#refresh();
+			if (track.marked) this.#unmark(ifname, track);
+			if (readmit) this.#refresh();
 		}, READMIT_SETTLE_MS);
 	}
 
-	/** Another bond link that is not a Wi-Fi station known to be down. */
-	#hasSurvivor(ifname: string): boolean {
-		return this.deps
-			.bondMembers()
-			.some(
-				(name) => name !== ifname && this.#links.get(name)?.running !== false,
-			);
+	#unmark(ifname: string, track: LinkTrack): void {
+		if (!track.marked) return;
+		track.marked = false;
+		this.deps.setLost(ifname, false);
 	}
 
-	#anyKept(): boolean {
-		for (const track of this.#links.values()) if (track.kept) return true;
-		return false;
-	}
-
-	/** Kept links still down and still in the bond that now have a survivor. */
-	#withdrawableKept(): string[] {
-		const names: string[] = [];
-		for (const [name, track] of this.#links) {
-			if (!track.kept) continue;
-			if (track.running !== false || !this.deps.isPublished(name)) {
-				track.kept = false;
-				continue;
+	/** Every mark is checked against sysfs, so no lost line can strand one. */
+	#armMarkCheck(): void {
+		if (this.#markCheck !== undefined) return;
+		this.#markCheck = this.deps.setTimeout(() => {
+			this.#markCheck = undefined;
+			if (!this.#wanted) return;
+			let anyMarked = false;
+			for (const [ifname, track] of this.#links) {
+				if (!track.marked) continue;
+				if (
+					!this.deps.isWifiStation(ifname) ||
+					this.deps.isOperational(ifname)
+				) {
+					logger.info("Wi-Fi carrier mark cleared by the sysfs check", {
+						ifname,
+					});
+					this.#unmark(ifname, track);
+					continue;
+				}
+				anyMarked = true;
 			}
-			if (this.#hasSurvivor(name)) names.push(name);
-		}
-		return names;
+			if (anyMarked) this.#armMarkCheck();
+		}, MARK_CHECK_MS);
 	}
 
 	#refresh(): void {
@@ -304,12 +291,21 @@ export class WifiCarrierWatch {
 		}
 	}
 
-	#clearTimers(track: LinkTrack): void {
+	#forget(ifname: string, track: LinkTrack): void {
 		if (track.hold !== undefined) this.deps.clearTimeout(track.hold);
-		if (track.readmit !== undefined) this.deps.clearTimeout(track.readmit);
+		if (track.settle !== undefined) this.deps.clearTimeout(track.settle);
 		track.hold = undefined;
-		track.readmit = undefined;
-		track.kept = false;
+		track.settle = undefined;
+		this.#unmark(ifname, track);
+		this.#links.delete(ifname);
+	}
+
+	#forgetAll(): void {
+		for (const [ifname, track] of [...this.#links]) this.#forget(ifname, track);
+		if (this.#markCheck !== undefined) {
+			this.deps.clearTimeout(this.#markCheck);
+			this.#markCheck = undefined;
+		}
 	}
 
 	#start(): void {
@@ -319,49 +315,56 @@ export class WifiCarrierWatch {
 			handle = this.deps.spawn(["ip", "-o", "monitor", "link"]);
 		} catch (err) {
 			logger.debug(`wifi carrier watch: spawn failed: ${err}`);
-			this.#scheduleRestart();
+			this.#scheduleRestart(false);
 			return;
 		}
 		this.#handle = handle;
+		const startedAt = this.deps.now();
 		void this.#read(handle).finally(() => {
 			if (this.#handle !== handle) return;
 			this.#handle = undefined;
 			// A new child reports only later edges: the states it missed are
 			// learned again, and the backstop poll covers the gap meanwhile.
-			for (const track of this.#links.values()) this.#clearTimers(track);
-			this.#links.clear();
-			this.#scheduleRestart();
+			this.#forgetAll();
+			this.#scheduleRestart(this.deps.now() - startedAt >= HEALTHY_CHILD_MS);
 		});
 	}
 
 	async #read(handle: WatcherHandle): Promise<void> {
 		const stdout = handle.proc.stdout;
-		if (!stdout) return;
-		const decoder = new TextDecoder();
-		let buffer = "";
-		try {
-			for await (const chunk of stdout) {
-				this.#restartDelayMs = RESTART_MIN_MS;
-				buffer += decoder.decode(chunk, { stream: true });
-				let newline = buffer.indexOf("\n");
-				while (newline !== -1) {
-					this.handleLine(buffer.slice(0, newline));
-					buffer = buffer.slice(newline + 1);
-					newline = buffer.indexOf("\n");
+		if (stdout) {
+			const decoder = new TextDecoder();
+			let buffer = "";
+			try {
+				for await (const chunk of stdout) {
+					// Lines a stopped or replaced child still had buffered are not ours.
+					if (this.#handle !== handle) break;
+					buffer += decoder.decode(chunk, { stream: true });
+					let newline = buffer.indexOf("\n");
+					while (newline !== -1 && this.#handle === handle) {
+						this.handleLine(buffer.slice(0, newline));
+						buffer = buffer.slice(newline + 1);
+						newline = buffer.indexOf("\n");
+					}
+					// One link line is a few hundred bytes; a longer tail is drift.
+					if (buffer.length > 8_192) buffer = "";
 				}
-				// One link line is a few hundred bytes; a longer tail is drift.
-				if (buffer.length > 8_192) buffer = "";
+				buffer += decoder.decode();
+				if (buffer.length > 0 && this.#handle === handle)
+					this.handleLine(buffer);
+			} catch (err) {
+				logger.debug(`wifi carrier watch: stream ended: ${err}`);
 			}
-			buffer += decoder.decode();
-			if (buffer.length > 0) this.handleLine(buffer);
-		} catch (err) {
-			logger.debug(`wifi carrier watch: stream ended: ${err}`);
 		}
+		// A reader that stopped while the child lives would leave the watch
+		// deaf with no restart: end the child so the supervisor sees an exit.
+		handle.abort();
 		await handle.proc.exited.catch(() => undefined);
 	}
 
-	#scheduleRestart(): void {
+	#scheduleRestart(healthy: boolean): void {
 		if (!this.#wanted || this.#restartTimer !== undefined) return;
+		if (healthy) this.#restartDelayMs = RESTART_MIN_MS;
 		const delay = this.#restartDelayMs;
 		this.#restartDelayMs = Math.min(delay * 2, RESTART_MAX_MS);
 		this.#restartTimer = this.deps.setTimeout(() => {
@@ -391,7 +394,7 @@ export function startWifiCarrierWatch(
 	watcher.start();
 }
 
-/** Shutdown hook: kill the child with the backend. */
+/** Shutdown hook: kill the child with the backend and clear its marks. */
 export function stopWifiCarrierWatch(): void {
 	watcher?.stop();
 	watcher = undefined;

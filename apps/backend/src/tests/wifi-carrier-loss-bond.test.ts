@@ -1,24 +1,24 @@
 /**
- * A RADIO THAT LOSES ITS AP LEAVES THE BOND ON THE CARRIER EDGE.
+ * A RADIO THAT LOSES ITS AP STOPS CARRYING ON THE CARRIER EDGE.
  *
  * NetworkManager keeps a Wi-Fi device `activated` while its supplicant looks
  * for the network again, so the only reader of the kernel's RUNNING flag used
- * to be the 5 s netif poll, and the link stayed in the bond for up to 5 s with
- * its radio deaf. The carrier watch runs the poll's own refresh on the edge.
+ * to be the 5 s netif poll, and the sender kept feeding the deaf radio until
+ * then. The carrier watch marks the link, and the bond publication leaves a
+ * marked link out of the sender's list unless nothing else is left.
  *
- * The suite drives the REAL `processIfconfigOutput` and the REAL
- * `genSrtlaIpList` behind the watcher, because the guarantees live in the
- * wiring: the withdrawal is the refresh's (so the operator's bond toggle and
- * every gate still decide readmission), a cellular link riding the same
- * refreshes is never touched, and nothing moves before the hold has passed.
+ * The suite drives the REAL `processIfconfigOutput`, the REAL bond collectors
+ * and the REAL `prepareSrtlaIpAddresses` behind the watcher (only the file
+ * write is captured), because the guarantees live in the wiring: the list is
+ * judged for the receiver it serves (a LAN receiver's subnet subset included),
+ * the operator's toggle and every gate still decide membership, the netif rows
+ * are never touched, and a modem is never marked.
  */
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { ManagedProcess, WatcherHandle } from "../helpers/spawn-policy.ts";
-import { netdevPresence } from "../modules/network/netdev-lifetime.ts";
 import {
 	getNetworkInterfaces,
-	isBondCandidate,
 	processIfconfigOutput,
 	resetBondOptOut,
 	resetNetifSnapshotForTest,
@@ -26,18 +26,25 @@ import {
 	setNetifDupIpSuppression,
 	setQueueUpdateGwHook,
 } from "../modules/network/network-interfaces.ts";
-import {
-	type RouterCellularScanDeps,
-	refreshUsbNetMarkers,
-	resetUsbNetMarkers,
-} from "../modules/network/router-cellular-scan.ts";
 import { setNetifState } from "../modules/network/state/netif-state.ts";
+import {
+	isWifiCarrierLost,
+	resetWifiCarrierLostForTest,
+	setWifiCarrierLost,
+} from "../modules/network/wifi-carrier-lost.ts";
 import {
 	CARRIER_LOSS_HOLD_MS,
 	READMIT_SETTLE_MS,
 	WifiCarrierWatch,
 } from "../modules/network/wifi-carrier-watch.ts";
-import { genSrtlaIpList } from "../modules/streaming/srtla.ts";
+import type { BondEntry } from "../modules/streaming/bind-map.ts";
+import type { BindMapPublication } from "../modules/streaming/bind-map-writer.ts";
+import {
+	genSrtlaBondEntries,
+	genSrtlaBondEntriesForLocalIpAddress,
+} from "../modules/streaming/srtla.ts";
+import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
+import { stopWifiUpdateLoopForTest } from "../modules/wifi/wifi-interfaces.ts";
 
 const RADIO_A = {
 	name: "wlan0",
@@ -51,31 +58,18 @@ const RADIO_B = {
 };
 const MODEM = { name: "wwan0", ip: "10.64.12.7", mac: "aa:bb:cc:00:00:03" };
 const ALL = [RADIO_A, RADIO_B, MODEM];
+const RECEIVER = "receiver.example";
+const LAN_RECEIVER = "192.168.178.40";
 
-function stanza(
-	link: { name: string; ip: string; mac: string },
-	running: boolean,
-): string {
-	const flags = running
-		? "flags=4163<UP,BROADCAST,RUNNING,MULTICAST>"
-		: "flags=4099<UP,BROADCAST,MULTICAST>";
+function stanza(link: { name: string; ip: string; mac: string }): string {
 	return [
-		`${link.name}: ${flags}  mtu 1500`,
+		`${link.name}: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500`,
 		`        inet ${link.ip}  netmask 255.255.255.0  broadcast ${link.ip.replace(/\.\d+$/, ".255")}`,
 		`        ether ${link.mac}  txqueuelen 1000  (Ethernet)`,
 		"        RX packets 200  bytes 20000 (20.0 KB)",
 		"        TX packets 100  bytes 1000 (1.0 KB)",
 	].join("\n");
 }
-
-const NO_USB: RouterCellularScanDeps = {
-	sysfsRoot: "/",
-	udevDataRoot: "/run/udev/data",
-	listDir: async () => [],
-	readAttr: async () => undefined,
-	resolveLink: async () => undefined,
-	readLinkName: async () => undefined,
-};
 
 const LINE_TAIL =
 	"mtu 1500 qdisc noqueue state %S mode DORMANT group default \\    link/ether aa:bb:cc:00:00:01 brd ff:ff:ff:ff:ff:ff";
@@ -86,34 +80,16 @@ function linkLine(ifname: string, carrier: boolean): string {
 		: `3: ${ifname}: <NO-CARRIER,BROADCAST,MULTICAST,UP> ${LINE_TAIL.replace("%S", "DORMANT")}`;
 }
 
-/** A box whose kernel carrier state the test sets, with fake timers. */
+/**
+ * A box whose kernel carrier the test sets, with fake timers. The netif rows
+ * stay as the last poll left them (all RUNNING), which is the window this
+ * change is about: the poll has not seen the carrier loss yet.
+ */
 function bench() {
 	const carrier = new Map(ALL.map((link) => [link.name, true]));
 	let clock = 0;
 	let refreshes = 0;
 	const timers: Array<{ at: number; fn: () => void; live: boolean }> = [];
-	// The device refresh scans the USB tree before it publishes. None of these
-	// links hangs off USB here (the radios sit on SDIO and PCIe, the modem on
-	// PCIe), so the scan covers every name and a returning radio's identity
-	// settles in the same refresh, as on the box.
-	const publish = () =>
-		processIfconfigOutput(
-			ALL.map((link) => stanza(link, carrier.get(link.name) === true)).join(
-				"\n\n",
-			),
-			undefined,
-			undefined,
-			undefined,
-			// `ip addr` reports each row's ifindex, as the device refresh reads it.
-			new Map(ALL.map((link) => [link.name, ifindexOf.get(link.name) ?? 0])),
-		);
-	const sample = async () => {
-		await refreshUsbNetMarkers(
-			ALL.filter((link) => carrier.get(link.name)).map((link) => link.name),
-			NO_USB,
-		);
-		publish();
-	};
 	const noChild = (): WatcherHandle => {
 		const proc: ManagedProcess = {
 			stdout: new ReadableStream<Uint8Array>(),
@@ -128,14 +104,11 @@ function bench() {
 	const watch = new WifiCarrierWatch({
 		spawn: noChild,
 		isWifiStation: (ifname) => ifname.startsWith("wl"),
-		isPublished: (ifname) => getNetworkInterfaces()[ifname] !== undefined,
-		bondMembers: () =>
-			Object.entries(getNetworkInterfaces())
-				.filter(([name, int]) => isBondCandidate(name, int))
-				.map(([name]) => name),
+		isOperational: (ifname) => carrier.get(ifname) === true,
+		setLost: setWifiCarrierLost,
+		needsReadmit: (ifname) => getNetworkInterfaces()[ifname] === undefined,
 		refresh: () => {
 			refreshes++;
-			return sample();
 		},
 		now: () => clock,
 		setTimeout: (fn, ms) => {
@@ -147,11 +120,7 @@ function bench() {
 			if (entry) entry.live = false;
 		},
 	});
-	const settle = async () => {
-		for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
-	};
-	/** Move the fake clock, running each due timer and the refresh it starts. */
-	const advance = async (ms: number) => {
+	const advance = (ms: number) => {
 		const until = clock + ms;
 		for (;;) {
 			const due = timers
@@ -161,7 +130,6 @@ function bench() {
 			due.live = false;
 			clock = due.at;
 			due.fn();
-			await settle();
 		}
 		clock = until;
 	};
@@ -170,164 +138,153 @@ function bench() {
 		carrier.set(ifname, up);
 		watch.handleLine(linkLine(ifname, up));
 	};
+	/** What a live refresh would hand the sender for `receiver`. */
+	const published = async (receiver = RECEIVER): Promise<string[]> => {
+		let written: readonly BondEntry[] = [];
+		await prepareSrtlaIpAddresses(
+			receiver,
+			{
+				isLocal: (address) => address === LAN_RECEIVER,
+				localList: genSrtlaBondEntriesForLocalIpAddress,
+				bondedList: genSrtlaBondEntries,
+				writeList: async (entries) => {
+					written = entries;
+					return { ok: true, changed: true } as unknown as BindMapPublication;
+				},
+			},
+			"refresh",
+		);
+		return written.map((entry) => entry.iface).sort();
+	};
+	processIfconfigOutput(ALL.map(stanza).join("\n\n"));
+	watch.start();
+	for (const link of ALL) watch.handleLine(linkLine(link.name, true));
 	return {
 		watch,
-		settle,
 		advance,
 		setCarrier,
-		sample,
+		published,
 		refreshes: () => refreshes,
 	};
 }
 
-/** The kernel's ifindex per name; a test replaces a netdev by changing it. */
-const ifindexOf = new Map<string, number>();
-
 beforeEach(() => {
-	ifindexOf.clear();
-	for (const [i, link] of ALL.entries()) ifindexOf.set(link.name, 3 + i);
-	spyOn(netdevPresence, "inSysfs").mockImplementation((name) =>
-		ifindexOf.has(name),
-	);
-	spyOn(netdevPresence, "ifindex").mockImplementation((name) =>
-		ifindexOf.get(name),
-	);
 	resetNetifSnapshotForTest();
-	resetUsbNetMarkers();
 	const netif = getNetworkInterfaces();
 	for (const name of Object.keys(netif)) delete netif[name];
 	setNetifState({});
 	for (const link of ALL) setNetifDupIpSuppression(link.name, false);
 	resetBondOptOut();
+	resetWifiCarrierLostForTest();
 	setQueueUpdateGwHook(null);
 });
 
 afterEach(() => {
-	(netdevPresence.inSysfs as unknown as { mockRestore(): void }).mockRestore();
-	(netdevPresence.ifindex as unknown as { mockRestore(): void }).mockRestore();
+	stopWifiUpdateLoopForTest();
+	resetWifiCarrierLostForTest();
 });
 
-describe("Wi-Fi carrier loss and the bond", () => {
-	test("a radio whose carrier stays down leaves the bond after the hold", async () => {
+describe("Wi-Fi carrier loss and the published bond", () => {
+	test("a radio whose carrier stays down stops carrying after the hold", async () => {
 		const b = bench();
-		await b.sample();
-		b.watch.start();
-		for (const link of ALL) b.watch.handleLine(linkLine(link.name, true));
-		expect(genSrtlaIpList().sort()).toEqual(
-			[MODEM.ip, RADIO_A.ip, RADIO_B.ip].sort(),
-		);
-
+		expect(await b.published()).toEqual(["wlan0", "wlan1", "wwan0"]);
 		b.setCarrier(RADIO_A.name, false);
-		await b.advance(CARRIER_LOSS_HOLD_MS - 1);
-		// Before the hold nothing moved: the bond still holds the deaf radio.
-		expect(genSrtlaIpList()).toContain(RADIO_A.ip);
-		await b.advance(1);
-		expect(genSrtlaIpList().sort()).toEqual([MODEM.ip, RADIO_B.ip].sort());
-		// The other radio and the modem rode the same refresh untouched.
+		b.advance(CARRIER_LOSS_HOLD_MS - 1);
+		expect(await b.published()).toEqual(["wlan0", "wlan1", "wwan0"]);
+		b.advance(1);
+		expect(await b.published()).toEqual(["wlan1", "wwan0"]);
+		// The netif row, its toggle state and the modem are untouched.
+		expect(getNetworkInterfaces()[RADIO_A.name]?.enabled).toBe(true);
 		expect(getNetworkInterfaces()[MODEM.name]?.enabled).toBe(true);
-		expect(getNetworkInterfaces()[RADIO_B.name]).toBeDefined();
+		expect(b.refreshes()).toBe(0);
 		b.watch.stop();
 	});
 
-	test("the radio is readmitted when its carrier returns", async () => {
+	test("the radio carries again once its carrier is back and settled", async () => {
 		const b = bench();
-		await b.sample();
-		b.watch.start();
-		for (const link of ALL) b.watch.handleLine(linkLine(link.name, true));
 		b.setCarrier(RADIO_A.name, false);
-		await b.advance(CARRIER_LOSS_HOLD_MS);
-		expect(genSrtlaIpList()).not.toContain(RADIO_A.ip);
-
-		// Re-associated with the other AP 1.5 s later, address kept.
-		await b.advance(1_500);
+		b.advance(CARRIER_LOSS_HOLD_MS);
+		expect(await b.published()).toEqual(["wlan1", "wwan0"]);
+		b.advance(1_500);
 		b.setCarrier(RADIO_A.name, true);
-		await b.advance(READMIT_SETTLE_MS);
-		expect(genSrtlaIpList().sort()).toEqual(
-			[MODEM.ip, RADIO_A.ip, RADIO_B.ip].sort(),
-		);
-		expect(b.refreshes()).toBe(2);
+		b.advance(READMIT_SETTLE_MS - 1);
+		expect(await b.published()).toEqual(["wlan1", "wwan0"]);
+		b.advance(1);
+		expect(await b.published()).toEqual(["wlan0", "wlan1", "wwan0"]);
+		// Its row never left, so no netif refresh was needed.
+		expect(b.refreshes()).toBe(0);
 		b.watch.stop();
 	});
 
-	test("a radio the operator took out of the bond stays out on readmission", async () => {
+	test("a LAN receiver's subnet subset keeps its only link", async () => {
+		// The receiver shares wlan0's subnet; the modem and wlan1 do not.
 		const b = bench();
-		setBondOptOut(RADIO_A.name, true);
-		await b.sample();
-		b.watch.start();
-		for (const link of ALL) b.watch.handleLine(linkLine(link.name, true));
-		expect(genSrtlaIpList()).not.toContain(RADIO_A.ip);
+		expect(await b.published(LAN_RECEIVER)).toEqual(["wlan0"]);
 		b.setCarrier(RADIO_A.name, false);
-		await b.advance(CARRIER_LOSS_HOLD_MS);
-		await b.advance(1_000);
-		b.setCarrier(RADIO_A.name, true);
-		await b.advance(READMIT_SETTLE_MS);
-		expect(getNetworkInterfaces()[RADIO_A.name]).toBeDefined();
-		expect(genSrtlaIpList().sort()).toEqual([MODEM.ip, RADIO_B.ip].sort());
+		b.advance(CARRIER_LOSS_HOLD_MS);
+		expect(isWifiCarrierLost(RADIO_A.name)).toBe(true);
+		// The modem elsewhere is no survivor for this receiver: nothing is emptied.
+		expect(await b.published(LAN_RECEIVER)).toEqual(["wlan0"]);
 		b.watch.stop();
 	});
 
-	test("another netdev under the radio's name starts without the old toggle", async () => {
+	test("both radios losing one AP stay in a bond with nothing else", async () => {
+		setBondOptOut(MODEM.name, true);
 		const b = bench();
-		await b.sample();
-		setBondOptOut(RADIO_A.name, true);
-		b.watch.start();
-		for (const link of ALL) b.watch.handleLine(linkLine(link.name, true));
+		expect(await b.published()).toEqual(["wlan0", "wlan1"]);
 		b.setCarrier(RADIO_A.name, false);
-		await b.advance(CARRIER_LOSS_HOLD_MS);
-		// The radio was unplugged and another one took its name meanwhile.
-		ifindexOf.set(RADIO_A.name, 40);
-		await b.advance(1_000);
-		b.setCarrier(RADIO_A.name, true);
-		await b.advance(READMIT_SETTLE_MS);
-		await b.sample();
-		expect(genSrtlaIpList()).toContain(RADIO_A.ip);
+		b.setCarrier(RADIO_B.name, false);
+		b.advance(CARRIER_LOSS_HOLD_MS);
+		expect(await b.published()).toEqual(["wlan0", "wlan1"]);
+		// wlan1 finds the other AP; wlan0 stays down and stops carrying then.
+		b.setCarrier(RADIO_B.name, true);
+		b.advance(READMIT_SETTLE_MS);
+		expect(await b.published()).toEqual(["wlan1"]);
+		b.watch.stop();
+	});
+
+	test("a radio toggled out is no survivor for a radio without carrier", async () => {
+		setBondOptOut(MODEM.name, true);
+		setBondOptOut(RADIO_B.name, true);
+		const b = bench();
+		expect(await b.published()).toEqual(["wlan0"]);
+		b.setCarrier(RADIO_A.name, false);
+		b.advance(CARRIER_LOSS_HOLD_MS);
+		b.setCarrier(RADIO_B.name, false);
+		b.advance(1_000);
+		b.setCarrier(RADIO_B.name, true);
+		b.advance(READMIT_SETTLE_MS);
+		// wlan1 is back but out of the bond: wlan0 stays, the list never empties.
+		expect(await b.published()).toEqual(["wlan0"]);
 		b.watch.stop();
 	});
 
 	test("a roam-length gap leaves the bond as it was", async () => {
 		const b = bench();
-		await b.sample();
-		b.watch.start();
-		for (const link of ALL) b.watch.handleLine(linkLine(link.name, true));
 		b.setCarrier(RADIO_B.name, false);
-		await b.advance(CARRIER_LOSS_HOLD_MS / 2);
+		b.advance(CARRIER_LOSS_HOLD_MS - 100);
 		b.setCarrier(RADIO_B.name, true);
-		await b.advance(10_000);
-		expect(b.refreshes()).toBe(0);
-		expect(genSrtlaIpList()).toContain(RADIO_B.ip);
+		b.advance(10_000);
+		expect(isWifiCarrierLost(RADIO_B.name)).toBe(false);
+		expect(await b.published()).toEqual(["wlan0", "wlan1", "wwan0"]);
 		b.watch.stop();
 	});
 
-	test("both radios on a lost AP stay in a bond with nothing else", async () => {
+	test("a modem losing its carrier is never marked", async () => {
 		const b = bench();
-		setBondOptOut(MODEM.name, true);
-		await b.sample();
-		b.watch.start();
-		for (const link of ALL) b.watch.handleLine(linkLine(link.name, true));
-		expect(genSrtlaIpList().sort()).toEqual([RADIO_A.ip, RADIO_B.ip].sort());
-		b.setCarrier(RADIO_A.name, false);
-		b.setCarrier(RADIO_B.name, false);
-		await b.advance(1_200);
-		// An empty bond would drop every sender connection: nothing moved.
-		expect(b.refreshes()).toBe(0);
-		expect(genSrtlaIpList().sort()).toEqual([RADIO_A.ip, RADIO_B.ip].sort());
-		// RADIO_B finds the other AP; RADIO_A stays down and is withdrawn then.
-		b.setCarrier(RADIO_B.name, true);
-		await b.advance(READMIT_SETTLE_MS);
-		expect(genSrtlaIpList()).toEqual([RADIO_B.ip]);
-		b.watch.stop();
-	});
-
-	test("a modem losing its carrier is left to the modem paths", async () => {
-		const b = bench();
-		await b.sample();
-		b.watch.start();
-		for (const link of ALL) b.watch.handleLine(linkLine(link.name, true));
 		b.setCarrier(MODEM.name, false);
-		await b.advance(10_000);
-		expect(b.refreshes()).toBe(0);
-		// Still published until the poll or a modem event says otherwise.
-		expect(genSrtlaIpList()).toContain(MODEM.ip);
+		b.advance(10_000);
+		expect(isWifiCarrierLost(MODEM.name)).toBe(false);
+		expect(await b.published()).toEqual(["wlan0", "wlan1", "wwan0"]);
 		b.watch.stop();
+	});
+
+	test("stopping the watch clears its marks", async () => {
+		const b = bench();
+		b.setCarrier(RADIO_A.name, false);
+		b.advance(CARRIER_LOSS_HOLD_MS);
+		expect(await b.published()).toEqual(["wlan1", "wwan0"]);
+		b.watch.stop();
+		expect(await b.published()).toEqual(["wlan0", "wlan1", "wwan0"]);
 	});
 });
