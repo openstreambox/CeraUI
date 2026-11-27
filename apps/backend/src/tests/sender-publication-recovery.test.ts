@@ -635,6 +635,38 @@ describe("bond row ages for the carrier rule", () => {
 		).toBeUndefined();
 		expect(bondRowHeldSince({ iface: "eth0", ip: "192.0.2.2" })).toBe(2_000);
 	});
+
+	test("the writer's own republication restarts every row's age", async () => {
+		resetBondRowAgesForTest();
+		let now = 0;
+		setBondRowClockForTest(() => now);
+		const fs = memoryFs();
+		const rows = [...link("wlan0", "192.0.2.1"), ...link("eth0", "192.0.2.3")];
+		await publishSrtlaBond(rows, fs.deps, notStreaming);
+		let failures = 1;
+		const deps = {
+			...fs.deps,
+			retryDelaysMs: [10],
+			writeFile: async (path: string, bytes: string) => {
+				if (path.startsWith(IPS) && failures > 0) {
+					failures -= 1;
+					throw new Error("EIO");
+				}
+				await fs.deps.writeFile(path, bytes);
+			},
+		};
+		now = 1_000;
+		// The same rows, but the write fails: what the sender read is in doubt.
+		await publishSrtlaBond(
+			[...link("wlan0", "192.0.2.1"), ...link("eth0", "192.0.2.4")],
+			deps,
+			notStreaming,
+		);
+		now = 3_000;
+		await eventually(() => !getBindMapPublicationHealth().stale);
+		// The repair restarts every row, the unchanged wlan0 included.
+		expect(bondRowHeldSince({ iface: "wlan0", ip: "192.0.2.1" })).toBe(3_000);
+	});
 });
 
 describe("reload delivery", () => {

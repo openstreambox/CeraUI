@@ -31,9 +31,17 @@ export function bondRowClock(): number {
 	return clock();
 }
 
-/** An IP list with these rows reached the sender now. */
-export function noteBondRowsWritten(entries: readonly BondEntry[]): void {
+/**
+ * An IP list with these rows reached the sender now. `restart` starts every
+ * row's age over: the writer's own republication after a stuck, failed or
+ * overtaken write, when what the sender last read is in doubt.
+ */
+export function noteBondRowsWritten(
+	entries: readonly BondEntry[],
+	options: { readonly restart?: boolean } = {},
+): void {
 	const at = clock();
+	if (options.restart) heldSince.clear();
 	const keys = new Set(entries.map(bondRowKey));
 	for (const key of [...heldSince.keys()])
 		if (!keys.has(key)) heldSince.delete(key);

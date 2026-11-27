@@ -376,7 +376,7 @@ export async function publishSrtlaBond(
 			// write the sender still reads the previous list.
 			if (wroteIpList(publication)) {
 				(options.registerBond ?? registerSrtlaBond)(published);
-				noteBondRowsWritten(published);
+				noteBondRowsWritten(published, { restart: origin.republished });
 			}
 			lastBond = { entries: [...published], publication };
 			if (wroteIpList(publication) && publication.changed)
