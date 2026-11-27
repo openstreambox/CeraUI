@@ -6,10 +6,13 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { expect, it, vi } from "vitest";
 import AutomationSection from "./AutomationSection.svelte";
 
-function renderSection(packagesManual: boolean | undefined) {
+function renderSection(
+	packagesManual: boolean | undefined,
+	packagesAuto = true,
+) {
 	const onSave = vi.fn(async () => true);
 	render(AutomationSection, {
-		settings: updateSettingsSchema.parse({ packagesAuto: true }),
+		settings: updateSettingsSchema.parse({ packagesAuto }),
 		system: false,
 		saving: false,
 		onSave,
@@ -19,11 +22,14 @@ function renderSection(packagesManual: boolean | undefined) {
 }
 
 it.each([undefined, false])(
-	"keeps the automatic package switch live when manual installs are %s",
+	"keeps the package switch's wording when manual installs are %s",
 	async (packagesManual) => {
 		// Given a device that installs packages automatically when asked to.
 		const { onSave, toggle } = renderSection(packagesManual);
-		// Then the switch shows the saved setting, enabled, with no hint.
+		// Then the switch keeps its label, shows the saved setting and has no hint.
+		expect(toggle.getAttribute("aria-label")).toBe(
+			m["settings.updates.automation.packages"](),
+		);
 		expect(toggle.hasAttribute("disabled")).toBe(false);
 		expect(toggle.getAttribute("aria-checked")).toBe("true");
 		expect(toggle.hasAttribute("aria-describedby")).toBe(false);
@@ -34,25 +40,31 @@ it.each([undefined, false])(
 	},
 );
 
-it("shows the automatic package switch off and disabled, with a hint, when installs are manual-only", async () => {
-	// Given a device that never installs packages on its own, whose stored
-	// setting still says automatic.
-	const { onSave, toggle } = renderSection(true);
-	// Then the label stays, the switch is disabled and off, and the hint says why.
-	expect(toggle.getAttribute("aria-label")).toBe(
-		m["settings.updates.automation.packages"](),
-	);
-	expect(
-		screen.getByText(m["settings.updates.automation.packages"]()),
-	).toBeTruthy();
-	expect(toggle.hasAttribute("disabled")).toBe(true);
-	expect(toggle.getAttribute("aria-checked")).toBe("false");
-	const hint = screen.getByTestId("update-auto-packages-manual");
-	expect(hint.textContent?.trim()).toBe(
-		m["settings.updates.automation.packagesManualHint"](),
-	);
-	expect(toggle.getAttribute("aria-describedby")).toBe(hint.id);
-	// When the operator clicks it anyway, then nothing is saved.
-	await fireEvent.click(toggle);
-	expect(onSave).not.toHaveBeenCalled();
-});
+it.each([true, false])(
+	"names the switch for the scheduled check, with a hint, when installs are manual-only (saved %s)",
+	async (packagesAuto) => {
+		// Given a device that installs packages only by hand, where the same
+		// setting still drives the scheduled package check.
+		const { onSave, toggle } = renderSection(true, packagesAuto);
+		const label = m["settings.updates.automation.packagesCheck"]();
+		// Then the switch is named for what it does there, shows the saved
+		// value, stays editable and is described by the hint.
+		expect(toggle.getAttribute("aria-label")).toBe(label);
+		expect(screen.getByText(label)).toBeTruthy();
+		expect(
+			screen.queryByText(m["settings.updates.automation.packages"]()),
+		).toBeNull();
+		expect(toggle.hasAttribute("disabled")).toBe(false);
+		expect(toggle.getAttribute("aria-checked")).toBe(String(packagesAuto));
+		const hint = screen.getByTestId("update-auto-packages-manual");
+		expect(hint.textContent?.trim()).toBe(
+			m["settings.updates.automation.packagesManualHint"](),
+		);
+		expect(toggle.getAttribute("aria-describedby")).toBe(hint.id);
+		// When the operator flips it, then exactly that setting is saved.
+		await fireEvent.click(toggle);
+		expect(onSave).toHaveBeenCalledExactlyOnceWith({
+			packagesAuto: !packagesAuto,
+		});
+	},
+);

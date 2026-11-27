@@ -198,6 +198,54 @@ test.describe('device update surfaces (Todo 41)', { tag: '@functional' }, () => 
 		).toHaveAttribute('aria-checked', 'false');
 	});
 
+	test('a manual-install image names the package switch for its check, and it saves as usual', async ({
+		page,
+		backendRpc,
+	}) => {
+		const wire = await installUpdateWire(page, {
+			fakes: {
+				'system.getUpdateCapabilities': { ...CAPABLE_CAPABILITIES, packageInstallsManual: true },
+			},
+		});
+		await boot(page);
+
+		const before = await backendRpc.call<UpdateSettings>(['system', 'getUpdateSettings']);
+		expect(before.packagesAuto).toBe(true);
+
+		const dialog = await openUpdatesDialog(page);
+		await expect(dialog.getByRole('switch', { name: 'Install package updates automatically' })).toHaveCount(0);
+		const toggle = dialog.getByRole('switch', { name: 'Check for package updates automatically' });
+		await expect(toggle).toBeEnabled();
+		await expect(toggle).toHaveAttribute('aria-checked', 'true');
+		await expect(toggle).toHaveAccessibleDescription('Package updates on this device are installed by hand.');
+
+		await toggle.click();
+		await expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+		// Exactly the one setting moved, through the one settings write.
+		const after = await backendRpc.call<UpdateSettings>(['system', 'getUpdateSettings']);
+		expect(after).toEqual({ ...before, packagesAuto: false });
+		expect(wire.calls('system.setUpdateSettings')).toHaveLength(1);
+		for (const path of ['system.installUpdatesNow', 'system.startUpdate', 'system.checkUpdatesNow']) {
+			expect(wire.calls(path)).toHaveLength(0);
+		}
+	});
+
+	test('a default image keeps the package switch label with no hint', async ({ page }) => {
+		await installUpdateWire(page, {
+			fakes: {
+				'system.getUpdateCapabilities': { ...CAPABLE_CAPABILITIES, packageInstallsManual: false },
+			},
+		});
+		await boot(page);
+		const dialog = await openUpdatesDialog(page);
+		const toggle = dialog.getByRole('switch', { name: 'Install package updates automatically' });
+		await expect(toggle).toBeEnabled();
+		await expect(toggle).toHaveAttribute('aria-checked', 'true');
+		await expect(toggle).toHaveAccessibleDescription('');
+		await expect(dialog.getByTestId('update-auto-packages-manual')).toHaveCount(0);
+	});
+
 	test('a schedule window is validated before it can be saved, then persisted', async ({
 		page,
 		backendRpc,

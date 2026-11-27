@@ -70,6 +70,12 @@ export {
 export interface UpdateSurface {
 	readonly capabilities: UpdateCapabilities | undefined;
 	readonly packagesReady: boolean;
+	/**
+	 * The current link's capabilities reply says package updates are installed
+	 * only by hand. False while that reply is pending, failed or from an
+	 * earlier link, and when a successful reply omits the field.
+	 */
+	readonly packagesManual: boolean;
 	readonly kernelReady: boolean;
 	readonly settings: UpdateSettings | undefined;
 	readonly details: UpdateDetails | undefined;
@@ -225,6 +231,17 @@ export function createUpdateSurface(): UpdateSurface {
 		);
 	}
 
+	// Manual-only package installs are claimed only from a successful reply
+	// asked of the CURRENT link. A pending, failed or previous link's read is
+	// not knowledge, so the switch keeps its default wording until one lands.
+	function packagesManual(): boolean {
+		return (
+			capabilities !== undefined &&
+			capsLink === getLinkEpoch() &&
+			capabilities.packageInstallsManual === true
+		);
+	}
+
 	function kernelReady(): boolean {
 		return (
 			capsLink === getLinkEpoch() && updateCapabilityView(capabilities).kernel
@@ -240,6 +257,9 @@ export function createUpdateSurface(): UpdateSurface {
 		},
 		get packagesReady() {
 			return packagesReady();
+		},
+		get packagesManual() {
+			return packagesManual();
 		},
 		get settings() {
 			return owner.settings;

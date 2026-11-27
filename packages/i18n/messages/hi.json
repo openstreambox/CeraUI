@@ -3080,6 +3080,7 @@
 	"settings.updates.slots.unavailable": "स्लॉट की स्थिति पढ़ी नहीं जा सकी।",
 	"settings.updates.automation.title": "स्वचालित अपडेट",
 	"settings.updates.automation.packages": "पैकेज अपडेट अपने आप इंस्टॉल करें",
+	"settings.updates.automation.packagesCheck": "पैकेज अपडेट अपने आप जांचें",
 	"settings.updates.automation.packagesManualHint": "इस डिवाइस पर पैकेज अपडेट मैन्युअल रूप से इंस्टॉल किए जाते हैं।",
 	"settings.updates.automation.system": "सिस्टम इमेज अपने आप इंस्टॉल करें",
 	"settings.updates.automation.systemHint": "डाउनलोड की गई इमेज अगले रीस्टार्ट पर लागू होती है। डिवाइस कभी अपने आप रीस्टार्ट नहीं होता।",

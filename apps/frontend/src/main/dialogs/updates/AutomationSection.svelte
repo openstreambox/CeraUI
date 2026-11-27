@@ -14,9 +14,11 @@
   packages must not throw away a window the operator is halfway through typing.
 
   Package automation always renders. Where the device installs packages only
-  when asked (`packagesManual`), its switch stays visible but disabled and off,
-  with a hint, because turning it on would do nothing. The system image toggle
-  and the channel exist only where the image has an OS agent.
+  by hand (`packagesManual`), `packagesAuto` still drives the scheduled package
+  check and its notice, so the switch stays and saves as everywhere else; it is
+  only named for what it does there, with a hint that installs are manual. The
+  system image toggle and the channel exist only where the image has an OS
+  agent.
 
   Both choices are bits-ui radio groups: one tab stop, arrow keys move and
   select (C-m3). While a write is in flight they turn READ-ONLY rather than
@@ -49,13 +51,19 @@ interface Props {
 	settings: UpdateSettings;
 	/** The image has an OS agent: show the system toggle and the channel. */
 	system: boolean;
-	/** The device installs package updates only when asked: the switch is off and disabled. */
+	/**
+	 * The device installs package updates only by hand: the package switch is
+	 * named for the scheduled check it still controls, with a hint.
+	 */
 	packagesManual?: boolean;
 	saving: boolean;
 	onSave: (patch: Partial<UpdateSettings>) => Promise<boolean>;
 }
 
 let { settings, system, packagesManual = false, saving, onSave }: Props = $props();
+
+const packagesLabel = () =>
+	packagesManual ? m['settings.updates.automation.packagesCheck']() : m['settings.updates.automation.packages']();
 
 const appliedUrl = $derived(settings.channelUrl ?? 'https://images.ceralive.tv');
 let channelUrl = $derived.by(() => {
@@ -126,7 +134,7 @@ const rung =
 	<div class="divide-border divide-y overflow-hidden rounded-lg border">
 		<div class="flex items-center justify-between gap-4 px-4 py-3">
 			<div class="min-w-0">
-				<p class="text-sm font-medium">{m['settings.updates.automation.packages']()}</p>
+				<p class="text-sm font-medium">{packagesLabel()}</p>
 				{#if packagesManual}
 					<p class="text-muted-foreground mt-0.5 text-xs" data-testid="update-auto-packages-manual" id="update-auto-packages-manual">
 						{m['settings.updates.automation.packagesManualHint']()}
@@ -135,15 +143,10 @@ const rung =
 			</div>
 			<Switch
 				aria-describedby={packagesManual ? 'update-auto-packages-manual' : undefined}
-				aria-label={m['settings.updates.automation.packages']()}
-				bind:checked={
-					() => settings.packagesAuto && !packagesManual,
-					(next) => {
-						if (!packagesManual) void onSave({ packagesAuto: next });
-					}
-				}
+				aria-label={packagesLabel()}
+				bind:checked={() => settings.packagesAuto, (next) => void onSave({ packagesAuto: next })}
 				data-testid="update-auto-packages"
-				disabled={saving || packagesManual}
+				disabled={saving}
 			/>
 		</div>
 		{#if system}

@@ -8,6 +8,10 @@ import {
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { rpc } from "../../lib/rpc/client";
+import {
+	noteLinkState,
+	noteSessionRestored,
+} from "../../lib/rpc/session-epoch.svelte";
 import { reactiveUpdateState } from "../../tests/fixtures/reactive-subscriptions.svelte";
 import UpdatesDialog from "./UpdatesDialog.svelte";
 
@@ -25,6 +29,9 @@ vi.mock("$lib/rpc/client", () => ({
 			getUpdateCapabilities: vi.fn(async () => capabilities),
 			getUpdateSettings: vi.fn(async () =>
 				updateSettingsSchema.parse({ packagesAuto }),
+			),
+			setUpdateSettings: vi.fn(async (next: unknown) =>
+				updateSettingsSchema.parse(next),
 			),
 			getUpdateDetails: vi.fn(async () => ({
 				slots: null,
@@ -78,6 +85,26 @@ afterEach(() => {
 	reactiveUpdateState.reset();
 	vi.clearAllMocks();
 });
+
+/** The package switch's wording and hint for one mode; it stays editable in both. */
+function expectPackageSwitch(mode: "default" | "manual"): void {
+	const label =
+		mode === "manual"
+			? m["settings.updates.automation.packagesCheck"]()
+			: m["settings.updates.automation.packages"]();
+	const toggle = screen.getByRole("switch", { name: label });
+	expect(toggle.hasAttribute("disabled")).toBe(false);
+	const hint = screen.queryByTestId("update-auto-packages-manual");
+	if (mode === "manual") {
+		expect(hint?.textContent?.trim()).toBe(
+			m["settings.updates.automation.packagesManualHint"](),
+		);
+		expect(toggle.getAttribute("aria-describedby")).toBe(hint?.id);
+	} else {
+		expect(hint).toBeNull();
+		expect(toggle.hasAttribute("aria-describedby")).toBe(false);
+	}
+}
 
 async function clickPackageUpdate(): Promise<void> {
 	await screen.findByTestId("update-install");
@@ -222,7 +249,9 @@ it("disables package installation until a delayed declaration lands", async () =
 });
 
 it("keeps package installation disabled after a failed declaration until Retry succeeds", async () => {
-	// Given a failed capability read despite a visible package offer.
+	// Given a failed capability read despite a visible package offer, on an
+	// image whose successful reply would say package installs are manual.
+	capabilities = { ...capabilities, packageInstallsManual: true };
 	vi.mocked(rpc.system.getUpdateCapabilities).mockRejectedValueOnce(
 		new Error("read failed"),
 	);
@@ -231,10 +260,14 @@ it("keeps package installation disabled after a failed declaration until Retry s
 	expect(screen.getByTestId("update-install").hasAttribute("disabled")).toBe(
 		true,
 	);
+	// The failed read claims neither mode: the default wording, no hint.
+	expectPackageSwitch("default");
 	// When the operator retries the existing details read and confirms the offer.
 	await fireEvent.click(
 		screen.getByRole("button", { name: m["settings.updates.retryDetails"]() }),
 	);
+	// Then the successful reply's mode shows, and the switch still saves.
+	await waitFor(() => expectPackageSwitch("manual"));
 	await clickPackageUpdate();
 	// Then only the now-confirmed capable route dispatches.
 	expect(rpc.system.startUpdate).not.toHaveBeenCalled();
@@ -267,28 +300,72 @@ it.each(["busy", "not_available", "stream_active"])(
 );
 
 it.each([
-	{ packageInstallsManual: undefined, disabled: false },
-	{ packageInstallsManual: false, disabled: false },
-	{ packageInstallsManual: true, disabled: true },
-])(
-	"automatic package switch follows packageInstallsManual=$packageInstallsManual",
-	async ({ packageInstallsManual, disabled }) => {
-		// Given the device's answer about manual-only package installs.
+	{ packageInstallsManual: undefined, mode: "default" },
+	{ packageInstallsManual: false, mode: "default" },
+	{ packageInstallsManual: true, mode: "manual" },
+] as const)(
+	"package switch wording follows packageInstallsManual=$packageInstallsManual",
+	async ({ packageInstallsManual, mode }) => {
+		// Given a successful reply with the field absent, false or true.
 		capabilities = {
 			mode: "capable",
 			features: ["apt-all-packages"],
 			...(packageInstallsManual === undefined ? {} : { packageInstallsManual }),
 		};
 		render(UpdatesDialog, { open: true });
-		const toggle = await screen.findByTestId("update-auto-packages");
+		await screen.findByTestId("update-auto-packages");
+		// Then only true renames the switch and adds the hint; it saves either way.
+		await waitFor(() => expectPackageSwitch(mode));
+		const toggle = screen.getByTestId("update-auto-packages");
+		expect(toggle.getAttribute("aria-checked")).toBe("true");
+		await fireEvent.click(toggle);
+		expect(rpc.system.setUpdateSettings).toHaveBeenCalledOnce();
+		expect(
+			vi.mocked(rpc.system.setUpdateSettings).mock.calls[0]?.[0],
+		).toMatchObject({ packagesAuto: false });
+	},
+);
+
+it("names the package switch only from the current link's successful reply", async () => {
+	noteLinkState("connected");
+	try {
+		// Given an image that answers manual, while that reply is still pending.
+		const first = Promise.withResolvers<UpdateCapabilities>();
+		vi.mocked(rpc.system.getUpdateCapabilities).mockReturnValueOnce(
+			first.promise,
+		);
+		render(UpdatesDialog, { open: true });
+		// Then a pending first read claims no mode: the section waits for it.
+		await waitFor(() =>
+			expect(rpc.system.getUpdateCapabilities).toHaveBeenCalledOnce(),
+		);
+		expect(screen.queryByTestId("update-auto-packages")).toBeNull();
+		first.resolve({ ...capabilities, packageInstallsManual: true });
+		await screen.findByTestId("update-auto-packages");
+		await waitFor(() => expectPackageSwitch("manual"));
+
+		// When the link drops and the session is restored on a replaced image,
+		// whose reply has not landed yet.
+		const second = Promise.withResolvers<UpdateCapabilities>();
+		vi.mocked(rpc.system.getUpdateCapabilities).mockReturnValueOnce(
+			second.promise,
+		);
+		noteLinkState("disconnected");
+		noteLinkState("connected");
+		noteSessionRestored();
+		// Then the previous link's answer is dropped at once, while the
+		// switch itself stays: the setting it saves is the same on every image.
+		await waitFor(() => expectPackageSwitch("default"));
+		await waitFor(() =>
+			expect(rpc.system.getUpdateCapabilities).toHaveBeenCalledTimes(2),
+		);
+		// When the new image answers without the field, it stays the default.
+		second.resolve({ mode: "capable", features: ["apt-all-packages"] });
 		await waitFor(() =>
 			expect(screen.queryByTestId("update-details-loading")).toBeNull(),
 		);
-		// Then the switch is disabled with the hint only where installs are manual-only.
-		expect(toggle.hasAttribute("disabled")).toBe(disabled);
-		expect(toggle.getAttribute("aria-checked")).toBe(String(!disabled));
-		expect(screen.queryByTestId("update-auto-packages-manual") !== null).toBe(
-			disabled,
-		);
-	},
-);
+		expectPackageSwitch("default");
+	} finally {
+		noteLinkState("disconnected");
+	}
+});
