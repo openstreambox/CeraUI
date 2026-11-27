@@ -1841,6 +1841,7 @@
 	"network.view.configure": "Configure",
 	"network.view.connect": "Connect",
 	"network.view.connected": "Connected",
+	"network.view.noStreamData": "No stream data on this link",
 	"network.view.disableBond": "Disable Bond",
 	"network.view.disconnected": "Disconnected",
 	"network.view.enableBond": "Enable Bond",

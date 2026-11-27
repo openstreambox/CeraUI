@@ -1851,6 +1851,7 @@
 	"network.view.configure": "Configurar",
 	"network.view.connect": "Conectar",
 	"network.view.connected": "Conectado",
+	"network.view.noStreamData": "Nenhum dado da transmissão neste link",
 	"network.view.disableBond": "Remover da agregação",
 	"network.view.disconnected": "Desconectado",
 	"network.view.enableBond": "Incluir na agregação",
