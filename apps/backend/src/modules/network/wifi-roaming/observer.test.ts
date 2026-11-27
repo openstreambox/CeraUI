@@ -491,6 +491,24 @@ describe("which access point each radio is on", () => {
 		expect(o.status()?.sharedAccessPoints).toEqual([]);
 	});
 
+	test("an unreadable link is no split: sharing stays as last known", () => {
+		const o = new RoamingObserver();
+		o.round(two(AP1));
+		const unread = two(AP1);
+		const radios = [
+			unread.radios[0] as RadioView,
+			{ ...(unread.radios[1] as RadioView), link: undefined },
+		];
+		const events = o.round({ ...unread, radios, at: 2_000 });
+		expect(events.filter((e) => e.event === "ap-split")).toEqual([]);
+		// Once read again on the same access point, no new shared event either.
+		expect(
+			o
+				.round({ ...two(AP1), at: 3_000 })
+				.filter((e) => e.event === "ap-shared"),
+		).toEqual([]);
+	});
+
 	test("the seen-bssids count and what it means for scanning, journalled when it changes", () => {
 		const o = new RoamingObserver();
 		const first = o.round(two(AP2, 1));

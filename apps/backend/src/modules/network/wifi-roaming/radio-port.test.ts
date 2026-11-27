@@ -141,7 +141,7 @@ describe("radios as the observer reads them", () => {
 		expect(iw.calls).toEqual([
 			"iw dev",
 			"iw dev wlan1 link",
-			`nmcli -g 802-11-wireless.seen-bssids connection show ${CONN}`,
+			`nmcli -g 802-11-wireless.seen-bssids connection show uuid ${CONN}`,
 		]);
 		expect(iw.loud).toEqual([]);
 	});
@@ -156,7 +156,7 @@ describe("radios as the observer reads them", () => {
 				} as Partial<WifiInterface>,
 			}),
 		]);
-		const SEEN = `nmcli -g 802-11-wireless.seen-bssids connection show ${CONN}`;
+		const SEEN = `nmcli -g 802-11-wireless.seen-bssids connection show uuid ${CONN}`;
 		const iw = fakeIw({
 			[SEEN]: "AA\\:00\\:00\\:00\\:00\\:01,AA\\:00\\:00\\:00\\:00\\:02\n",
 		});
@@ -171,6 +171,30 @@ describe("radios as the observer reads them", () => {
 		expect(iw.loud).toEqual([]);
 	});
 
+	test("a count read while the radio changed profiles is not reported for the new one", async () => {
+		const OTHER = "22222222-2222-4222-8222-222222222222";
+		const rows = await seed.publish([
+			station({
+				row: {
+					conn: CONN,
+					activeConn: CONN,
+					activeMode: "infrastructure",
+				} as Partial<WifiInterface>,
+			}),
+		]);
+		const row = Object.values(rows)[0] as WifiInterface;
+		const iw = fakeIw();
+		const read = await port(iw, new Set(), {
+			run: async (bin, args, opts) => {
+				const out = await iw.run(bin, args, opts);
+				// NetworkManager activates another profile during the read.
+				if (bin === "nmcli") row.activeConn = OTHER;
+				return out;
+			},
+		}).read();
+		expect(read.radios[0]?.seenBssids).toBeNull();
+	});
+
 	test("no active station profile, an unreadable property, or an empty one", async () => {
 		await seed.publish([station({ row: {} })]);
 		const iw = fakeIw();
@@ -178,7 +202,7 @@ describe("radios as the observer reads them", () => {
 		expect(iw.calls.some((c) => c.startsWith("nmcli"))).toBe(false);
 		await seed.publish([station()]);
 		const failing = fakeIw({
-			[`nmcli -g 802-11-wireless.seen-bssids connection show ${CONN}`]:
+			[`nmcli -g 802-11-wireless.seen-bssids connection show uuid ${CONN}`]:
 				new Error("nmcli failed"),
 		});
 		expect((await port(failing).read()).radios[0]?.seenBssids).toBeNull();

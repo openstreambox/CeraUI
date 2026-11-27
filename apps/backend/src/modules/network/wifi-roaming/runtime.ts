@@ -128,7 +128,7 @@ export function fileIo(
 	// Existing files keep their mode on rename and append: set it once.
 	const ensureDir = async () => {
 		await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-		if (prepared) return;
+		if (prepared || sealed) return;
 		await fs.chmod(dir, 0o700);
 		await fs.chmod(journal, 0o600).catch(() => {
 			// No journal yet: it is created 0600.
@@ -192,6 +192,7 @@ export type LossPort = Readonly<{
 	watch(radios: readonly WatchedRadio[]): void;
 	tick(): Promise<void>;
 	drain(): LossEvent[];
+	dropped(): number;
 	status(id: string): LossStatus | null;
 }>;
 
@@ -217,8 +218,9 @@ function statusDocument(
 	startedAt: number,
 	status: ObserverStatus | null,
 	journalDropped: number,
+	lossDropped: number,
 ): string {
-	return `${JSON.stringify({ level: "observe", state, startedAt, journalDropped, ...(status ?? {}) }, null, 2)}\n`;
+	return `${JSON.stringify({ level: "observe", state, startedAt, journalDropped, lossDropped, ...(status ?? {}) }, null, 2)}\n`;
 }
 
 export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
@@ -249,7 +251,13 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 	};
 
 	const document = (state: "observing" | "stopped") =>
-		statusDocument(state, startedAt, current(), journalDropped);
+		statusDocument(
+			state,
+			startedAt,
+			current(),
+			journalDropped,
+			deps.loss.dropped(),
+		);
 
 	const writeStatus = async (state: "observing" | "stopped") => {
 		if (sealed) return;
@@ -260,6 +268,7 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 			startedAt,
 			current() ? { ...(current() as ObserverStatus), at: 0 } : null,
 			journalDropped,
+			deps.loss.dropped(),
 		);
 		if (
 			state === "observing" &&
@@ -305,6 +314,7 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 					id: r.id,
 					permanentMac: r.permanentMac,
 					ifname: r.ifname,
+					bssid: r.link ? r.link.bssid : null,
 				})),
 		);
 		const events = observer.round({
@@ -359,6 +369,9 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 					(async () => {
 						await inFlight;
 						deps.sender.close();
+						// Losses that ended since the last round still reach the journal.
+						for (const event of deps.loss.drain())
+							journal(JSON.stringify(event));
 						await writeStatus("stopped");
 						await journalTail;
 					})(),

@@ -153,7 +153,7 @@ const ALLOWED_SYMBOLS: Record<string, string[]> = {
 		"OwnedSender",
 		"ownedSenderLifetime",
 	],
-	"../../streaming/srtla.ts": ["getLastPublishedBond"],
+	"../../streaming/srtla.ts": ["getLastWrittenBond"],
 	"../../wifi/wifi-adapter-admission.ts": [
 		"WifiAdapterAdmission",
 		"admitWifiAdapter",
@@ -429,7 +429,7 @@ describe("the one NetworkManager read", () => {
 		expect(hits).toEqual(["radio-port.ts"]);
 		const text = code(read("radio-port.ts")).replace(/\s+/g, " ");
 		expect(text).toContain(
-			'deps.run( "nmcli", [ "-g", "802-11-wireless.seen-bssids", "connection", "show", argMatch(UUID_RE, uuid), ], { timeout: READ_TIMEOUT_MS, quiet: true }, )',
+			'deps.run( "nmcli", [ "-g", "802-11-wireless.seen-bssids", "connection", "show", "uuid", argMatch(UUID_RE, uuid), ], { timeout: READ_TIMEOUT_MS, quiet: true }, )',
 		);
 	});
 });

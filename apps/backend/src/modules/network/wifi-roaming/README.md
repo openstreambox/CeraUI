@@ -87,19 +87,30 @@ when done.
 - **Which access point each radio is on, and whether they share one.** Two
   radios on one access point both go when it goes.
 - **`seen-bssids`**: how many access points the active profile has connected
-  to, read with `nmcli -g 802-11-wireless.seen-bssids connection show <uuid>`
-  at most once a minute per profile (the count is kept, not the access
-  points). Under two, NetworkManager gives the radio its long background-scan
-  interval above -70 dBm (once a day), so it will not look for another access
-  point by itself: `rareBackgroundScan`.
+  to, read with `nmcli -g 802-11-wireless.seen-bssids connection show uuid
+  <uuid>` at most once a minute per profile (the count is kept, not the access
+  points), and reported only if the same profile is still active after the
+  read. Under two, NetworkManager gives a profile without a fixed BSSID and
+  without 802.1X its long background-scan interval above -70 dBm (once a
+  day): `rareBackgroundScan`. It describes the profile as NetworkManager will
+  configure it at its next activation; a running association keeps the
+  interval it started with, and a profile with a fixed BSSID or 802.1X follows
+  other rules.
 - **The dead-link window** (`loss-watch.ts`): per access point loss, the time
   from the radio's kernel carrier going down (cfg80211 drops it when the
   station disconnects) to the bond CeraUI publishes for the sender no longer
-  having the interface. Read every 100 ms from sysfs and in-process; the
-  sender applies the new bond on its next reload, which this does not include.
-  Outcomes: `left-bond` (the window), `recovered` (the carrier came back
-  first), `not-in-bond`, `timeout` (30 s). Every admitted client radio is
-  watched, associated or not, and a loss in progress is followed to its end.
+  having the interface. Read every 100 ms from sysfs and the last bond whose
+  IP list reached disk (a failed write leaves the previous list, which the
+  sender still reads); the sender applies a new bond on its next reload, which
+  this does not include. Outcomes: `left-bond` (the window), `recovered` (the
+  carrier came back first), `unordered` (both changed within 100 ms),
+  `not-in-bond`, `radio-replaced` (another radio took the name first),
+  `timeout` (30 s). Each record names the access point the radio was last
+  seen on. Every admitted client radio is watched, associated or not, and a
+  loss in progress is followed to its end. At most 256 ended losses wait for
+  the journal; older ones are dropped and counted (`lossDropped`).
+- An unreadable link, the radio's own or a partner's, leaves the sharing as
+  last known: it is no split.
 
 ## The decision
 

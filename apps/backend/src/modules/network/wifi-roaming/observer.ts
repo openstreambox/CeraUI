@@ -90,8 +90,10 @@ export type RadioStatus = Readonly<{
 	/** Access points the active profile has connected to; `null` unknown. */
 	seenBssids: number | null;
 	/**
-	 * Fewer than two: NetworkManager scans this radio's network only once a
-	 * day above -70 dBm, so it will not move by itself. `null` unknown.
+	 * Fewer than two: for a profile without a fixed BSSID or 802.1X,
+	 * NetworkManager scans this network only once a day above -70 dBm, so the
+	 * radio will not move by itself. It describes the profile at its next
+	 * activation, not the running association. `null` unknown.
 	 */
 	rareBackgroundScan: boolean | null;
 }>;
@@ -256,6 +258,9 @@ export class RoamingObserver {
 			.filter(([, names]) => names.length > 1)
 			.map(([bssid, names]) => ({ bssid, radios: [...names].sort() }))
 			.sort((a, b) => a.bssid.localeCompare(b.bssid));
+		const unreadable = new Set(
+			input.radios.filter((r) => r.link === undefined).map((r) => r.ifname),
+		);
 		input.radios.forEach((radio, i) => {
 			const state = this.#radios.get(radio.id) as RadioState;
 			const bssid = radio.link?.bssid ?? null;
@@ -268,7 +273,17 @@ export class RoamingObserver {
 					? { bssid, with: partners.join(",") }
 					: null;
 			const before = state.shared;
-			if (now && (before?.bssid !== now.bssid || before.with !== now.with))
+			// An unreadable link, its own or a partner's, says nothing about
+			// sharing: keep what was known.
+			const unknown =
+				radio.link === undefined ||
+				(before?.with.split(",").some((n) => unreadable.has(n)) ?? false);
+			if (unknown) {
+				/* no change */
+			} else if (
+				now &&
+				(before?.bssid !== now.bssid || before.with !== now.with)
+			)
 				events.push(
 					this.#event(at, state, {
 						event: "ap-shared",
@@ -284,7 +299,7 @@ export class RoamingObserver {
 						with: before.with.split(","),
 					}),
 				);
-			state.shared = now;
+			if (!unknown) state.shared = now;
 			if (radio.seenBssids !== state.seenBssids) {
 				if (radio.seenBssids !== null || state.seenBssids !== undefined)
 					events.push(

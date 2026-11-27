@@ -111,6 +111,7 @@ function fakeDeps(over: Partial<RuntimeDeps> = {}) {
 		},
 		tick: async () => {},
 		drain: () => lossEvents.splice(0),
+		dropped: () => 0,
 		status: () => null,
 	};
 	const deps: FakeDeps = {
@@ -244,6 +245,7 @@ describe("the dead-link watch", () => {
 			id: "02:00:00:00:f0:01/1:1:p",
 			ifname: "wlan1",
 			event: "ap-lost",
+			bssid: "aa:00:00:00:00:01",
 			lostAt: 2_600,
 			outcome: "left-bond",
 			durationMs: 2_400,
@@ -263,6 +265,27 @@ describe("the dead-link watch", () => {
 		});
 		await rt.round();
 		expect(f.watched).toEqual([["wlan1", "wlan2"]]);
+		await rt.stop();
+		expect(f.journal.map((l) => JSON.parse(l).event)).toContain("ap-lost");
+	});
+});
+
+describe("losses at stop", () => {
+	test("a loss that ended since the last round still reaches the journal", async () => {
+		const f = fakeDeps();
+		const rt = createObserverRuntime(f.deps);
+		await rt.round();
+		f.lossEvents.push({
+			at: 6_000,
+			radio: "02:00:00:00:f0:01",
+			id: "02:00:00:00:f0:01/1:1:p",
+			ifname: "wlan1",
+			event: "ap-lost",
+			bssid: null,
+			lostAt: 5_500,
+			outcome: "recovered",
+			durationMs: 500,
+		});
 		await rt.stop();
 		expect(f.journal.map((l) => JSON.parse(l).event)).toContain("ap-lost");
 	});
@@ -374,6 +397,53 @@ describe("sealed file io, with the file operations held", () => {
 			expect(held.calls).not.toContain("rename");
 			expect(held.calls).toContain("unlink");
 			expect(await readdirReal(dir)).toEqual([]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("a journal rotation sealed after its second read writes nothing", async () => {
+		const root = await mkdtemp(join(tmpdir(), "wifi-roaming-rot2-"));
+		const dir = join(root, "run");
+		try {
+			await mkdirReal(dir, { recursive: true });
+			const full = `${Array.from({ length: JOURNAL_MAX_LINES }, (_, i) => `{"n":${i}}`).join("\n")}\n`;
+			await writeFileReal(join(dir, "journal.jsonl"), full, { mode: 0o600 });
+			// Hold only the second read: the one rotation makes after the count.
+			const gate = Promise.withResolvers<void>();
+			const entered = Promise.withResolvers<void>();
+			let reads = 0;
+			const calls: string[] = [];
+			const ops: FileOps = {
+				appendFile: async (...a: Parameters<typeof appendFileReal>) => {
+					calls.push("appendFile");
+					return appendFileReal(...a);
+				},
+				chmod: chmodReal,
+				mkdir: mkdirReal,
+				readFile: (async (...a: Parameters<typeof readFileReal>) => {
+					reads++;
+					if (reads === 2) {
+						entered.resolve();
+						await gate.promise;
+					}
+					return readFileReal(...a);
+				}) as typeof readFileReal,
+				rename: renameReal,
+				unlink: unlinkReal,
+				writeFile: async (...a: Parameters<typeof writeFileReal>) => {
+					calls.push("writeFile");
+					return writeFileReal(...a);
+				},
+			};
+			const io = fileIo(dir, ops);
+			const appending = io.appendJournal('{"n":"new"}');
+			await entered.promise;
+			io.seal?.();
+			gate.resolve();
+			await appending;
+			expect(calls).toEqual([]);
+			expect(await readFileReal(join(dir, "journal.jsonl"), "utf8")).toBe(full);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

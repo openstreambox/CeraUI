@@ -31,6 +31,7 @@ import {
 } from "../modules/streaming/bind-map-writer.ts";
 import {
 	getLastPublishedBond,
+	getLastWrittenBond,
 	publishSrtlaBond,
 	resetPublishedBond,
 	resetSrtlaReloadForTest,
@@ -501,6 +502,28 @@ describe("publication order", () => {
 		expect(rc).toMatchObject({ ok: true, generation: 2 });
 		expect(getLastPublishedBond()).toEqual({ entries: c, publication: rc });
 		expect(fs.files.get(IPS)).toBe("192.0.2.3");
+	});
+
+	test("the written bond stays at the last IP list that reached disk when a later write fails", async () => {
+		const fs = memoryFs();
+		const a = link("eth0", "192.0.2.1");
+		const ra = await publishSrtlaBond(a, fs.deps, notStreaming);
+		expect(ra).toMatchObject({ ok: true });
+		expect(getLastWrittenBond()).toEqual({ entries: a, publication: ra });
+		const failing = {
+			...fs.deps,
+			writeFile: async (path: string, bytes: string) => {
+				if (path.startsWith(IPS)) throw new Error("EIO");
+				await fs.deps.writeFile(path, bytes);
+			},
+		};
+		const b = link("eth1", "192.0.2.2");
+		const rb = await publishSrtlaBond(b, failing, notStreaming);
+		expect(rb).toMatchObject({ ok: false });
+		// The attempt is the last published record; the sender still reads a.
+		expect(getLastPublishedBond()?.entries).toEqual(b);
+		expect(getLastWrittenBond()).toEqual({ entries: a, publication: ra });
+		expect(fs.files.get(IPS)).toBe("192.0.2.1");
 	});
 
 	test("a background republication owes its own reload while streaming", async () => {

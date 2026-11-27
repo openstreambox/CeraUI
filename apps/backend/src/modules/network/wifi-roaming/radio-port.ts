@@ -203,6 +203,7 @@ export function createRadioPort(deps: RadioPortDeps) {
 						"802-11-wireless.seen-bssids",
 						"connection",
 						"show",
+						"uuid",
 						argMatch(UUID_RE, uuid),
 					],
 					{ timeout: READ_TIMEOUT_MS, quiet: true },
@@ -278,15 +279,17 @@ export function createRadioPort(deps: RadioPortDeps) {
 					await quiet(["dev", argMatch(ID_RE, admission.row.ifname), "link"]),
 				);
 				const row = admission.row;
-				const profile =
+				const activeProfile = () =>
 					row.activeMode === "infrastructure"
 						? (row.activeConn ?? row.conn ?? null)
 						: null;
-				seens.push(
+				const profile = activeProfile();
+				const count =
 					profile !== null && UUID_RE.test(profile)
 						? await readSeen(profile)
-						: null,
-				);
+						: null;
+				// The read awaited: a count stands only for the profile still active.
+				seens.push(activeProfile() === profile ? count : null);
 			}
 			// Every read awaited: each radio must still be the admitted one,
 			// checked after all of them, not just after its own.
