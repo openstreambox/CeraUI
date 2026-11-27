@@ -855,6 +855,26 @@
 	],
 	"live.setup.noLinks": "لا روابط",
 	"live.setup.title": "إعداد البث",
+	"live.bar.beforeLive": "قبل بدء البث",
+	"live.bar.checking": "جارٍ التحقق من الجاهزية…",
+	"live.bar.showAll": "عرض الكل",
+	"live.bar.scrollForAll": "مرّر لعرض كل العناصر",
+	"live.goLive.fix.chooseAnotherSource": "اختر مصدرًا آخر",
+	"live.bar.blockerCount": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=zero": "لا توجد أمور للإصلاح",
+				"countPlural=one": "أمر واحد يحتاج إلى إصلاح",
+				"countPlural=two": "أمران يحتاجان إلى إصلاح",
+				"countPlural=few": "{count} أمور تحتاج إلى إصلاح",
+				"countPlural=many": "{count} أمرًا يحتاج إلى إصلاح",
+				"countPlural=other": "{count} أمر يحتاج إلى إصلاح",
+				"countPlural=*": "{count} أمر يحتاج إلى إصلاح"
+			}
+		}
+	],
 	"live.source.activeConfigured": "مُهيأ",
 	"live.source.activeLive": "مباشر",
 	"live.source.audioAmbiguousBody": "تُبلّغ هذه الكاميرا عن أكثر من جهاز صوت خاص بها، لذلك لن نخمّن أيها تريد. اختر الجهاز الصحيح أدناه.",
@@ -3220,26 +3240,6 @@
 	"live.connectionsCard.title": "الاتصالات",
 	"live.audioCard.title": "الصوت",
 	"live.telemetryCard.title": "القياس عن بُعد",
-	"live.bar.beforeLive": "قبل بدء البث",
-	"live.bar.checking": "جارٍ التحقق من الجاهزية…",
-	"live.bar.showAll": "عرض الكل",
-	"live.bar.scrollForAll": "مرّر لعرض كل العناصر",
-	"live.goLive.fix.chooseAnotherSource": "اختر مصدرًا آخر",
-	"live.bar.blockerCount": [
-		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
-			"match": {
-				"countPlural=zero": "لا توجد أمور للإصلاح",
-				"countPlural=one": "أمر واحد يحتاج إلى إصلاح",
-				"countPlural=two": "أمران يحتاجان إلى إصلاح",
-				"countPlural=few": "{count} أمور تحتاج إلى إصلاح",
-				"countPlural=many": "{count} أمرًا يحتاج إلى إصلاح",
-				"countPlural=other": "{count} أمر يحتاج إلى إصلاح",
-				"countPlural=*": "{count} أمر يحتاج إلى إصلاح"
-			}
-		}
-	],
 	"network.hotspot.steeringPending": "التوجيه قيد الانتظار",
 	"network.view.hotspotRadio": "راديو نقطة ساخنة",
 	"network.view.hotspotRadioChoose": "اختر راديو",
