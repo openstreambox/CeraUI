@@ -1,5 +1,8 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
-import { rmSync } from "node:fs";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { statusResponseSchema } from "@ceraui/rpc";
 import { SpawnTimeoutError } from "../helpers/spawn-policy.ts";
 import { buildAptAllInstallArgs } from "../modules/system/apt-all-packages.ts";
 import { softwareUpdateOutputPaths } from "../modules/system/software-update-output.ts";
@@ -18,8 +21,12 @@ import {
 import {
 	getUpdateState,
 	startSoftwareUpdate,
+	triggerManualUpdateCheck,
 } from "../modules/system/software-updates.ts";
+import { DownloadPausedLedger } from "../modules/system/update-orchestrator/download-paused-ledger.ts";
+import { DownloadPausedNotices } from "../modules/system/update-orchestrator/download-paused-notices.ts";
 import {
+	admitAndPrepareStreamStart,
 	getOrchestratorState,
 	installUpdatesNow,
 	resetOrchestratorRuntimeForTest,
@@ -37,21 +44,38 @@ import {
 import { updateHarness } from "./software-updates-preflight-harness.ts";
 
 /*
-  A launch that ends before its unit is submitted to systemd never ran apt:
-  the unit-name probe (`systemctl show`) timed out or found the name taken, or
-  the output files could not be prepared. That used to settle like apt's own
-  failure: the wire said `failed`, the orchestrator recorded DOWNLOAD_FAILED,
-  and the persisted `failed` phase waited for an operator reset, across
-  reboots. Everything from `systemd-run` on can have created the unit, so it
-  stays a failure.
+  A launch that ends before its unit is submitted to systemd never ran the
+  install transaction: the unit-name probe (`systemctl show`) timed out or found
+  the name taken, or the output files could not be prepared. That used to
+  settle like apt's own failure: the wire said `failed`, the orchestrator
+  recorded DOWNLOAD_FAILED, and the persisted `failed` phase waited for an
+  operator reset, across reboots. Everything from `systemd-run` on can have
+  created the unit, so it stays a failure. The refusal belongs to the launch
+  the orchestrator started, never to whatever the wire shows when it looks.
 */
 
 const realRunUpgrade = transaction.runDetachedAptUpgrade;
+const fixtureDirs: string[] = [];
+// Notices are not this suite's subject: none reach the process-wide store.
+let notices: ReturnType<
+	typeof spyOn<typeof notifications, "notificationBroadcast">
+>;
+
+beforeEach(() => {
+	notices = spyOn(notifications, "notificationBroadcast").mockImplementation(
+		() => {},
+	);
+});
 
 afterEach(() => {
+	notices.mockRestore();
 	resetOrchestratorRuntimeForTest();
-	for (const dir of quarantineDirs.splice(0)) rmSync(dir, { recursive: true });
+	for (const dir of [...quarantineDirs.splice(0), ...fixtureDirs.splice(0)])
+		rmSync(dir, { recursive: true, force: true });
 });
+
+const failureNotices = () =>
+	notices.mock.calls.filter(([id]) => id === "ceralive_update_failed");
 
 const showTimeout = () =>
 	new SpawnTimeoutError(
@@ -121,6 +145,7 @@ function fakeSystemd(options: { readonly aptExit?: number } = {}) {
 		},
 	};
 }
+type FakeSystemd = ReturnType<typeof fakeSystemd>;
 
 const handlers = { onStdout: () => {}, onStderr: () => {} };
 const directArgs = [
@@ -136,59 +161,57 @@ const allArgs = buildAptAllInstallArgs(
 	[{ name: "ceralive-device", version: "2026.11.6" }],
 	"any",
 );
-
-// ─── the launcher: what ends before the submission ────────────────────────
-
-test.each([
+const launchers = [
+	[
+		"capable",
+		(deps: DetachedAptUpgradeDeps) =>
+			runDetachedAptAll(allArgs, "any", handlers, deps),
+	],
+	[
+		"legacy",
+		(deps: DetachedAptUpgradeDeps) =>
+			runDetachedAptUpgrade(directArgs, handlers, deps),
+	],
+] as const;
+const causes = [
 	[
 		"the unit-name probe times out",
-		(s: ReturnType<typeof fakeSystemd>) => s.failInspect(showTimeout),
+		(s: FakeSystemd) => s.failInspect(showTimeout),
 		SpawnTimeoutError,
 	],
 	[
 		"a transaction already holds the name",
-		(s: ReturnType<typeof fakeSystemd>) => s.occupy(),
+		(s: FakeSystemd) => s.occupy(),
 		DetachedAptServiceAlreadyExistsError,
 	],
 	[
 		"the output files cannot be prepared",
-		(s: ReturnType<typeof fakeSystemd>) =>
-			s.failOutput(new Error("EROFS: read-only file system")),
+		(s: FakeSystemd) => s.failOutput(new Error("EROFS: read-only file system")),
 		Error,
 	],
-] as const)(
-	"a capable launch whose %s is refused before systemd-run",
-	async (_name, arrange, cause) => {
-		// Given a launch preparation that cannot finish.
-		const systemd = fakeSystemd();
-		arrange(systemd);
-		// When the capable two-stage unit is launched.
-		const refusal = await runDetachedAptAll(
-			allArgs,
-			"any",
-			handlers,
-			systemd.deps,
-		).catch((error: unknown) => error);
-		// Then it is a refusal naming its cause, and nothing reached systemd.
-		expect(refusal).toBeInstanceOf(DetachedAptLaunchRefusedError);
-		expect((refusal as DetachedAptLaunchRefusedError).cause).toBeInstanceOf(
-			cause,
-		);
-		expect(systemd.submitted).toEqual([]);
-	},
-);
+] as const;
 
-test("a legacy launch whose unit-name probe times out is refused the same way", async () => {
-	const systemd = fakeSystemd();
-	systemd.failInspect(showTimeout);
-	const refusal = await runDetachedAptUpgrade(
-		directArgs,
-		handlers,
-		systemd.deps,
-	).catch((error: unknown) => error);
-	expect(refusal).toBeInstanceOf(DetachedAptLaunchRefusedError);
-	expect(systemd.submitted).toEqual([]);
-});
+// ─── the launcher: what ends before the submission ────────────────────────
+
+for (const [kind, launch] of launchers)
+	test.each(causes)(
+		`a ${kind} launch whose %s is refused before systemd-run`,
+		async (_name, arrange, cause) => {
+			// Given a launch preparation that cannot finish.
+			const systemd = fakeSystemd();
+			arrange(systemd);
+			// When the unit is launched.
+			const refusal = await launch(systemd.deps).catch(
+				(error: unknown) => error,
+			);
+			// Then it is a refusal naming its cause, and nothing reached systemd.
+			expect(refusal).toBeInstanceOf(DetachedAptLaunchRefusedError);
+			expect((refusal as DetachedAptLaunchRefusedError).cause).toBeInstanceOf(
+				cause,
+			);
+			expect(systemd.submitted).toEqual([]);
+		},
+	);
 
 test.each([
 	[
@@ -206,87 +229,44 @@ test.each([
 	async (_name, failure) => {
 		// Given a submission that fails once it was made (the unit may exist).
 		const systemd = fakeSystemd();
-		systemd.failStart(failure);
+		const thrown = failure();
+		systemd.failStart(() => thrown);
 		// When the unit is launched.
-		const error = await runDetachedAptAll(
-			allArgs,
-			"any",
-			handlers,
-			systemd.deps,
-		).catch((caught: unknown) => caught);
-		// Then the error is the submission's own, as before.
+		const outcome = runDetachedAptAll(allArgs, "any", handlers, systemd.deps);
+		// Then it rejects with the submission's own error, as before.
+		await expect(outcome).rejects.toBe(thrown);
 		expect(systemd.submitted).toHaveLength(1);
-		expect(error).not.toBeInstanceOf(DetachedAptLaunchRefusedError);
 	},
 );
 
-// ─── the package wire: retryable, not a failed download ───────────────────
-
-test("a refused launch puts a retryable failure on the wire and notifies no failed update", async () => {
-	// Given an install whose unit-name probe times out during preparation.
-	await using h = await updateHarness();
-	const systemd = fakeSystemd();
-	systemd.failInspect(showTimeout);
-	spyOn(transaction, "runDetachedAptUpgrade").mockImplementation(
-		(args, watched) => realRunUpgrade(args, watched, systemd.deps),
-	);
-	const notices = spyOn(notifications, "notificationBroadcast");
-	try {
-		// When the accepted start runs its continuation.
-		expect(startSoftwareUpdate()).toEqual({ started: true });
-		await h.check();
-		// Then the wire says nothing ran and the device tries again.
-		const state = getUpdateState();
-		expect(state).toMatchObject({ kind: "failed", retryable: true });
-		expect(state.kind === "failed" && state.reason).toContain(
-			"The software update did not start",
-		);
-		expect(systemd.submitted).toEqual([]);
-		expect(
-			notices.mock.calls.filter(([id]) => id === "ceralive_update_failed"),
-		).toEqual([]);
-	} finally {
-		notices.mockRestore();
-	}
-});
-
-test("a failure after systemd-run stays a plain failure with its notification", async () => {
-	// Given an install whose apt-get exits 100 in its unit.
-	await using h = await updateHarness();
-	const systemd = fakeSystemd({ aptExit: 100 });
-	spyOn(transaction, "runDetachedAptUpgrade").mockImplementation(
-		(args, watched) => realRunUpgrade(args, watched, systemd.deps),
-	);
-	const notices = spyOn(notifications, "notificationBroadcast");
-	try {
-		startSoftwareUpdate();
-		await h.check();
-		// Then the failure is the transaction's, as before.
-		const state = getUpdateState();
-		expect(state.kind).toBe("failed");
-		expect(state).not.toHaveProperty("retryable");
-		expect(systemd.submitted).toHaveLength(1);
-		expect(
-			notices.mock.calls.filter(([id]) => id === "ceralive_update_failed"),
-		).toHaveLength(1);
-	} finally {
-		notices.mockRestore();
-	}
-});
-
 // ─── the orchestrator: back to the queue, nothing persisted as failed ─────
 
-async function orchestratedInstall(systemd: ReturnType<typeof fakeSystemd>) {
+async function orchestratedInstall(systemd: FakeSystemd) {
 	const h = await updateHarness();
 	spyOn(transaction, "runDetachedAptUpgrade").mockImplementation(
 		(args, watched) => realRunUpgrade(args, watched, systemd.deps),
 	);
 	const persisted: string[] = [];
 	const quarantine = testQuarantine();
+	const root = mkdtempSync(join(tmpdir(), "launch-refused-notices-"));
+	fixtureDirs.push(root);
+	let stops = 0;
 	const deps = fakeDeps({
 		quarantine,
-		startPackageInstall: () => startSoftwareUpdate(),
+		startPackageInstall: (ticket) => startSoftwareUpdate(undefined, ticket),
 		getPackageInstallWireState: getUpdateState,
+		// The launch records where it ran; a refusal must not keep that.
+		readPackageAttempt: async () => ({ bootId: "boot-1", slot: "a" }),
+		isIdle: async () => false,
+		stopPackageInstallUnit: async () => {
+			stops++;
+		},
+		downloadNotices: new DownloadPausedNotices({
+			ledger: new DownloadPausedLedger(join(root, "download-notices.json")),
+			publish: () => {},
+			clear: () => {},
+			report: () => undefined,
+		}),
 	});
 	const persist = deps.persist;
 	setOrchestratorRuntimeDepsForTest({
@@ -298,37 +278,65 @@ async function orchestratedInstall(systemd: ReturnType<typeof fakeSystemd>) {
 	});
 	setOrchestratorStateForTest({
 		...initialOrchestratorState(0),
-		phase: "available",
+		phase: "awaiting-idle",
 	});
-	return { h, persisted, quarantine };
+	// Queued outside the idle window: the tick loads the boot provenance and
+	// launches nothing; the owner's Install now does.
+	await runOrchestratorTick();
+	return {
+		h,
+		persisted,
+		quarantine,
+		stops: () => stops,
+		wireFrames: () =>
+			h.frames
+				.map((frame) => statusResponseSchema.parse(frame).update_state)
+				.filter((state) => state !== undefined),
+	};
 }
 
 test("a systemctl show timeout during preparation leaves the install queued, not failed", async () => {
 	// Given an install whose unit-name probe times out after it was accepted.
 	const systemd = fakeSystemd();
 	systemd.failInspect(showTimeout);
-	const { h, persisted } = await orchestratedInstall(systemd);
+	const { h, persisted, quarantine, wireFrames } =
+		await orchestratedInstall(systemd);
 	await using _h = h;
 	// When the owner installs and the orchestrator observes the outcome.
 	expect(await installUpdatesNow()).toEqual({ started: true });
 	expect(getOrchestratorState().phase).toBe("downloading");
+	expect(getOrchestratorState().packageAttempt).toEqual({
+		bootId: "boot-1",
+		slot: "a",
+	});
+	const plan = await quarantine.readPending();
 	await h.check();
+	// Then the device reported it as retryable, with no failure notice.
+	expect(wireFrames()).toContainEqual(
+		expect.objectContaining({ kind: "failed", retryable: true }),
+	);
+	expect(failureNotices()).toEqual([]);
 	await runOrchestratorTick();
-	// Then the install waits in the queue again, and no failure was persisted.
+	// And the install waits in the queue again, with nothing persisted as
+	// failed, no provenance kept, and the offer back on the wire.
 	expect(getOrchestratorState().phase).toBe("awaiting-idle");
 	expect(getOrchestratorState().failureReason).toBeNull();
 	expect(getOrchestratorState().packageAttempt).toBeUndefined();
 	expect(persisted).not.toContain("failed");
+	expect(getUpdateState().kind).toBe("available");
 	expect(systemd.submitted).toEqual([]);
-	// And once systemd answers, the retry from the queue launches the unit.
+	// And once systemd answers, the retry launches the unit with the plan it
+	// recorded from the offer.
 	systemd.failInspect(null);
 	h.next();
 	expect(await installUpdatesNow()).toEqual({ started: true });
+	expect(await quarantine.readPending()).toEqual(plan);
+	expect(plan.length).toBeGreaterThan(0);
 	await h.check();
 	expect(systemd.submitted).toHaveLength(1);
 });
 
-test("a name taken by a real start after admission refuses retryably, and the retry never launches over it", async () => {
+test("a name taken by another start after admission refuses retryably, and the retry never launches over it", async () => {
 	// Given a transaction that takes the unit name after the install was admitted.
 	const systemd = fakeSystemd();
 	const { h, persisted } = await orchestratedInstall(systemd);
@@ -359,6 +367,64 @@ test("a name taken by a real start after admission refuses retryably, and the re
 	expect(systemd.submitted).toHaveLength(1);
 });
 
+test("a stream start after a settled refusal stops nothing under the name", async () => {
+	// Given a refused launch whose name another transaction holds, not yet polled.
+	const systemd = fakeSystemd();
+	const { h, stops } = await orchestratedInstall(systemd);
+	await using _h = h;
+	expect(await installUpdatesNow()).toEqual({ started: true });
+	systemd.occupy();
+	await h.check();
+	expect(getOrchestratorState().phase).toBe("downloading");
+	// When a stream starts.
+	const admission = await admitAndPrepareStreamStart();
+	// Then the refusal settles first: the stream goes ahead, and the unit that
+	// holds the name is not this install's to stop.
+	expect(admission).toEqual({ allowed: true });
+	expect(stops()).toBe(0);
+	expect(getOrchestratorState().phase).toBe("awaiting-idle");
+});
+
+test("a check that clears the wire first does not strand the refused launch", async () => {
+	// Given a refused launch, not yet polled.
+	const systemd = fakeSystemd();
+	systemd.failInspect(showTimeout);
+	const { h, persisted } = await orchestratedInstall(systemd);
+	await using _h = h;
+	expect(await installUpdatesNow()).toEqual({ started: true });
+	await h.check();
+	// When the Packages card's check clears the failure off the wire.
+	expect(triggerManualUpdateCheck()).toBe(true);
+	expect(getUpdateState().kind).not.toBe("failed");
+	await runOrchestratorTick();
+	// Then the refusal is still this launch's, and it is queued again.
+	expect(getOrchestratorState().phase).toBe("awaiting-idle");
+	expect(persisted).not.toContain("failed");
+});
+
+test("a refusal of a Packages card start is not the orchestrator's launch", async () => {
+	// Given an install the orchestrator launched whose apt fails in its unit.
+	const systemd = fakeSystemd({ aptExit: 100 });
+	const { h } = await orchestratedInstall(systemd);
+	await using _h = h;
+	expect(await installUpdatesNow()).toEqual({ started: true });
+	await h.check();
+	expect(getOrchestratorState().phase).toBe("downloading");
+	// When, before the orchestrator looks, the Packages card starts one of its
+	// own that is refused before systemd-run.
+	systemd.failInspect(showTimeout);
+	h.next();
+	expect(startSoftwareUpdate()).toEqual({ started: true });
+	await h.check();
+	// Then that start keeps today's failure, with its notice and no retry flag.
+	expect(getUpdateState()).toMatchObject({ kind: "failed" });
+	expect(getUpdateState()).not.toHaveProperty("retryable");
+	expect(failureNotices()).toHaveLength(2);
+	await runOrchestratorTick();
+	// And the orchestrator's launch, whose apt ran, is recorded as failed.
+	expect(getOrchestratorState().phase).toBe("failed");
+});
+
 test("a submission systemd refused is still a failed download", async () => {
 	// Given a launch whose systemd-run call fails (the unit may exist).
 	const systemd = fakeSystemd();
@@ -375,9 +441,11 @@ test("a submission systemd refused is still a failed download", async () => {
 	expect(await installUpdatesNow()).toEqual({ started: true });
 	await h.check();
 	await runOrchestratorTick();
-	// Then it is recorded as before.
+	// Then it is recorded as before, with its notice.
 	expect(getOrchestratorState().phase).toBe("failed");
 	expect(persisted).toContain("failed");
+	expect(getUpdateState()).not.toHaveProperty("retryable");
+	expect(failureNotices()).toHaveLength(1);
 	expect(systemd.submitted).toHaveLength(1);
 });
 
@@ -391,6 +459,7 @@ test("a retryable failure seen once the install committed is not a refusal", asy
 	setOrchestratorRuntimeDepsForTest(
 		fakeDeps({
 			quarantine,
+			takePackageLaunchRefusal: () => true,
 			getPackageInstallWireState: () => ({
 				kind: "failed",
 				reason: "The software update did not start: probe",

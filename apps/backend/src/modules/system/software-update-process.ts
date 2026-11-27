@@ -94,9 +94,9 @@ export class DetachedAptServicePinnedError extends Error {
 }
 
 /**
- * A start that ended before its unit was submitted to systemd, so apt never ran
- * for it: the probe of the unit name failed or found the name taken, or the
- * output files could not be prepared. `cause` is what ended it. Anything from
+ * A start that ended before its unit was submitted to systemd, so the install
+ * transaction never ran for it: the probe of the unit name failed or found the
+ * name taken, or the output files could not be prepared. `cause` is what ended it. Anything from
  * the `systemd-run` call on is not this: a refused or timed-out submission may
  * still have created the unit.
  */

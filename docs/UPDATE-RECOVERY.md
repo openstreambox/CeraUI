@@ -1863,38 +1863,51 @@ Still open:
 
 ## A launch refused before its unit was submitted [EXISTS — fixture-proven]
 
-A package launch first asks systemd for the fixed unit name
+A package launch asks systemd for the fixed unit name
 (`systemctl show ceralive-software-update.service`) and prepares the output
-files; only then does it submit the unit with `systemd-run`. When anything in
-that preparation fails (the probe times out or is unreadable, it finds a unit
-by that name, or the output files cannot be prepared) the launcher throws
-`DetachedAptLaunchRefusedError`, with the original error as `cause`. Apt never
-ran for that start. This used to settle like apt's own failure: `failed` on the
-wire, `DOWNLOAD_FAILED`, and a persisted `failed` phase that waited for an
-operator reset, across reboots, although nothing had been tried.
+files right before it submits the unit with `systemd-run`. When that last
+preparation fails (the probe times out or is unreadable, it finds a unit by
+that name, or the output files cannot be prepared) the launcher throws
+`DetachedAptLaunchRefusedError`, with the original error as `cause`. The
+install transaction never ran for that start. Discovery, the space preflight's
+`apt-get --print-uris`, the pinned-plan simulation (`apt-get -s`) and, on a
+pinned route, the download-only prefetch (`apt-get -d`) can run before it;
+none of them runs dpkg, and the prefetch leaves only archives in the cache that
+the next install reuses. This used to settle like apt's own failure: `failed`
+on the wire, `DOWNLOAD_FAILED`, and a persisted `failed` phase that waited for
+an operator reset, across reboots.
 
-Now the process monitor publishes `failed` with `retryable: true` (the reason
-names the cause), logs a warning instead of the "update failed" notification,
-and the orchestrator, still in `downloading` for that launch, dispatches
-`INSTALL_LAUNCH_REFUSED`: the phase goes back to `awaiting-idle` with no failure
-reason and without the launched attempt's provenance, exactly where a start
-refused up front stays. The next tick inside the idle window, or Install now,
-launches again; a retry while the name is still taken is refused the same way
-and never submits a unit over it. `pending-packages.json` stays as the refused
-launch wrote it: the retry starts from a `failed` wire, so it keeps that record
-(the limitation under "Still open" above), which is the plan that was just
-refused.
+For an install the orchestrator started, the refusal now belongs to that
+launch. The orchestrator hands each start a ticket (`startSoftwareUpdate`'s
+second argument); the process monitor records a refusal against it, publishes
+`failed` with `retryable: true` and the cause as the reason, and logs a warning
+instead of the "update failed" notification. The orchestrator takes the
+refusal for its own launch (`takePackageLaunchRefusal`) on its next poll, or
+first thing when a stream starts, and dispatches `INSTALL_LAUNCH_REFUSED`: the
+phase goes back to `awaiting-idle` with no failure reason and without the
+launch's provenance, where a start refused up front already stays. It never
+reads the refusal off the wire, so a Packages card start of its own, or a check
+that clears the wire first, cannot move another launch. A stream start that
+finds a settled refusal stops nothing: whatever holds the name is not this
+install's. Taking the refusal withdraws it from the wire if the wire still
+shows it, so the offer is back and the retry records the plan it launches in
+`pending-packages.json`. The next tick in the idle window, or Install now,
+launches again (60 s apart at most while the refusal persists); a retry while
+the name is still taken is refused the same way and never submits a unit over
+it.
 
-Everything from the `systemd-run` call on is unchanged: a refused or timed-out
-submission may still have created the unit, so it stays a failed download, and
-a `retryable` failure seen once the phase is `committing` goes through the
-commit-failure path as before. Command validation (`buildDetachedApt*Command`)
-is also outside the refusal: an argument the builder rejects would be rejected
-on every retry. Coverage:
-`software-update-launch-refused.test.ts` (each pre-submission cause on both
-launchers, the wire and notification, the orchestrator replay of a
-`systemctl show` timeout and of a name taken by another start, and the
-submission and committing cases that keep their failure).
+A start without a ticket (the Packages card's own `system.startUpdate`) keeps
+the plain failure and its notification. Everything from the `systemd-run` call
+on is unchanged: a refused or timed-out submission may still have created the
+unit, so it stays a failed download, and a failure seen once the phase is
+`committing` goes through the commit-failure path as before. Command validation
+(`buildDetachedApt*Command`) is also outside the refusal: an argument the
+builder rejects would be rejected on every retry. Coverage:
+`software-update-launch-refused.test.ts` (each of the three pre-submission
+causes on both launchers; the orchestrator replay of a `systemctl show` timeout
+and of a name taken by another start; a stream start, a check and a Packages
+card start racing a refusal; the submission and committing cases that keep
+their failure).
 
 ## OS staging recovery [PARTIAL — fixture-proven, board re-drill owed]
 

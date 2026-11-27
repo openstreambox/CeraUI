@@ -382,6 +382,8 @@ export function resetSoftwareUpdateState(): void {
 	installUnitPinned = false;
 	installUnitProof = undefined;
 	installUnitProofFailing = false;
+	launchTicket = null;
+	refusedLaunches = new WeakMap();
 	aptDiscoveryRunning = false;
 	softUpdateStatus = null;
 	currentUpdateIdentity = null;
@@ -1715,8 +1717,39 @@ async function simulateMockSoftwareUpdate(): Promise<void> {
 	broadcastUpdateState();
 }
 
+/**
+ * The orchestrator's handle on one install it started. A launch refused before
+ * its unit was submitted is recorded against it, and only the orchestrator
+ * that holds it takes that refusal (takePackageLaunchRefusal), whatever the
+ * wire shows by then.
+ */
+export type PackageLaunchTicket = object;
+
+// The ticket of the install accepted last; null for a start of its own.
+let launchTicket: PackageLaunchTicket | null = null;
+// Refused launches by ticket, with the failure id the wire showed for each.
+let refusedLaunches = new WeakMap<PackageLaunchTicket, string>();
+
+/**
+ * True once, if the install started with `ticket` was refused before its unit
+ * was submitted. Taking it also withdraws that refusal from the wire when the
+ * wire still shows it, so the offer is back and the retry records the plan it
+ * launches.
+ */
+export function takePackageLaunchRefusal(ticket: PackageLaunchTicket): boolean {
+	const failureId = refusedLaunches.get(ticket);
+	if (failureId === undefined) return false;
+	refusedLaunches.delete(ticket);
+	if (lastUpdateFailure?.failure_id === failureId) {
+		lastUpdateFailure = null;
+		broadcastUpdateState();
+	}
+	return true;
+}
+
 export function startSoftwareUpdate(
 	onCommitSucceeded?: () => void,
+	ticket?: PackageLaunchTicket,
 ): UpdateStartOutcome {
 	if (isDisruptiveActionPending()) return refuseUpdateStart("already_updating");
 	if (pendingPackageSuccess.pending)
@@ -1738,13 +1771,14 @@ export function startSoftwareUpdate(
 	lastUpdateSucceeded = false;
 	lastPreflightFailure = null;
 	lastCleanupWarning = undefined;
+	launchTicket = ticket ?? null;
 
 	if (aptGetUpdating || aptDiscoveryRunning) {
 		if (!delayedSoftwareUpdateStart) {
 			delayedSoftwareUpdateStart = setTimeout(() => {
 				delayedSoftwareUpdateStart = undefined;
 				if (pendingPackageSuccess.pending) return;
-				const outcome = startSoftwareUpdate(onCommitSucceeded);
+				const outcome = startSoftwareUpdate(onCommitSucceeded, ticket);
 				if (!outcome.started) {
 					lastUpdateSucceeded = false;
 					lastUpdateFailure = {
@@ -1790,6 +1824,8 @@ type SoftwareUpdateProcessMonitor = {
 export function createSoftwareUpdateProcessMonitor(
 	prefetched = "",
 	launched: Pick<SoftUpdateStatus, "run" | "targets"> = {},
+	// The orchestrator's handle on this install, when it started it.
+	ticket: PackageLaunchTicket | null = null,
 ): SoftwareUpdateProcessMonitor {
 	// The CeraLive offer this update was taken against, fixed when it is taken.
 	const offer = standingCeraliveOffer();
@@ -1860,13 +1896,15 @@ export function createSoftwareUpdateProcessMonitor(
 		owned: boolean,
 	): Promise<number> => {
 		let code: number;
-		// Ended before its unit was submitted: nothing ran, so it is retried,
-		// not recorded as a failed download.
+		// Ended before its unit was submitted, for an install the orchestrator
+		// started: the install transaction never ran, so the orchestrator
+		// queues it again instead of recording a failed download. A start of
+		// its own (the Packages card's) keeps the plain failure.
 		let refused = false;
 		try {
 			code = await completion;
 		} catch (err) {
-			refused = err instanceof DetachedAptLaunchRefusedError;
+			refused = ticket !== null && err instanceof DetachedAptLaunchRefusedError;
 			const message = err instanceof Error ? err.message : String(err);
 			aptErr += aptErr.length > 0 ? `\n${message}` : message;
 			code =
@@ -1906,6 +1944,8 @@ export function createSoftwareUpdateProcessMonitor(
 			lastUpdateSucceeded = code === 0;
 			if (code === 0 && owned) pendingPackageSuccess.observe();
 			lastUpdateFailure = failure;
+			if (ticket !== null && failure?.retryable)
+				refusedLaunches.set(ticket, failure.failure_id);
 			softUpdateStatus.result = code === 0 ? code : aptErr;
 			const settledStatus = softUpdateStatus;
 			softUpdateStatus = null;
@@ -2208,10 +2248,14 @@ async function prepareSoftwareUpdate(
 	}
 	pendingPackageSuccess.assertEffectsAllowed();
 	notePlannedShutdown("software_update");
-	const monitor = createSoftwareUpdateProcessMonitor(prefetched, {
-		run: softUpdateStatus?.run,
-		...(targets ? { targets } : {}),
-	});
+	const monitor = createSoftwareUpdateProcessMonitor(
+		prefetched,
+		{
+			run: softUpdateStatus?.run,
+			...(targets ? { targets } : {}),
+		},
+		launchTicket,
+	);
 	const finalFamily = installFamily(network.reachability.verdict);
 	const detachedArgs =
 		admitted && network.pinned

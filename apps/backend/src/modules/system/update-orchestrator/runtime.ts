@@ -53,10 +53,12 @@ import {
 	type InstallUnitVerdict,
 	isAptAllDiscovery,
 	proveInstallUnitFree,
+	type PackageLaunchTicket,
 	recoverSoftwareUpdateIfRunning,
 	runSoftwareUpdateCheck,
 	type SoftwareUpdateError,
 	startSoftwareUpdate,
+	takePackageLaunchRefusal,
 	type UpdateStartOutcome,
 } from "../software-updates.ts";
 import { isStreamConfirmedIdle } from "../stream-liveness-source.ts";
@@ -287,7 +289,14 @@ export interface OrchestratorRuntimeDeps {
 	readonly isStreamLive: () => boolean;
 	readonly onlyMeteredCandidateExists: () => Promise<boolean>;
 	readonly runPackageCheck: () => Promise<SoftwareUpdateError>;
-	readonly startPackageInstall: () => UpdateStartOutcome;
+	readonly startPackageInstall: (
+		ticket?: PackageLaunchTicket,
+	) => UpdateStartOutcome;
+	/**
+	 * True once if the install started with `ticket` was refused before its
+	 * unit was submitted (software-updates.ts takePackageLaunchRefusal).
+	 */
+	readonly takePackageLaunchRefusal?: (ticket: PackageLaunchTicket) => boolean;
 	/**
 	 * Proves systemd holds no unit under the install unit's name right before a
 	 * launch. A refused launch then stays a retry instead of a recorded failure.
@@ -427,7 +436,9 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	isStreamLive: () => !isStreamConfirmedIdle(),
 	onlyMeteredCandidateExists: defaultOnlyMeteredCandidateExists,
 	runPackageCheck: runSoftwareUpdateCheck,
-	startPackageInstall: () => startSoftwareUpdate(notePackageCommitSucceeded),
+	startPackageInstall: (ticket) =>
+		startSoftwareUpdate(notePackageCommitSucceeded, ticket),
+	takePackageLaunchRefusal,
 	installUnitFree: proveInstallUnitFree,
 	getPackageInstallWireState: getUpdateState,
 	stopPackageInstallUnit: stopPackageInstallUnitForStream,
@@ -555,6 +566,9 @@ let activeOsStage:
 setOsStageLiveProducerProbe(() => activeOsStage?.attemptId ?? null);
 let raucStreamAbortInProcess = false;
 let packageInstallStarting = false;
+// The install this orchestrator launched last, to learn whether its launch was
+// refused before its unit was submitted.
+let startedLaunch: PackageLaunchTicket | null = null;
 let packageHoldAttempt: DownloadInterruption | undefined;
 let updateAdmissionProbe: Promise<boolean> | undefined;
 let osForceActivated = false;
@@ -704,6 +718,7 @@ export function resetOrchestratorRuntimeForTest(): void {
 	kernelRuntime.reset();
 	deps.downloadNotices?.dispose();
 	packageHoldAttempt = undefined;
+	startedLaunch = null;
 	resetDisruptiveActionReservationForTest();
 	if (tickTimer) clearTimeout(tickTimer);
 	tickTimer = undefined;
@@ -1157,6 +1172,9 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 		});
 	if (pendingPackageSuccess.pending) return COMMIT_STAGE_REFUSAL;
 	if (isDisruptiveActionPending()) return COMMIT_STAGE_REFUSAL;
+	// A launch refused before submission has no unit to stop: whatever holds
+	// the name is not this install's.
+	settleRefusedLaunch();
 	const cached = admitStreamStart(state);
 	if (!cached.allowed) return cached;
 
@@ -1437,11 +1455,13 @@ async function maybeStartPackageInstall(opts: {
 		}
 		if (isDisruptiveActionPending())
 			return { started: false, reason: "already_updating" };
-		const result = deps.startPackageInstall();
+		const ticket: PackageLaunchTicket = {};
+		const result = deps.startPackageInstall(ticket);
 		if (!result.started) {
 			await deps.quarantine.clearPending();
 			return result; // stays awaiting-idle; retried next tick
 		}
+		startedLaunch = ticket;
 		const previousHold = packageHoldAttempt;
 		packageHoldAttempt = packageDownloadAttempt(available);
 		dispatch({
@@ -1467,8 +1487,23 @@ async function maybeStartPackageInstall(opts: {
 	}
 }
 
+/**
+ * The install this orchestrator launched was refused before its unit was
+ * submitted: back to the queue, as a start refused up front. Taken from the
+ * package side for that launch only, never read off the wire: a start of the
+ * Packages card's own, or a check, can change what the wire shows first.
+ */
+function settleRefusedLaunch(): boolean {
+	if (state.phase !== "downloading" || startedLaunch === null) return false;
+	if (!(deps.takePackageLaunchRefusal?.(startedLaunch) ?? false)) return false;
+	startedLaunch = null;
+	dispatch({ type: "INSTALL_LAUNCH_REFUSED", now: deps.now() });
+	return true;
+}
+
 async function pollPackageInstallProgress(): Promise<void> {
 	if (state.phase !== "downloading" && state.phase !== "committing") return;
+	if (settleRefusedLaunch()) return;
 	const wire = deps.getPackageInstallWireState();
 	const now = deps.now();
 	if (wire.kind === "downloading") {
@@ -1495,16 +1530,6 @@ async function pollPackageInstallProgress(): Promise<void> {
 		if (state.phase === "downloading")
 			dispatch({ type: "COMMIT_PHASE_ENTERED", now });
 		dispatch({ type: "COMMIT_SUCCEEDED", now });
-		return;
-	}
-	// Only a launch this phase made can be refused before submission: once
-	// apt's output has moved the phase on, a failure is the transaction's.
-	if (
-		wire.kind === "failed" &&
-		wire.retryable &&
-		state.phase === "downloading"
-	) {
-		dispatch({ type: "INSTALL_LAUNCH_REFUSED", now });
 		return;
 	}
 	if (wire.kind === "failed") {
