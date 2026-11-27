@@ -570,6 +570,8 @@ let packageInstallStarting = false;
 // refused before its unit was submitted.
 let startedLaunch: PackageLaunchTicket | null = null;
 let launchRefusalSettling: Promise<boolean> | null = null;
+// A refused launch's pending list stayed on disk (its clearing failed).
+let refusedPlanStale = false;
 let packageHoldAttempt: DownloadInterruption | undefined;
 let updateAdmissionProbe: Promise<boolean> | undefined;
 let osForceActivated = false;
@@ -721,6 +723,7 @@ export function resetOrchestratorRuntimeForTest(): void {
 	packageHoldAttempt = undefined;
 	startedLaunch = null;
 	launchRefusalSettling = null;
+	refusedPlanStale = false;
 	resetDisruptiveActionReservationForTest();
 	if (tickTimer) clearTimeout(tickTimer);
 	tickTimer = undefined;
@@ -1189,7 +1192,9 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 	if (state.phase === "downloading") {
 		// A refused launch first: another start's commit on the wire is not
 		// this install's to latch.
-		if (await settleRefusedLaunch()) return admitAfterRefusedLaunch();
+		const refusedFirst = settleRefusedLaunch();
+		if (refusedFirst && (await refusedFirst)) return admitAfterRefusedLaunch();
+		const probedLaunch = startedLaunch;
 		const freshWire = deps.getPackageInstallWireState();
 		packageHoldAttempt ??= packageDownloadAttempt(freshWire);
 		const interruption = packageHoldAttempt;
@@ -1210,8 +1215,17 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 		// The probe waited. A launch refused meanwhile (settled here or by the
 		// tick) has no unit to stop: whatever holds the name is not this
 		// install's, and the probe above was its commit guard.
-		if (await settleRefusedLaunch()) return admitStreamStart(state);
+		const refusedLater = settleRefusedLaunch();
+		if (refusedLater) {
+			await refusedLater;
+			return admitStreamStart(state);
+		}
 		if (state.phase !== "downloading") return admitStreamStart(state);
+		// A launch that replaced the probed one is not what the probe saw:
+		// decide on it afresh.
+		if (startedLaunch !== probedLaunch) return admitAndPrepareStreamStart();
+		// No await from the refusal check to the stop: a refusal recorded now
+		// cannot slip in between.
 		await deps.stopPackageInstallUnit();
 		if (pendingPackageSuccess.pending) return COMMIT_STAGE_REFUSAL;
 		dispatch({ type: "DOWNLOAD_ABORTED_FOR_STREAM", now: deps.now() });
@@ -1427,6 +1441,12 @@ async function maybeStartPackageInstall(opts: {
 						...(item.version ? { version: item.version } : {}),
 					})) ?? available.identity.packages.map((name) => ({ name })),
 			);
+			refusedPlanStale = false;
+		} else if (refusedPlanStale) {
+			// A refused launch's plan that could not be cleared must not ride
+			// into this launch's commit; a failure here leaves it queued.
+			await deps.quarantine.clearPending();
+			refusedPlanStale = false;
 		}
 		if (opts.isCurrent && !opts.isCurrent()) {
 			await deps.quarantine.clearPending();
@@ -1500,14 +1520,14 @@ async function maybeStartPackageInstall(opts: {
  * package side for that launch only, never read off the wire: a start of the
  * Packages card's own, or a check, can change what the wire shows first.
  */
-function settleRefusedLaunch(): Promise<boolean> {
+function settleRefusedLaunch(): Promise<boolean> | false {
 	// One settlement at a time: a stream start that finds the tick settling
 	// waits for it instead of reading "not refused" and stopping the name.
+	// Nothing to settle answers synchronously, so a caller can act on that
+	// answer in the same turn (the stream start's stop does).
 	if (launchRefusalSettling) return launchRefusalSettling;
-	if (state.phase !== "downloading" || startedLaunch === null)
-		return Promise.resolve(false);
-	if (!(deps.takePackageLaunchRefusal?.(startedLaunch) ?? false))
-		return Promise.resolve(false);
+	if (state.phase !== "downloading" || startedLaunch === null) return false;
+	if (!(deps.takePackageLaunchRefusal?.(startedLaunch) ?? false)) return false;
 	startedLaunch = null;
 	const settling = (async () => {
 		// As a start refused up front: its plan goes with it, and the retry
@@ -1515,6 +1535,8 @@ function settleRefusedLaunch(): Promise<boolean> {
 		try {
 			await deps.quarantine.clearPending();
 		} catch (error) {
+			// The retry clears it before it launches, or does not launch.
+			refusedPlanStale = true;
 			logger.warn(
 				"update-orchestrator: clearing a refused launch's pending list failed",
 				{ error },
@@ -1546,7 +1568,8 @@ async function admitAfterRefusedLaunch(): Promise<StreamStartUpdateAdmission> {
 
 async function pollPackageInstallProgress(): Promise<void> {
 	if (state.phase !== "downloading" && state.phase !== "committing") return;
-	if (await settleRefusedLaunch()) return;
+	const refused = settleRefusedLaunch();
+	if (refused && (await refused)) return;
 	const wire = deps.getPackageInstallWireState();
 	const now = deps.now();
 	if (wire.kind === "downloading") {

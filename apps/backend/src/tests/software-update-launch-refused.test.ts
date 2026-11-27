@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { statusResponseSchema } from "@ceraui/rpc";
+import type { UpdateState } from "@ceraui/rpc/schemas";
 import { SpawnTimeoutError } from "../helpers/spawn-policy.ts";
+import * as events from "../modules/events/emit.ts";
 import { buildAptAllInstallArgs } from "../modules/system/apt-all-packages.ts";
 import type { AptReachability } from "../modules/system/apt-reachability.ts";
 import { softwareUpdateOutputPaths } from "../modules/system/software-update-output.ts";
@@ -65,14 +67,19 @@ let notices: ReturnType<
 	typeof spyOn<typeof notifications, "notificationBroadcast">
 >;
 
+// Nor does the process-wide event history.
+let emitted: ReturnType<typeof spyOn<typeof events, "emitEvent">>;
+
 beforeEach(() => {
 	notices = spyOn(notifications, "notificationBroadcast").mockImplementation(
 		() => {},
 	);
+	emitted = spyOn(events, "emitEvent").mockImplementation(() => undefined);
 });
 
 afterEach(() => {
 	notices.mockRestore();
+	emitted.mockRestore();
 	resetOrchestratorRuntimeForTest();
 	for (const dir of [...quarantineDirs.splice(0), ...fixtureDirs.splice(0)])
 		rmSync(dir, { recursive: true, force: true });
@@ -511,8 +518,15 @@ test("a stream start that meets the tick settling a refusal waits for it", async
 	await Bun.sleep(0);
 	// When a stream starts meanwhile.
 	const admission = admitAndPrepareStreamStart();
+	let answered = false;
+	void admission.then(() => {
+		answered = true;
+	});
+	await Bun.sleep(5);
+	// Then it waits for that settlement,
+	expect(answered).toBe(false);
 	cleared.resolve();
-	// Then it waits for that settlement and stops nothing.
+	// and stops nothing.
 	expect(await admission).toEqual({ allowed: true });
 	await tick;
 	expect(stops).toBe(0);
@@ -547,6 +561,109 @@ test("a stream start during the refused launch's cache cleanup stops nothing", a
 	expect(getOrchestratorState().phase).toBe("awaiting-idle");
 	expect(getUpdateState().kind).toBe("available");
 	expect(wireFrames().some((state) => state.kind === "failed")).toBe(false);
+});
+
+test("a launch that replaced the probed one during the probe is decided afresh", async () => {
+	// Given a launch whose probe sees a launch the tick then replaces.
+	let stops = 0;
+	let probes = 0;
+	let takenOnce = false;
+	let wire: UpdateState = {
+		kind: "downloading",
+		progress: { total: 0, downloading: 0, unpacking: 0, setting_up: 0 },
+	};
+	setOrchestratorRuntimeDepsForTest(
+		fakeDeps({
+			quarantine: testQuarantine(),
+			getPackageInstallWireState: () => wire,
+			// The first launch is refused once, while its probe waits.
+			takePackageLaunchRefusal: () => {
+				if (probes !== 1 || takenOnce) return false;
+				takenOnce = true;
+				return true;
+			},
+			isCommitStageRunning: async () => {
+				probes++;
+				if (probes === 1) {
+					// The tick takes the refusal and relaunches, now committing.
+					await runOrchestratorTick();
+					await installUpdatesNow();
+					wire = {
+						kind: "installing",
+						progress: { total: 1, downloading: 1, unpacking: 1, setting_up: 0 },
+					};
+				}
+				return false;
+			},
+			stopPackageInstallUnit: async () => {
+				stops++;
+			},
+			isIdle: async () => false,
+		}),
+	);
+	setOrchestratorStateForTest({
+		...initialOrchestratorState(0),
+		phase: "available",
+	});
+	expect(await installUpdatesNow()).toEqual({ started: true });
+	// When a stream starts.
+	const admission = await admitAndPrepareStreamStart();
+	// Then the new launch, whose wire says dpkg runs, is not stopped.
+	expect(stops).toBe(0);
+	expect(admission.allowed).toBe(false);
+});
+
+test("a refused plan whose clearing failed is cleared before the retry launches", async () => {
+	// Given a refused launch whose pending list could not be cleared.
+	const quarantine = testQuarantine();
+	let clearFails = true;
+	let clears = 0;
+	quarantine.clearPending = async () => {
+		clears++;
+		if (clearFails) throw new Error("EIO");
+	};
+	quarantine.savePending = async () => {};
+	let refused = false;
+	let wire: UpdateState = {
+		kind: "downloading",
+		progress: { total: 0, downloading: 0, unpacking: 0, setting_up: 0 },
+	};
+	let launches = 0;
+	setOrchestratorRuntimeDepsForTest(
+		fakeDeps({
+			quarantine,
+			getPackageInstallWireState: () => wire,
+			takePackageLaunchRefusal: () => {
+				const once = refused;
+				refused = false;
+				return once;
+			},
+			startPackageInstall: () => {
+				launches++;
+				return { started: true };
+			},
+			isIdle: async () => false,
+		}),
+	);
+	setOrchestratorStateForTest({
+		...initialOrchestratorState(0),
+		phase: "available",
+	});
+	expect(await installUpdatesNow()).toEqual({ started: true });
+	refused = true;
+	await runOrchestratorTick();
+	expect(getOrchestratorState().phase).toBe("awaiting-idle");
+	// When the retry starts from a wire that shows a Packages card failure.
+	wire = { kind: "failed", reason: "E: broken" };
+	// Then it does not launch while the old plan stays,
+	await installUpdatesNow().catch(() => undefined);
+	expect(launches).toBe(1);
+	expect(getOrchestratorState().phase).toBe("awaiting-idle");
+	// and launches once the old plan is gone.
+	clearFails = false;
+	expect(await installUpdatesNow()).toEqual({ started: true });
+	expect(launches).toBe(2);
+	expect(clears).toBeGreaterThanOrEqual(3);
 });
 
 test("a commit stage under the name still refuses the stream after a settled refusal", async () => {

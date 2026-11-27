@@ -1880,8 +1880,10 @@ an operator reset, across reboots.
 For an install the orchestrator started, the refusal now belongs to that
 launch. The orchestrator hands each start a ticket (`startSoftwareUpdate`'s
 second argument); the process monitor records a refusal against it as soon as
-the launcher rejects (before its archive cleanup), publishes
-`failed` with `retryable: true` and the cause as the reason, clears the overlay without a
+the launcher rejects (before its archive cleanup), then publishes
+`failed` with `retryable: true` and the cause as the reason (or nothing, when
+the orchestrator took the refusal during the cleanup and the offer is already
+back), clears the overlay without a
 finished install's result (so no tab announces a failure), and logs a warning
 instead of the "update failed" notification. The orchestrator takes the
 refusal for its own launch (`takePackageLaunchRefusal`) on its next poll, or
@@ -1894,11 +1896,14 @@ meets the tick settling waits for it. A stream start takes a refusal before it
 reads the wire, so another start's commit there is not latched to this launch,
 and it still refuses the stream while a unit under the name commits (the wire
 or the commit-stage probe). A refusal seen only after the probe's wait, or a
-phase the tick moved meanwhile, is decided on what is there then. In each case
-nothing is stopped: whatever holds the name is not this install's. A second start
+phase the tick moved meanwhile, is decided on what is there then, and a launch
+that replaced the probed one is admitted afresh. The last refusal check and
+the stop run in one turn, with no wait between them. Nothing is stopped for a
+refused launch: whatever holds the name is not this install's. A second start
 while one waits for discovery is refused (`already_updating`) instead of being
 reported started, so a ticket always belongs to the launch that runs. Settling
-clears `pending-packages.json`, as a start refused up front does; taking the
+clears `pending-packages.json`, as a start refused up front does (if that
+fails, the retry clears it before it launches, or does not launch); taking the
 refusal withdraws it from the wire if the wire shows it, so the offer is back
 and the retry saves the record from it, as a first launch does. If the wire
 shows something else then (a later failure of a Packages card start), the
