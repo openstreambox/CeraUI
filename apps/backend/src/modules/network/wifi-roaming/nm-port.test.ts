@@ -119,7 +119,11 @@ function fakeRun(fail: (args: string[]) => boolean = () => false) {
 describe("join", () => {
 	test("clones the radio's own bound profile, locks the BSSID, and activates on that radio only", async () => {
 		const f = fakeRun();
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect(await nm.join("wlan2", "venue", "AA:00:00:00:00:02")).toEqual({
 			activation: CLONE,
 		});
@@ -142,7 +146,11 @@ describe("join", () => {
 
 	test("a failed activation deletes the clone", async () => {
 		const f = fakeRun((args) => args.includes("up"));
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect(
 			await nm.join("wlan2", "venue", "aa:00:00:00:00:02"),
 		).toBeUndefined();
@@ -151,7 +159,11 @@ describe("join", () => {
 
 	test("no bound profile for the SSID: no write at all", async () => {
 		const f = fakeRun();
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect(
 			await nm.join("wlan2", "elsewhere", "aa:00:00:00:00:02"),
 		).toBeUndefined();
@@ -160,7 +172,11 @@ describe("join", () => {
 
 	test("a malformed BSSID is refused before any command", async () => {
 		const f = fakeRun();
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		await expect(nm.join("wlan2", "venue", "aa:00:00:00:00")).rejects.toThrow();
 		expect(f.calls).toEqual([]);
 	});
@@ -180,7 +196,11 @@ describe("escaped SSIDs", () => {
 				return `cafe:2 (${SOURCE}) cloned as ceraui-search-wlan2 (${CLONE}).`;
 			return "";
 		};
-		const nm = createSearchNm({ run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect([...(await nm.savedSsids("wlan2"))]).toEqual(["cafe:2"]);
 		expect(await nm.join("wlan2", "cafe:2", "aa:00:00:00:00:02")).toEqual({
 			activation: CLONE,
@@ -191,7 +211,11 @@ describe("escaped SSIDs", () => {
 describe("hotspot mode", () => {
 	test("observe reports the phy and an AP leg on it", async () => {
 		const f = fakeRun();
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect(await nm.observe("wlan1")).toMatchObject({
 			phy: "phy1",
 			apOnPhy: true,
@@ -203,7 +227,11 @@ describe("hotspot mode", () => {
 	});
 	test("an unreadable interface list leaves the mode unknown", async () => {
 		const f = fakeRun((args) => args.length === 1 && args[0] === "dev");
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect(await nm.observe("wlan2")).toMatchObject({ apOnPhy: null });
 	});
 });
@@ -211,14 +239,22 @@ describe("hotspot mode", () => {
 describe("reads never scan", () => {
 	test("observe uses iw link, nmcli listings without rescan, and ip", async () => {
 		const f = fakeRun();
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		await nm.observe("wlan1");
 		expect(f.calls.some((c) => /rescan|scan/.test(c))).toBe(false);
 	});
 
 	test("scan names the radio and waits for a fresh result", async () => {
 		const f = fakeRun();
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		await nm.scan("wlan2");
 		expect(f.calls).toEqual([
 			"nmcli -t -f BSSID,SSID,SIGNAL,CHAN device wifi list ifname wlan2 --rescan yes",
@@ -247,7 +283,11 @@ describe("backslashes in SSIDs", () => {
 				return `x (${SOURCE}) cloned as ceraui-search-wlan2 (${CLONE}).`;
 			return "";
 		};
-		const nm = createSearchNm({ run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		const rows = await nm.scan("wlan2");
 		expect(rows?.[0]?.ssid).toBe("cafe\\2");
 		expect(await nm.savedSsids("wlan2")).toEqual(new Set(["cafe\\2"]));
@@ -257,14 +297,22 @@ describe("backslashes in SSIDs", () => {
 describe("late checks", () => {
 	test("radioMode reads iw dev only", async () => {
 		const f = fakeRun();
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect(await nm.radioMode("wlan1")).toEqual({ phy: "phy1", apOnPhy: true });
 		expect(f.calls).toEqual(["iw dev"]);
 	});
 
 	test("a join refused right before activation removes the clone and never activates", async () => {
 		const f = fakeRun();
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect(
 			await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => false),
 		).toBe("refused");
@@ -277,7 +325,11 @@ describe("late checks", () => {
 describe("active-profile listing", () => {
 	test("an unreadable listing is reported as unread, not as nothing active", async () => {
 		const f = fakeRun((args) => args.includes("--active"));
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect(await nm.observe("wlan2")).toMatchObject({
 			activation: null,
 			activationRead: false,
@@ -286,7 +338,11 @@ describe("active-profile listing", () => {
 
 	test("a readable listing with nothing on the radio is read and empty", async () => {
 		const f = fakeRun();
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect(await nm.observe("wlan2")).toMatchObject({
 			activation: null,
 			activationRead: true,
@@ -295,7 +351,11 @@ describe("active-profile listing", () => {
 
 	test("a refused join leaves the earlier clone alone", async () => {
 		const f = fakeRun();
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => false);
 		expect(f.calls).not.toContain(`nmcli connection delete ${STALE}`);
 	});
@@ -311,7 +371,11 @@ describe("join's last check and stale clones", () => {
 			if (args.join(" ") === "-t -f NAME,UUID connection show") ap = true;
 			return out;
 		};
-		const nm = createSearchNm({ run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect(
 			await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => !ap),
 		).toBe("refused");
@@ -331,7 +395,11 @@ describe("join's last check and stale clones", () => {
 			}
 			return f.run(bin, args);
 		};
-		const nm = createSearchNm({ run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		expect(
 			await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => true),
 		).toEqual({ activation: CLONE });
@@ -343,7 +411,11 @@ describe("join's last check and stale clones", () => {
 
 	test("an unreadable active listing deletes no earlier clone", async () => {
 		const f = fakeRun((args) => args.includes("--active"));
-		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			confirm: async () => true,
+		});
 		await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => true);
 		expect(f.calls).not.toContain(`nmcli connection delete ${STALE}`);
 	});

@@ -30,6 +30,7 @@ import type {
 	MonitorEvent,
 	WifiState,
 } from "../network/state-types.ts";
+import { admitRadio } from "../network/wifi-roaming/radio-lock.ts";
 import {
 	mayScanNow,
 	scanGateActive,
@@ -45,6 +46,7 @@ import {
 	currentHotspotApIfnames,
 	type WifiNetwork,
 } from "./wifi.ts";
+import { confirmWifiAdapterLifetime } from "./wifi-adapter-admission.ts";
 import {
 	ownsWifiAdapterLock,
 	type WifiAdapterLockKey,
@@ -801,7 +803,12 @@ function startRescan(
 	if (joined) return joined;
 
 	const ifname = device === undefined ? undefined : ifnameForDevice(device);
-	const run = runRescan(key, ifname, underHeldLock).finally(() => {
+	const run = runRescan(
+		key,
+		ifname,
+		underHeldLock,
+		device !== undefined,
+	).finally(() => {
 		rescanInFlight.delete(key);
 	});
 	rescanInFlight.set(key, run);
@@ -821,12 +828,17 @@ function scanKeyForIfname(ifname: string): WifiScanKey {
   While the roaming coordinator protects radios (those that carry the stream,
   serve the hotspot or are joining a network), those are never scanned: a
   request for one scans nothing, and a request for every radio scans each of
-  the others by name.
+  the others by name. A request that named a radio no row answers to scans
+  nothing: it must not turn into a request for every radio.
 */
-function rescanTargets(ifname: string | undefined): (string | undefined)[] {
+function rescanTargets(
+	ifname: string | undefined,
+	named: boolean,
+): (string | undefined)[] {
 	const protectedNow = scanProtectedRadios();
 	if (!scanGateActive()) return [ifname];
 	if (ifname !== undefined) return protectedNow.has(ifname) ? [] : [ifname];
+	if (named) return [];
 	const others: string[] = [];
 	for (const macAddress in wifiInterfacesByMacAddress) {
 		const name = wifiInterfacesByMacAddress[macAddress]?.ifname;
@@ -839,34 +851,41 @@ async function runRescan(
 	key: WifiScanKey,
 	ifname: string | undefined,
 	underHeldLock = false,
+	named = ifname !== undefined,
 ): Promise<RescanReport> {
 	const scanned: (string | undefined)[] = [];
 	try {
-		const targets = rescanTargets(ifname);
+		const targets = rescanTargets(ifname, named);
 		for (const target of targets) {
 			if (target === undefined || !scanGateActive()) {
 				await rescanAction(target);
 				scanned.push(target);
 				continue;
 			}
-			// While the coordinator runs, each scan goes out under the radio's
-			// owner-resolved adapter lock (the one hotspot changes hold) after a
-			// fresh look at its mode and phy. Only the awaiting scan RPC, for its
-			// own radio, dispatches under the lock it holds, and only while it
-			// still owns it right before the scan. Everyone else contends; a busy
-			// lock or a refused check skips the radio.
-			const lockKey = scanKeyForIfname(target);
+			// While the coordinator runs, a radio is scanned only as the radio
+			// the coordinator would act on: a verified, published identity row,
+			// admitted like every Wi-Fi mutation, under the owner lock that row
+			// resolves to (the one hotspot changes hold). Then a fresh look at
+			// its mode and phy, and after that await a fresh sample confirming the
+			// same physical radio and lifetime under the held lock, right before
+			// the scan goes out; a replug under the name refuses. Only the
+			// awaiting scan RPC, for its own radio, dispatches under the lock it
+			// holds. Everyone else contends; an uncertain identity, a busy lock, a
+			// refused check or a scan NetworkManager rejects skips the radio.
+			const admission = admitRadio(target);
+			if (!admission) continue;
 			const inline =
-				underHeldLock && target === ifname && ownsWifiAdapterLock(lockKey);
+				underHeldLock &&
+				target === ifname &&
+				ownsWifiAdapterLock(admission.owner);
 			const dispatch = async () => {
 				if (!(await mayScanNow(target))) return false;
-				if (inline && !ownsWifiAdapterLock(lockKey)) return false;
-				await rescanAction(target);
-				return true;
+				if (!(await confirmWifiAdapterLifetime(admission))) return false;
+				return (await rescanAction(target)) !== false;
 			};
 			const sent = inline
 				? { success: true as const, result: await dispatch() }
-				: await withWifiAdapterLock(lockKey, dispatch);
+				: await withWifiAdapterLock(admission.owner, dispatch);
 			if (sent.success && sent.result) scanned.push(target);
 		}
 

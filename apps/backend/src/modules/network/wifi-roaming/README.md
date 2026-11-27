@@ -92,15 +92,21 @@ radio associated without an address is not idle.
   - `scan-gate.ts`: CeraUI's own rescans skip holders, assisters, the
     hotspot radio, a radio that is searching or joining, and every radio on
     the phys those use. The set is republished on every role, hold or
-    ownership change. Each rescan of a radio goes out under its
-    owner-resolved adapter lock after a fresh, fail-closed read of its mode
-    and phy. The scan RPC holds that lock across the dispatch and says so
+    ownership change. Each rescan of a radio is admitted like a coordinator
+    action (below) and goes out under the owner lock its row resolves to,
+    after a fresh, fail-closed read of its mode and phy and then a fresh
+    sample confirming the same radio and lifetime. A radio without a verified
+    identity is not scanned while the gate is active; a request naming a radio
+    no row answers to scans nothing; a scan NetworkManager refuses is not
+    reported as run. The scan RPC holds that lock across the dispatch and says so
     (`underHeldLock`), so its own radio's scan goes out inline under it,
     re-checked right before the scan; every other rescan contends for the
     lock, including one a lock holder starts without awaiting (hotspot
     teardown). So a named scan of an eligible radio really runs, a busy radio
     is reported as busy, and no scan escapes a released lock.
-  - `bond-hold.ts`: a radio leaves the SRTLA bond while it searches.
+  - `bond-hold.ts`: a radio leaves the SRTLA bond while it searches. The hold
+    is part of bond admission (`admitsBondLink`) and of the same-subnet list a
+    LAN receiver gets, so no sender list or last-uplink check counts it.
   - `ownership.ts`: other Wi-Fi automation leaves coordinator-owned radios
     alone. A radio in hotspot use is not coordinator-owned.
   - `radio-lock.ts`: scans and joins run under CeraUI's per-adapter Wi-Fi
@@ -113,6 +119,14 @@ radio associated without an address is not idle.
       lifetime.
 
     A Limited, Unverified, unpublished or replaced radio is not acted on.
+    The admission travels with the action: the NetworkManager port binds a
+    join to the profiles pinned to the admitted permanent MAC (never the
+    name's current, possibly randomized address) and confirms the radio again
+    right before each scan and activation, so a replug under the same name
+    gets neither the scan nor the clone. Verified twins (two radios with one
+    permanent MAC, registered as `MAC@port`) are refused like Limited radios:
+    the shared admission accepts bare-MAC rows only, as the network-diversity
+    check and the two-radio adapter do.
 
 ## Not yet
 
@@ -123,7 +137,13 @@ These come in later parts:
 - Boot wiring and configuration, with the preconditions it needs: IPv6-only
   paths counted as associated, `stop()` fenced against a round in flight, a
   startup sweep of leftover `ceraui-search-*` profiles, and radio state keyed
-  by incarnation rather than by interface name.
+  by physical identity rather than by interface name. Roles, cool-downs and
+  bond holds are still kept per interface name, so a radio replaced under the
+  same name would inherit them: key them by `physicalWifiAdapterId`, resolve
+  the current interface for each hold and effect, confirm in `mayActivate`
+  and after each effect before accepting evidence, persist no lock key or
+  incarnation, and stand the network-diversity scanner down for
+  coordinator-owned radios (it calls NetworkManager directly).
 - The first holder is whatever NetworkManager activated with the operator's
   profile. Without a BSSID lock, NetworkManager gives it a background scan
   every 30 s below -65 dBm on a multi-AP network. `status()` reports
@@ -141,7 +161,7 @@ radio-keyed roles.
 ## Tests
 
 ```sh
-bun test apps/backend/src/modules/network/wifi-roaming/ apps/backend/src/tests/wifi-rescan-holder-gate.test.ts
+bun test apps/backend/src/modules/network/wifi-roaming/ apps/backend/src/tests/wifi-rescan-holder-gate.test.ts apps/backend/src/tests/wifi-rescan-lock-escape.test.ts apps/backend/src/tests/wifi-roaming-bond-hold-lists.test.ts
 ```
 
 The coordinator tests run a fake world of radios, APs, routers and a clock.

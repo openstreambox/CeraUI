@@ -13,7 +13,6 @@ import {
 } from "../modules/network/wifi-roaming/scan-gate.ts";
 import { withWifiAdapterLock } from "../modules/wifi/wifi-adapter-lock.ts";
 import {
-	addWifiInterface,
 	resetWifiScanStampsForTest,
 	setRescanActionForTest,
 	setScanRefreshAction,
@@ -21,38 +20,38 @@ import {
 	wifiCancelScanRefresh,
 	wifiRescan,
 } from "../modules/wifi/wifi-connections.ts";
-import type { WifiInterface } from "../modules/wifi/wifi-interfaces.ts";
 import {
 	isolateWifiRegistry,
 	restoreWifiRegistry,
 } from "./helpers/wifi-registry.ts";
+import { seedWifiRadios } from "./helpers/wifi-verified-radios.ts";
 
 const HOLDER: MacAddress = "aa:bb:cc:dd:ee:01";
 const SEARCHER: MacAddress = "aa:bb:cc:dd:ee:02";
-function seed(mac: MacAddress, id: number, ifname: string) {
-	addWifiInterface(mac, {
-		id,
-		ifname,
-		conn: null,
-		hw: `r${id}`,
-		available: new Map(),
-		saved: {},
-		savedAll: {},
-	} as WifiInterface);
-}
 let inherited: ReturnType<typeof isolateWifiRegistry>;
-beforeEach(() => {
+let seeded: Awaited<ReturnType<typeof seedWifiRadios>>;
+beforeEach(async () => {
 	inherited = isolateWifiRegistry();
 	resetWifiScanStampsForTest();
-	seed(HOLDER, 0, "wlan0");
-	seed(SEARCHER, 1, "wlan1");
+	// Verified, published radios: the gate admits a radio before scanning it.
+	seeded = await seedWifiRadios();
+	await seeded.publish(
+		[HOLDER, SEARCHER].map((mac, id) => ({
+			ifname: `wlan${id}`,
+			mac,
+			ifindex: 70 + id,
+			phy: 7 + id,
+			row: { id, hw: `r${id}` },
+		})),
+	);
 	setScanRefreshAction(() => {});
 	setScanResultReaderForTest(() => Promise.resolve(true));
 });
-afterEach(() => {
+afterEach(async () => {
 	protectRadiosFromScans([]);
 	setScanGateModeReader(null);
 	wifiCancelScanRefresh();
+	await seeded.restore();
 	restoreWifiRegistry(inherited);
 	resetWifiScanStampsForTest();
 });

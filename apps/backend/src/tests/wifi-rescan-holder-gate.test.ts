@@ -14,7 +14,6 @@ import {
 } from "../modules/network/wifi-roaming/scan-gate.ts";
 import { withWifiAdapterLock } from "../modules/wifi/wifi-adapter-lock.ts";
 import {
-	addWifiInterface,
 	getWifiScanStampForDevice,
 	resetWifiScanStampsForTest,
 	setRescanActionForTest,
@@ -24,39 +23,43 @@ import {
 	wifiRescan,
 	wifiRescanDispatched,
 } from "../modules/wifi/wifi-connections.ts";
-import type { WifiInterface } from "../modules/wifi/wifi-interfaces.ts";
 import { wifiScanProcedure } from "../rpc/procedures/wifi.procedure.ts";
 import type { AppWebSocket, RPCContext } from "../rpc/types.ts";
 import {
 	isolateWifiRegistry,
 	restoreWifiRegistry,
 } from "./helpers/wifi-registry.ts";
+import {
+	type SeedRadio,
+	seedWifiRadios,
+} from "./helpers/wifi-verified-radios.ts";
 
 const HOLDER: MacAddress = "aa:bb:cc:dd:ee:01";
 const SEARCHER: MacAddress = "aa:bb:cc:dd:ee:02";
 const THIRD: MacAddress = "aa:bb:cc:dd:ee:03";
 
-function seedRadio(macAddress: MacAddress, id: number, ifname: string): void {
-	addWifiInterface(macAddress, {
-		id,
-		ifname,
-		conn: null,
-		hw: `radio ${id}`,
-		available: new Map(),
-		saved: {},
-		savedAll: {},
-	} as WifiInterface);
-}
+/*
+  Verified, published radios: while the gate is active a radio is scanned only
+  through the same admission every Wi-Fi mutation uses.
+*/
+const radios = (): SeedRadio[] =>
+	[HOLDER, SEARCHER, THIRD].map((mac, id) => ({
+		ifname: `wlan${id}`,
+		mac,
+		ifindex: 60 + id,
+		phy: 6 + id,
+		row: { id, hw: `radio ${id}` },
+	}));
 
 let inherited: ReturnType<typeof isolateWifiRegistry>;
+let seed: Awaited<ReturnType<typeof seedWifiRadios>>;
 let spawns: Array<string | undefined>;
 
-beforeEach(() => {
+beforeEach(async () => {
 	inherited = isolateWifiRegistry();
 	resetWifiScanStampsForTest();
-	seedRadio(HOLDER, 0, "wlan0");
-	seedRadio(SEARCHER, 1, "wlan1");
-	seedRadio(THIRD, 2, "wlan2");
+	seed = await seedWifiRadios();
+	await seed.publish(radios());
 	setScanRefreshAction(() => {});
 	setScanResultReaderForTest(() => Promise.resolve(true));
 	spawns = [];
@@ -65,10 +68,11 @@ beforeEach(() => {
 	});
 });
 
-afterEach(() => {
+afterEach(async () => {
 	protectRadiosFromScans([]);
 	setScanGateModeReader(null);
 	wifiCancelScanRefresh();
+	await seed.restore();
 	restoreWifiRegistry(inherited);
 	resetWifiScanStampsForTest();
 });
@@ -306,5 +310,71 @@ describe("the scan RPC while the gate is active", () => {
 		});
 		expect(result).toEqual({ success: false, error: "DEVICE_BUSY" });
 		expect(spawns).toEqual([]);
+	});
+});
+
+describe("rescans admit the radio they scan", () => {
+	const eligible = () =>
+		setScanGateModeReader(async (ifname) => ({
+			phy: `phy-${ifname}`,
+			apOnPhy: false,
+		}));
+
+	test("a radio replugged under its name while its mode is read is not scanned", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		setScanGateModeReader(async (ifname) => {
+			// Sysfs already shows another lifetime behind wlan1: a replug that
+			// no discovery pass has published yet.
+			seed.sysfs(
+				radios().map((r) =>
+					r.ifname === "wlan1" ? { ...r, ifindex: r.ifindex + 10 } : r,
+				),
+			);
+			return { phy: `phy-${ifname}`, apOnPhy: false };
+		});
+		await wifiRescan(1);
+		expect(spawns).toEqual([]);
+		expect(getWifiScanStampForDevice(1)).toBeUndefined();
+	});
+
+	test("a radio without a verified identity is not scanned while the gate is active", async () => {
+		// A new radio whose phy reports no permanent MAC: Limited. (The same
+		// lifetime would keep its earlier verified identity.)
+		await seed.publish(
+			radios().map((r) =>
+				r.ifname === "wlan1"
+					? { ...r, mac: undefined, ifindex: r.ifindex + 20, phy: r.phy + 20 }
+					: r,
+			),
+		);
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		eligible();
+		await wifiRescan();
+		expect(spawns).toEqual(["wlan2"]);
+	});
+
+	test("a rescan naming a radio no row answers to scans nothing", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		eligible();
+		await wifiRescan(9);
+		expect(spawns).toEqual([]);
+		expect(await wifiRescanDispatched(9)).toBe(false);
+		expect(spawns).toEqual([]);
+	});
+
+	test("a scan NetworkManager refuses is not reported as dispatched and moves no stamp", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		eligible();
+		setRescanActionForTest(async (device) => {
+			spawns.push(device);
+			return false;
+		});
+		let dispatched: boolean | undefined;
+		await withWifiAdapterLock(SEARCHER, async () => {
+			dispatched = await wifiRescanDispatched(1, { underHeldLock: true });
+		});
+		expect(dispatched).toBe(false);
+		expect(spawns).toEqual(["wlan1"]);
+		expect(getWifiScanStampForDevice(1)).toBeUndefined();
 	});
 });

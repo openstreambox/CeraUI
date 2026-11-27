@@ -11,7 +11,6 @@
  * no background scan from NetworkManager and the supplicant does not roam
  * away from that BSSID.
  */
-import { readFile } from "node:fs/promises";
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
 import {
 	JOIN_REFUSED,
@@ -19,6 +18,11 @@ import {
 	type RadioObservation,
 } from "./coordinator.ts";
 import type { ScanRow, UplinkIdentity } from "./policy.ts";
+import {
+	admitRadio,
+	admittedRadio,
+	confirmAdmittedRadio,
+} from "./radio-lock.ts";
 
 export type Runner = (
 	bin: string,
@@ -174,29 +178,42 @@ export function parseCloneUuid(stdout: string): string | undefined {
 
 export type SearchNmDeps = Readonly<{
 	run: Runner;
-	/** MAC address the radio's saved profiles are bound to. */
-	macOf?: (ifname: string) => Promise<string | undefined>;
+	/**
+	 * Permanent MAC the radio's saved profiles are bound to (NetworkManager
+	 * matches `802-11-wireless.mac-address` against the permanent address).
+	 * `join` asks for the MAC of the radio admitted under the held lock;
+	 * `listing` (candidate ranking, outside the lock) may admit afresh.
+	 */
+	macOf?: (
+		ifname: string,
+		purpose: "listing" | "join",
+	) => Promise<string | undefined>;
+	/**
+	 * Right before a scan or an activation: the radio behind `ifname` is still
+	 * the one admitted under the held lock.
+	 */
+	confirm?: (ifname: string) => Promise<boolean>;
 }>;
 
-async function sysfsMac(ifname: string): Promise<string | undefined> {
-	try {
-		const mac = (
-			await readFile(
-				`/sys/class/net/${argMatch(ID_RE, ifname)}/address`,
-				"utf8",
-			)
-		)
-			.trim()
-			.toLowerCase();
-		return BSSID_RE.test(mac) ? mac : undefined;
-	} catch {
-		return undefined;
-	}
+/*
+  Never the name's current address: that is the operational MAC, which can be
+  randomized, and after a replug it belongs to another radio. Only the
+  permanent MAC of a verified, published identity row counts.
+*/
+async function admittedMac(
+	ifname: string,
+	purpose: "listing" | "join",
+): Promise<string | undefined> {
+	const admission =
+		admittedRadio(ifname) ??
+		(purpose === "listing" ? admitRadio(ifname) : undefined);
+	return admission?.permanentMac;
 }
 
 export function createSearchNm(deps: SearchNmDeps) {
 	const run = deps.run;
-	const macOf = deps.macOf ?? sysfsMac;
+	const macOf = deps.macOf ?? admittedMac;
+	const confirm = deps.confirm ?? confirmAdmittedRadio;
 	const quiet = async (bin: string, args: string[], timeout = 10_000) => {
 		try {
 			return await run(bin, args, { timeout });
@@ -249,8 +266,11 @@ export function createSearchNm(deps: SearchNmDeps) {
 	}
 
 	/** Saved Wi-Fi profiles bound to this radio, by SSID. */
-	async function boundProfiles(ifname: string): Promise<Map<string, string>> {
-		const mac = await macOf(ifname);
+	async function boundProfiles(
+		ifname: string,
+		purpose: "listing" | "join",
+	): Promise<Map<string, string>> {
+		const mac = await macOf(ifname, purpose);
 		const bySsid = new Map<string, string>();
 		if (!mac) return bySsid;
 		const out = await quiet("nmcli", [
@@ -369,6 +389,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 		},
 
 		async scan(ifname: string): Promise<readonly ScanRow[] | undefined> {
+			if (!(await confirm(argMatch(ID_RE, ifname)))) return undefined;
 			const out = await quiet(
 				"nmcli",
 				[
@@ -389,7 +410,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 		},
 
 		async savedSsids(ifname: string): Promise<ReadonlySet<string>> {
-			return new Set((await boundProfiles(ifname)).keys());
+			return new Set((await boundProfiles(ifname, "listing")).keys());
 		},
 
 		async join(
@@ -400,7 +421,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 		): Promise<JoinResult | typeof JOIN_REFUSED | undefined> {
 			const dev = argMatch(ID_RE, ifname);
 			const target = argMatch(BSSID_RE, bssid.toLowerCase());
-			const source = (await boundProfiles(dev)).get(ssid);
+			const source = (await boundProfiles(dev, "join")).get(ssid);
 			if (!source) return undefined;
 			const name = searchProfileName(dev);
 			const cloned = await quiet("nmcli", [
@@ -429,8 +450,10 @@ export function createSearchNm(deps: SearchNmDeps) {
 			if (modified !== undefined) {
 				await deleteStaleOwned(dev, uuid);
 				// The listing and deletes take time: check once more right before
-				// activation, so a hotspot that came up meanwhile still stops it.
-				if (!(await mayActivate())) {
+				// activation, so a hotspot that came up meanwhile still stops it,
+				// and confirm the radio is still the admitted one, so a replug
+				// under this name does not get the clone.
+				if (!(await mayActivate()) || !(await confirm(dev))) {
 					await quiet("nmcli", ["connection", "delete", uuid]);
 					return JOIN_REFUSED;
 				}

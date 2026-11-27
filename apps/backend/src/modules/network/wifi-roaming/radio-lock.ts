@@ -13,13 +13,16 @@
  * lifetime) before the action runs. A Limited, Unverified, unpublished or
  * replaced radio is refused, so the coordinator does not act on it.
  *
- * Identity is confirmed once, at lock entry, not again at activation or after
- * the action. A replug during a join is still bounded: the clone keeps the
- * source profile's MAC binding, so NetworkManager does not bring it up on
- * another radio, and verification next round needs the clone's activation on
- * this interface. Confirming in `mayActivate` and after the action, as the
- * two-radio effect adapter does, is a slice-3 item.
+ * The admission travels with the action. While `fn` runs, {@link admittedRadio}
+ * returns it for this interface, so the NetworkManager port binds profiles to
+ * the admitted permanent MAC rather than to whatever MAC the name shows now,
+ * and {@link confirmAdmittedRadio} re-samples the radio right before each
+ * dispatch (a scan, an activation). A replug under the same name therefore
+ * fails the next confirmation instead of receiving the old radio's profile.
+ * Confirming after the action, as the two-radio effect adapter does, is a
+ * slice-3 item.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
 	admitWifiAdapter,
 	confirmWifiAdapterLifetime,
@@ -38,6 +41,30 @@ export function admitRadio(ifname: string): WifiAdapterAdmission | undefined {
 	return admitWifiAdapter(keys[0] as string);
 }
 
+const lockedAdmission = new AsyncLocalStorage<WifiAdapterAdmission>();
+
+/**
+ * The admission the current {@link withRadioLock} action runs under, when it
+ * is for `ifname`. `undefined` outside such an action.
+ */
+export function admittedRadio(
+	ifname: string,
+): WifiAdapterAdmission | undefined {
+	const admission = lockedAdmission.getStore();
+	return admission?.row.ifname === ifname ? admission : undefined;
+}
+
+/**
+ * Right before a dispatch inside {@link withRadioLock}: the radio behind
+ * `ifname` is still the admitted one (same registry row, owner, incarnation,
+ * permanent MAC and lifetime, under the held owner lock). False outside an
+ * action for this interface.
+ */
+export async function confirmAdmittedRadio(ifname: string): Promise<boolean> {
+	const admission = admittedRadio(ifname);
+	return admission !== undefined && confirmWifiAdapterLifetime(admission);
+}
+
 export async function withRadioLock<T>(
 	ifname: string,
 	fn: () => Promise<T>,
@@ -47,7 +74,10 @@ export async function withRadioLock<T>(
 	const result = await withWifiAdapterLock(admission.owner, async () => {
 		if (!(await confirmWifiAdapterLifetime(admission)))
 			return { confirmed: false as const };
-		return { confirmed: true as const, value: await fn() };
+		return {
+			confirmed: true as const,
+			value: await lockedAdmission.run(admission, fn),
+		};
 	});
 	if (!result.success || !result.result.confirmed) return { ok: false };
 	return { ok: true, value: result.result.value };
