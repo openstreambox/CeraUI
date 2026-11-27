@@ -11,6 +11,12 @@ vi.mock("$lib/rpc/client", () => ({
 	ConnectionResetError: class ConnectionResetError extends Error {},
 	rpc: {},
 	rpcClient: {
+		// The session gate (reconnect re-auth): never armed in this stub.
+		setSessionActive: () => undefined,
+		confirmSocketSignedIn: () => undefined,
+		failHeldCalls: () => undefined,
+		isAwaitingSignIn: () => false,
+		recycleSocket: () => undefined,
 		onMessage: (handler: (type: string, data: unknown) => void) => {
 			handlers.message = handler;
 		},

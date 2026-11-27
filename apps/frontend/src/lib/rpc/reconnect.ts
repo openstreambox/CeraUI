@@ -8,7 +8,9 @@
  * showing the authenticated shell while every view is blank — the live-reload
  * blank-state bug.
  *
- * This module re-establishes the session using the stored credential, then fires
+ * This module re-establishes the session using this tab's own credential (the
+ * token its sign-in established; never the origin-wide `auth` slot, which
+ * another tab may have replaced), then fires
  * a safety hydrate (`streaming.getConfig` + `status.getStatus`, both authed
  * procedures) and routes the results through the existing `handleMessage` path so
  * the HUD and destination views repopulate even if the backend's post-login push
@@ -27,25 +29,33 @@
 
 /** Outcome of a single reconnect re-auth attempt. */
 export type ReauthOutcome =
-	/** Nothing stored — first-time/initial-load login owns the first auth. */
+	/** This tab holds no credential (not signed in): nothing to restore. */
 	| "no-token"
 	/** Re-auth succeeded and the safety hydrate ran. */
 	| "hydrated"
-	/** Stored credential rejected — cleared and routed to the login screen. */
+	/** The credential was rejected: forgotten and routed to the login screen. */
 	| "expired"
 	| "unreachable"
 	| "superseded";
 
 export interface ReauthDeps {
-	/** Read the stored credential (localStorage `auth`); null when absent. */
-	getStoredToken: () => string | null;
-	/** Remove the stored credential after a rejection (natural loop break). */
-	clearStoredToken: (rejectedToken: string) => void;
+	/**
+	 * The credential to present on the new socket: the token this tab signed in
+	 * with, held in memory while it is signed in; null when it holds none.
+	 */
+	getToken: () => string | null;
+	/**
+	 * Forget this tab's credential after a rejection (natural loop break), but
+	 * only while it is still the rejected one. It never touches the shared
+	 * `auth` slot: only an explicit sign-in or sign-out writes that, so another
+	 * tab's newer token survives.
+	 */
+	forgetToken: (rejectedToken: string) => void;
 	/** Whether this is still the socket and session that started the attempt. */
 	isCurrent: () => boolean;
 	/** Publish admission before starting the independent safety pulls. */
 	onAuthenticated: () => void;
-	/** Re-authenticate with the stored credential. */
+	/** Re-authenticate with this tab's credential. */
 	login: (token: string) => Promise<{ success: boolean }>;
 	/** Safety-hydrate source: current streaming config (authed procedure). */
 	getConfig: () => Promise<unknown>;
@@ -62,16 +72,16 @@ export interface ReauthDeps {
 /**
  * Re-authenticate on a reconnect, then safety-hydrate the view state.
  *
- * Guarantees no rejected-credential loop: on server rejection the stored
+ * Guarantees no rejected-credential loop: on server rejection this tab's
  * credential is cleared, so a subsequent invocation short-circuits at
- * {@link ReauthDeps.getStoredToken} returning `null` (→ `"no-token"`) and never
+ * {@link ReauthDeps.getToken} returning `null` (→ `"no-token"`) and never
  * calls {@link ReauthDeps.login} again. Transport failure returns
  * `"unreachable"` without changing the credential or auth state.
  */
 export async function reauthenticateAndHydrate(
 	deps: ReauthDeps,
 ): Promise<ReauthOutcome> {
-	const token = deps.getStoredToken();
+	const token = deps.getToken();
 	if (!token) return "no-token";
 
 	let result: { success: boolean };
@@ -88,9 +98,9 @@ export async function reauthenticateAndHydrate(
 	deps.dispatch("auth", result);
 
 	if (!result.success) {
-		// Stored credential expired/invalid: clear it so the next reconnect finds
+		// Credential expired/invalid: forget it so the next reconnect finds
 		// no token (loop break) and route to the login screen.
-		deps.clearStoredToken(token);
+		deps.forgetToken(token);
 		deps.routeToLogin();
 		return "expired";
 	}
