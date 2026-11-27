@@ -226,9 +226,10 @@ const polledNames = new Set<string>();
 const flappingNames = new Set<string>();
 // A name once seen on USB keeps the USB replacement fence after it disappears.
 const usbObservedNames = new Set<string>();
-// The MAC each published row carried. Local ingress tokens follow it, so a MAC
-// change is judged against what was published, not a sample a newer poll dropped.
-const publishedMacs = new Map<string, string | undefined>();
+// The last MAC a published row carried. Local ingress tokens follow it, so a MAC
+// change is judged against what was published, not a sample a newer poll dropped,
+// and a sample without a MAC keeps the baseline until the netdev retires.
+const publishedMacs = new Map<string, string>();
 type NetdevBusEvidence = {
 	readonly result: NetdevBus;
 	readonly seen: number;
@@ -273,24 +274,29 @@ function bumpPresence(name: string): void {
 function installScanSettlement(): void {
 	if (stopScanSettlement) return;
 	const stopNetdevRetired = onNetdevRetired(
-		(name, epoch, fencePoll, retired) => {
+		(name, epoch, fencePoll, retired, replaced) => {
 			if (fencePoll) netifRefreshGeneration++;
 			presenceEpoch.set(name, epoch);
 			publishedMacs.delete(name);
 			// Whoever retired the name (poll, monitor or USB scan), a different live
 			// netdev now holding it is a replacement and gets the replacement fence.
+			// The retiring observer's own comparison decides; a later read here can
+			// be unreadable or lack the evidence that showed the change. Without it,
+			// a recorded witness that differs from the live one still counts.
 			// A retired name last seen on USB waits for a scan of its successor's own
 			// identity even after a plain removal (a USB return cannot prove
 			// continuity). A Wi-Fi radio's lifetime is the radio's own; other removed
 			// names re-read their bus through the new lifetime instead.
-			const live = retired === undefined ? undefined : readNetdevWitness(name);
+			const live =
+				replaced || retired === undefined ? undefined : readNetdevWitness(name);
 			const replacedByLive =
 				retired !== undefined &&
 				live !== undefined &&
 				live.present !== false &&
 				hasNetdevWitness(live) &&
 				netdevChanged(retired, live);
-			if (fencePoll) {
+			if (replaced) holdReplacedNetdev(name);
+			else if (fencePoll) {
 				if (replacedByLive) holdReplacedNetdev(name);
 				else if (
 					usbObservedNames.has(name) &&
@@ -418,6 +424,24 @@ function hasWirelessKernelEvidence(name: string): boolean {
 	return (
 		wifiInterfaceReaders.pathExists(`/sys/class/net/${name}/phy80211`) ||
 		wifiInterfaceReaders.pathExists(`/sys/class/net/${name}/wireless`)
+	);
+}
+
+/**
+ * Wireless sysfs of the netdev this publication validated. The witness read on
+ * both sides of the lookup must agree with the recorded one, so a radio that
+ * took the name after validation cannot vouch for the row being published.
+ */
+function hasWirelessEvidenceOfRecordedNetdev(name: string): boolean {
+	const recorded = netdevWitness(name);
+	const before = readNetdevWitness(name);
+	const wireless = hasWirelessKernelEvidence(name);
+	const after = readNetdevWitness(name);
+	return (
+		wireless &&
+		!netdevChanged(recorded, before) &&
+		!netdevChanged(recorded, after) &&
+		!netdevChanged(before, after)
 	);
 }
 
@@ -991,8 +1015,7 @@ export function handleNetifMonitorEvent(event: MonitorEvent): void {
 				!hasNetdevWitness(previous) &&
 				hasNetdevWitness(current))
 		)
-			retireNetdev(name);
-		if (replaced) holdReplacedNetdev(name);
+			retireNetdev(name, true, replaced);
 		if (netif[name]) return;
 		flappingNames.delete(name);
 		noteNetdevWitness(name, current);
@@ -1002,8 +1025,11 @@ export function handleNetifMonitorEvent(event: MonitorEvent): void {
 		if (replaced || netdevPresence.inSysfs(name) === false) {
 			// An unclassified placeholder may have no stale sample to discard.
 			// Its new presence epoch still forces a fresh bus read before admission.
-			retireNetdev(name, hasNetdevWitness(previous) || usbNetScanCovers(name));
-			if (replaced && current.present !== false) holdReplacedNetdev(name);
+			retireNetdev(
+				name,
+				hasNetdevWitness(previous) || usbNetScanCovers(name),
+				replaced && current.present !== false,
+			);
 		} else {
 			// NM events carry no incarnation. Do not let an old down remove the
 			// addressed successor while the kernel still reports it operational.
@@ -1371,9 +1397,11 @@ async function refreshNetifFromOs(): Promise<void> {
 				netdevChanged(netdevWitness(name), live) ||
 				netdevChanged(netdevWitness(name), witness)
 			) {
-				retireNetdev(name);
-				if (live.present !== false && hasNetdevWitness(live))
-					holdReplacedNetdev(name);
+				retireNetdev(
+					name,
+					true,
+					live.present !== false && hasNetdevWitness(live),
+				);
 				withdrawn.add(name);
 			}
 		}
@@ -1440,10 +1468,7 @@ function observePollWitness(name: string, witness: NetdevWitness): boolean {
 	const replaced =
 		netdevChanged(previous, witness) ||
 		(flappingNames.has(name) && !netdevMatches(previous, witness));
-	if (replaced) {
-		retireNetdev(name);
-		if (netdevChanged(previous, witness)) holdReplacedNetdev(name);
-	}
+	if (replaced) retireNetdev(name, true, netdevChanged(previous, witness));
 	flappingNames.delete(name);
 	noteNetdevWitness(name, witness);
 	return replaced;
@@ -1582,7 +1607,7 @@ function publishIfconfigEntries(
 			if (
 				wifi &&
 				isUsbReplacementPending(name) &&
-				hasWirelessKernelEvidence(name) &&
+				hasWirelessEvidenceOfRecordedNetdev(name) &&
 				confirmNonUsbReplacement(name)
 			)
 				intsChanged = true;
@@ -1631,7 +1656,7 @@ function publishIfconfigEntries(
 				...(previous?.busReadWarned ? { busReadWarned: true } : {}),
 				...(previous?.identitySettled ? { identitySettled: true } : {}),
 			};
-			publishedMacs.set(name, mac);
+			if (mac !== undefined) publishedMacs.set(name, mac);
 			const entry = newInterfaces[name];
 			if (
 				entry.busUnreadable &&

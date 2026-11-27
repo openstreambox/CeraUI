@@ -59,6 +59,7 @@ export function firstSightScan(
 	const indices = new Map<string, number>();
 	let ipUnavailable = false;
 	let sysfsIndexUnavailable = false;
+	let sysfsNodeUnavailable = false;
 	let ifconfigGate: Promise<void> | undefined;
 	const fixture = options.usbReader ?? constructedTwinDeps(options.devices);
 	const reads = new Map<
@@ -140,7 +141,7 @@ export function firstSightScan(
 			if (!match) return realStatSync(path, opts);
 			const name = match[1] ?? "";
 			const index = indices.get(name);
-			return listed(name) && index !== undefined
+			return listed(name) && index !== undefined && !sysfsNodeUnavailable
 				? { dev: 1n, ino: BigInt(index) }
 				: undefined;
 		}) as typeof fs.statSync);
@@ -173,6 +174,10 @@ export function firstSightScan(
 		/** The sysfs ifindex read fails too; only the sysfs node still answers. */
 		setSysfsIndexUnavailable: (unavailable = true) => {
 			sysfsIndexUnavailable = unavailable;
+		},
+		/** The sysfs node stat fails; presence and the index still answer. */
+		setSysfsNodeUnavailable: (unavailable = true) => {
+			sysfsNodeUnavailable = unavailable;
 		},
 		holdIfconfig: (gate: Promise<void>) => {
 			ifconfigGate = gate;

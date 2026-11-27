@@ -854,7 +854,13 @@ async function runUsbNetScan(
 				netdevChanged(previous, current) ||
 				netdevChanged(read.witness, current)
 			) {
-				retireNetdev(name);
+				// This comparison is the evidence: retirement carries it, so the
+				// successor is held even when no later read can show the change.
+				retireNetdev(
+					name,
+					true,
+					current.present !== false && hasNetdevWitness(current),
+				);
 				stale.add(name);
 			} else if (
 				netdevChanged(previous, read.witness) ||
