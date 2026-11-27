@@ -62,6 +62,31 @@ describe("LiveBar", () => {
 		expect(bar.getAttribute("data-state")).toBe("blocked");
 	});
 
+	it("marks a notice line apart from a blocking reason and from ready", () => {
+		const notice = render(LiveBar, {
+			props: {
+				status: "Stop the stream above first",
+				notice: true,
+				children: action,
+			},
+		});
+		expect(notice.getByTestId("live-bar").getAttribute("data-state")).toBe(
+			"notice",
+		);
+		notice.unmount();
+
+		// A blocking reason wins over a notice.
+		const { getByTestId } = render(LiveBar, {
+			props: {
+				status: "Select a source",
+				blocked: true,
+				notice: true,
+				children: action,
+			},
+		});
+		expect(getByTestId("live-bar").getAttribute("data-state")).toBe("blocked");
+	});
+
 	it("publishes its height on the document root while mounted", () => {
 		const { unmount } = render(LiveBar, { props: { children: action } });
 		expect(
