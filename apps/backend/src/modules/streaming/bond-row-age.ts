@@ -22,6 +22,10 @@ import type { BondEntry } from "./bind-map.ts";
 
 let clock: () => number = () => performance.now();
 const heldSince = new Map<string, number>();
+// A publication whose IP list did not reach disk (failed, timed out, possibly
+// still landing late): until the next one that does, what the sender reads is
+// in doubt.
+let inDoubt = false;
 
 export const bondRowKey = (entry: Pick<BondEntry, "iface" | "ip">) =>
 	`${entry.iface} ${entry.ip}`;
@@ -31,17 +35,23 @@ export function bondRowClock(): number {
 	return clock();
 }
 
+/** A publication's IP list did not reach disk; the next written one restarts every age. */
+export function noteBondRowsInDoubt(): void {
+	inDoubt = true;
+}
+
 /**
- * An IP list with these rows reached the sender now. `restart` starts every
- * row's age over: the writer's own republication after a stuck, failed or
- * overtaken write, when what the sender last read is in doubt.
+ * An IP list with these rows reached the sender now. Every row's age starts
+ * over when `restart` asks for it (the writer's own republication) or when an
+ * earlier publication left the list in doubt, whichever caller repairs it.
  */
 export function noteBondRowsWritten(
 	entries: readonly BondEntry[],
 	options: { readonly restart?: boolean } = {},
 ): void {
 	const at = clock();
-	if (options.restart) heldSince.clear();
+	if (options.restart || inDoubt) heldSince.clear();
+	inDoubt = false;
 	const keys = new Set(entries.map(bondRowKey));
 	for (const key of [...heldSince.keys()])
 		if (!keys.has(key)) heldSince.delete(key);
@@ -57,6 +67,7 @@ export function bondRowHeldSince(
 
 export function resetBondRowAgesForTest(): void {
 	heldSince.clear();
+	inDoubt = false;
 	clock = () => performance.now();
 }
 

@@ -39,6 +39,7 @@ import {
 } from "../modules/streaming/bind-map-writer.ts";
 import {
 	bondRowHeldSince,
+	noteBondRowsWritten,
 	resetBondRowAgesForTest,
 	setBondRowClockForTest,
 } from "../modules/streaming/bond-row-age.ts";
@@ -634,6 +635,74 @@ describe("bond row ages for the carrier rule", () => {
 			bondRowHeldSince({ iface: "eth0", ip: "192.0.2.1" }),
 		).toBeUndefined();
 		expect(bondRowHeldSince({ iface: "eth0", ip: "192.0.2.2" })).toBe(2_000);
+	});
+
+	test("a caller's write after one that did not reach disk restarts every row's age", async () => {
+		resetBondRowAgesForTest();
+		let now = 0;
+		setBondRowClockForTest(() => now);
+		const fs = memoryFs(20);
+		const rows = [...link("wlan0", "192.0.2.1"), ...link("eth0", "192.0.2.3")];
+		await publishSrtlaBond(rows, fs.deps, notStreaming);
+		now = 1_000;
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const slow = {
+			...fs.deps,
+			retryDelaysMs: [60_000],
+			writeFile: async (path: string, bytes: string) => {
+				if (path.startsWith(IPS)) await held;
+				await fs.deps.writeFile(path, bytes);
+			},
+		};
+		expect(
+			await publishSrtlaBond(link("wlan0", "192.0.2.1"), slow, notStreaming),
+		).toMatchObject({ reason: "timed_out" });
+		// The ages still say 0, but the abandoned Wi-Fi-only list may land late.
+		expect(bondRowHeldSince({ iface: "eth0", ip: "192.0.2.3" })).toBe(0);
+		release();
+		await Bun.sleep(30);
+		now = 2_000;
+		// An ordinary refresh repairs it.
+		expect(
+			(
+				await publishSrtlaBond(
+					rows,
+					{ ...fs.deps, deadlineMs: 2_000 },
+					notStreaming,
+				)
+			).ok,
+		).toBe(true);
+		// eth0 was missing from the list that landed late: its age starts over.
+		expect(bondRowHeldSince({ iface: "eth0", ip: "192.0.2.3" })).toBe(2_000);
+		// wlan0 was in every list since that late landing settled.
+		expect(bondRowHeldSince({ iface: "wlan0", ip: "192.0.2.1" })).toBe(1_000);
+	});
+
+	test("a timed-out publish leaves the next written list restarting every age", async () => {
+		resetBondRowAgesForTest();
+		let now = 0;
+		setBondRowClockForTest(() => now);
+		const fs = memoryFs(10);
+		const rows = [...link("wlan0", "192.0.2.1"), ...link("eth0", "192.0.2.3")];
+		await publishSrtlaBond(rows, fs.deps, notStreaming);
+		const stuck = {
+			...fs.deps,
+			retryDelaysMs: [60_000],
+			writeFile: () => new Promise<void>(() => {}),
+		};
+		now = 1_000;
+		// The caller is answered timed_out; the abandoned attempt never settles.
+		expect(
+			await publishSrtlaBond(link("wlan0", "192.0.2.1"), stuck, notStreaming),
+		).toMatchObject({ reason: "timed_out" });
+		now = 2_000;
+		// The next list that does reach the sender, from any caller, restarts them all.
+		noteBondRowsWritten(rows);
+		expect(bondRowHeldSince({ iface: "eth0", ip: "192.0.2.3" })).toBe(2_000);
+		expect(bondRowHeldSince({ iface: "wlan0", ip: "192.0.2.1" })).toBe(2_000);
 	});
 
 	test("the writer's own republication restarts every row's age", async () => {
