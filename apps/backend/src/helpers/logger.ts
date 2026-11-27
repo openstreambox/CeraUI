@@ -218,6 +218,107 @@ export function isCredentialSensitiveKey(key: string): boolean {
 }
 
 /**
+ * Credential words matched as WHOLE tokens of a key, after splitting on
+ * separators (`_`, `-`, `.`, spaces) and camelCase boundaries.
+ *
+ * {@link SENSITIVE_KEY_RE} is a SUBSTRING match, so it can only hold words that
+ * never occur inside innocent keys. `pass` and `key` are the opposite: as
+ * substrings they would blank `passthrough`, `bypass` and every `keyframe`, so
+ * they were left out, and with them `ssh_pass`, `ssh_pass_hash` and
+ * `remote_key`, which the boot-time `config loaded` record then carried in
+ * clear text into the journal. Matching tokens closes that without the
+ * over-redaction: `ssh_pass` and `sshPass` split to `ssh` + `pass`, while
+ * `video_passthrough` and `bypass` keep their single, different token.
+ */
+const SECRET_KEY_TOKENS: ReadonlySet<string> = new Set<string>([
+	"pass",
+	"passwd",
+	"pwd",
+	"psk",
+	"passcode",
+	"passkey",
+	"apikey",
+	"authkey",
+	"privkey",
+	"privatekey",
+	"cookie",
+	"sshpass",
+]);
+
+/**
+ * A `key` token is a credential only when the token before it says which
+ * kind: `remote_key`, `api_key`, `stream_key`, `pre_shared_key`. A bare `key`,
+ * and identifiers such as `stableKey` or `sortKey`, stay readable.
+ */
+const SECRET_KEY_QUALIFIERS: ReadonlySet<string> = new Set<string>([
+	"access",
+	"api",
+	"auth",
+	"bcrp",
+	"control",
+	"encryption",
+	"enrol",
+	"enroll",
+	"ingest",
+	"pairing",
+	"pre",
+	"preshared",
+	"private",
+	"priv",
+	"relay",
+	"remote",
+	"secret",
+	"session",
+	"shared",
+	"signing",
+	"ssh",
+	"stream",
+	"tailscale",
+	"wifi",
+	"wpa",
+]);
+
+function keyTokens(key: string): string[] {
+	return key
+		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+		.replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+		.toLowerCase()
+		.split(/[^a-z0-9]+/)
+		.filter(Boolean);
+}
+
+/** Whole-token credential test; see {@link SECRET_KEY_TOKENS}. */
+export function isSecretTokenKey(key: string): boolean {
+	const tokens = keyTokens(key);
+	return tokens.some(
+		(token, index) =>
+			// `passThrough` / `pass-through` is a mode, not a credential.
+			(SECRET_KEY_TOKENS.has(token) &&
+				!(token === "pass" && tokens[index + 1] === "through")) ||
+			((token === "key" || token === "keys") &&
+				index > 0 &&
+				SECRET_KEY_QUALIFIERS.has(tokens[index - 1] ?? "")),
+	);
+}
+
+/**
+ * Every key-side rule in one place, so the plain-object walk, the Error
+ * projection and the top-level record format can't drift apart.
+ */
+export function isSensitiveKey(key: string): boolean {
+	return (
+		isStreamIdKey(key) ||
+		SENSITIVE_KEY_RE.test(key) ||
+		isSecretTokenKey(key) ||
+		isSmsSensitiveKey(key) ||
+		isGpsSensitiveKey(key) ||
+		isUssdSensitiveKey(key) ||
+		isOwnNumberSensitiveKey(key) ||
+		isCredentialSensitiveKey(key)
+	);
+}
+
+/**
  * Backstop for the VALUE side: a raw `mmcli -K -s <path>` record pasted into a
  * free-text log line carries the body and the originator on its face. The
  * backend's SMS module is content-free by construction, so this should never
@@ -299,18 +400,14 @@ function redactValue(value: unknown): unknown {
 			name === value.name &&
 			message === value.message &&
 			stack === value.stack &&
-			!Object.keys(value).some(
-				(key) => isStreamIdKey(key) || SENSITIVE_KEY_RE.test(key),
-			)
+			!Object.keys(value).some(isSensitiveKey)
 		)
 			return value;
 		return {
 			...Object.fromEntries(
 				Object.entries(value).map(([key, inner]) => [
 					key,
-					isStreamIdKey(key) || SENSITIVE_KEY_RE.test(key)
-						? REDACTED
-						: redactValue(inner),
+					isSensitiveKey(key) ? REDACTED : redactValue(inner),
 				]),
 			),
 			name,
@@ -329,16 +426,7 @@ function redactValue(value: unknown): unknown {
 	if (isRedactablePlainObject(value)) {
 		const out: Record<string, unknown> = {};
 		for (const [key, inner] of Object.entries(value)) {
-			out[key] =
-				isStreamIdKey(key) ||
-				SENSITIVE_KEY_RE.test(key) ||
-				isSmsSensitiveKey(key) ||
-				isGpsSensitiveKey(key) ||
-				isUssdSensitiveKey(key) ||
-				isOwnNumberSensitiveKey(key) ||
-				isCredentialSensitiveKey(key)
-					? REDACTED
-					: redactValue(inner);
+			out[key] = isSensitiveKey(key) ? REDACTED : redactValue(inner);
 		}
 		return out;
 	}
@@ -361,16 +449,7 @@ export function logRedact(value: unknown): unknown {
  */
 export const redact = winston.format((info) => {
 	for (const key of Object.keys(info)) {
-		info[key] =
-			isStreamIdKey(key) ||
-			SENSITIVE_KEY_RE.test(key) ||
-			isSmsSensitiveKey(key) ||
-			isGpsSensitiveKey(key) ||
-			isUssdSensitiveKey(key) ||
-			isOwnNumberSensitiveKey(key) ||
-			isCredentialSensitiveKey(key)
-				? REDACTED
-				: redactValue(info[key]);
+		info[key] = isSensitiveKey(key) ? REDACTED : redactValue(info[key]);
 	}
 	return info;
 });

@@ -1,5 +1,6 @@
 import type { LogEntry, LogLevel } from "@ceraui/rpc/schemas";
 import { z } from "zod";
+import { logRedact } from "../../helpers/logger.ts";
 import { sourceOfUnit } from "./catalog.ts";
 
 export type RawJournalRecord = LogEntry & {
@@ -89,9 +90,13 @@ export function parseRecord(input: unknown): RawJournalRecord | null {
 					const meta = eventMetaSchema.safeParse(data.meta);
 					if (meta.success) eventId = meta.data.event_id;
 				}
+				// Records written before a key joined the logger's redaction rules
+				// stay in the persistent journal for up to its retention; the same
+				// key rules run again here so the viewer, export and bundle don't
+				// replay a credential an older build logged.
 				text = `${typeof data.module === "string" && data.module ? `[${data.module}] ` : ""}${data.msg}${
 					data.meta !== null && typeof data.meta === "object"
-						? ` ${JSON.stringify(data.meta)}`
+						? ` ${JSON.stringify(logRedact(data.meta))}`
 						: ""
 				}`;
 				if (

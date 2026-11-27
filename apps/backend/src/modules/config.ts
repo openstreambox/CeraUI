@@ -20,6 +20,7 @@ import {
 	loadJsonConfig,
 	writeFileAtomicSync,
 } from "../helpers/config-loader.ts";
+import { configLogView } from "../helpers/config-log-view.ts";
 import {
 	coerceLegacySource,
 	RUNTIME_CONFIG_DEFAULTS,
@@ -95,7 +96,9 @@ export async function loadConfig() {
 		Object.assign(config, MOCK_CONFIG_PAIRING_DEFAULTS);
 	}
 
-	logger.debug("config loaded", config);
+	// Allowlisted fields only: this record lands in the persistent journal on
+	// every start, and the loaded config still holds every credential here.
+	logger.debug("config loaded", configLogView(config));
 
 	// Lazy import breaks the config↔audio cycle (audio.ts imports getConfig).
 	const { warnIfConfiguredAudioSourceUnavailable } = await import(
