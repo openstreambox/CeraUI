@@ -2033,8 +2033,9 @@ tick instead of a recorded `DOWNLOAD_FAILED`, whose `failed` phase would outlive
 the reboot that clears the pin. A proof that finds the unit gone clears the pin
 (a temporary reference, such as a D-Bus client's, can hold a stopped unit for a
 moment). A start that still finds the unit pinned throws
-`DetachedAptServicePinnedError` instead of running a `systemd-run` that systemd
-would refuse ("already loaded or has a fragment file"). The unit also orders
+`DetachedAptServicePinnedError` (as the `cause` of the launch refusal described
+below, so the orchestrator queues it again) instead of running a `systemd-run`
+that systemd would refuse ("already loaded or has a fragment file"). The unit also orders
 itself `Before=ceralive-write-drain.service`, so an image can drop the name from
 the drain and keep the shutdown waiting for a running transaction. That
 property is sent first: systemd writes the transient file one property at a
