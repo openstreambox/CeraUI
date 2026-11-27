@@ -4,6 +4,7 @@ import { unlinkSync } from "node:fs";
 import {
 	createControlClient,
 	JSON_RPC_METHOD_NOT_FOUND,
+	MAX_CONTROL_LINE_CHARS,
 	SENDER_CONTROL_METHODS,
 	STATS_TOPIC,
 	senderStatsSchema,
@@ -715,5 +716,122 @@ describe("per-link arrival reports and sender health", () => {
 		});
 		expect(beforeFirstAck.links[0]?.last_srtla_ack_age_ms).toBeUndefined();
 		expect(beforeFirstAck.links[0]?.srtla_ack_epoch).toBe(1);
+	});
+
+	test("a malformed new field is dropped, not the whole frame", () => {
+		const parsed = senderStatsSchema.safeParse({
+			mode: "enhanced",
+			negotiated_latency_ms: -1,
+			links: [
+				{
+					...link,
+					data_packets_queued_total: 1.5,
+					srtla_ack_epoch: "seven",
+					weak: "no",
+					cc_state: 3,
+					ip: "",
+				},
+			],
+		});
+		expect(parsed.success).toBe(true);
+		expect(parsed.data?.negotiated_latency_ms).toBeUndefined();
+		expect(parsed.data?.links[0]).toMatchObject({ conn_id: 0, rtt_ms: 30 });
+		for (const key of [
+			"data_packets_queued_total",
+			"srtla_ack_epoch",
+			"weak",
+			"cc_state",
+			"ip",
+		])
+			expect(
+				(parsed.data?.links[0] as Record<string, unknown> | undefined)?.[key],
+			).toBeUndefined();
+	});
+
+	test("a malformed field the projection relies on still rejects the frame", () => {
+		expect(
+			senderStatsSchema.safeParse({
+				mode: "enhanced",
+				links: [{ ...link, rtt_ms: "slow" }],
+			}).success,
+		).toBe(false);
+	});
+});
+
+describe("line size ceiling", () => {
+	/**
+	 * A peer that answers a request (or, with `pushOnOpen`, a subscription) with
+	 * one endless line, written in chunks until it is past the ceiling.
+	 */
+	async function floodServer(tag: string, ackSubscribe = false) {
+		const path = socketPath(tag);
+		try {
+			unlinkSync(path);
+		} catch {
+			// first run for this path
+		}
+		const flood = async (socket: { write: (d: string) => number }) => {
+			const chunk = "x".repeat(65_536);
+			let sent = 0;
+			while (sent <= MAX_CONTROL_LINE_CHARS + 16) {
+				const n = socket.write(chunk);
+				sent += n;
+				if (n < chunk.length) await Bun.sleep(2);
+			}
+		};
+		const server = Bun.listen<undefined>({
+			unix: path,
+			socket: {
+				data(socket, chunk) {
+					const line = new TextDecoder().decode(chunk).trim();
+					const frame = JSON.parse(line.split("\n")[0] as string) as {
+						id: number;
+						method: string;
+					};
+					if (ackSubscribe && frame.method === "subscribe")
+						socket.write(
+							`${JSON.stringify({ jsonrpc: "2.0", result: { subscription_id: "sub-0" }, id: frame.id })}\n`,
+						);
+					void flood(socket);
+				},
+			},
+		});
+		servers.push({ stop: () => server.stop(true) });
+		return path;
+	}
+
+	test("a peer that sends an over-long line is dropped, and a pending request fails at once", async () => {
+		const path = await floodServer("huge");
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 5000,
+		});
+		const started = Date.now();
+		const outcome = await client?.getStats().then(
+			() => "resolved",
+			() => "rejected",
+		);
+		expect(outcome).toBe("rejected");
+		expect(Date.now() - started).toBeLessThan(4000);
+		// The connection is gone: the next request fails at once too.
+		const next = await client?.getStats().then(
+			() => "resolved",
+			() => "rejected",
+		);
+		expect(next).toBe("rejected");
+		client?.close();
+	});
+
+	test("a subscription sees an over-long push as a disconnect", async () => {
+		const path = await floodServer("hugepush", true);
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 5000,
+		});
+		const seen: Array<unknown> = [];
+		const stop = client?.subscribeStats((snapshot) => seen.push(snapshot));
+		for (let i = 0; i < 100 && !seen.includes(null); i++) await Bun.sleep(20);
+		expect(seen).toContain(null);
+		stop?.();
 	});
 });

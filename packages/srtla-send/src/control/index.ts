@@ -95,6 +95,12 @@ export const JSON_RPC_INTERNAL_ERROR = -32603;
 /** Client-side code for a request that never got an answer. */
 export const CONTROL_TIMEOUT_CODE = -32000;
 
+/**
+ * Longest line the client buffers from the sender. A stats frame with many
+ * links is a few tens of kilobytes; anything past this is not the sender.
+ */
+export const MAX_CONTROL_LINE_CHARS = 1_048_576;
+
 // ---------------------------------------------------------------------------
 // Capability document (`get_capabilities` / `--capabilities-json` + `methods`)
 // ---------------------------------------------------------------------------
@@ -179,37 +185,42 @@ export const senderLinkStatsSchema = z.object({
 	/** Enhanced-mode quality multiplier, ~0.35..1.1. */
 	quality_multiplier: z.number(),
 	/** Source address of the uplink, the IP-list identity. */
-	ip: z.string().min(1).optional(),
+	ip: z.string().min(1).optional().catch(undefined),
 	// Per-link arrival reports (irlserver/srtla_send#30). Optional until every
 	// sender CeraUI drives reports them; compare the totals and the age only
 	// between snapshots with the same `srtla_ack_epoch`.
 	/** SRT DATA datagrams queued on this link (first sends, retransmits, probes). */
-	data_packets_queued_total: z.number().int().min(0).optional(),
+	data_packets_queued_total: z
+		.number()
+		.int()
+		.min(0)
+		.optional()
+		.catch(undefined),
 	/** Sequence entries in SRTLA ACKs that arrived on this link while registered. */
-	srtla_ack_entries_total: z.number().int().min(0).optional(),
+	srtla_ack_entries_total: z.number().int().min(0).optional().catch(undefined),
 	/** Absent before the first SRTLA ACK of the current epoch. */
-	last_srtla_ack_age_ms: z.number().int().min(0).optional(),
+	last_srtla_ack_age_ms: z.number().int().min(0).optional().catch(undefined),
 	/** Changes when the connection is created or its socket replaced. */
-	srtla_ack_epoch: z.number().int().min(0).optional(),
+	srtla_ack_epoch: z.number().int().min(0).optional().catch(undefined),
 	// Sender-side health the scheduler already acts on. All optional: older
 	// senders omit them, and CeraUI treats a missing flag as "no signal".
 	/** Dual-window minimum RTT baseline. */
-	rtt_min_ms: z.number().min(0).optional(),
+	rtt_min_ms: z.number().min(0).optional().catch(undefined),
 	/** The weak-link classifier flags this link. */
-	weak: z.boolean().optional(),
+	weak: z.boolean().optional().catch(undefined),
 	/** `healthy`, `high_rtt`, `no_traffic`, `low_share` or `bypassed`. */
-	weak_reason: z.string().optional(),
+	weak_reason: z.string().optional().catch(undefined),
 	/** Per-link capacity estimate in bits/s; 0 means no signal. */
-	cc_target_bps: z.number().int().min(0).optional(),
+	cc_target_bps: z.number().int().min(0).optional().catch(undefined),
 	/** `bootstrap`, `climbing`, `holding`, `backing_off` or `drain`. */
-	cc_state: z.string().optional(),
+	cc_state: z.string().optional().catch(undefined),
 	/** Loss the per-link congestion control sees, per mille. */
-	cc_loss_permille: z.number().int().min(0).optional(),
-	cc_loss_degraded: z.boolean().optional(),
+	cc_loss_permille: z.number().int().min(0).optional().catch(undefined),
+	cc_loss_degraded: z.boolean().optional().catch(undefined),
 	/** Held out by the stall gate (probes only). */
-	stall_gated: z.boolean().optional(),
-	sole_carrier_excluded: z.boolean().optional(),
-	in_flight_cap_active: z.boolean().optional(),
+	stall_gated: z.boolean().optional().catch(undefined),
+	sole_carrier_excluded: z.boolean().optional().catch(undefined),
+	in_flight_cap_active: z.boolean().optional().catch(undefined),
 });
 
 export const senderStatsSchema = z.object({
@@ -219,7 +230,7 @@ export const senderStatsSchema = z.object({
 	total_links: z.number().int().min(0).optional(),
 	session_bytes_sent: z.number().int().min(0).optional(),
 	/** SRT latency the peer negotiated, 0 when unknown. */
-	negotiated_latency_ms: z.number().int().min(0).optional(),
+	negotiated_latency_ms: z.number().int().min(0).optional().catch(undefined),
 	links: z.array(senderLinkStatsSchema),
 	bind_map_status: bindMapStatusSchema.optional(),
 	disposition: bindMapDispositionSchema.optional(),
@@ -416,14 +427,26 @@ class LineConnection {
 	}
 
 	onData(chunk: Uint8Array): void {
+		if (this.closed) return;
 		this.buffer += this.decoder.decode(chunk, { stream: true });
 		let nl = this.buffer.indexOf("\n");
 		while (nl !== -1) {
 			const line = this.buffer.slice(0, nl);
 			this.buffer = this.buffer.slice(nl + 1);
 			if (line.trim().length > 0) this.handleLine(line);
+			if (this.closed) return;
 			nl = this.buffer.indexOf("\n");
 		}
+		// A peer that never ends its line would grow the buffer without bound.
+		if (this.buffer.length > MAX_CONTROL_LINE_CHARS) this.overflow();
+	}
+
+	/** Drop a connection whose peer sent an over-long line, as a disconnect. */
+	private overflow(): void {
+		const handler = this.disconnectHandler;
+		this.buffer = "";
+		this.close();
+		handler?.();
 	}
 
 	private handleLine(line: string): void {
