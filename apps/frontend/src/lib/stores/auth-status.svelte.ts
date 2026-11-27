@@ -109,11 +109,17 @@ export function forgetSessionToken(): void {
  */
 export function forgetRejectedToken(rejectedToken: string): void {
 	if (sessionToken === rejectedToken) sessionToken = null;
-	if (
-		typeof localStorage !== "undefined" &&
-		localStorage.getItem("auth") === rejectedToken
-	)
-		localStorage.removeItem("auth");
+	// Best effort: blocked or failing storage must not stop the refusal from
+	// ending this tab's session.
+	try {
+		if (
+			typeof localStorage !== "undefined" &&
+			localStorage.getItem("auth") === rejectedToken
+		)
+			localStorage.removeItem("auth");
+	} catch (error) {
+		console.warn("Could not clear the refused stored credential:", error);
+	}
 }
 
 /** Record that the page has signed in at least once (see `authenticatedOnce`). */
