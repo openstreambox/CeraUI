@@ -3041,6 +3041,7 @@
 	"live.source.degradedCause.source-changed": "The video input's signal changed while it was in use. The device picks it up again on its own — if it keeps happening, check the camera's output settings.",
 	"settings.updates.packages.title": "Packages",
 	"settings.updates.packages.notChecked": "The device has not reported a completed check yet.",
+	"settings.updates.packages.systemFirst": "Install the system update first. It brings its own packages, and anything newer is offered after it.",
 	"settings.updates.nextCheck": "Next automatic check: {time}",
 	"settings.updates.nextCheckSoon": "Next automatic check: as soon as possible",
 	"settings.updates.checkDeferredMetered": "Waiting for a connection that isn't cellular, because package updates over cellular are off.",

@@ -42,20 +42,40 @@ test('package button drives scoped progress, global badge, Go Live band and inst
 	await expect(page.getByTestId('notification-item').filter({ hasText: 'cerastream' })).toBeVisible();
 });
 
-for (const regime of ['os-available', 'legacy'] as const) {
-	test(`package button keeps legacy RPC with ${regime} @functional`, async ({ page }) => {
-		// Given a state for which the legacy package route is intentionally retained.
-		const wire = await installUpdateWire(page, { packages, orchestrator: orchestratorState(regime === 'os-available' ? 'os-available' : 'available'), fakes: {
-			'system.getUpdateCapabilities': regime === 'legacy' ? LEGACY_CAPABILITIES : CAPABLE_CAPABILITIES,
-			'system.getUpdateDetails': capableDetails(),
-			'system.startUpdate': { success: true },
-		} });
-		// When packages are confirmed, then only the legacy RPC is dispatched.
-		await confirmPackages(page);
-		await expect.poll(() => wire.calls('system.startUpdate').length).toBe(1);
-		expect(wire.calls('system.installUpdatesNow')).toEqual([]);
-	});
-}
+test('package button keeps legacy RPC on a legacy image @functional', async ({ page }) => {
+	// Given a state for which the legacy package route is intentionally retained.
+	const wire = await installUpdateWire(page, { packages, orchestrator: orchestratorState('available'), fakes: {
+		'system.getUpdateCapabilities': LEGACY_CAPABILITIES,
+		'system.getUpdateDetails': capableDetails(),
+		'system.startUpdate': { success: true },
+	} });
+	// When packages are confirmed, then only the legacy RPC is dispatched.
+	await confirmPackages(page);
+	await expect.poll(() => wire.calls('system.startUpdate').length).toBe(1);
+	expect(wire.calls('system.installUpdatesNow')).toEqual([]);
+});
+
+test('an offered system image comes before the packages @functional', async ({ page }) => {
+	// Given packages on offer while the device offers a system image.
+	const wire = await installUpdateWire(page, { packages, orchestrator: orchestratorState('os-available'), fakes: {
+		'system.getUpdateCapabilities': CAPABLE_CAPABILITIES,
+		'system.getUpdateDetails': capableDetails(),
+		'system.startUpdate': { success: true },
+		'system.installUpdatesNow': { success: true },
+	} });
+	await page.goto('/');
+	await ensureAuthenticated(page);
+	await navigateTo(page, 'settings');
+	await page.getByTestId('settings-entry-updates').click();
+	await expect(page.getByTestId('update-details-loading')).toHaveCount(0);
+	// Then the Packages section says to install the system update first, with no package button.
+	await expect(page.getByTestId('update-packages-system-first')).toHaveText(
+		'Install the system update first. It brings its own packages, and anything newer is offered after it.',
+	);
+	await expect(page.getByTestId('update-install')).toHaveCount(0);
+	expect(wire.calls('system.startUpdate')).toEqual([]);
+	expect(wire.calls('system.installUpdatesNow')).toEqual([]);
+});
 
 test('package button waits for a phase before scoped install @functional', async ({ page }) => {
 	// Given a capable declaration but no orchestrator phase in the initial hydrate.

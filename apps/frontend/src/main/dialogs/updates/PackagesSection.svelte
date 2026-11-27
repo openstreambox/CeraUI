@@ -27,9 +27,10 @@ import { Progress } from '$lib/components/ui/progress';
 import { confirmOperation, getOperationPhase } from '$lib/rpc/async-operation.svelte';
 import { rpc } from '$lib/rpc/client';
 import { NotSentError } from '$lib/rpc/rpc-error';
-import { getUpdateState } from '$lib/rpc/subscriptions.svelte';
+import { getUpdateOrchestratorState, getUpdateState } from '$lib/rpc/subscriptions.svelte';
 import { actionableCountOf, availableOf, checkedAtOf } from '$lib/updates/legacy-packages';
 import { CONNECTION_DROPPED, createLiveProgress } from '$lib/updates/live-progress';
+import { SYSTEM_IMAGE_PHASES } from '$lib/updates/update-dialog-view';
 import type { UpdateSurface } from '$lib/updates/update-surface.svelte';
 
 import ActionOutcomeBand from './ActionOutcomeBand.svelte';
@@ -46,6 +47,12 @@ let { surface, clock, autoEnabled, aptTransport }: Props = $props();
 
 const updateState = $derived(getUpdateState());
 const actionableCount = $derived(actionableCountOf(availableOf(updateState)));
+// An offered or installing system image comes first: it carries its own
+// packages, and the device runs one install at a time.
+const systemFirst = $derived.by(() => {
+	const phase = getUpdateOrchestratorState()?.phase;
+	return actionableCount > 0 && phase !== undefined && SYSTEM_IMAGE_PHASES.includes(phase);
+});
 const failed = $derived(updateState?.kind === 'failed');
 const succeeded = $derived(updateState?.kind === 'success');
 const preflightFailed = $derived(updateState?.kind === 'update_preflight_failed');
@@ -276,7 +283,11 @@ $effect(() => () => clearTimeout(checkTimeout));
 				{m["general.retryUpdateCheck"]()}
 			</Button>
 		{:else}
-			{#if actionableCount > 0}
+			{#if systemFirst}
+				<p class="text-muted-foreground text-sm" data-testid="update-packages-system-first">
+					{m['settings.updates.packages.systemFirst']()}
+				</p>
+			{:else if actionableCount > 0}
 				<Button class="w-full gap-2" data-testid="update-install" disabled={!surface.packagesReady} onclick={() => (confirmOpen = true)} variant={surface.packagesReady ? 'default' : 'secondary'}>
 					<Download class="size-4" />
 					{m["general.updateButton"]()}

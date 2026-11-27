@@ -3056,6 +3056,7 @@
 	"live.source.degradedCause.source-changed": "Le signal de l'entrée vidéo a changé pendant son utilisation. L'appareil le reprend tout seul — si cela se répète, vérifiez les réglages de sortie de la caméra.",
 	"settings.updates.packages.title": "Paquets",
 	"settings.updates.packages.notChecked": "L'appareil n'a pas encore signalé de vérification terminée.",
+	"settings.updates.packages.systemFirst": "Installez d'abord la mise à jour du système. Elle apporte ses propres paquets ; ce qui est plus récent est proposé ensuite.",
 	"settings.updates.nextCheck": "Prochaine vérification automatique : {time}",
 	"settings.updates.nextCheckSoon": "Prochaine vérification automatique : dès que possible",
 	"settings.updates.checkDeferredMetered": "En attente d’une connexion non cellulaire, car les mises à jour des paquets par réseau cellulaire sont désactivées.",

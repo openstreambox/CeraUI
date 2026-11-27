@@ -3101,6 +3101,7 @@
 	"live.source.degradedCause.source-changed": "تغيّرت إشارة مدخل الفيديو أثناء الاستخدام. يلتقطها الجهاز مجدداً تلقائياً — إن تكرر ذلك، فتحقق من إعدادات خرج الكاميرا.",
 	"settings.updates.packages.title": "الحزم",
 	"settings.updates.packages.notChecked": "لم يُبلغ الجهاز بعد عن اكتمال أي فحص.",
+	"settings.updates.packages.systemFirst": "ثبّت تحديث النظام أولاً. فهو يتضمن حزمه الخاصة، وأي حزم أحدث تُعرض بعده.",
 	"settings.updates.nextCheck": "الفحص التلقائي التالي: {time}",
 	"settings.updates.nextCheckSoon": "الفحص التلقائي التالي: في أقرب وقت ممكن",
 	"settings.updates.checkDeferredMetered": "في انتظار اتصال غير خلوي، لأن تحديثات الحزم عبر الشبكة الخلوية متوقفة.",
