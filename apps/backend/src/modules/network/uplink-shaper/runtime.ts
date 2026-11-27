@@ -2,7 +2,7 @@ import { rename } from "node:fs/promises";
 import { logger } from "../../../helpers/logger.ts";
 import { buildLinkTelemetry } from "../../streaming/link-telemetry.ts";
 import { getStreamLifecycleState } from "../../streaming/stream-lifecycle-status.ts";
-import { isRealDevice } from "../../system/device-detection.ts";
+import { hasCapability } from "../../system/board-capabilities.ts";
 import { applyTrafficControl } from "../uplink-sharing.ts";
 import { readDesiredSteeringState } from "../uplink-steering/state-builder.ts";
 import { type RootQdisc, UplinkShaperApplier } from "./applier.ts";
@@ -35,7 +35,7 @@ const coordinator = new UplinkShaperCoordinator({
 });
 
 export async function initUplinkShaper(): Promise<void> {
-	enabled = await isRealDevice();
+	enabled = await hasCapability("client-internet");
 	if (enabled) await tickUplinkShaper();
 }
 
