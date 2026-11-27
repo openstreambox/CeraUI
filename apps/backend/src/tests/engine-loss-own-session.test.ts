@@ -10,10 +10,13 @@ function harness(opts: {
 }) {
 	let runtime: "idle" | "streaming" = "streaming";
 	let ownedEvidence = false;
+	let clock = 0;
 	const stops: number[] = [];
 	const stopCauses: string[] = [];
 	const session = createStreamSessionOrchestrator({
 		createAttemptId: () => "loss",
+		now: () => clock,
+		lossStopWindowMs: 10_000,
 		setStreamingStatus: () => {},
 		initialLiveness: () => (opts.launched ? "idle" : "unknown"),
 		queryRuntime: async () => runtime,
@@ -38,6 +41,9 @@ function harness(opts: {
 		},
 		setOwnedEvidence: (next: boolean) => {
 			ownedEvidence = next;
+		},
+		advance: (ms: number) => {
+			clock += ms;
 		},
 	};
 }
@@ -122,4 +128,35 @@ test("a confirmed idle engine expires the recovery record", async () => {
 	h.setRuntime("streaming");
 	expect(await h.session.reconcile()).toBe("reconciling");
 	expect(h.stops).toEqual([]);
+});
+
+test("the heartbeat after the restoration window leaves a streaming session protected", async () => {
+	const h = harness({ launched: true });
+	await h.session.start({ origin: "ui", launch });
+	await h.session.retireLostSession();
+	// Restoration has given up; the engine reports a streaming session later.
+	h.advance(10_001);
+
+	await h.session.reconcileLostSession(() => true);
+	expect(h.stops).toEqual([]);
+	expect(h.session.snapshot().state).toBe("reconciling");
+	expect(h.session.streamLiveness()).toBe("unknown");
+	// The record is gone, so no later heartbeat Stops either.
+	await h.session.reconcileLostSession(() => true);
+	expect(h.stops).toEqual([]);
+});
+
+test("the heal and heartbeat reconciliation Stops the lost own session within the window", async () => {
+	const h = harness({ launched: true });
+	await h.session.start({ origin: "ui", launch });
+	await h.session.retireLostSession();
+	h.advance(9_000);
+
+	await h.session.reconcileLostSession(() => true);
+	expect(h.stops).toHaveLength(1);
+	expect(h.session.snapshot().state).toBe("idle");
+	expect(h.session.streamLiveness()).toBe("idle");
+	// The settled loss is not reconciled again.
+	await h.session.reconcileLostSession(() => true);
+	expect(h.stops).toHaveLength(1);
 });
