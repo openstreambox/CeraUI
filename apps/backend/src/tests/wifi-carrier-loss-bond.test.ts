@@ -138,6 +138,8 @@ function bench() {
 		carrier.set(ifname, up);
 		watch.handleLine(linkLine(ifname, up));
 	};
+	/** The links the sender's telemetry shows carrying (all, unless a test says). */
+	const carrying = new Set(ALL.map((link) => link.name));
 	/** What a live refresh would hand the sender for `receiver`. */
 	const published = async (
 		receiver = RECEIVER,
@@ -150,6 +152,7 @@ function bench() {
 				isLocal: (address) => address === LAN_RECEIVER,
 				localList: genSrtlaBondEntriesForLocalIpAddress,
 				bondedList: genSrtlaBondEntries,
+				carryingIfaces: () => carrying,
 				writeList: async (entries) => {
 					written = entries;
 					return { ok: true, changed: true } as unknown as BindMapPublication;
@@ -162,7 +165,7 @@ function bench() {
 	processIfconfigOutput(ALL.map(stanza).join("\n\n"));
 	watch.start();
 	for (const link of ALL) watch.handleLine(linkLine(link.name, true));
-	return { watch, advance, setCarrier, published };
+	return { watch, advance, setCarrier, published, carrying };
 }
 
 beforeEach(() => {
@@ -411,6 +414,7 @@ describe("the carrier rule at publication", () => {
 		entries: BondEntry[],
 		lost: readonly string[] | ((ifname: string) => boolean),
 		down: readonly string[] = typeof lost === "function" ? [] : lost,
+		carrying?: readonly string[],
 	) => {
 		let written: readonly BondEntry[] = [];
 		await prepareSrtlaIpAddresses(
@@ -426,6 +430,7 @@ describe("the carrier rule at publication", () => {
 				carrierLost:
 					typeof lost === "function" ? lost : (ifname) => lost.includes(ifname),
 				carrierDown: (ifname) => down.includes(ifname),
+				carryingIfaces: () => new Set(carrying ?? entries.map((e) => e.iface)),
 			},
 			"refresh",
 		);
@@ -476,6 +481,21 @@ describe("the carrier rule at publication", () => {
 				["wlan0"],
 			),
 		).toEqual(["wlan1", "eth0"]);
+	});
+
+	test("a link the telemetry does not show carrying is no survivor", async () => {
+		// Ethernet is up but cannot reach the receiver: nothing goes out on it.
+		expect(
+			await publish([entry("wlan0"), entry("eth0")], ["wlan0"], ["wlan0"], []),
+		).toEqual(["wlan0", "eth0"]);
+		expect(
+			await publish(
+				[entry("wlan0"), entry("eth0")],
+				["wlan0"],
+				["wlan0"],
+				["eth0"],
+			),
+		).toEqual(["eth0"]);
 	});
 
 	test("each entry's state is read once per publication", async () => {

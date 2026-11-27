@@ -163,6 +163,8 @@ export type WifiCarrierWatchDeps = {
 
 type LinkTrack = {
 	ifindex: number;
+	/** Counts edges, so an async sysfs answer only acts on the edge it was asked for. */
+	edges: number;
 	running: boolean | undefined;
 	downSince: number | undefined;
 	hold: Timer | undefined;
@@ -225,6 +227,7 @@ export class WifiCarrierWatch {
 		if (!track) {
 			track = {
 				ifindex,
+				edges: 0,
 				running: undefined,
 				downSince: undefined,
 				hold: undefined,
@@ -237,6 +240,7 @@ export class WifiCarrierWatch {
 		// repeat the same line: only an edge does anything.
 		if (track.running === running) return;
 		track.running = running;
+		track.edges++;
 		this.deps.setDown(ifname, !running, track.ifindex);
 		if (running) this.#onCarrierUp(ifname, track);
 		else this.#onCarrierDown(ifname, track);
@@ -255,8 +259,10 @@ export class WifiCarrierWatch {
 			if (!this.deps.isWifiStation(ifname)) return;
 			// The monitor said down; the kernel must still agree. If it does
 			// not, a line was lost: take the kernel's word for the state.
+			const edges = track.edges;
 			this.#withOperational(ifname, (operational) => {
-				if (!this.#current(ifname, track) || track.running !== false) return;
+				if (!this.#current(ifname, track) || track.edges !== edges) return;
+				if (track.running !== false) return;
 				if (operational) {
 					this.#markRunning(ifname, track);
 					return;
@@ -320,6 +326,7 @@ export class WifiCarrierWatch {
 	/** The kernel reports the link operational although no up line came. */
 	#markRunning(ifname: string, track: LinkTrack): void {
 		track.running = true;
+		track.edges++;
 		track.downSince = undefined;
 		this.deps.setDown(ifname, false);
 	}
@@ -342,8 +349,10 @@ export class WifiCarrierWatch {
 				anyMarked = true;
 				// An up line was seen: its settle decides, not this check.
 				if (track.running !== false) continue;
+				const edges = track.edges;
 				const clear = () => {
-					if (!this.#current(ifname, track) || track.running !== false) return;
+					if (!this.#current(ifname, track) || track.edges !== edges) return;
+					if (track.running !== false) return;
 					logger.info("Wi-Fi carrier mark cleared by the sysfs check", {
 						ifname,
 					});

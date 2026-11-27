@@ -29,6 +29,7 @@ import {
 } from "../../network/wifi-carrier-lost.ts";
 import type { BondEntry } from "../bind-map.ts";
 import type { BindMapPublication } from "../bind-map-writer.ts";
+import { buildLinkTelemetry } from "../link-telemetry.ts";
 import {
 	genSrtlaBondEntries,
 	genSrtlaBondEntriesForLocalIpAddress,
@@ -47,6 +48,8 @@ export type SrtlaIpPreparationDeps = {
 	readonly carrierLost?: (ifname: string) => boolean;
 	/** A Wi-Fi link whose carrier is down right now, marked or not. */
 	readonly carrierDown?: (ifname: string) => boolean;
+	/** Interfaces the sender's telemetry shows carrying the stream right now. */
+	readonly carryingIfaces?: () => ReadonlySet<string>;
 };
 
 const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
@@ -69,9 +72,11 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
   (`network/wifi-carrier-lost.ts`), and a live refresh leaves it out of the
   list for whichever receiver this bond serves (a LAN receiver's subnet subset
   included). It is left out only while another entry of the same address
-  family can carry: one that is not marked, whose carrier is not down right
-  now, and that is not a CLAT translator row (write-time revalidation may still
-  drop those). Otherwise the list keeps those entries: an empty list, or one
+  family is carrying: one that is not marked, whose carrier is not down right
+  now, that the sender's own telemetry shows carrying the stream (a fresh row
+  with `carrying: true`, so a link that is up but cannot reach the receiver is
+  no backup), and that is not a CLAT translator row (write-time revalidation
+  may still drop those). Without that evidence nothing counts as a backup. Otherwise the list keeps those entries: an empty list, or one
   with only links the receiver cannot be reached over, would make the sender
   drop its last usable connection, and radios that lost one access point
   together usually re-associate within a second or two with their sockets
@@ -104,10 +109,22 @@ const liveCarrierLost = (ifname: string) =>
 const liveCarrierDown = (ifname: string) =>
 	liveFor(ifname, wifiCarrierDownState);
 
+/** The sender's fresh telemetry rows that are carrying, read once. */
+function telemetryCarryingIfaces(): ReadonlySet<string> {
+	const telemetry = buildLinkTelemetry();
+	if (!telemetry || telemetry.stale) return new Set();
+	return new Set(
+		telemetry.links
+			.filter((row) => !row.stale && row.carrying === true)
+			.map((row) => row.iface),
+	);
+}
+
 function withoutDeafWifi(
 	entries: BondEntry[],
 	carrierLost: (ifname: string) => boolean,
 	carrierDown: (ifname: string) => boolean,
+	carryingIfaces: () => ReadonlySet<string>,
 ): BondEntry[] {
 	const state = new Map(
 		entries.map((entry) => [
@@ -118,11 +135,17 @@ function withoutDeafWifi(
 	const deaf = entries.filter((entry) => state.get(entry)?.lost);
 	if (deaf.length === 0) return entries;
 	const family = (entry: BondEntry) => isIP(entry.ip);
+	const carrying = carryingIfaces();
 	const carriers = new Set(
 		entries
 			.filter((entry) => {
 				const s = state.get(entry);
-				return entry.parentIface === undefined && !s?.lost && !s?.down;
+				return (
+					entry.parentIface === undefined &&
+					!s?.lost &&
+					!s?.down &&
+					carrying.has(entry.iface)
+				);
 			})
 			.map(family),
 	);
@@ -157,6 +180,7 @@ export async function prepareSrtlaIpAddresses(
 					collected,
 					deps.carrierLost ?? liveCarrierLost,
 					deps.carrierDown ?? liveCarrierDown,
+					deps.carryingIfaces ?? telemetryCarryingIfaces,
 				)
 			: collected;
 	if (purpose === "launch" && entries.length === 0) {

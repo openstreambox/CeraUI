@@ -446,6 +446,41 @@ describe("WifiCarrierWatch marks", () => {
 		watch.stop();
 	});
 
+	test("a late sysfs answer never acts on a newer edge", async () => {
+		const h = harness();
+		const answers: Array<(value: boolean) => void> = [];
+		const watch = new WifiCarrierWatch({
+			...h.deps,
+			isOperational: () =>
+				new Promise<boolean>((resolve) => {
+					answers.push(resolve);
+				}),
+		});
+		watch.start();
+		watch.handleLine(linkLine("wlan0", ASSOCIATED, "UP"));
+		watch.handleLine(linkLine("wlan0", NO_CARRIER, "DORMANT"));
+		h.advance(CARRIER_LOSS_HOLD_MS);
+		// While the first hold's read is in flight: back up, then down again.
+		watch.handleLine(linkLine("wlan0", ASSOCIATED, "UP"));
+		watch.handleLine(linkLine("wlan0", NO_CARRIER, "DORMANT"));
+		answers[0]?.(false);
+		await h.flush();
+		// The second loss has not outlasted its own hold yet.
+		expect(h.marks).toEqual([]);
+		h.advance(CARRIER_LOSS_HOLD_MS);
+		answers[1]?.(false);
+		await h.flush();
+		expect(h.marks).toEqual([["wlan0", true]]);
+		// A periodic check's late "up" for the old edge does not clear a newer loss.
+		h.advance(MARK_CHECK_MS);
+		watch.handleLine(linkLine("wlan0", ASSOCIATED, "UP"));
+		watch.handleLine(linkLine("wlan0", NO_CARRIER, "DORMANT"));
+		answers[2]?.(true);
+		await h.flush();
+		expect(h.marks).toEqual([["wlan0", true]]);
+		watch.stop();
+	});
+
 	test("a mark whose carrier-up line was lost is cleared by the sysfs check", () => {
 		const h = harness();
 		h.watch.start();
