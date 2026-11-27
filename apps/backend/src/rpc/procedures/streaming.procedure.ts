@@ -540,8 +540,9 @@ export const keepReconnectingProcedure = authedProcedure
  * The box's reconnect settings. A running window keeps its deadline; the new
  * maximum applies from the next window (or "Keep trying"), and turning it off
  * ends a running automatic window at its next step. A save that fails changes
- * nothing. Only the two fields are echoed: the full config carries secrets the
- * other tabs must not receive.
+ * nothing in memory. Only the two fields (with the stream-ID flags the frame
+ * must keep true) are echoed: the full config carries secrets the other tabs
+ * must not receive.
  */
 export const setReconnectProcedure = authedProcedure
 	.input(setReconnectInputSchema)
@@ -567,6 +568,12 @@ export const setReconnectProcedure = authedProcedure
 		broadcastMsg("config", {
 			auto_reconnect: config.auto_reconnect,
 			auto_reconnect_max_s: config.auto_reconnect_max_s,
+			// The local serializer derives these flags for every config frame;
+			// without the stored state a partial frame would read as "unset".
+			srt_streamid_configured: Boolean(config.srt_streamid),
+			relay_streamid_override_configured: Boolean(
+				config.relay_streamid_override,
+			),
 		});
 		const applied = reconnectSettings(config);
 		return {

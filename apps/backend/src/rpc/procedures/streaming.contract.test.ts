@@ -274,10 +274,30 @@ describe("streaming setter-contract — contains-envelope (S3)", () => {
 			},
 		);
 		try {
+			const stored = getConfig();
+			stored.srt_streamid = "publish-key";
+			stored.relay_streamid_override = undefined;
 			await callMutation(setReconnectProcedure, { max_s: 600 });
 			expect(sent).toEqual([
-				["config", { auto_reconnect: true, auto_reconnect_max_s: 600 }],
+				[
+					"config",
+					{
+						auto_reconnect: true,
+						auto_reconnect_max_s: 600,
+						srt_streamid_configured: true,
+						relay_streamid_override_configured: false,
+					},
+				],
 			]);
+			// What a local tab receives: the stored stream ID still reads as set,
+			// and no secret is in the frame.
+			const { publicStreamIds } = await import(
+				"../../helpers/stream-id-secret.ts"
+			);
+			const wire = publicStreamIds(sent[0]?.[1] as Record<string, unknown>);
+			expect(wire).toMatchObject({ srt_streamid_configured: true });
+			expect(JSON.stringify(wire)).not.toContain("publish-key");
+			stored.srt_streamid = undefined;
 			const save = spyOn(configModule, "saveConfig").mockImplementation(() => {
 				throw new Error("disk full");
 			});
