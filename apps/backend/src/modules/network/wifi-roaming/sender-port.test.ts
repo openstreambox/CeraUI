@@ -230,6 +230,21 @@ describe("only the sender this backend launched", () => {
 		expect(state.closes).toBe(1);
 	});
 
+	test("a connect that completes after the owned sender went away sends nothing", async () => {
+		const { state, port } = fake();
+		const gate = Promise.withResolvers<void>();
+		state.connectGate = gate.promise;
+		state.replies.push(stats([link()]));
+		const polling = port.poll();
+		await Bun.sleep(5);
+		state.owner = null;
+		gate.resolve();
+		await polling;
+		expect(state.calls).toEqual([]);
+		expect(state.closes).toBe(1);
+		expect(port.view().reachable).toBe(false);
+	});
+
 	test("a connect that resolves after close is closed at once and reads nothing", async () => {
 		const { state, port } = fake();
 		const gate = Promise.withResolvers<void>();

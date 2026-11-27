@@ -67,8 +67,10 @@ when done.
    adapter do. Admitting them is a change to that shared admission, for every
    consumer at once, not to this module. NetworkManager's state comes from the registry row (a station
    is `infrastructure` mode with an address); the link from
-   `iw dev <if> link` every round and the phy from `iw dev` at most every 5 s
-   (neither scans, and neither leaves a debug trace per call). Every radio's
+   `iw dev <if> link` every round and the phy from `iw dev` at most every 5 s,
+   or at once when the set of admitted radios (name and physical id) changed,
+   so a replaced radio never inherits another phy's AP state (neither read
+   scans, and neither leaves a debug trace per call). Every radio's
    admission is taken again after all reads, and a radio that changed
    meanwhile is skipped for the round.
 3. The decision (`observer.ts`), pure, state keyed by the physical radio id
@@ -107,8 +109,10 @@ carries the encoder's whole rate.
 waits for the round in flight, closes the sender client, writes a final
 `stopped` status and drains the journal. Then the file writer is sealed: a
 write still in progress stops at its next step (a status written to its
-temporary file is discarded, not renamed), and a late sender connection is
-closed unread.
+temporary file is discarded, not renamed; a journal rotation that has read
+the file writes nothing), and a late sender connection is closed unread. A
+file operation the kernel already has can still complete after the deadline;
+nothing after it runs.
 
 ## Guards
 

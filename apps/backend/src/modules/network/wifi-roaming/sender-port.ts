@@ -200,6 +200,11 @@ export function createSenderPort(deps: SenderPortDeps): SenderPort {
 				}
 				client = opened;
 				clientLifetime = owner.lifetime;
+				// The connect awaited: the owned sender may have gone meanwhile.
+				if (!stillOwned()) {
+					drop();
+					return;
+				}
 				const doc = await client.getCapabilities();
 				if (closed) return;
 				if (!stillOwned()) {

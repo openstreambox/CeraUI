@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import * as ts from "typescript";
 
 const SRC = join(import.meta.dir, "..");
 const DIR = join(SRC, "modules/network/wifi-roaming");
@@ -334,6 +335,81 @@ describe("the roaming observer acts on nothing", () => {
 		);
 		expect(refs).toEqual(["radio-port.ts", "radio-port.ts", "radio-port.ts"]);
 		expect(code(read("radio-port.ts"))).toContain("const quiet = async (args");
+	});
+});
+
+describe("the runner, read from the syntax tree", () => {
+	const tree = (file: string) =>
+		ts.createSourceFile(file, read(file), ts.ScriptTarget.Latest, true);
+
+	/** How each identifier `name` is used in `file`, by syntax, not by text. */
+	function uses(file: string, name: string): string[] {
+		const src = tree(file);
+		const out: string[] = [];
+		const visit = (n: ts.Node) => {
+			if (ts.isIdentifier(n) && n.text === name) {
+				const p = n.parent;
+				const text = (x: ts.Node) => x.getText(src).replace(/\s+/g, " ");
+				if (
+					(ts.isPropertyAssignment(p) ||
+						ts.isPropertySignature(p) ||
+						ts.isShorthandPropertyAssignment(p)) &&
+					p.name === n
+				)
+					out.push(`key:${text(p)}`);
+				else if (ts.isPropertyAccessExpression(p) && p.name === n) {
+					const call = p.parent;
+					out.push(
+						ts.isCallExpression(call) && call.expression === p
+							? `member-call:${text(call).split("(")[0]}(${call.arguments[0] ? text(call.arguments[0]) : ""}`
+							: `member:${text(p)}`,
+					);
+				} else if (ts.isVariableDeclaration(p) && p.name === n)
+					out.push("declaration");
+				else if (ts.isParameter(p) && p.name === n) out.push("parameter");
+				else if (ts.isImportSpecifier(p)) out.push("import");
+				else if (ts.isCallExpression(p) && p.expression === n)
+					out.push(
+						`call:${p.arguments.map((a) => (ts.isArrayLiteralExpression(a) ? text(a) : `<${ts.SyntaxKind[a.kind]}>`)).join(",")}`,
+					);
+				else out.push(`other:${text(p)}`);
+			}
+			ts.forEachChild(n, visit);
+		};
+		visit(src);
+		return out.sort();
+	}
+
+	test("the wrapper is declared once and called only with the two literal reads", () => {
+		const q = uses("radio-port.ts", "quiet");
+		expect(q.filter((u) => !u.startsWith("key:"))).toEqual(
+			[
+				"declaration",
+				'call:["dev"]',
+				'call:["dev", argMatch(ID_RE, admission.row.ifname), "link"]',
+			].sort(),
+		);
+		for (const file of sources.filter((f) => f !== "radio-port.ts"))
+			expect(uses(file, "quiet").filter((u) => !u.startsWith("key:"))).toEqual(
+				[],
+			);
+	});
+
+	test("the runner is called once, for iw, and otherwise only passed along by name", () => {
+		const r = uses("radio-port.ts", "run");
+		expect(r.filter((u) => u.startsWith("member"))).toEqual([
+			'member-call:deps.run("iw"',
+		]);
+		expect(
+			r.filter((u) => u.startsWith("other:") || u.startsWith("call:")),
+		).toEqual([]);
+		const rt = uses("runtime.ts", "run");
+		expect(
+			rt.filter((u) => u.startsWith("call:") || u.startsWith("member")),
+		).toEqual([]);
+		expect(rt.filter((u) => u.startsWith("other:"))).toEqual([
+			"other:defaultRadioPortDeps(run, now, exclude)",
+		]);
 	});
 });
 

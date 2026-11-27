@@ -823,7 +823,11 @@ describe("line size ceiling", () => {
 	});
 
 	test("an over-long line that ends with its newline is not parsed either", async () => {
-		// Starts like a valid reply for the request; it would resolve it if parsed.
+		// The head stays under the ceiling, the whole line goes over it.
+		expect(MAX_CONTROL_LINE_CHARS - 200).toBeLessThan(MAX_CONTROL_LINE_CHARS);
+		// Pinned: everything but the last 400 bytes arrives first (below the
+		// ceiling, no newline), then the rest crosses the ceiling together
+		// with the newline. Only the complete-line check can catch it.
 		const path = socketPath("hugeline");
 		const server = Bun.listen<undefined>({
 			unix: path,
@@ -832,15 +836,30 @@ describe("line size ceiling", () => {
 					const frame = JSON.parse(
 						new TextDecoder().decode(chunk).trim().split("\n")[0] as string,
 					) as { id: number };
-					const pad = "z".repeat(MAX_CONTROL_LINE_CHARS + 16);
-					const line = `${JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: statsResult(), pad })}\n`;
+					const reply = (pad: string) =>
+						JSON.stringify({
+							jsonrpc: "2.0",
+							id: frame.id,
+							result: statsResult(),
+							pad,
+						});
+					// The line (without its newline) is the ceiling plus 200.
+					const pad = "z".repeat(
+						MAX_CONTROL_LINE_CHARS + 200 - reply("").length,
+					);
+					const line = `${reply(pad)}\n`;
+					const head = line.slice(0, line.length - 400);
+					const tail = line.slice(line.length - 400);
 					void (async () => {
 						let at = 0;
-						while (at < line.length) {
-							const n = socket.write(line.slice(at, at + 65_536));
+						while (at < head.length) {
+							const n = socket.write(head.slice(at, at + 65_536));
 							at += n;
 							if (n === 0) await Bun.sleep(2);
 						}
+						// Let the client take the head in before the tail is sent.
+						await Bun.sleep(100);
+						socket.write(tail);
 					})();
 				},
 			},
@@ -850,11 +869,14 @@ describe("line size ceiling", () => {
 			socketPath: path,
 			timeoutMs: 5000,
 		});
+		const started = Date.now();
 		const outcome = await client?.getStats().then(
 			(v) => (v === null ? "null" : "resolved"),
 			() => "rejected",
 		);
 		expect(outcome).toBe("rejected");
+		// Rejected by the disconnect, not by the request timeout.
+		expect(Date.now() - started).toBeLessThan(4000);
 		client?.close();
 	});
 

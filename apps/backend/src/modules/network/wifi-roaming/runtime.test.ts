@@ -1,18 +1,27 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+	appendFile as appendFileReal,
 	chmod,
+	chmod as chmodReal,
 	mkdir,
+	mkdir as mkdirReal,
 	mkdtemp,
+	readdir as readdirReal,
 	readFile,
+	readFile as readFileReal,
+	rename as renameReal,
 	rm,
 	stat,
+	unlink as unlinkReal,
 	writeFile,
+	writeFile as writeFileReal,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RadioRead } from "./radio-port.ts";
 import {
 	createObserverRuntime,
+	type FileOps,
 	fileIo,
 	JOURNAL_MAX_LINES,
 	JOURNAL_MAX_PENDING,
@@ -259,6 +268,78 @@ describe("bounded writes", () => {
 		await Bun.sleep(20);
 		expect(f.statuses.length + f.journal.length).toBe(written);
 	}, 10_000);
+});
+
+describe("sealed file io, with the file operations held", () => {
+	/** Real file operations under `root`, one of them held until released. */
+	function heldOps(hold: "writeFile" | "readFile") {
+		const gate = Promise.withResolvers<void>();
+		const entered = Promise.withResolvers<void>();
+		const calls: string[] = [];
+		const wrap = <F extends (...a: never[]) => Promise<unknown>>(
+			name: string,
+			f: F,
+		) =>
+			(async (...a: Parameters<F>) => {
+				calls.push(name);
+				if (name === hold) {
+					entered.resolve();
+					await gate.promise;
+				}
+				return f(...a);
+			}) as unknown as F;
+		const ops: FileOps = {
+			appendFile: wrap("appendFile", appendFileReal),
+			chmod: wrap("chmod", chmodReal),
+			mkdir: wrap("mkdir", mkdirReal),
+			readFile: wrap("readFile", readFileReal),
+			rename: wrap("rename", renameReal),
+			unlink: wrap("unlink", unlinkReal),
+			writeFile: wrap("writeFile", writeFileReal),
+		};
+		return { ops, calls, release: gate.resolve, entered: entered.promise };
+	}
+
+	test("a status sealed while its temporary file is being written is never published", async () => {
+		const root = await mkdtemp(join(tmpdir(), "wifi-roaming-held-"));
+		const dir = join(root, "run");
+		try {
+			const held = heldOps("writeFile");
+			const io = fileIo(dir, held.ops);
+			const writing = io.writeStatus('{"v":1}\n');
+			await held.entered;
+			io.seal?.();
+			held.release();
+			await writing;
+			expect(held.calls).not.toContain("rename");
+			expect(held.calls).toContain("unlink");
+			expect(await readdirReal(dir)).toEqual([]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("a journal rotation sealed after its read writes nothing", async () => {
+		const root = await mkdtemp(join(tmpdir(), "wifi-roaming-rot-"));
+		const dir = join(root, "run");
+		try {
+			await mkdirReal(dir, { recursive: true });
+			const full = `${Array.from({ length: JOURNAL_MAX_LINES }, (_, i) => `{"n":${i}}`).join("\n")}\n`;
+			await writeFileReal(join(dir, "journal.jsonl"), full, { mode: 0o600 });
+			const held = heldOps("readFile");
+			const io = fileIo(dir, held.ops);
+			const appending = io.appendJournal('{"n":"new"}');
+			await held.entered;
+			io.seal?.();
+			held.release();
+			await appending;
+			expect(held.calls).not.toContain("writeFile");
+			expect(held.calls).not.toContain("appendFile");
+			expect(await readFileReal(join(dir, "journal.jsonl"), "utf8")).toBe(full);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("sealed file io", () => {

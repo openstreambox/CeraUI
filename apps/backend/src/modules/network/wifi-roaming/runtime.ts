@@ -79,26 +79,58 @@ export type RuntimeIo = Readonly<{
  * directory. Journal writes are serialized and rotation replaces the file
  * atomically, so no line is lost to a race.
  */
-export function fileIo(dir = WIFI_ROAMING_RUN_DIR): RuntimeIo {
+/** The file operations `fileIo` uses; a test seam. */
+export type FileOps = Readonly<{
+	appendFile: typeof appendFile;
+	chmod: typeof chmod;
+	mkdir: typeof mkdir;
+	readFile: typeof readFile;
+	rename: typeof rename;
+	unlink: typeof unlink;
+	writeFile: typeof writeFile;
+}>;
+
+const fileOps: FileOps = {
+	appendFile,
+	chmod,
+	mkdir,
+	readFile,
+	rename,
+	unlink,
+	writeFile,
+};
+
+/**
+ * Sealing fences every later step: a file operation already handed to the
+ * kernel still completes, but nothing after it (a rename, an append) runs.
+ */
+export function fileIo(
+	dir = WIFI_ROAMING_RUN_DIR,
+	fs: FileOps = fileOps,
+): RuntimeIo {
 	let sealed = false;
 	let lines: number | null = null;
 	let queue: Promise<void> = Promise.resolve();
 	const journal = `${dir}/journal.jsonl`;
 	const read = async () =>
-		(await readFile(journal, "utf8").catch(() => ""))
+		(await fs.readFile(journal, "utf8").catch(() => ""))
 			.split("\n")
 			.filter(Boolean);
 	let prepared = false;
 	// Existing files keep their mode on rename and append: set it once.
 	const ensureDir = async () => {
-		await mkdir(dir, { recursive: true, mode: 0o700 });
+		await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 		if (prepared) return;
-		await chmod(dir, 0o700);
-		await chmod(journal, 0o600).catch(() => {
+		await fs.chmod(dir, 0o700);
+		await fs.chmod(journal, 0o600).catch(() => {
 			// No journal yet: it is created 0600.
 		});
 		prepared = true;
 	};
+	const discard = (tmp: string) =>
+		fs.unlink(tmp).catch(() => {
+			// Gone already: nothing was published.
+		});
 	return {
 		seal() {
 			sealed = true;
@@ -108,15 +140,13 @@ export function fileIo(dir = WIFI_ROAMING_RUN_DIR): RuntimeIo {
 			await ensureDir();
 			if (sealed) return;
 			const tmp = `${dir}/status.json.${process.pid}.tmp`;
-			await writeFile(tmp, json, { mode: 0o600 });
+			await fs.writeFile(tmp, json, { mode: 0o600 });
 			// Sealed while writing: the new status is never published.
 			if (sealed) {
-				await unlink(tmp).catch(() => {
-					// Gone already: nothing was published.
-				});
+				await discard(tmp);
 				return;
 			}
-			await rename(tmp, `${dir}/status.json`);
+			await fs.rename(tmp, `${dir}/status.json`);
 		},
 		appendJournal(line) {
 			const next = queue.then(async () => {
@@ -124,21 +154,21 @@ export function fileIo(dir = WIFI_ROAMING_RUN_DIR): RuntimeIo {
 				await ensureDir();
 				if (sealed) return;
 				if (lines === null) lines = (await read()).length;
+				if (sealed) return;
 				if (lines >= JOURNAL_MAX_LINES) {
 					const kept = (await read()).slice(-Math.floor(JOURNAL_MAX_LINES / 2));
+					if (sealed) return;
 					const tmp = `${journal}.${process.pid}.tmp`;
-					await writeFile(tmp, `${kept.join("\n")}\n`, { mode: 0o600 });
+					await fs.writeFile(tmp, `${kept.join("\n")}\n`, { mode: 0o600 });
 					if (sealed) {
-						await unlink(tmp).catch(() => {
-							// Gone already: nothing was published.
-						});
+						await discard(tmp);
 						return;
 					}
-					await rename(tmp, journal);
+					await fs.rename(tmp, journal);
 					lines = kept.length;
 				}
 				if (sealed) return;
-				await appendFile(journal, `${line}\n`, { mode: 0o600 });
+				await fs.appendFile(journal, `${line}\n`, { mode: 0o600 });
 				lines++;
 			});
 			queue = next.catch(() => {
@@ -297,6 +327,11 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 }
 
 let current: ObserverRuntime | null = null;
+
+/** Whether the observer runs in this process (for tests and diagnostics). */
+export function wifiRoamingRunning(): boolean {
+	return current !== null;
+}
 
 /** Start the observer when the runtime config asks for it. */
 export async function initWifiRoaming(

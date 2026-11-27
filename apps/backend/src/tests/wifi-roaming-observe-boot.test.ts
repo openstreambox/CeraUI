@@ -9,6 +9,7 @@ import {
 import {
 	initWifiRoaming,
 	stopWifiRoaming,
+	wifiRoamingRunning,
 } from "../modules/network/wifi-roaming/runtime.ts";
 
 afterEach(() => resetShutdownForTest());
@@ -48,6 +49,8 @@ describe("boot and shutdown", () => {
 			await initWifiRoaming({ level: "off" }, false);
 			await initWifiRoaming({ level: "observe" }, true);
 			expect(timers).not.toHaveBeenCalled();
+			// No runtime was built: no sender port, no radio port, no file writer.
+			expect(wifiRoamingRunning()).toBe(false);
 			// Nothing started, so stopping has nothing to wait for.
 			await stopWifiRoaming();
 		} finally {
