@@ -131,6 +131,8 @@ const armedStreamConfigSchema = z.object({
 	source_stable_id: z.string().optional(),
 	selected_video_input: z.string().optional(),
 	input_mode: inputModeSchema.optional(),
+	/** Capture fields the launch left unset (automatic), which a restoration keeps unset. */
+	capture_unset: z.array(z.string()).optional(),
 });
 export type ArmedStreamConfig = z.infer<typeof armedStreamConfigSchema>;
 
@@ -166,6 +168,20 @@ export const LAUNCHED_CAPTURE_KEYS = [
 	"video_codec",
 	"video_passthrough",
 ] as const satisfies readonly (keyof ArmedStreamConfig)[];
+
+/**
+ * The launch override a restoration starts from: capture fields the recorded
+ * launch left unset stay unset instead of taking a value saved since.
+ */
+export function restorationLaunchOverride(
+	config: ArmedStreamConfig,
+): Partial<ArmedStreamConfig> {
+	const { capture_unset: unset, ...recorded } = config;
+	const override: Partial<ArmedStreamConfig> = { ...recorded };
+	for (const key of LAUNCHED_CAPTURE_KEYS)
+		if (unset?.includes(key)) override[key] = undefined;
+	return override;
+}
 export type LaunchedCapture = Pick<
 	ArmedStreamConfig,
 	(typeof LAUNCHED_CAPTURE_KEYS)[number]

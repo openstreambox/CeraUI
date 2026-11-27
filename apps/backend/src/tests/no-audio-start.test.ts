@@ -1671,6 +1671,17 @@ test("an engine restart restores the single input a Start sent when the shared s
 	expect(await restart()).toEqual(device("Primary"));
 });
 
+test("an engine restart keeps a resolution the Start left automatic automatic after one is saved", async () => {
+	await running("Primary", "mix");
+	expect(engine.startRequests.at(-1)).not.toHaveProperty("resolution");
+	// Saved after the Start without applying to the running stream.
+	getConfig().resolution = "720p";
+	saveConfig();
+	await restart();
+	expect(engine.startRequests).toHaveLength(2);
+	expect(engine.startRequests.at(-1)).not.toHaveProperty("resolution");
+});
+
 test("an engine restart restores the level the engine applied, not the one asked for", async () => {
 	liveEngine(undefined, (update) => ({ ...update, gain_db: -11 }));
 	await running("Primary", "mix");
