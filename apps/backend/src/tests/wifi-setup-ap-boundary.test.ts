@@ -473,32 +473,22 @@ test("a persisted claim on the setup AP grants no lookup, policy or credential a
 	expect(effects).toEqual([]);
 });
 
-test("a foreign unpinned AP with another connection name keeps upstream adoption", async () => {
+test("a foreign unpinned AP with another connection name follows upstream's foreign-AP handling", async () => {
 	profiles.set(OPERATOR, setupProfile("Hotspot"));
 	resources = firstApInstances(new Set(profiles.keys()), profiles);
 	const iface = radio();
 
 	await discovery.handleHotspotConn(undefined, OPERATOR, { active: true });
 
+	// Setup-AP recognition stays narrow: another connection name is not the
+	// setup AP and reaches upstream's own decision. Since upstream #677 that
+	// decision never adopts an unowned AP: no credential claim, no repin and no
+	// priority write. With no MAC pin and no supplied radio it is not observed
+	// on the row either.
 	expect(isProvisioningApConn(OPERATOR)).toBe(false);
-	expect(iface.hotspot.conn).toBe(OPERATOR);
-	expect(getHotspotCredentials(B)).toMatchObject({
-		ssid: SETUP_SSID,
-		password: SETUP_PSK,
-		conn: OPERATOR,
-	});
-	expect(effects).toEqual([
-		[
-			"con",
-			"modify",
-			OPERATOR,
-			"connection.interface-name",
-			"",
-			"802-11-wireless.mac-address",
-			B,
-		],
-		["con", "modify", OPERATOR, "connection.autoconnect-priority", "999"],
-	]);
+	expect(iface.hotspot.conn).toBeUndefined();
+	expect(getHotspotCredentials(B)).toBeUndefined();
+	expect(effects).toEqual([]);
 });
 
 test("under the image's marker its active AP is the setup AP whatever its name, for the marker's lifetime", async () => {
