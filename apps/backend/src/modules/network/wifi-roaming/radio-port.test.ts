@@ -16,6 +16,7 @@ import {
 import type { WifiInterface } from "../../wifi/wifi-interfaces.ts";
 import {
 	apOnPhyOf,
+	countSeenBssids,
 	createRadioPort,
 	parseIwDev,
 	parseIwLink,
@@ -137,8 +138,52 @@ describe("radios as the observer reads them", () => {
 		expect(radio?.id.startsWith(`${MAC1}/51:`)).toBe(true);
 		// Only reads: the interface list and the radio's link, never a scan,
 		// and none of them leaves a debug trace.
-		expect(iw.calls).toEqual(["iw dev", "iw dev wlan1 link"]);
+		expect(iw.calls).toEqual([
+			"iw dev",
+			"iw dev wlan1 link",
+			`nmcli -g 802-11-wireless.seen-bssids connection show ${CONN}`,
+		]);
 		expect(iw.loud).toEqual([]);
+	});
+
+	test("the active profile's seen-bssids count: one read-only property, at most once a minute", async () => {
+		await seed.publish([
+			station({
+				row: {
+					conn: CONN,
+					activeConn: CONN,
+					activeMode: "infrastructure",
+				} as Partial<WifiInterface>,
+			}),
+		]);
+		const SEEN = `nmcli -g 802-11-wireless.seen-bssids connection show ${CONN}`;
+		const iw = fakeIw({
+			[SEEN]: "AA\\:00\\:00\\:00\\:00\\:01,AA\\:00\\:00\\:00\\:00\\:02\n",
+		});
+		const p = port(iw);
+		clock = 0;
+		expect((await p.read()).radios[0]?.seenBssids).toBe(2);
+		clock = 59_000;
+		await p.read();
+		clock = 60_000;
+		await p.read();
+		expect(iw.calls.filter((c) => c === SEEN)).toHaveLength(2);
+		expect(iw.loud).toEqual([]);
+	});
+
+	test("no active station profile, an unreadable property, or an empty one", async () => {
+		await seed.publish([station({ row: {} })]);
+		const iw = fakeIw();
+		expect((await port(iw).read()).radios[0]?.seenBssids).toBeNull();
+		expect(iw.calls.some((c) => c.startsWith("nmcli"))).toBe(false);
+		await seed.publish([station()]);
+		const failing = fakeIw({
+			[`nmcli -g 802-11-wireless.seen-bssids connection show ${CONN}`]:
+				new Error("nmcli failed"),
+		});
+		expect((await port(failing).read()).radios[0]?.seenBssids).toBeNull();
+		expect(countSeenBssids("\n")).toBe(0);
+		expect(countSeenBssids("AA\\:BB\\:CC\\:DD\\:EE\\:FF\n")).toBe(1);
 	});
 
 	test("the interface list is read at most every 5 s, the link every round", async () => {

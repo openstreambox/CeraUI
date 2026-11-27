@@ -20,6 +20,11 @@
  * State is keyed by the physical radio id, so a radio replugged under the
  * same name starts with nothing. Roams the radio makes by itself are
  * recorded, which is what a walk compares the decisions with.
+ *
+ * Also recorded, for every round: which access point each radio is on and
+ * whether radios share one (an access point that goes then takes all of
+ * them), and how many access points each radio's profile has connected to
+ * (`seen-bssids`; under two the radio will not scan by itself above -70 dBm).
  */
 
 import {
@@ -80,12 +85,28 @@ export type RadioStatus = Readonly<{
 	wouldNudges: number;
 	lastWouldNudgeAt: number | null;
 	roams: number;
+	/** Other radios associated to the same access point. */
+	sharesAccessPointWith: readonly string[];
+	/** Access points the active profile has connected to; `null` unknown. */
+	seenBssids: number | null;
+	/**
+	 * Fewer than two: NetworkManager scans this radio's network only once a
+	 * day above -70 dBm, so it will not move by itself. `null` unknown.
+	 */
+	rareBackgroundScan: boolean | null;
+}>;
+
+export type SharedAccessPoint = Readonly<{
+	bssid: string;
+	radios: readonly string[];
 }>;
 
 export type ObserverStatus = Readonly<{
 	at: number;
 	sender: SenderView;
 	radios: readonly RadioStatus[];
+	/** Access points more than one radio is associated to. */
+	sharedAccessPoints: readonly SharedAccessPoint[];
 	skipped: readonly SkippedRadio[];
 }>;
 
@@ -96,6 +117,8 @@ export type JournalEvent = Readonly<
 		| { event: "blocked"; blockers: Blocker[] }
 		| { event: "roamed"; from: string; to: string; signalDbm: number | null }
 		| { event: "radio-added" | "radio-gone" }
+		| { event: "ap-shared" | "ap-split"; bssid: string; with: string[] }
+		| { event: "seen-bssids"; count: number | null }
 	)
 >;
 
@@ -121,6 +144,9 @@ type RadioState = {
 	cooldownMs: number;
 	roamedAt: number | null;
 	roams: number;
+	/** The access point and partners the last round found it sharing. */
+	shared: { bssid: string; with: string } | null;
+	seenBssids: number | null | undefined;
 };
 
 /** The delivering stayers for `ifname`: other mapped links proven over a span. */
@@ -208,6 +234,8 @@ export class RoamingObserver {
 					cooldownMs: COOLDOWN_BASE_MS,
 					roamedAt: null,
 					roams: 0,
+					shared: null,
+					seenBssids: undefined,
 				};
 				this.#radios.set(radio.id, state);
 				events.push(this.#event(at, state, { event: "radio-added" }));
@@ -215,6 +243,67 @@ export class RoamingObserver {
 			state.ifname = radio.ifname;
 			statuses.push(this.#judge(radio, state, input, events));
 		}
+
+		// Which radios share an access point, and what changed since last round.
+		const byBssid = new Map<string, string[]>();
+		for (const r of input.radios)
+			if (r.link)
+				byBssid.set(r.link.bssid, [
+					...(byBssid.get(r.link.bssid) ?? []),
+					r.ifname,
+				]);
+		const sharedAccessPoints: SharedAccessPoint[] = [...byBssid]
+			.filter(([, names]) => names.length > 1)
+			.map(([bssid, names]) => ({ bssid, radios: [...names].sort() }))
+			.sort((a, b) => a.bssid.localeCompare(b.bssid));
+		input.radios.forEach((radio, i) => {
+			const state = this.#radios.get(radio.id) as RadioState;
+			const bssid = radio.link?.bssid ?? null;
+			const partners =
+				bssid === null
+					? []
+					: (byBssid.get(bssid) ?? []).filter((n) => n !== radio.ifname).sort();
+			const now =
+				bssid !== null && partners.length > 0
+					? { bssid, with: partners.join(",") }
+					: null;
+			const before = state.shared;
+			if (now && (before?.bssid !== now.bssid || before.with !== now.with))
+				events.push(
+					this.#event(at, state, {
+						event: "ap-shared",
+						bssid: now.bssid,
+						with: partners,
+					}),
+				);
+			else if (!now && before)
+				events.push(
+					this.#event(at, state, {
+						event: "ap-split",
+						bssid: before.bssid,
+						with: before.with.split(","),
+					}),
+				);
+			state.shared = now;
+			if (radio.seenBssids !== state.seenBssids) {
+				if (radio.seenBssids !== null || state.seenBssids !== undefined)
+					events.push(
+						this.#event(at, state, {
+							event: "seen-bssids",
+							count: radio.seenBssids,
+						}),
+					);
+				state.seenBssids = radio.seenBssids;
+			}
+			const st = statuses[i] as RadioStatus;
+			statuses[i] = {
+				...st,
+				sharesAccessPointWith: partners,
+				seenBssids: radio.seenBssids,
+				rareBackgroundScan:
+					radio.seenBssids === null ? null : radio.seenBssids < 2,
+			};
+		});
 		for (const [id, state] of this.#radios)
 			if (!seen.has(id)) {
 				this.#radios.delete(id);
@@ -225,6 +314,7 @@ export class RoamingObserver {
 			at,
 			sender: input.sender,
 			radios: statuses,
+			sharedAccessPoints,
 			skipped: input.skipped,
 		};
 		return events;
@@ -384,6 +474,9 @@ export class RoamingObserver {
 			wouldNudges: state.wouldNudges,
 			lastWouldNudgeAt: state.lastWouldNudgeAt,
 			roams: state.roams,
+			sharesAccessPointWith: [],
+			seenBssids: radio.seenBssids,
+			rareBackgroundScan: null,
 		};
 	}
 

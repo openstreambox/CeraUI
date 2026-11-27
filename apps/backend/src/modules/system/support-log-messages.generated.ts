@@ -1402,6 +1402,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 		" is the setup's station",
 	],
 	["wifi-roaming: journal write failed"],
+	["wifi-roaming: loss watch failed"],
 	["wifi-roaming: observer not started: ", ""],
 	["wifi-roaming: observer round failed: ", ""],
 	["wifi-roaming: observer started (level observe, acts on nothing)"],

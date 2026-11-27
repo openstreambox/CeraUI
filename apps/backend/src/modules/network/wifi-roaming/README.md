@@ -27,13 +27,18 @@ directory or journal gets these modes back):
 - `status.json`: replaced when it changed, and every 10 s regardless. Level,
   state (`observing` or `stopped`), dropped journal lines, what the sender can
   do and how its links map (`reachable`, `arrivalReports`, `standby`,
-  `mapping`), and per radio: physical radio id, permanent MAC, interface,
-  SSID, BSSID, level, slope, condition, decision, blockers, stayers, counts of
-  would-nudges and of the radio's own roams. Radios left out are listed with
-  the reason (`not-admitted`, `twin`, `excluded`, `changed-during-read`).
+  `mapping`), the access points more than one radio is on
+  (`sharedAccessPoints`), and per radio: physical radio id, permanent MAC,
+  interface, SSID, BSSID, the radios it shares its access point with, level,
+  slope, condition, decision, blockers, stayers, counts of would-nudges and of
+  the radio's own roams, `seenBssids` and `rareBackgroundScan`, and `loss`
+  (dead-link record, below). Radios left out are listed with the reason
+  (`not-admitted`, `twin`, `excluded`, `changed-during-read`).
 - `journal.jsonl`: one line per event (`radio-added`, `radio-gone`,
   `fade-start`, `fade-end`, `would-nudge`, `blocked` when the reasons change,
-  `roamed` with the BSSIDs), with the permanent MAC and the physical radio id.
+  `roamed` with the BSSIDs, `ap-shared` and `ap-split`, `seen-bssids` when the
+  count changes, `ap-lost` per access point loss), with the permanent MAC and
+  the physical radio id.
   At most 2,000 lines; past that the newer half is kept. At most 256 lines
   wait for the disk; past that new events are dropped and counted.
 
@@ -76,6 +81,25 @@ when done.
 3. The decision (`observer.ts`), pure, state keyed by the physical radio id
    (`physicalWifiAdapterId`), so a radio replugged under the same name starts
    with nothing.
+
+## Three readings for a walk
+
+- **Which access point each radio is on, and whether they share one.** Two
+  radios on one access point both go when it goes.
+- **`seen-bssids`**: how many access points the active profile has connected
+  to, read with `nmcli -g 802-11-wireless.seen-bssids connection show <uuid>`
+  at most once a minute per profile (the count is kept, not the access
+  points). Under two, NetworkManager gives the radio its long background-scan
+  interval above -70 dBm (once a day), so it will not look for another access
+  point by itself: `rareBackgroundScan`.
+- **The dead-link window** (`loss-watch.ts`): per access point loss, the time
+  from the radio's kernel carrier going down (cfg80211 drops it when the
+  station disconnects) to the bond CeraUI publishes for the sender no longer
+  having the interface. Read every 100 ms from sysfs and in-process; the
+  sender applies the new bond on its next reload, which this does not include.
+  Outcomes: `left-bond` (the window), `recovered` (the carrier came back
+  first), `not-in-bond`, `timeout` (30 s). Every admitted client radio is
+  watched, associated or not, and a loss in progress is followed to its end.
 
 ## The decision
 

@@ -14,6 +14,7 @@ const DIR = join(SRC, "modules/network/wifi-roaming");
 
 /** The observer's files. A new file must be added here, and so pass the guards. */
 const EXPECTED = [
+	"loss-watch.ts",
 	"observer.ts",
 	"policy.ts",
 	"proof.ts",
@@ -91,7 +92,6 @@ const FORBIDDEN_WORDS = new Set([
 
 /** Names that would reach NetworkManager, the Wi-Fi client or the sender's controls. */
 const FORBIDDEN_NAMES = [
-	"nmcli",
 	"wpa_cli",
 	"wpa_supplicant",
 	"fi.w1",
@@ -130,11 +130,13 @@ const ALLOWED_IMPORTS = new Set([
 	"../../../helpers/logger.ts",
 	"../../../helpers/run.ts",
 	"../../streaming/continuity-observer.ts",
+	"../../streaming/srtla.ts",
 	"../../wifi/wifi-adapter-admission.ts",
 	"../../wifi/wifi-connections.ts",
 	"../../wifi/wifi-interfaces.ts",
 	"../../wifi/wifi-permanent-mac.ts",
 	"../network-interfaces.ts",
+	"./loss-watch.ts",
 	"./observer.ts",
 	"./policy.ts",
 	"./proof.ts",
@@ -151,6 +153,7 @@ const ALLOWED_SYMBOLS: Record<string, string[]> = {
 		"OwnedSender",
 		"ownedSenderLifetime",
 	],
+	"../../streaming/srtla.ts": ["getLastPublishedBond"],
 	"../../wifi/wifi-adapter-admission.ts": [
 		"WifiAdapterAdmission",
 		"admitWifiAdapter",
@@ -294,7 +297,7 @@ describe("the roaming observer acts on nothing", () => {
 		);
 	});
 
-	test("the only command it runs is iw, with the interface list or one radio's link", () => {
+	test("the only commands it runs are iw, with the interface list or one radio's link, and one nmcli read", () => {
 		// Every way a runner could be reached: the name, a property, a read.
 		const sites: string[] = [];
 		for (const file of sources)
@@ -315,7 +318,11 @@ describe("the roaming observer acts on nothing", () => {
 				"radio-port.ts: run",
 				"radio-port.ts: run",
 				"radio-port.ts: run",
+				// The two calls through it: iw, and the one NetworkManager read.
 				"radio-port.ts: .run",
+				"radio-port.ts: .run",
+				// The loss watch imports only argMatch and ID_RE from the run helper.
+				"loss-watch.ts: run",
 				'radio-port.ts: quiet(["dev"])',
 				"LINK",
 				// The runtime: the production runner imported and handed to the
@@ -399,6 +406,7 @@ describe("the runner, read from the syntax tree", () => {
 		const r = uses("radio-port.ts", "run");
 		expect(r.filter((u) => u.startsWith("member"))).toEqual([
 			'member-call:deps.run("iw"',
+			'member-call:deps.run("nmcli"',
 		]);
 		expect(
 			r.filter((u) => u.startsWith("other:") || u.startsWith("call:")),
@@ -410,6 +418,19 @@ describe("the runner, read from the syntax tree", () => {
 		expect(rt.filter((u) => u.startsWith("other:"))).toEqual([
 			"other:defaultRadioPortDeps(run, now, exclude)",
 		]);
+	});
+});
+
+describe("the one NetworkManager read", () => {
+	test("nmcli appears once, reading only the seen-bssids property of one profile", () => {
+		const hits = sources.flatMap((file) =>
+			[...code(read(file)).matchAll(/\bnmcli\b/g)].map(() => file),
+		);
+		expect(hits).toEqual(["radio-port.ts"]);
+		const text = code(read("radio-port.ts")).replace(/\s+/g, " ");
+		expect(text).toContain(
+			'deps.run( "nmcli", [ "-g", "802-11-wireless.seen-bssids", "connection", "show", argMatch(UUID_RE, uuid), ], { timeout: READ_TIMEOUT_MS, quiet: true }, )',
+		);
 	});
 });
 

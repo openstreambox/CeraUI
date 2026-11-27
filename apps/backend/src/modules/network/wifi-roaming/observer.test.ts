@@ -50,6 +50,7 @@ const radio = (over: Partial<RadioView> = {}): RadioView => ({
 	station: true,
 	reserved: false,
 	link: { bssid: AP1, ssid: "venue", signalDbm: -60 },
+	seenBssids: 2,
 	...over,
 });
 
@@ -132,7 +133,7 @@ describe("a healthy radio", () => {
 			blockers: [],
 			wouldNudges: 0,
 		});
-		expect(events.map((e) => e.event)).toEqual(["radio-added"]);
+		expect(events.map((e) => e.event)).toEqual(["radio-added", "seen-bssids"]);
 	});
 });
 
@@ -441,5 +442,77 @@ describe("a span under one mapping", () => {
 		const again = snap(8, { stayer: false });
 		rounds(o, 9, 9, { radio: fading, snapshot: again });
 		expect(status(o)?.stayers).toEqual([]);
+	});
+});
+
+describe("which access point each radio is on", () => {
+	const two = (bssid2: string, seen2: number | null = 2): RoundInput => ({
+		at: 1_000,
+		radios: [
+			radio(),
+			radio({
+				id: "02:00:00:00:e0:02/61:6:p6",
+				permanentMac: "02:00:00:00:e0:02",
+				ifname: "wlan2",
+				link: { bssid: bssid2, ssid: "venue", signalDbm: -58 },
+				seenBssids: seen2,
+			}),
+		],
+		skipped: [],
+		snapshot: snap(1),
+		sender: READY,
+	});
+
+	test("two radios on one access point are reported as sharing it, once each way", () => {
+		const o = new RoamingObserver();
+		const first = o.round(two(AP1));
+		expect(o.status()?.sharedAccessPoints).toEqual([
+			{ bssid: AP1, radios: ["wlan1", "wlan2"] },
+		]);
+		expect(o.status()?.radios.map((r) => r.sharesAccessPointWith)).toEqual([
+			["wlan2"],
+			["wlan1"],
+		]);
+		expect(first.filter((e) => e.event === "ap-shared")).toHaveLength(2);
+		// The same again: nothing new in the journal.
+		expect(
+			o
+				.round({ ...two(AP1), at: 2_000 })
+				.filter((e) => e.event === "ap-shared"),
+		).toEqual([]);
+		// One radio moves to another access point: both record the split.
+		const split = o.round({ ...two(AP2), at: 3_000 });
+		expect(
+			split
+				.filter((e) => e.event === "ap-split")
+				.map((e) => e.ifname)
+				.sort(),
+		).toEqual(["wlan1", "wlan2"]);
+		expect(o.status()?.sharedAccessPoints).toEqual([]);
+	});
+
+	test("the seen-bssids count and what it means for scanning, journalled when it changes", () => {
+		const o = new RoamingObserver();
+		const first = o.round(two(AP2, 1));
+		const st = o.status()?.radios;
+		expect(st?.map((r) => [r.seenBssids, r.rareBackgroundScan])).toEqual([
+			[2, false],
+			[1, true],
+		]);
+		expect(first.filter((e) => e.event === "seen-bssids")).toHaveLength(2);
+		expect(
+			o
+				.round({ ...two(AP2, 1), at: 2_000 })
+				.filter((e) => e.event === "seen-bssids"),
+		).toEqual([]);
+		const grew = o.round({ ...two(AP2, 2), at: 3_000 });
+		expect(grew.filter((e) => e.event === "seen-bssids")).toMatchObject([
+			{ ifname: "wlan2", count: 2 },
+		]);
+		const unknown = o.round({ ...two(AP2, null), at: 4_000 });
+		expect(o.status()?.radios[1]?.rareBackgroundScan).toBeNull();
+		expect(unknown.filter((e) => e.event === "seen-bssids")).toMatchObject([
+			{ ifname: "wlan2", count: null },
+		]);
 	});
 });

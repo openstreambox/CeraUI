@@ -27,6 +27,14 @@ import {
 import { logger } from "../../../helpers/logger.ts";
 import { run } from "../../../helpers/run.ts";
 import { normalizeMacAddress } from "../../wifi/wifi-permanent-mac.ts";
+import {
+	defaultLossWatchDeps,
+	LOSS_TICK_MS,
+	type LossEvent,
+	type LossStatus,
+	LossWatch,
+	type WatchedRadio,
+} from "./loss-watch.ts";
 import { type ObserverStatus, RoamingObserver } from "./observer.ts";
 import {
 	createRadioPort,
@@ -179,10 +187,19 @@ export function fileIo(
 	};
 }
 
+/** The dead-link watch as the runtime drives it. */
+export type LossPort = Readonly<{
+	watch(radios: readonly WatchedRadio[]): void;
+	tick(): Promise<void>;
+	drain(): LossEvent[];
+	status(id: string): LossStatus | null;
+}>;
+
 export type RuntimeDeps = Readonly<{
 	now(): number;
 	sender: SenderPort;
 	radios: { read(): Promise<RadioRead> };
+	loss: LossPort;
 	io: RuntimeIo;
 	setInterval(fn: () => void, ms: number): unknown;
 	clearInterval(handle: unknown): void;
@@ -217,8 +234,22 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 	let journalDropped = 0;
 	let lastStatus: { body: string; at: number } | null = null;
 
+	/** The observer's status with each radio's dead-link record. */
+	const current = (): ObserverStatus | null => {
+		const st = observer.status();
+		return st
+			? {
+					...st,
+					radios: st.radios.map((r) => ({
+						...r,
+						loss: deps.loss.status(r.id),
+					})),
+				}
+			: null;
+	};
+
 	const document = (state: "observing" | "stopped") =>
-		statusDocument(state, startedAt, observer.status(), journalDropped);
+		statusDocument(state, startedAt, current(), journalDropped);
 
 	const writeStatus = async (state: "observing" | "stopped") => {
 		if (sealed) return;
@@ -227,9 +258,7 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 		const body = statusDocument(
 			state,
 			startedAt,
-			observer.status()
-				? { ...(observer.status() as ObserverStatus), at: 0 }
-				: null,
+			current() ? { ...(current() as ObserverStatus), at: 0 } : null,
 			journalDropped,
 		);
 		if (
@@ -267,6 +296,17 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 		if (stopped) return;
 		const read = await deps.radios.read();
 		if (stopped) return;
+		// Every admitted client radio, associated or not: a loss leaves it
+		// unassociated, and its record must stay.
+		deps.loss.watch(
+			read.radios
+				.filter((r) => r.reserved === false)
+				.map((r) => ({
+					id: r.id,
+					permanentMac: r.permanentMac,
+					ifname: r.ifname,
+				})),
+		);
 		const events = observer.round({
 			at: deps.now(),
 			radios: read.radios,
@@ -275,7 +315,8 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 			sender: deps.sender.view(),
 		});
 		if (stopped) return;
-		for (const event of events) journal(JSON.stringify(event));
+		for (const event of [...events, ...deps.loss.drain()])
+			journal(JSON.stringify(event));
 		await writeStatus("observing");
 	};
 
@@ -294,6 +335,12 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 	const handle = deps.setInterval(() => {
 		void round();
 	}, ROUND_MS);
+	const lossHandle = deps.setInterval(() => {
+		if (!stopped)
+			deps.loss.tick().catch((error: unknown) => {
+				logger.debug("wifi-roaming: loss watch failed", { error });
+			});
+	}, LOSS_TICK_MS);
 
 	return {
 		round,
@@ -302,6 +349,7 @@ export function createObserverRuntime(deps: RuntimeDeps): ObserverRuntime {
 			if (stopped) return;
 			stopped = true;
 			deps.clearInterval(handle);
+			deps.clearInterval(lossHandle);
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			const deadline = new Promise<void>((resolve) => {
 				timer = setTimeout(resolve, STOP_DEADLINE_MS);
@@ -355,6 +403,7 @@ export async function initWifiRoaming(
 		now,
 		sender: createSenderPort(defaultSenderPortDeps(now, SENDER_TIMEOUT_MS)),
 		radios: createRadioPort(defaultRadioPortDeps(run, now, exclude)),
+		loss: new LossWatch(defaultLossWatchDeps(now)),
 		io: fileIo(),
 		setInterval: (fn, ms) => setInterval(fn, ms),
 		clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),

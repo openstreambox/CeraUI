@@ -18,13 +18,15 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RadioRead } from "./radio-port.ts";
+import { LOSS_TICK_MS, type LossEvent } from "./loss-watch.ts";
+import type { RadioRead, RadioView } from "./radio-port.ts";
 import {
 	createObserverRuntime,
 	type FileOps,
 	fileIo,
 	JOURNAL_MAX_LINES,
 	JOURNAL_MAX_PENDING,
+	type LossPort,
 	type RuntimeDeps,
 	type RuntimeIo,
 	roamingBlocker,
@@ -52,7 +54,7 @@ const VIEW: SenderView = {
 };
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
-type FakeDeps = Omit<RuntimeDeps, "sender" | "io"> & {
+type FakeDeps = Mutable<Omit<RuntimeDeps, "sender" | "io">> & {
 	sender: Mutable<SenderPort>;
 	io: Mutable<RuntimeIo>;
 };
@@ -85,6 +87,7 @@ function fakeDeps(over: Partial<RuntimeDeps> = {}) {
 						station: true,
 						reserved: false,
 						link: { bssid: "aa:00:00:00:00:01", ssid: "venue", signalDbm: -55 },
+						seenBssids: 1,
 					},
 				],
 				skipped: [],
@@ -100,7 +103,18 @@ function fakeDeps(over: Partial<RuntimeDeps> = {}) {
 		},
 	};
 	const clock = { now: 5_000 };
+	const lossEvents: LossEvent[] = [];
+	const watched: string[][] = [];
+	const loss: LossPort = {
+		watch: (radios) => {
+			watched.push(radios.map((r) => r.ifname));
+		},
+		tick: async () => {},
+		drain: () => lossEvents.splice(0),
+		status: () => null,
+	};
 	const deps: FakeDeps = {
+		loss,
 		now: () => clock.now,
 		sender,
 		radios,
@@ -116,6 +130,8 @@ function fakeDeps(over: Partial<RuntimeDeps> = {}) {
 	};
 	return {
 		clock,
+		lossEvents,
+		watched,
 		deps,
 		log,
 		statuses,
@@ -139,7 +155,10 @@ describe("the observer runtime", () => {
 			radios: [{ ifname: "wlan1", decision: "none" }],
 		});
 		await rt.stop();
-		expect(f.journal.map((l) => JSON.parse(l).event)).toEqual(["radio-added"]);
+		expect(f.journal.map((l) => JSON.parse(l).event)).toEqual([
+			"radio-added",
+			"seen-bssids",
+		]);
 	});
 
 	test("rounds never overlap: a tick during a round joins it", async () => {
@@ -209,6 +228,46 @@ describe("the observer runtime", () => {
 	});
 });
 
+describe("the dead-link watch", () => {
+	test("is told every admitted client radio, ticks on its own timer, and its losses reach the journal", async () => {
+		const f = fakeDeps();
+		const intervals: number[] = [];
+		f.deps.setInterval = (_fn, ms) => {
+			intervals.push(ms);
+			return intervals.length;
+		};
+		const rt = createObserverRuntime(f.deps);
+		expect(intervals.sort((a, b) => a - b)).toEqual([LOSS_TICK_MS, 1_000]);
+		f.lossEvents.push({
+			at: 5_000,
+			radio: "02:00:00:00:f0:01",
+			id: "02:00:00:00:f0:01/1:1:p",
+			ifname: "wlan1",
+			event: "ap-lost",
+			lostAt: 2_600,
+			outcome: "left-bond",
+			durationMs: 2_400,
+		});
+		const base = (await f.deps.radios.read()).radios[0] as RadioView;
+		f.deps.radios.read = async () => ({
+			radios: [
+				base,
+				// Lost its access point: still watched, so its loss is measured.
+				{ ...base, id: "x/2", ifname: "wlan2", link: null, station: false },
+				// Serving a hotspot: not a client radio.
+				{ ...base, id: "x/3", ifname: "wlan3", reserved: true },
+				// Phy state unknown: not watched either.
+				{ ...base, id: "x/4", ifname: "wlan4", reserved: null },
+			],
+			skipped: [],
+		});
+		await rt.round();
+		expect(f.watched).toEqual([["wlan1", "wlan2"]]);
+		await rt.stop();
+		expect(f.journal.map((l) => JSON.parse(l).event)).toContain("ap-lost");
+	});
+});
+
 describe("bounded writes", () => {
 	test("an unchanged status is written again only every 10 s", async () => {
 		const f = fakeDeps();
@@ -240,6 +299,7 @@ describe("bounded writes", () => {
 					station: true,
 					reserved: false,
 					link: null,
+					seenBssids: null,
 				},
 			],
 			skipped: [],

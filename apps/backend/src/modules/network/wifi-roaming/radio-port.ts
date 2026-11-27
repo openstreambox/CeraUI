@@ -20,6 +20,13 @@
  * `iw dev` (which interfaces are in AP mode on which phy) is read at most
  * every 5 s; the link of each radio once a round. Both are routine reads and
  * leave no debug trace per call.
+ *
+ * For each station's active profile, the number of access points it has
+ * connected to (`802-11-wireless.seen-bssids`, a read-only `nmcli -g` of that
+ * one property), at most once a minute per profile. Under two, NetworkManager
+ * gives the radio its long background-scan interval above -70 dBm (once a
+ * day), so the radio will not look for another access point by itself. Only
+ * the count is kept, not the access points.
  */
 
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
@@ -39,6 +46,10 @@ export type Runner = (
 ) => Promise<string>;
 
 const READ_TIMEOUT_MS = 2_000;
+/** How long one `seen-bssids` read stands for a profile. */
+export const SEEN_BSSIDS_READ_MS = 60_000;
+const UUID_RE =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** How long one `iw dev` read stands for the phy's AP state. */
 export const PHY_READ_MS = 5_000;
 
@@ -69,6 +80,11 @@ export type RadioView = Readonly<{
 	reserved: boolean | null;
 	/** `null`: not associated; `undefined`: the link could not be read. */
 	link: RadioLink | null | undefined;
+	/**
+	 * Access points the active profile has connected to (`seen-bssids`), `null`
+	 * without an active station profile or when it could not be read.
+	 */
+	seenBssids: number | null;
 }>;
 
 export type SkippedRadio = Readonly<{ ifname: string; reason: string }>;
@@ -133,6 +149,15 @@ export function parseIwDev(
 	return out;
 }
 
+/** How many access points `nmcli -g 802-11-wireless.seen-bssids` lists. */
+export function countSeenBssids(stdout: string): number {
+	return stdout
+		.trim()
+		.split(",")
+		.map((b) => b.trim())
+		.filter((b) => b !== "").length;
+}
+
 /** Whether `ifname` or another interface on its phy is in AP mode. */
 export function apOnPhyOf(
 	devs: ReadonlyMap<string, { phy: string; type: string | null }>,
@@ -162,6 +187,32 @@ export function createRadioPort(deps: RadioPortDeps) {
 		} catch {
 			return undefined;
 		}
+	};
+	const seen = new Map<string, { at: number; count: number | null }>();
+	const readSeen = async (uuid: string): Promise<number | null> => {
+		const now = deps.now();
+		const kept = seen.get(uuid);
+		if (kept && now - kept.at < SEEN_BSSIDS_READ_MS) return kept.count;
+		let count: number | null = null;
+		try {
+			count = countSeenBssids(
+				await deps.run(
+					"nmcli",
+					[
+						"-g",
+						"802-11-wireless.seen-bssids",
+						"connection",
+						"show",
+						argMatch(UUID_RE, uuid),
+					],
+					{ timeout: READ_TIMEOUT_MS, quiet: true },
+				),
+			);
+		} catch {
+			count = null;
+		}
+		seen.set(uuid, { at: now, count });
+		return count;
 	};
 	let phys:
 		| {
@@ -221,10 +272,22 @@ export function createRadioPort(deps: RadioPortDeps) {
 						)
 					: undefined;
 			const links: (string | undefined)[] = [];
-			for (const [, admission] of admitted)
+			const seens: (number | null)[] = [];
+			for (const [, admission] of admitted) {
 				links.push(
 					await quiet(["dev", argMatch(ID_RE, admission.row.ifname), "link"]),
 				);
+				const row = admission.row;
+				const profile =
+					row.activeMode === "infrastructure"
+						? (row.activeConn ?? row.conn ?? null)
+						: null;
+				seens.push(
+					profile !== null && UUID_RE.test(profile)
+						? await readSeen(profile)
+						: null,
+				);
+			}
 			// Every read awaited: each radio must still be the admitted one,
 			// checked after all of them, not just after its own.
 			const radios: RadioView[] = [];
@@ -250,6 +313,7 @@ export function createRadioPort(deps: RadioPortDeps) {
 					station: row.conn !== null && row.activeMode === "infrastructure",
 					reserved: rowServesHotspot(row) ? true : ap,
 					link: linkOut === undefined ? undefined : parseIwLink(linkOut),
+					seenBssids: seens[i] ?? null,
 				});
 			});
 			return { radios, skipped };
