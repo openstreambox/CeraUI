@@ -458,6 +458,8 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	],
 	["Wi-Fi profile ", " is the device image's setup AP; CeraUI leaves it alone"],
 	["Wi-Fi profile authority retired"],
+	["Wi-Fi: settling the abandoned activation on ", " failed: ", ""],
+	["Wi-Fi: the abandoned activation on ", " could not be cancelled"],
 	["Wifi connection does not have an SSID!"],
 	["Wifi interfaces refreshed"],
 	["[config-migration] pipeline '", "' not in offered set"],
@@ -1362,6 +1364,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["usb-net scan skipped an interface"],
 	["usb-net scan superseded"],
 	["usbspeed check deferred"],
+	["wifi ", " failed: ", ""],
 	[
 		"wifi capabilities: ",
 		" links to ",
