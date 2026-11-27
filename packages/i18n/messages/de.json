@@ -2487,7 +2487,7 @@
 	"notifications.keepTryingRefused": "Nichts mehr zu versuchen: Der Stream läuft wieder oder wurde gestoppt.",
 	"notifications.keepTryingUnreachable": "Das Gerät war nicht erreichbar, es versucht es also vielleicht nicht weiter. Sieh unter Live nach.",
 	"live.reconnectingChip": "Verbindet neu",
-	"live.reconnectExpiredChip": "Neu verbinden fehlgeschlagen",
+	"live.reconnectExpiredChip": "Nicht wieder verbunden",
 	"live.reconnectingTitle": "Stream wird neu verbunden",
 	"live.reconnectingLeft": "noch {time}",
 	"live.reconnectingBody": "Neuer Versuch, sobald eine Netzwerkverbindung zurück ist. Bis dahin sehen Zuschauer deinen BRB-Bildschirm.",
