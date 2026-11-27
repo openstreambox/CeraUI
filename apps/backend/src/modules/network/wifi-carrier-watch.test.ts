@@ -554,6 +554,8 @@ describe("WifiCarrierWatch marks", () => {
 		});
 		watch.start();
 		watch.handleLine(linkLine("wlan1", ASSOCIATED, "UP"));
+		// An up track alone arms the sweep.
+		expect(h.pending().filter((t) => t.ms === MARK_CHECK_MS)).toHaveLength(1);
 		present.set("wlan1", false);
 		h.advance(MARK_CHECK_MS);
 		// Nothing is tracked any more, so the sweep stops.

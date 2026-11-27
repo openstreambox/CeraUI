@@ -52,7 +52,8 @@ import {
 import {
 	carryingIfacesFrom,
 	prepareSrtlaIpAddresses,
-	publishedRowsFrom,
+	resetHeldRowsForTest,
+	SURVIVOR_ROW_AGE_MS,
 } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
 import { stopWifiUpdateLoopForTest } from "../modules/wifi/wifi-interfaces.ts";
 
@@ -151,6 +152,7 @@ function bench() {
 		receiver = RECEIVER,
 		purpose: "launch" | "refresh" = "refresh",
 	): Promise<string[]> => {
+		await seeded;
 		let written: readonly BondEntry[] = [];
 		await prepareSrtlaIpAddresses(
 			receiver,
@@ -159,10 +161,8 @@ function bench() {
 				localList: genSrtlaBondEntriesForLocalIpAddress,
 				bondedList: genSrtlaBondEntries,
 				carryingIfaces: () => carrying,
-				publishedRows: () =>
-					publishedRowsFrom({
-						entries: ALL.map((l) => ({ iface: l.name, ip: l.ip }) as BondEntry),
-					}),
+				// Every row has been held for longer than the carrying window.
+				now: () => clock + SURVIVOR_ROW_AGE_MS,
 				writeList: async (entries) => {
 					written = entries;
 					return { ok: true, changed: true } as unknown as BindMapPublication;
@@ -173,12 +173,23 @@ function bench() {
 		return written.map((entry) => entry.iface).sort();
 	};
 	processIfconfigOutput(ALL.map(stanza).join("\n\n"));
+	// The launch publication at time 0 starts every row's held age.
+	const seeded = prepareSrtlaIpAddresses(RECEIVER, {
+		isLocal: () => false,
+		localList: () => [],
+		bondedList: () =>
+			ALL.map((l) => ({ iface: l.name, ip: l.ip }) as BondEntry),
+		writeList: async () =>
+			({ ok: true, changed: true }) as unknown as BindMapPublication,
+		now: () => 0,
+	});
 	watch.start();
 	for (const link of ALL) watch.handleLine(linkLine(link.name, true));
 	return { watch, advance, setCarrier, published, carrying };
 }
 
 beforeEach(() => {
+	resetHeldRowsForTest();
 	// The fixture's interface events go nowhere: no store, no log, no timers left.
 	resetEventEmitterForTest({
 		appendEvent: () => undefined,
@@ -437,12 +448,23 @@ describe("the carrier rule at publication", () => {
 		held?: readonly BondEntry[],
 	) => {
 		let written: readonly BondEntry[] = [];
+		resetHeldRowsForTest();
+		// What the sender has held since time 0 (a launch publication).
+		await prepareSrtlaIpAddresses(RECEIVER, {
+			isLocal: () => false,
+			localList: () => [],
+			bondedList: () => [...(held ?? entries)],
+			writeList: async () =>
+				({ ok: true, changed: true }) as unknown as BindMapPublication,
+			now: () => 0,
+		});
 		await prepareSrtlaIpAddresses(
 			RECEIVER,
 			{
 				isLocal: () => false,
 				localList: () => [],
 				bondedList: () => entries,
+				now: () => SURVIVOR_ROW_AGE_MS,
 				writeList: async (list) => {
 					written = list;
 					return { ok: true, changed: true } as unknown as BindMapPublication;
@@ -451,7 +473,6 @@ describe("the carrier rule at publication", () => {
 					typeof lost === "function" ? lost : (ifname) => lost.includes(ifname),
 				carrierDown: (ifname) => down.includes(ifname),
 				carryingIfaces: () => new Set(carrying ?? entries.map((e) => e.iface)),
-				publishedRows: () => publishedRowsFrom({ entries: held ?? entries }),
 			},
 			"refresh",
 		);
@@ -519,18 +540,83 @@ describe("the carrier rule at publication", () => {
 		).toEqual(["eth0"]);
 	});
 
-	test("a survivor the sender does not hold under that address is no survivor", async () => {
-		// eth0 just got a new lease: its carrying evidence is the old socket's.
+	test("a survivor under a new address counts only once it has been held long enough", async () => {
+		resetHeldRowsForTest();
+		const before = [entry("wlan0"), entry("eth0")];
 		const moved = [entry("wlan0"), entry("eth0", undefined, "192.0.2.77")];
-		expect(
-			await publish(moved, ["wlan0"], ["wlan0"], undefined, [
-				entry("wlan0"),
-				entry("eth0"),
-			]),
-		).toEqual(["wlan0", "eth0"]);
-		expect(
-			await publish(moved, ["wlan0"], ["wlan0"], undefined, moved),
-		).toEqual(["eth0"]);
+		let written: readonly BondEntry[] = [];
+		const refresh = (list: BondEntry[], at: number) =>
+			prepareSrtlaIpAddresses(
+				RECEIVER,
+				{
+					isLocal: () => false,
+					localList: () => [],
+					bondedList: () => list,
+					writeList: async (rows) => {
+						written = rows;
+						return { ok: true, changed: true } as unknown as BindMapPublication;
+					},
+					carrierLost: (ifname) => ifname === "wlan0",
+					carrierDown: (ifname) => ifname === "wlan0",
+					// eth0's interface-level evidence is still the old socket's.
+					carryingIfaces: () => new Set(["eth0"]),
+					now: () => at,
+				},
+				"refresh",
+			).then(() => written.map((e) => e.iface));
+		await prepareSrtlaIpAddresses(RECEIVER, {
+			isLocal: () => false,
+			localList: () => [],
+			bondedList: () => before,
+			writeList: async () =>
+				({ ok: true, changed: true }) as unknown as BindMapPublication,
+			now: () => 0,
+		});
+		// eth0 gets a new lease at 20 s: its new address is not yet held.
+		expect(await refresh(moved, 20_000)).toEqual(["wlan0", "eth0"]);
+		// A second refresh 1 s later: the address is published, still too new.
+		expect(await refresh(moved, 21_000)).toEqual(["wlan0", "eth0"]);
+		// Held past the carrying window: progress now belongs to this socket.
+		expect(await refresh(moved, 20_000 + SURVIVOR_ROW_AGE_MS)).toEqual([
+			"eth0",
+		]);
+	});
+
+	test("a failed write does not age a row", async () => {
+		resetHeldRowsForTest();
+		const rows = [entry("wlan0"), entry("eth0")];
+		const run = (at: number, ok: boolean) => {
+			let written: readonly BondEntry[] = [];
+			return prepareSrtlaIpAddresses(
+				RECEIVER,
+				{
+					isLocal: () => false,
+					localList: () => [],
+					bondedList: () => rows,
+					writeList: async (list) => {
+						written = list;
+						return (ok
+							? { ok: true, changed: true }
+							: {
+									ok: false,
+									reason: "ips_write_failed",
+									changed: false,
+								}) as unknown as BindMapPublication;
+					},
+					carrierLost: (ifname) => ifname === "wlan0",
+					carrierDown: (ifname) => ifname === "wlan0",
+					carryingIfaces: () => new Set(["eth0"]),
+					now: () => at,
+				},
+				"refresh",
+			).then(() => written.map((e) => e.iface));
+		};
+		// Nothing ever reached the sender: no row is held, so wlan0 stays.
+		expect(await run(0, false)).toEqual(["wlan0", "eth0"]);
+		expect(await run(SURVIVOR_ROW_AGE_MS * 2, false)).toEqual([
+			"wlan0",
+			"eth0",
+		]);
 	});
 
 	test("the telemetry adapter counts only fresh carrying rows", () => {
@@ -555,7 +641,6 @@ describe("the carrier rule at publication", () => {
 				.size,
 		).toBe(0);
 		expect(carryingIfacesFrom(null).size).toBe(0);
-		expect([...publishedRowsFrom(undefined)]).toEqual([]);
 	});
 
 	test("each entry's state is read once per publication", async () => {
