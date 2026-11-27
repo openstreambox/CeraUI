@@ -909,6 +909,11 @@
 		"locales": ["fr"],
 		"reason": "\"Notifications\" is the French plural; fr devtools.testDifferentTypes reads \"Testez différents types de notifications toast et leurs comportements\"."
 	},
+	"notifications.power.status": {
+		"value": "{text}",
+		"locales": ["ar", "de", "es", "fr", "hi", "ja", "ko", "pt-BR", "zh"],
+		"reason": "A bare placeholder with no words: the backend sends the composed English power notice as {text}, and the notification store localizes it phrase by phrase with localizePowerText."
+	},
 	"settings.destination": {
 		"value": "Destination",
 		"locales": ["fr"],
