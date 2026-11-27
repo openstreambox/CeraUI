@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import {
 	type UpdateSettings,
+	updateChannelUrlSchema,
 	updateSettingsInputSchema,
 	updateSettingsSchema,
 } from "@ceraui/rpc/schemas";
@@ -19,6 +20,7 @@ export const UPDATE_IMAGE_CHANNEL_FILE = "update-image-channel.json";
 const imageChannelSchema = z
 	.object({
 		schema: z.literal(1),
+		channelUrl: updateChannelUrlSchema.optional(),
 		channel: z.enum(["stable", "beta"]),
 		allowSystemDownloadsOverCellular: z.boolean().default(false),
 	})
@@ -138,6 +140,7 @@ export async function loadUpdateSettings(
 			? {
 					...defaults,
 					channel: imageChannel.channel,
+					channelUrl: imageChannel.channelUrl,
 					allowSystemOverCellular:
 						imageChannel.allowSystemDownloadsOverCellular,
 				}
@@ -149,6 +152,7 @@ export async function loadUpdateSettings(
 		return {
 			...settings,
 			channel: imageChannel.channel,
+			channelUrl: imageChannel.channelUrl,
 			allowSystemOverCellular: imageChannel.allowSystemDownloadsOverCellular,
 		};
 
@@ -185,13 +189,18 @@ export function saveUpdateSettings(
 	settingsRevision++;
 	writeFileAtomicSync(
 		filePath,
-		JSON.stringify({ ...parsed.data, channel: "stable" }),
+		JSON.stringify({
+			...parsed.data,
+			channelUrl: undefined,
+			channel: "stable",
+		}),
 	);
 	writeFileAtomicSync(
 		imageChannelPath(filePath),
 		JSON.stringify({
 			schema: 1,
 			channel: parsed.data.channel,
+			channelUrl: parsed.data.channelUrl,
 			allowSystemDownloadsOverCellular: parsed.data.allowSystemOverCellular,
 		}),
 	);
