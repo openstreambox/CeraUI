@@ -504,6 +504,10 @@ export const modemMutationEntrySchema = z.object({
 	stableKey: z.string().min(1),
 	// A verified USB serial identity can supplement, but never replace, the port key.
 	unitLinkId: z.string().min(1).optional(),
+	// At creation the modem had a serial, but no device number proved it was
+	// this device's: its unit is unknown, not absent, so descriptor equality
+	// cannot verify a rollback of this entry.
+	unitUnproven: z.literal(true).optional(),
 	deviceVidPid: z
 		.string()
 		.regex(/^[0-9a-f]{4}:[0-9a-f]{4}$/)

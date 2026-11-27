@@ -60,7 +60,13 @@ import {
 
 export type CapturedState = Readonly<Record<string, unknown>>;
 
-export type RollbackResult = "restored" | "failed" | "unavailable" | "absent";
+export type RollbackResult =
+	| "restored"
+	| "failed"
+	| "unavailable"
+	| "absent"
+	// The journal could not prove the modem's unit when it began.
+	| "unproven";
 
 export interface MutationRollbackHandler {
 	/** A kind-specific durable witness can supersede generic USB capture. */
@@ -158,6 +164,7 @@ async function serialFor(device: UsbDeviceSnapshot, deps: MutationCaptureDeps) {
 		device.udevProperties?.ID_USB_SERIAL_SHORT;
 	let attribute: string | undefined;
 	let unbound: string | undefined;
+	let unproven = false;
 	if (device.sysfsPath !== undefined) {
 		attribute = await deps.readSerial(device.sysfsPath);
 		unbound = attribute;
@@ -171,7 +178,11 @@ async function serialFor(device: UsbDeviceSnapshot, deps: MutationCaptureDeps) {
 				enumerated === undefined
 					? undefined
 					: deviceNumber(await deps.readDevnum(device.sysfsPath));
-			if (now === undefined || now !== enumerated) attribute = "";
+			if (now === undefined || now !== enumerated) {
+				attribute = "";
+				unproven =
+					usbSerialIdentity(unbound, device.vendorId).key !== undefined;
+			}
 		}
 	}
 	const raw = attribute ?? device.serialNumber;
@@ -183,18 +194,26 @@ async function serialFor(device: UsbDeviceSnapshot, deps: MutationCaptureDeps) {
 		// Not this lifetime's identity, but still a serial some device holds.
 		unbound: usbSerialIdentity(unbound, device.vendorId),
 		agrees: property === undefined || observed.key === reported.key,
+		// A serial was read, but nothing proved it was this device's.
+		unproven,
 	};
 }
 
-async function reliableUnitLinkId(
+/**
+ * The unit evidence of one enumerated device: its link id when its serial is
+ * this lifetime's and unique, `unproven` when a serial was read but the device
+ * number that ties it to this lifetime was missing or had changed.
+ */
+async function unitEvidence(
 	device: UsbDeviceSnapshot,
 	devices: readonly UsbDeviceSnapshot[],
 	deps: MutationCaptureDeps,
-): Promise<string | undefined> {
+): Promise<{ id?: string; unproven?: true }> {
 	const vid = device.vendorId.toLowerCase();
-	if (!/^[0-9a-f]{4}$/.test(vid)) return undefined;
-	const { observed, agrees } = await serialFor(device, deps);
-	if (observed.key === undefined || !agrees) return undefined;
+	if (!/^[0-9a-f]{4}$/.test(vid)) return {};
+	const { observed, agrees, unproven } = await serialFor(device, deps);
+	if (unproven) return { unproven: true };
+	if (observed.key === undefined || !agrees) return {};
 	const peers = await Promise.all(
 		devices
 			.filter(
@@ -212,11 +231,19 @@ async function reliableUnitLinkId(
 				peer.unbound.key === observed.key,
 		)
 	)
-		return undefined;
+		return {};
 	const remembered = new Set(getConfig().usb_serial_shared ?? []);
-	if (observed.isShared(remembered)) return undefined;
+	if (observed.isShared(remembered)) return {};
 
-	return mintLinkId(`usb-serial:${observed.key}`);
+	return { id: mintLinkId(`usb-serial:${observed.key}`) };
+}
+
+async function reliableUnitLinkId(
+	device: UsbDeviceSnapshot,
+	devices: readonly UsbDeviceSnapshot[],
+	deps: MutationCaptureDeps,
+): Promise<string | undefined> {
+	return (await unitEvidence(device, devices, deps)).id;
 }
 
 /** The unit identity of a device from one enumeration, read with the active capture deps. */
@@ -228,9 +255,11 @@ export function observedUnitLinkId(
 }
 
 /** Record an opaque unit identity if the enumerated modem has a reliable serial. */
-export async function captureModemJournalIdentity(
-	stableKey: string,
-): Promise<{ deviceVidPid?: string; unitLinkId?: string }> {
+export async function captureModemJournalIdentity(stableKey: string): Promise<{
+	deviceVidPid?: string;
+	unitLinkId?: string;
+	unitUnproven?: true;
+}> {
 	const deps = activeDeps;
 	const devices = await deps.enumerate();
 	const device = devices.find(
@@ -238,12 +267,13 @@ export async function captureModemJournalIdentity(
 	);
 	if (device === undefined) return {};
 	const vidPid = `${device.vendorId}:${device.productId}`.toLowerCase();
-	const unitLinkId = await reliableUnitLinkId(device, devices, deps);
+	const unit = await unitEvidence(device, devices, deps);
 	return {
 		...(/^[0-9a-f]{4}:[0-9a-f]{4}$/.test(vidPid)
 			? { deviceVidPid: vidPid }
 			: {}),
-		...(unitLinkId === undefined ? {} : { unitLinkId }),
+		...(unit.id === undefined ? {} : { unitLinkId: unit.id }),
+		...(unit.unproven ? { unitUnproven: true } : {}),
 	};
 }
 
@@ -304,6 +334,7 @@ export async function rollbackMutation(
 	stableKey: string,
 	preState: CapturedState,
 	unitLinkId?: string,
+	unitUnproven = false,
 ): Promise<RollbackResult> {
 	if (kind === "modem-config" && typeof preState.format === "string") {
 		const inverse = configInverses.get(preState.format);
@@ -324,6 +355,8 @@ export async function rollbackMutation(
 			return "failed";
 		}
 	}
+	// Descriptor equality would accept a replacement with the same descriptors.
+	if (unitUnproven) return "unproven";
 	const current = await captureModemState(stableKey, undefined, unitLinkId);
 	assertMutationJournalRevision(revision);
 	if (current === undefined) return "absent";
