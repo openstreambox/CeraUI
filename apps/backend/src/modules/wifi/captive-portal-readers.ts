@@ -209,9 +209,10 @@ const props: Readonly<Record<string, readonly string[]>> = {
 /** Explicit capture only: omitted dependencies refuse; never install a default reader. */
 export async function captureWifiPortalBindingFromSystem(
 	deviceId: number,
+	incarnation: string,
 	deps?: PortalReaderDeps,
 ): Promise<PortalCapture> {
-	if (!deps) return FAIL;
+	if (!deps || !incarnation) return FAIL;
 	let bus: DbusTransport | undefined,
 		poisoned = false,
 		finished = false;
@@ -680,7 +681,7 @@ export async function captureWifiPortalBindingFromSystem(
 		if (!transport) unavailable();
 		await bounded(() => transport.connect(), PORTAL_READER_LIMITS.connectMs);
 		result = await bounded(
-			() => captureWifiPortalBinding(deviceId, readers),
+			() => captureWifiPortalBinding(deviceId, incarnation, readers),
 			PORTAL_READER_LIMITS.transactionMs,
 		);
 	} catch {
