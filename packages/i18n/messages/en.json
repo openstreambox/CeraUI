@@ -2744,6 +2744,7 @@
 	"wifiSelector.button.connect": "Connect",
 	"wifiSelector.button.disconnect": "Disconnect",
 	"wifiSelector.button.forget": "Forget",
+	"wifiSelector.button.manage": "Manage",
 	"wifiSelector.button.scan": "Scan",
 	"wifiSelector.button.scanning": "Scanning...",
 	"wifiSelector.dialog.availableNetworks": "Available Networks",
