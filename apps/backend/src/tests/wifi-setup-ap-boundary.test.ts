@@ -489,6 +489,17 @@ test("a foreign unpinned AP with another connection name follows upstream's fore
 	expect(iface.hotspot.conn).toBeUndefined();
 	expect(getHotspotCredentials(B)).toBeUndefined();
 	expect(effects).toEqual([]);
+
+	// Once boot discovery reports it as the radio's active connection, upstream's
+	// observe-only path records it as the radio's foreign AP: visible and
+	// stoppable, still unowned and unwritten. The setup-AP early return would
+	// leave the row untouched instead.
+	const live = await discoverActive(OPERATOR);
+
+	expect(live.hotspot.conn).toBe(OPERATOR);
+	expect(discovery.isObservedForeignHotspot(live.hotspot, B)).toBe(true);
+	expect(getHotspotCredentials(B)).toBeUndefined();
+	expect(effects).toEqual([]);
 });
 
 test("under the image's marker its active AP is the setup AP whatever its name, for the marker's lifetime", async () => {
