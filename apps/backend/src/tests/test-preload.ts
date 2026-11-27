@@ -52,6 +52,11 @@ process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = join(
 	"carrier-intent",
 );
 process.env.CERALIVE_STREAMING_MARKER = join(runtimeRoot, "streaming");
+const previousCarryingBootClaim = process.env.CERALIVE_CARRYING_BOOT_CLAIM;
+process.env.CERALIVE_CARRYING_BOOT_CLAIM = join(
+	runtimeRoot,
+	"carrying-boot-claim",
+);
 // The sender census never reads the host's process table in unit tests.
 const previousSenderCensusRoot = process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT;
 process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT = join(runtimeRoot, "proc");
@@ -127,6 +132,9 @@ afterAll(async () => {
 	if (previousStreamingMarker === undefined)
 		delete process.env.CERALIVE_STREAMING_MARKER;
 	else process.env.CERALIVE_STREAMING_MARKER = previousStreamingMarker;
+	if (previousCarryingBootClaim === undefined)
+		delete process.env.CERALIVE_CARRYING_BOOT_CLAIM;
+	else process.env.CERALIVE_CARRYING_BOOT_CLAIM = previousCarryingBootClaim;
 	if (previousSenderCensusRoot === undefined)
 		delete process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT;
 	else process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT = previousSenderCensusRoot;
