@@ -485,7 +485,11 @@ test("a stream start that meets the tick settling a refusal waits for it", async
 	// Given a refusal the tick is settling, its pending list still clearing.
 	const cleared = Promise.withResolvers<void>();
 	const quarantine = testQuarantine();
-	quarantine.clearPending = () => cleared.promise;
+	let clearing = 0;
+	quarantine.clearPending = () => {
+		clearing++;
+		return cleared.promise;
+	};
 	let stops = 0;
 	let refused = false;
 	setOrchestratorRuntimeDepsForTest(
@@ -515,7 +519,9 @@ test("a stream start that meets the tick settling a refusal waits for it", async
 	expect(await installUpdatesNow()).toEqual({ started: true });
 	refused = true;
 	const tick = runOrchestratorTick();
-	await Bun.sleep(0);
+	// The tick has taken the refusal and is clearing its plan.
+	for (let i = 0; i < 200 && clearing === 0; i++) await Bun.sleep(1);
+	expect(clearing).toBe(1);
 	// When a stream starts meanwhile.
 	const admission = admitAndPrepareStreamStart();
 	let answered = false;
@@ -529,6 +535,8 @@ test("a stream start that meets the tick settling a refusal waits for it", async
 	// and stops nothing.
 	expect(await admission).toEqual({ allowed: true });
 	await tick;
+	// One settlement: the stream start joined the tick's.
+	expect(clearing).toBe(1);
 	expect(stops).toBe(0);
 	expect(getOrchestratorState().phase).toBe("awaiting-idle");
 });
