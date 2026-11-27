@@ -1169,6 +1169,8 @@ export const GET_CONFIG_KEYS = [
 	'selected_ingest_endpoint',
 	'detectionMethod',
 	'modem_provisioning',
+	'auto_reconnect',
+	'auto_reconnect_max_s',
 ] as const satisfies readonly (keyof ConfigMessage)[];
 
 // Sent right after a `config` broadcast whose write cleared settings, on the

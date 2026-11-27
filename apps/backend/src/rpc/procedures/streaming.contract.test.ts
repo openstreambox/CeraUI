@@ -263,41 +263,30 @@ describe("streaming setter-contract — contains-envelope (S3)", () => {
 		).rejects.toThrow();
 	});
 
-	test("setReconnect echoes only its two fields to the other tabs, and a failed save changes nothing", async () => {
+	test("setReconnect echoes through the one config broadcast, in its public form, and a failed save changes nothing", async () => {
 		const { spyOn } = await import("bun:test");
-		const sockets = await import("../../modules/ui/websocket-server.ts");
+		const compat = await import("../compat.ts");
+		const { buildMessage } = await import("../events.ts");
 		const configModule = await import("../../modules/config.ts");
-		const sent: Array<[string, unknown]> = [];
-		const broadcast = spyOn(sockets, "broadcastMsg").mockImplementation(
+		const wire: string[] = [];
+		const broadcast = spyOn(compat, "broadcastMsg").mockImplementation(
 			(type: string, data: unknown) => {
-				sent.push([type, data]);
+				if (type === "config") wire.push(buildMessage(type, data));
 			},
 		);
+		const stored = getConfig();
+		const before = { srt_streamid: stored.srt_streamid };
+		stored.srt_streamid = "publish-key-4417";
 		try {
-			const stored = getConfig();
-			stored.srt_streamid = "publish-key";
-			stored.relay_streamid_override = undefined;
 			await callMutation(setReconnectProcedure, { max_s: 600 });
-			expect(sent).toEqual([
-				[
-					"config",
-					{
-						auto_reconnect: true,
-						auto_reconnect_max_s: 600,
-						srt_streamid_configured: true,
-						relay_streamid_override_configured: false,
-					},
-				],
-			]);
-			// What a local tab receives: the stored stream ID still reads as set,
-			// and no secret is in the frame.
-			const { publicStreamIds } = await import(
-				"../../helpers/stream-id-secret.ts"
-			);
-			const wire = publicStreamIds(sent[0]?.[1] as Record<string, unknown>);
-			expect(wire).toMatchObject({ srt_streamid_configured: true });
-			expect(JSON.stringify(wire)).not.toContain("publish-key");
-			stored.srt_streamid = undefined;
+			expect(wire).toHaveLength(1);
+			const frame = JSON.parse(wire[0] ?? "{}").config;
+			expect(frame).toMatchObject({
+				auto_reconnect: true,
+				auto_reconnect_max_s: 600,
+				srt_streamid_configured: true,
+			});
+			expect(wire[0]).not.toContain("publish-key-4417");
 			const save = spyOn(configModule, "saveConfig").mockImplementation(() => {
 				throw new Error("disk full");
 			});
@@ -310,9 +299,10 @@ describe("streaming setter-contract — contains-envelope (S3)", () => {
 			}
 			expect(getConfig().auto_reconnect).toBe(true);
 			expect(getConfig().auto_reconnect_max_s).toBe(600);
-			expect(sent).toHaveLength(1);
+			expect(wire).toHaveLength(1);
 		} finally {
 			broadcast.mockRestore();
+			stored.srt_streamid = before.srt_streamid;
 			await callMutation(setReconnectProcedure, { enabled: true, max_s: 120 });
 		}
 	});
