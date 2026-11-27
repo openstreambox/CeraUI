@@ -83,6 +83,7 @@ import {
 	setMockHotspotConfig,
 } from "../../mocks/providers/wifi.ts";
 import { resolveMockWifiDevice } from "../../mocks/providers/wifi-incarnation.ts";
+import { scanGateActive } from "../../modules/network/wifi-roaming/scan-gate.ts";
 import { hasCapability } from "../../modules/system/board-capabilities.ts";
 import {
 	handleWifi,
@@ -106,7 +107,10 @@ import {
 } from "../../modules/wifi/wifi-adapter-mode-outcome.ts";
 import { setWifiAdapterMode } from "../../modules/wifi/wifi-adapter-mode-transition.ts";
 import { withoutWifiRequestBinding } from "../../modules/wifi/wifi-binding.ts";
-import { getWifiInterfacesByMacAddress } from "../../modules/wifi/wifi-connections.ts";
+import {
+	getWifiInterfacesByMacAddress,
+	wifiRescanDispatched,
+} from "../../modules/wifi/wifi-connections.ts";
 import {
 	persistWifiCountry,
 	setWifiCountry,
@@ -357,6 +361,23 @@ export const wifiScanProcedure = authedProcedure
 		if (mockWifiBusy()) return { success: false, error: "DEVICE_BUSY" };
 		const ws = context.ws;
 		const lockKey = wifiAdapterLockKeyForDeviceId(input.device);
+		// While the roaming coordinator's scan gate is active, the scan itself
+		// is dispatched under this lock after the gate's fresh mode check; the
+		// rescan is told the lock is held here, awaited, and does not take it
+		// twice. The reply says whether the radio was really scanned:
+		// a radio the gate refuses (it carries the stream, serves the hotspot or
+		// shares a protected phy) is as unavailable as a busy one. Otherwise the
+		// scan stays fire-and-forget, as before.
+		if (scanGateActive()) {
+			let scanned = false;
+			const busy = await runGuarded(lockKey, async () => {
+				scanned = await wifiRescanDispatched(Number(input.device), {
+					underHeldLock: lockKey !== undefined,
+				});
+			});
+			if (busy || !scanned) return { success: false, error: "DEVICE_BUSY" };
+			return { success: true };
+		}
 		const busy = await runGuarded(lockKey, () => {
 			void handleWifi(ws, { scan: Number(input.device) });
 		});

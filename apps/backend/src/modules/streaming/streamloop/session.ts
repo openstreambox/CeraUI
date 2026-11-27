@@ -24,6 +24,7 @@ import type WebSocket from "ws";
 import { logger } from "../../../helpers/logger.ts";
 import { onNetworkInterfaceSourcesChange } from "../../network/network-interfaces.ts";
 import { onUsbNetScanCommitted } from "../../network/router-cellular-scan.ts";
+import { onBondHoldChange } from "../../network/wifi-roaming/bond-hold.ts";
 import { isUpdating } from "../../system/software-updates.ts";
 import { sendStatus } from "../../ui/status.ts";
 import { getSocketSenderId } from "../../ui/websocket-server.ts";
@@ -353,6 +354,9 @@ export async function start(
 		refreshSrtlaIpAddresses,
 	);
 	const removeScanListener = onUsbNetScanCommitted(refreshSrtlaIpAddresses);
+	const removeBondHoldListener = onBondHoldChange(() => {
+		void refreshSrtlaIpAddresses();
+	});
 	sessionResources = {
 		generation,
 		closeReloadCheck,
@@ -360,6 +364,7 @@ export async function start(
 			closeReloadCheck();
 			removeNetifListener();
 			removeScanListener();
+			removeBondHoldListener();
 		},
 	};
 

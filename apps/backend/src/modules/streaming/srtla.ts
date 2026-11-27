@@ -37,6 +37,7 @@ import {
 	type NetworkInterface,
 } from "../network/network-interfaces.ts";
 import { isUsbReplacementPending } from "../network/router-cellular-scan.ts";
+import { isHeldOutOfBond } from "../network/wifi-roaming/bond-hold.ts";
 import { setup } from "../setup.ts";
 import type { BondEntry } from "./bind-map.ts";
 import {
@@ -246,6 +247,10 @@ function isLocalBondCandidate(
 		owner = translation.parent;
 		parent = currentParent;
 	}
+	// A radio the Wi-Fi roaming search took out of the bond is scanning or
+	// joining another access point: a same-subnet receiver must not get it
+	// either, exactly as the bonded list leaves it out (`admitsBondLink`).
+	if (isHeldOutOfBond(name) || isHeldOutOfBond(owner)) return false;
 	return (
 		!isUsbReplacementPending(owner) && !isHeldOutByModemBlock(owner, parent)
 	);

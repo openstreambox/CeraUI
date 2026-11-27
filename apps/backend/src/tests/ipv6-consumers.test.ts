@@ -495,7 +495,7 @@ test("the session refreshes bond sources through the source-change subscription"
 		"const removeScanListener = onUsbNetScanCommitted(refreshSrtlaIpAddresses)",
 	);
 	expect(session).toMatch(
-		/removeNetworkInterfacesChangeListener:\s*\(\) => \{\s*closeReloadCheck\(\);\s*removeNetifListener\(\);\s*removeScanListener\(\);\s*\}/,
+		/removeNetworkInterfacesChangeListener:\s*\(\) => \{\s*closeReloadCheck\(\);\s*removeNetifListener\(\);\s*removeScanListener\(\);\s*removeBondHoldListener\(\);\s*\}/,
 	);
 });
 

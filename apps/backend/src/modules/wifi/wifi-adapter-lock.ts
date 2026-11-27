@@ -110,6 +110,21 @@ export function wifiAdapterLockKeyForDeviceId(
 }
 
 /**
+ * Resolve the canonical key from a station interface name, for callers that
+ * know a radio by its ifname (the Wi-Fi roaming coordinator). `undefined` when
+ * no registered adapter has that name.
+ */
+export function wifiAdapterLockKeyForIfname(
+	ifname: string,
+): WifiAdapterLockKey | undefined {
+	const interfaces = getWifiInterfacesByMacAddress();
+	for (const mac in interfaces) {
+		if (interfaces[mac]?.ifname === ifname) return wifiAdapterLockKey(mac);
+	}
+	return undefined;
+}
+
+/**
  * Resolve the canonical key from a saved or active connection UUID, so
  * connect/disconnect/forget lock the same adapter a hotspot toggle would.
  */

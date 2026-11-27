@@ -30,6 +30,12 @@ import type {
 	MonitorEvent,
 	WifiState,
 } from "../network/state-types.ts";
+import { admitRadio } from "../network/wifi-roaming/radio-lock.ts";
+import {
+	scanGateActive,
+	scanPermit,
+	scanProtectedRadios,
+} from "../network/wifi-roaming/scan-gate.ts";
 import {
 	getModeForInterface,
 	onWifiChange,
@@ -40,9 +46,12 @@ import {
 	currentHotspotApIfnames,
 	type WifiNetwork,
 } from "./wifi.ts";
+import { confirmWifiAdapterLifetime } from "./wifi-adapter-admission.ts";
 import {
+	ownsWifiAdapterLock,
 	type WifiAdapterLockKey,
 	wifiAdapterLockKey,
+	withWifiAdapterLock,
 } from "./wifi-adapter-lock.ts";
 import {
 	notifyWifiAdapterModeEdge,
@@ -634,7 +643,10 @@ export function setScanRefreshAction(action: () => unknown): void {
   (`wifiAdapterLockKey`, the adapter's permanent MAC), and one key's in-flight
   run can never answer for another's.
 */
-const rescanInFlight = new Map<WifiScanKey, Promise<void>>();
+/** Radios a run actually dispatched a scan to (`undefined`: device-less). */
+type RescanReport = ReadonlySet<string | undefined>;
+
+const rescanInFlight = new Map<WifiScanKey, Promise<RescanReport>>();
 
 /*
   The key a device-LESS `wifiRescan()` coalesces on: "refresh every radio". A
@@ -747,8 +759,43 @@ export function setScanResultReaderForTest(
  * Concurrent callers for the SAME adapter join one run; callers for DIFFERENT
  * adapters each get their own, because a scan of one radio says nothing about
  * another.
+ *
+ * While the roaming coordinator's scan gate is active, each radio's scan is
+ * dispatched under its owner-resolved adapter lock, which this run contends
+ * for like anyone else. Holding that lock is not enough to scan inline: a
+ * caller that starts a rescan inside its lock without awaiting it (hotspot
+ * teardown does) would otherwise have the scan go out after it released the
+ * lock, racing whoever takes it next. Only {@link wifiRescanDispatched} with
+ * `underHeldLock` dispatches inline.
  */
 export function wifiRescan(device?: WifiInterfaceId): Promise<void> {
+	return startRescan(device, false).then(() => undefined);
+}
+
+/**
+ * Like {@link wifiRescan} for one named radio, resolving to whether a scan of
+ * that radio was actually dispatched. While the roaming coordinator's scan
+ * gate is active it can refuse the radio (it carries the stream, serves the
+ * hotspot or shares a protected phy) or find its adapter lock busy; the scan
+ * RPC reports that instead of a success that never happened.
+ *
+ * `underHeldLock`: the caller holds this radio's owner-resolved adapter lock
+ * and awaits this call inside it (the scan RPC). The radio's scan is then
+ * dispatched inline under that lock, which is not reentrant, and only while
+ * the caller still owns it right before the scan goes out.
+ */
+export async function wifiRescanDispatched(
+	device: WifiInterfaceId,
+	opts: { underHeldLock?: boolean } = {},
+): Promise<boolean> {
+	const report = await startRescan(device, opts.underHeldLock === true);
+	return report.has(ifnameForDevice(device));
+}
+
+function startRescan(
+	device: WifiInterfaceId | undefined,
+	underHeldLock: boolean,
+): Promise<RescanReport> {
 	const key =
 		device === undefined ? WIFI_SCAN_ALL_KEY : wifiScanKeyForDevice(device);
 
@@ -756,23 +803,105 @@ export function wifiRescan(device?: WifiInterfaceId): Promise<void> {
 	if (joined) return joined;
 
 	const ifname = device === undefined ? undefined : ifnameForDevice(device);
-	const run = runRescan(key, ifname).finally(() => {
+	const run = runRescan(
+		key,
+		ifname,
+		underHeldLock,
+		device !== undefined,
+	).finally(() => {
 		rescanInFlight.delete(key);
 	});
 	rescanInFlight.set(key, run);
 	return run;
 }
 
+function scanKeyForIfname(ifname: string): WifiScanKey {
+	for (const macAddress in wifiInterfacesByMacAddress) {
+		if (wifiInterfacesByMacAddress[macAddress]?.ifname === ifname)
+			return wifiAdapterLockKey(macAddress);
+	}
+	return `dev:${ifname}`;
+}
+
+/*
+  Which radios a rescan request actually scans. Normally the request as given.
+  While the roaming coordinator protects radios (those that carry the stream,
+  serve the hotspot or are joining a network), those are never scanned: a
+  request for one scans nothing, and a request for every radio scans each of
+  the others by name. A request that named a radio no row answers to scans
+  nothing: it must not turn into a request for every radio.
+*/
+function rescanTargets(
+	ifname: string | undefined,
+	named: boolean,
+): (string | undefined)[] {
+	const protectedNow = scanProtectedRadios();
+	if (!scanGateActive()) return [ifname];
+	if (ifname !== undefined) return protectedNow.has(ifname) ? [] : [ifname];
+	if (named) return [];
+	const others: string[] = [];
+	for (const macAddress in wifiInterfacesByMacAddress) {
+		const name = wifiInterfacesByMacAddress[macAddress]?.ifname;
+		if (name && !protectedNow.has(name)) others.push(name);
+	}
+	return others;
+}
+
 async function runRescan(
 	key: WifiScanKey,
 	ifname: string | undefined,
-): Promise<void> {
+	underHeldLock = false,
+	named = ifname !== undefined,
+): Promise<RescanReport> {
+	const scanned: (string | undefined)[] = [];
 	try {
-		await rescanAction(ifname);
+		const targets = rescanTargets(ifname, named);
+		for (const target of targets) {
+			if (target === undefined || !scanGateActive()) {
+				await rescanAction(target);
+				scanned.push(target);
+				continue;
+			}
+			// While the coordinator runs, a radio is scanned only as the radio
+			// the coordinator would act on: a verified, published identity row,
+			// admitted like every Wi-Fi mutation, under the owner lock that row
+			// resolves to (the one hotspot changes hold). Then a fresh look at
+			// its mode and phy, and after that await a fresh sample confirming the
+			// same physical radio and lifetime under the held lock, right before
+			// the scan goes out; a replug under the name refuses. Only the
+			// awaiting scan RPC, for its own radio, dispatches under the lock it
+			// holds. Everyone else contends; an uncertain identity, a busy lock, a
+			// refused check or a scan NetworkManager rejects skips the radio.
+			const admission = admitRadio(target);
+			if (!admission) continue;
+			const inline =
+				underHeldLock &&
+				target === ifname &&
+				ownsWifiAdapterLock(admission.owner);
+			const dispatch = async () => {
+				const permit = await scanPermit(target);
+				if (!permit) return false;
+				if (!(await confirmWifiAdapterLifetime(admission))) return false;
+				// The sample awaited: protection may have moved onto this radio
+				// or its phy meanwhile. Re-check with no await before the scan.
+				if (!permit()) return false;
+				return (await rescanAction(target)) !== false;
+			};
+			const sent = inline
+				? { success: true as const, result: await dispatch() }
+				: await withWifiAdapterLock(admission.owner, dispatch);
+			if (sent.success && sent.result) scanned.push(target);
+		}
 
 		/* A rescan request will fail if a previous one is in progress,
-     but we still attempt to update the results */
-		if (await scanResultReader()) noteScanCompleted(key);
+     but we still attempt to update the results. Only radios that were
+     actually rescanned get their scan stamp advanced. */
+		if (await scanResultReader()) {
+			if (scanned.length === 1 && scanned[0] === ifname) noteScanCompleted(key);
+			else
+				for (const target of scanned)
+					if (target !== undefined) noteScanCompleted(scanKeyForIfname(target));
+		}
 		wifiScheduleScanRefresh();
 	} catch (err) {
 		// A shared promise must not reject: every joined caller would raise its own
@@ -781,4 +910,5 @@ async function runRescan(
 		// returns), so reaching here is drift worth logging, never worth throwing.
 		logger.warn(`wifiRescan failed: ${err}`);
 	}
+	return new Set(scanned);
 }
