@@ -151,13 +151,17 @@ let detachedExpiry: ReturnType<typeof setTimeout> | undefined;
 const START_RECEIPT_TTL_MS = 60_000;
 
 // A Save already sent when the dialog closed for a changed radio keeps its
-// receipt too. It is keyed to the old radio's token, so reopening the editor on
-// another radio leaves it to settle; only its bound, a new detached Save or the
+// receipt too, one per outstanding Save under its op key. Each is keyed to its
+// own radio's token, so reopening the editor on another radio, or a later Save
+// detaching, leaves it to settle; only its own terminal, its own bound or the
 // view going away ends it.
-let detachedSave: AbortController | undefined;
-let detachedSaveExpiry: ReturnType<typeof setTimeout> | undefined;
+// biome-ignore lint/nursery/useSvelteReactiveClasses: Detached receipts are imperative bookkeeping that the effect writes; tracking them would subscribe it to its own ledger.
+const detachedSaves = new Map<string, {
+	readonly controller: AbortController;
+	readonly expiry: ReturnType<typeof setTimeout>;
+}>();
 
-/** At most one detached receipt, bounded on its own and gone with the view. */
+/** At most one detached Start receipt, bounded on its own and gone with the view. */
 function retireDetachedStart() {
 	clearTimeout(detachedExpiry);
 	detachedExpiry = undefined;
@@ -165,11 +169,16 @@ function retireDetachedStart() {
 	detachedStart = undefined;
 }
 
-function retireDetachedSave() {
-	clearTimeout(detachedSaveExpiry);
-	detachedSaveExpiry = undefined;
-	detachedSave?.abort();
-	detachedSave = undefined;
+function retireDetachedSave(key: string, controller?: AbortController) {
+	const detached = detachedSaves.get(key);
+	if (!detached || (controller && detached.controller !== controller)) return;
+	detachedSaves.delete(key);
+	clearTimeout(detached.expiry);
+	detached.controller.abort();
+}
+
+function retireDetachedSaves() {
+	for (const key of [...detachedSaves.keys()]) retireDetachedSave(key);
 }
 
 /** The dialog's own refusal wording for a Start it no longer shows. */
@@ -191,7 +200,7 @@ function current(binding: WifiRadioBinding): boolean {
 	return open && sameWifiRadio(binding, capture());
 }
 
-onDestroy(() => { ownerSession += 1; admission?.abort(); retireDetachedStart(); retireDetachedSave(); });
+onDestroy(() => { ownerSession += 1; admission?.abort(); retireDetachedStart(); retireDetachedSaves(); });
 
 function beginAdmission(binding: WifiRadioBinding): AbortController {
 	admission?.abort();
@@ -354,14 +363,16 @@ $effect.pre(() => {
 				detachedExpiry = setTimeout(() => {
 					if (detachedStart === detached) retireDetachedStart();
 				}, START_RECEIPT_TTL_MS);
-			} else if (admission && savePending) {
-				retireDetachedSave();
-				const detached = admission;
-				detachedSave = detached;
+			} else if (admission && savePending && configAdmissionKey !== undefined) {
+				// Never retires an older detached Save: it is another radio's key.
+				const key = configAdmissionKey;
+				const controller = admission;
+				retireDetachedSave(key);
+				detachedSaves.set(key, {
+					controller,
+					expiry: setTimeout(() => retireDetachedSave(key, controller), START_RECEIPT_TTL_MS),
+				});
 				admission = undefined;
-				detachedSaveExpiry = setTimeout(() => {
-					if (detachedSave === detached) retireDetachedSave();
-				}, START_RECEIPT_TTL_MS);
 			} else admission?.abort();
 			confirmingStart = false;
 			openedTarget = undefined;
@@ -610,7 +621,7 @@ async function writeConfig(
 		},
 	});
 	controller.abort();
-	if (detachedSave === controller) retireDetachedSave();
+	retireDetachedSave(wifiHotspotConfigOpKey(original.device, incarnation), controller);
 	return result;
 }
 
