@@ -32,12 +32,14 @@ const staleSshPass = "stale-ssh-pass-62";
 const sshPassHash = "$6$fixturesalt$fixturehashfixturehash";
 const staleRemoteKey = "stale-remote-key-93";
 const staleFrameKey = "stale-frame-remote-key-47";
+const staleSrtPass = "stale-srt-uri-pass-58";
 const leaked = [
 	staleSshPass,
 	sshPassHash,
 	staleRemoteKey,
 	currentSshPass,
 	staleFrameKey,
+	staleSrtPass,
 ];
 
 // The exact record shape a 5.1 to 6.2 build writes on every start.
@@ -69,6 +71,14 @@ const legacyFramePreview = JSON.stringify({
 	meta: {
 		preview: JSON.stringify({ remote_key: staleFrameKey, x: 1 }).slice(0, 40),
 	},
+});
+
+// An SRT URI with its passphrase under an ordinary metadata key.
+const legacySrtUri = JSON.stringify({
+	ts: "2026-11-27T00:00:02.000Z",
+	level: "info",
+	msg: "sender target",
+	meta: { target: `srt://198.51.100.7:9000?passphrase=${staleSrtPass}` },
 });
 
 let fixture: ReturnType<typeof queryFixture>;
@@ -112,6 +122,7 @@ beforeEach(() => {
 			record(2, { MESSAGE: "an ordinary line" }),
 			record(3, { MESSAGE: splitConfigLoaded }),
 			record(4, { MESSAGE: legacyFramePreview }),
+			record(5, { MESSAGE: legacySrtUri }),
 		]),
 	);
 });
@@ -142,7 +153,7 @@ test("the log view export carries no credential an older build logged", async ()
 	// The split record's cut-off value, too.
 	expect(text).not.toContain("stale-remote");
 	expect(text).toContain("config loaded");
-	expect(text).toEndWith("# complete: 4 entries\n");
+	expect(text).toEndWith("# complete: 5 entries\n");
 });
 
 test("the support bundle carries no credential an older build logged", async () => {

@@ -4,6 +4,8 @@ import {
 	redactKeyValueText,
 	redactSensitiveKeys,
 } from "../../helpers/logger.ts";
+import { redactSrtPassphrases } from "../../helpers/srt-secret-redaction.ts";
+import { redactStreamIdText } from "../../helpers/stream-id-secret.ts";
 import { sourceOfUnit } from "./catalog.ts";
 
 export type RawJournalRecord = LogEntry & {
@@ -174,4 +176,18 @@ export function toLogEntry(record: RawJournalRecord): LogEntry {
 		...entry
 	} = record;
 	return entry;
+}
+
+/**
+ * The entry the log viewer shows (query, around, follow). The export and the
+ * bundle project records with their own redactors and typed markers; the viewer
+ * has no later stage, so the logger's typed SRT passphrase and stream-id
+ * scrubbers run here, once per record.
+ */
+export function toViewerEntry(record: RawJournalRecord): LogEntry {
+	const entry = toLogEntry(record);
+	const message = clipJournalMessage(
+		redactStreamIdText(redactSrtPassphrases(entry.message)),
+	);
+	return message === entry.message ? entry : { ...entry, message };
 }

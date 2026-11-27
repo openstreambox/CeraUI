@@ -8,6 +8,7 @@ import {
 import { locatePagesAround } from "./around.ts";
 import { currentBootId } from "./boot-id.ts";
 import { listBoots } from "./boots.ts";
+import { toViewerEntry } from "./parse.ts";
 import { type InteractiveAdmission, withQuerySlot } from "./query-admission.ts";
 import { JournalReadError } from "./reader.ts";
 import { scanPage } from "./scan-page.ts";
@@ -44,6 +45,7 @@ export async function queryLogs(
 					bootId,
 					epoch: getLogState().historyEpoch,
 					signal,
+					project: toViewerEntry,
 				});
 			},
 			admission,

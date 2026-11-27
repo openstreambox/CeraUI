@@ -320,39 +320,103 @@ export function isSensitiveKey(key: string): boolean {
 }
 
 /**
- * The key rules applied to JSON that is already TEXT: a frame preview, a
- * template message that interpolated `JSON.stringify(...)`, or a journal record
- * that journald split or that no longer parses. A `"key": value` pair whose key
- * {@link isSensitiveKey} matches keeps its key and loses its value, in plain
- * and in once-escaped (`\"key\":\"value\"`) form. A value cut off by the
- * end of the text is masked to the end.
+ * The key rules applied to JSON that is already TEXT: a template message that
+ * interpolated `JSON.stringify(...)`, or a journal record that journald split
+ * or that no longer parses. A `"key": value` pair whose key {@link
+ * isSensitiveKey} matches keeps its key and loses its value, in plain JSON and
+ * in JSON escaped once inside another JSON string (`\"key\":\"value\"`).
+ * String values are read with the JSON escape rules of their own level, so an
+ * escaped quote inside the value doesn't end it, and a value cut off by the end
+ * of the text (even right after a backslash) is masked to the end. Numbers are
+ * masked too; `true`, `false`, `null`, objects and arrays are left as they are.
  */
-const PLAIN_PAIR_RE =
-	/"([A-Za-z0-9_.\- ]{1,128})"(\s*:\s*)(?:"(?:[^"\\]|\\.)*(?:"|$)|-?\d[\d.eE+-]*)/g;
-const ESCAPED_PAIR_RE =
-	/\\"([A-Za-z0-9_.\- ]{1,128})\\"(\s*:\s*)(?:\\"(?:[^"\\]|\\[^"])*(?:\\"|$)|-?\d[\d.eE+-]*)/g;
+const PAIR_KEY_RE = /(\\?)"([A-Za-z0-9_.\- ]{1,128})\1"(\s*:\s*)/g;
+const PAIR_NUMBER_RE = /-?\d[\d.eE+-]*/y;
+
+/** End of a plain JSON string body starting at `from`: index of its closing quote, or the text length. */
+function plainStringEnd(
+	text: string,
+	from: number,
+): { end: number; closed: boolean } {
+	for (let i = from; i < text.length; i++) {
+		const c = text[i];
+		if (c === "\\") i++;
+		else if (c === '"') return { end: i, closed: true };
+	}
+	return { end: text.length, closed: false };
+}
+
+/**
+ * End of a string body that sits escaped inside an outer JSON string: decodes
+ * the outer escapes (`\\` is a backslash, `\"` a quote) and applies the inner
+ * escape rules to the result. Returns the index of the closing `\"`, or where
+ * the outer string or the text ends.
+ */
+function escapedStringEnd(
+	text: string,
+	from: number,
+): { end: number; closed: boolean } {
+	let innerEscape = false;
+	let i = from;
+	while (i < text.length) {
+		const start = i;
+		let inner: string;
+		if (text[i] === "\\") {
+			if (i + 1 >= text.length) return { end: text.length, closed: false };
+			const next = text[i + 1];
+			inner = next === "\\" ? "\\" : next === '"' ? '"' : "x";
+			i += 2;
+		} else if (text[i] === '"') {
+			// An unescaped quote ends the outer string, and the value with it.
+			return { end: i, closed: false };
+		} else {
+			inner = "x";
+			i += 1;
+		}
+		if (innerEscape) innerEscape = false;
+		else if (inner === "\\") innerEscape = true;
+		else if (inner === '"') return { end: start, closed: true };
+	}
+	return { end: text.length, closed: false };
+}
 
 /**
  * SRT passphrase fields are left to their own typed masking (`redactSrtPassphrases`
- * at write time, the named-passphrase rules of the export and the bundle), which
- * keeps the `[REDACTED:srt_passphrase]` markers and the bundle's counts.
+ * at write time and in the viewer, the named-passphrase rules of the export and
+ * the bundle), which keeps the `[REDACTED:srt_passphrase]` markers and the
+ * bundle's counts.
  */
 function masksTextPair(key: string): boolean {
 	return isSensitiveKey(key) && !/passphrase/i.test(key);
 }
 
 export function redactKeyValueText(text: string): string {
-	if (!text.includes(":")) return text;
-	let out = text;
-	if (out.includes('"'))
-		out = out.replace(PLAIN_PAIR_RE, (match, key: string, colon: string) =>
-			masksTextPair(key) ? `"${key}"${colon}"${REDACTED}"` : match,
-		);
-	if (out.includes('\\"'))
-		out = out.replace(ESCAPED_PAIR_RE, (match, key: string, colon: string) =>
-			masksTextPair(key) ? `\\"${key}\\"${colon}\\"${REDACTED}\\"` : match,
-		);
-	return out;
+	if (!text.includes('"') || !text.includes(":")) return text;
+	let out = "";
+	let last = 0;
+	PAIR_KEY_RE.lastIndex = 0;
+	for (let m = PAIR_KEY_RE.exec(text); m; m = PAIR_KEY_RE.exec(text)) {
+		const [, slash = "", key = ""] = m;
+		const valueStart = m.index + m[0].length;
+		if (!masksTextPair(key)) continue;
+		const quote = `${slash}"`;
+		let valueEnd: number;
+		if (text.startsWith(quote, valueStart)) {
+			const body = valueStart + quote.length;
+			const { end, closed } = slash
+				? escapedStringEnd(text, body)
+				: plainStringEnd(text, body);
+			valueEnd = closed ? end + quote.length : end;
+		} else {
+			PAIR_NUMBER_RE.lastIndex = valueStart;
+			if (!PAIR_NUMBER_RE.test(text)) continue;
+			valueEnd = PAIR_NUMBER_RE.lastIndex;
+		}
+		out += `${text.slice(last, valueStart)}${quote}${REDACTED}${quote}`;
+		last = valueEnd;
+		PAIR_KEY_RE.lastIndex = Math.max(valueEnd, PAIR_KEY_RE.lastIndex);
+	}
+	return last === 0 ? text : out + text.slice(last);
 }
 
 const KEY_WALK_MAX_DEPTH = 16;

@@ -49,12 +49,15 @@ applies the logger's key rules again before clipping. A parsed backend record's
 metadata goes through `redactSensitiveKeys` (key rules only, no held-value
 matchers, so a scan stays within its budget), and every message text,
 including split or unparseable records and other units' lines, goes through
-`redactKeyValueText`, which masks the value of a sensitive `"key": value`
-pair in plain or once-escaped JSON, to the end of the text when the value is
-cut off. The viewer, the export and the bundle all read through this. Not
-covered: a split piece that starts inside a value, and an object or array
-under a sensitive key in unparsed text. Both are rare at journald's 48 KiB
-line limit.
+`redactKeyValueText`. That one reads `"key": value` pairs with the JSON escape
+rules of their own level, plain or escaped once inside another string, and
+masks a sensitive key's string or number value, to the end of the text when the
+value is cut off. SRT passphrase fields are left to their typed rules. The
+export and the bundle then apply their own redactors; the viewer (query,
+around, follow) projects with `toViewerEntry`, which adds the logger's typed
+SRT passphrase and stream-id scrubbers once per record. Not covered: a split
+piece that starts inside a value, and an object or array under a sensitive
+key in unparsed text. Both are rare at journald's 48 KiB line limit.
 Classifier fields `messageId`, `unitField` and `pid` stay internal;
 `toLogEntry` removes them at the wire boundary.
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,9 +16,15 @@ import {
 	REDACTED,
 	redactKeyValueText,
 } from "../helpers/logger.ts";
-import { loadConfig, setConfigFilePath } from "../modules/config.ts";
+import {
+	getConfigFilePath,
+	loadConfig,
+	setConfigFilePath,
+} from "../modules/config.ts";
 import { parseRecord } from "../modules/device-logs/parse.ts";
+import { parseMessage } from "../rpc/adapter.ts";
 import { logRpcCall } from "../rpc/rpc-logging.ts";
+import type { AppWebSocket } from "../rpc/types.ts";
 import { journalObject } from "./helpers/device-journal-record.ts";
 
 // Synthetic values only. Each is distinctive so a leak shows up verbatim.
@@ -163,13 +169,52 @@ describe("key rules on JSON that is already text", () => {
 		expect(out).toContain('\\"x\\":1');
 	});
 
+	test("an escaped quote inside a value doesn't end it", () => {
+		// `{"remote_key":"ab\"<rest>"}` escaped once more inside a JSON string.
+		const inner = JSON.stringify({ remote_key: `ab"${REMOTE_KEY}` });
+		const outer = JSON.stringify({ preview: inner });
+		const out = redactKeyValueText(outer);
+
+		expect(out).not.toContain(REMOTE_KEY);
+		expect(JSON.parse(out)).toEqual({
+			preview: `{"remote_key":"${REDACTED}"}`,
+		});
+	});
+
+	test("a value cut right after a backslash is masked to the end", () => {
+		for (const text of [
+			`{"ssh_pass":"${SSH_PASS}\\`,
+			`"{\\"ssh_pass\\":\\"${SSH_PASS}\\`,
+		])
+			expect(redactKeyValueText(text)).not.toContain(SSH_PASS);
+	});
+
 	test("ordinary pairs and plain text are left alone", () => {
 		const text =
 			'{"video_passthrough":"auto","stableKey":"usb-1.2","msg":"ok: done"} note: fine';
 		expect(redactKeyValueText(text)).toBe(text);
 	});
 
-	test("a rejected frame's string preview is masked at write time", () => {
+	test("a rejected frame is masked before its preview is clipped", async () => {
+		const ws = {
+			remoteAddress: "127.0.0.1",
+			data: {},
+		} as unknown as AppWebSocket;
+		const lines = await captureLines("rpc: unrecognised frame", () =>
+			parseMessage(
+				JSON.stringify({
+					pad: "x".repeat(60),
+					ssh_pass: `${SSH_PASS}\\\\\\"tail`,
+				}),
+				ws,
+			),
+		);
+
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).not.toContain(SSH_PASS.slice(0, 10));
+	});
+
+	test("a string preview is masked at write time", () => {
 		const preview = JSON.stringify({
 			path: ["system", "setRemoteConfig"],
 			input: { remote_key: REMOTE_KEY },
@@ -210,6 +255,11 @@ describe("RPC traces: procedures whose credentials have generic names", () => {
 
 describe("config loaded: allowlisted fields only", () => {
 	let dir = "";
+	let priorPath = "";
+
+	beforeEach(() => {
+		priorPath = getConfigFilePath();
+	});
 
 	afterEach(async () => {
 		// loadConfig replaced the runtime config and both held hashes; leave an
@@ -218,7 +268,7 @@ describe("config loaded: allowlisted fields only", () => {
 			writeFileSync(join(dir, "config.json"), "{}", { mode: 0o600 });
 			await loadConfig();
 		}
-		setConfigFilePath("config.json");
+		setConfigFilePath(priorPath);
 		if (dir) rmSync(dir, { recursive: true, force: true });
 		dir = "";
 	});

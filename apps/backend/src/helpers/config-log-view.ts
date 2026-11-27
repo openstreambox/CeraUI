@@ -17,7 +17,7 @@ import { REDACTED } from "./logger.ts";
  * `source`, `selected_video_input`, stable ids, `source_preference`,
  * `composition`, `audio_inputs`, `asrc`, `pipeline`), maps keyed by a MAC, an
  * interface or a physical link (`wifi_modes`, `eth_roles`, `bond_opt_out`,
- * `usb_serial_shared`), remembered SSIDs and devices, the custom provider host,
+ * `usb_serial_shared`, `fm350_internal_calls`), remembered SSIDs and devices, the custom provider host,
  * and add-on user config.
  */
 export const LOGGABLE_CONFIG_FIELDS: ReadonlySet<keyof RuntimeConfig> = new Set<
@@ -60,7 +60,6 @@ export const LOGGABLE_CONFIG_FIELDS: ReadonlySet<keyof RuntimeConfig> = new Set<
 	"country",
 	"modem_provisioning",
 	"modem_backend",
-	"fm350_internal_calls",
 	"modem_shadow",
 	"modem_capabilities",
 ]);
