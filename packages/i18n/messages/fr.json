@@ -3096,6 +3096,7 @@
 	"settings.updates.automation.title": "Mises à jour automatiques",
 	"settings.updates.automation.packages": "Installer automatiquement les mises à jour de paquets",
 	"settings.updates.automation.packagesCheck": "Rechercher automatiquement les mises à jour de paquets",
+	"settings.updates.automation.packagesNeutral": "Mises à jour automatiques des paquets",
 	"settings.updates.automation.packagesManualHint": "Sur cet appareil, les mises à jour de paquets s'installent manuellement.",
 	"settings.updates.automation.system": "Installer automatiquement les images système",
 	"settings.updates.automation.systemHint": "Une image téléchargée s'applique au prochain redémarrage. L'appareil ne redémarre jamais de lui-même.",

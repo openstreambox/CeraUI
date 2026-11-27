@@ -86,16 +86,20 @@ afterEach(() => {
 	vi.clearAllMocks();
 });
 
-/** The package switch's wording and hint for one mode; it stays editable in both. */
-function expectPackageSwitch(mode: "default" | "manual"): void {
-	const label =
-		mode === "manual"
-			? m["settings.updates.automation.packagesCheck"]()
-			: m["settings.updates.automation.packages"]();
+/**
+ * The package switch's wording and hint for one state; it stays editable in
+ * all three, because it saves the same setting on every image.
+ */
+function expectPackageSwitch(mode: "install" | "check" | "unknown"): void {
+	const label = {
+		install: m["settings.updates.automation.packages"](),
+		check: m["settings.updates.automation.packagesCheck"](),
+		unknown: m["settings.updates.automation.packagesNeutral"](),
+	}[mode];
 	const toggle = screen.getByRole("switch", { name: label });
 	expect(toggle.hasAttribute("disabled")).toBe(false);
 	const hint = screen.queryByTestId("update-auto-packages-manual");
-	if (mode === "manual") {
+	if (mode === "check") {
 		expect(hint?.textContent?.trim()).toBe(
 			m["settings.updates.automation.packagesManualHint"](),
 		);
@@ -260,14 +264,14 @@ it("keeps package installation disabled after a failed declaration until Retry s
 	expect(screen.getByTestId("update-install").hasAttribute("disabled")).toBe(
 		true,
 	);
-	// The failed read claims neither mode: the default wording, no hint.
-	expectPackageSwitch("default");
+	// The failed read claims neither mode: the neutral wording, no hint.
+	expectPackageSwitch("unknown");
 	// When the operator retries the existing details read and confirms the offer.
 	await fireEvent.click(
 		screen.getByRole("button", { name: m["settings.updates.retryDetails"]() }),
 	);
 	// Then the successful reply's mode shows, and the switch still saves.
-	await waitFor(() => expectPackageSwitch("manual"));
+	await waitFor(() => expectPackageSwitch("check"));
 	await clickPackageUpdate();
 	// Then only the now-confirmed capable route dispatches.
 	expect(rpc.system.startUpdate).not.toHaveBeenCalled();
@@ -300,9 +304,9 @@ it.each(["busy", "not_available", "stream_active"])(
 );
 
 it.each([
-	{ packageInstallsManual: undefined, mode: "default" },
-	{ packageInstallsManual: false, mode: "default" },
-	{ packageInstallsManual: true, mode: "manual" },
+	{ packageInstallsManual: undefined, mode: "install" },
+	{ packageInstallsManual: false, mode: "install" },
+	{ packageInstallsManual: true, mode: "check" },
 ] as const)(
 	"package switch wording follows packageInstallsManual=$packageInstallsManual",
 	async ({ packageInstallsManual, mode }) => {
@@ -314,7 +318,7 @@ it.each([
 		};
 		render(UpdatesDialog, { open: true });
 		await screen.findByTestId("update-auto-packages");
-		// Then only true renames the switch and adds the hint; it saves either way.
+		// Then a successful reply picks install or check; the switch saves either way.
 		await waitFor(() => expectPackageSwitch(mode));
 		const toggle = screen.getByTestId("update-auto-packages");
 		expect(toggle.getAttribute("aria-checked")).toBe("true");
@@ -342,7 +346,7 @@ it("names the package switch only from the current link's successful reply", asy
 		expect(screen.queryByTestId("update-auto-packages")).toBeNull();
 		first.resolve({ ...capabilities, packageInstallsManual: true });
 		await screen.findByTestId("update-auto-packages");
-		await waitFor(() => expectPackageSwitch("manual"));
+		await waitFor(() => expectPackageSwitch("check"));
 
 		// When the link drops and the session is restored on a replaced image,
 		// whose reply has not landed yet.
@@ -353,19 +357,36 @@ it("names the package switch only from the current link's successful reply", asy
 		noteLinkState("disconnected");
 		noteLinkState("connected");
 		noteSessionRestored();
-		// Then the previous link's answer is dropped at once, while the
-		// switch itself stays: the setting it saves is the same on every image.
-		await waitFor(() => expectPackageSwitch("default"));
+		// Then the previous link's answer is dropped at once: neither mode is
+		// claimed, while the switch itself stays, since it saves the same
+		// setting on every image.
+		await waitFor(() => expectPackageSwitch("unknown"));
 		await waitFor(() =>
 			expect(rpc.system.getUpdateCapabilities).toHaveBeenCalledTimes(2),
 		);
-		// When the new image answers without the field, it stays the default.
+		// When the new image answers without the field, the switch names
+		// automatic installs.
 		second.resolve({ mode: "capable", features: ["apt-all-packages"] });
-		await waitFor(() =>
-			expect(screen.queryByTestId("update-details-loading")).toBeNull(),
-		);
-		expectPackageSwitch("default");
+		await waitFor(() => expectPackageSwitch("install"));
 	} finally {
 		noteLinkState("disconnected");
 	}
+});
+
+it("a failed read keeps the switch editable under the neutral name, saving as usual", async () => {
+	// Given a capability read that fails on open.
+	vi.mocked(rpc.system.getUpdateCapabilities).mockRejectedValueOnce(
+		new Error("read failed"),
+	);
+	render(UpdatesDialog, { open: true });
+	await screen.findByTestId("update-details-failed");
+	// Then the switch claims neither mode and still saves the preference.
+	expectPackageSwitch("unknown");
+	const toggle = screen.getByTestId("update-auto-packages");
+	expect(toggle.getAttribute("aria-checked")).toBe("true");
+	await fireEvent.click(toggle);
+	expect(rpc.system.setUpdateSettings).toHaveBeenCalledOnce();
+	expect(
+		vi.mocked(rpc.system.setUpdateSettings).mock.calls[0]?.[0],
+	).toMatchObject({ packagesAuto: false });
 });

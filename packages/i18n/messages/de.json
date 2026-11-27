@@ -3081,6 +3081,7 @@
 	"settings.updates.automation.title": "Automatische Updates",
 	"settings.updates.automation.packages": "Paket-Updates automatisch installieren",
 	"settings.updates.automation.packagesCheck": "Automatisch nach Paket-Updates suchen",
+	"settings.updates.automation.packagesNeutral": "Automatische Paket-Updates",
 	"settings.updates.automation.packagesManualHint": "Paket-Updates werden auf diesem Gerät von Hand installiert.",
 	"settings.updates.automation.system": "Systemabbilder automatisch installieren",
 	"settings.updates.automation.systemHint": "Ein heruntergeladenes Abbild wird beim nächsten Neustart aktiv. Das Gerät startet nie von selbst neu.",

@@ -1455,10 +1455,11 @@ strictly. With a valid record:
   package check and its notice on or off there, so the Updates dialog keeps
   the switch and saves it as everywhere else, but names it "Check for package
   updates automatically", with the hint "Package updates on this device are
-  installed by hand." It says so only after a successful reply on the current
-  connection; while that reply is pending, failed or from before a reconnect,
-  the switch keeps its usual name. Everywhere else the field is `false` (older
-  backends omit it, which means the same) and nothing changes.
+  installed by hand." Either name needs a successful reply on the current
+  connection: while that reply is pending, failed or from before a reconnect,
+  the switch reads "Automatic package updates", still saving `packagesAuto`.
+  Everywhere else the field is `false` (older backends omit it, which means
+  the same) and the switch keeps "Install package updates automatically".
 - An install that ends before its apt unit launched (clock, dpkg, refresh,
   unreachable or captive repository, discovery, nothing installable, pinned
   recheck, space preflight, failed download, any stream before launch, a start

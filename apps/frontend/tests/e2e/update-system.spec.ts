@@ -246,6 +246,34 @@ test.describe('device update surfaces (Todo 41)', { tag: '@functional' }, () => 
 		await expect(dialog.getByTestId('update-auto-packages-manual')).toHaveCount(0);
 	});
 
+	test('an unanswered capability read keeps the package switch under a neutral name, saving as usual', async ({
+		page,
+		backendRpc,
+	}) => {
+		const wire = await installUpdateWire(page, {
+			failures: {
+				'system.getUpdateCapabilities': { code: 'INTERNAL_SERVER_ERROR', message: 'read failed' },
+			},
+		});
+		await boot(page);
+		const before = await backendRpc.call<UpdateSettings>(['system', 'getUpdateSettings']);
+
+		const dialog = await openUpdatesDialog(page);
+		await expect(dialog.getByTestId('update-details-failed')).toBeVisible();
+		for (const claim of ['Install package updates automatically', 'Check for package updates automatically']) {
+			await expect(dialog.getByRole('switch', { name: claim })).toHaveCount(0);
+		}
+		const toggle = dialog.getByRole('switch', { name: 'Automatic package updates' });
+		await expect(toggle).toBeEnabled();
+		await expect(toggle).toHaveAccessibleDescription('');
+		await toggle.click();
+		await expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+		const after = await backendRpc.call<UpdateSettings>(['system', 'getUpdateSettings']);
+		expect(after).toEqual({ ...before, packagesAuto: false });
+		expect(wire.calls('system.setUpdateSettings')).toHaveLength(1);
+	});
+
 	test('a schedule window is validated before it can be saved, then persisted', async ({
 		page,
 		backendRpc,

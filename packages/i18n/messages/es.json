@@ -3096,6 +3096,7 @@
 	"settings.updates.automation.title": "Actualizaciones automáticas",
 	"settings.updates.automation.packages": "Instalar actualizaciones de paquetes automáticamente",
 	"settings.updates.automation.packagesCheck": "Buscar actualizaciones de paquetes automáticamente",
+	"settings.updates.automation.packagesNeutral": "Actualizaciones automáticas de paquetes",
 	"settings.updates.automation.packagesManualHint": "En este dispositivo, las actualizaciones de paquetes se instalan manualmente.",
 	"settings.updates.automation.system": "Instalar imágenes del sistema automáticamente",
 	"settings.updates.automation.systemHint": "Una imagen descargada se aplica en el siguiente reinicio. El dispositivo nunca se reinicia por sí solo.",

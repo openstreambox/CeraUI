@@ -2861,6 +2861,7 @@
 	"settings.updates.automation.title": "자동 업데이트",
 	"settings.updates.automation.packages": "패키지 업데이트 자동 설치",
 	"settings.updates.automation.packagesCheck": "패키지 업데이트 자동 확인",
+	"settings.updates.automation.packagesNeutral": "패키지 자동 업데이트",
 	"settings.updates.automation.packagesManualHint": "이 기기에서는 패키지 업데이트를 수동으로 설치합니다.",
 	"settings.updates.automation.system": "시스템 이미지 자동 설치",
 	"settings.updates.automation.systemHint": "다운로드한 이미지는 다음 재시작 때 적용됩니다. 기기는 절대 스스로 재시작하지 않습니다.",

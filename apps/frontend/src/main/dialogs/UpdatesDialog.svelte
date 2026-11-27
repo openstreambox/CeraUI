@@ -213,7 +213,7 @@ const activityEta = $derived(activityPhase ? etaMinutes(orchestrator?.progress?.
 			{#if settings}
 				<AutomationSection
 					onSave={surface.save}
-					packagesManual={surface.packagesManual}
+					packagesMode={surface.packagesMode}
 					saving={surface.saving}
 					{settings}
 					system={view.system}
