@@ -726,7 +726,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		},
 		status: "enforced",
 		mechanism:
-			"spawnWatcher runs ip monitor link on a device (never under mocks); stopWifiCarrierWatch aborts it at shutdown and a failed reader reaps its child; restarts back off to one a minute unless a child lived 30 s, its marks are cleared meanwhile and the 5 s netif poll covers the gap",
+			"spawnWatcher runs ip monitor link on a device (never under mocks) with stderr discarded; stopWifiCarrierWatch aborts it at shutdown and a failed reader reaps its child; restarts back off to one a minute unless a child lived 30 s, its marks are cleared meanwhile and the 5 s netif poll covers the gap",
 	},
 	{
 		id: "sensors.dmesgRk3588",

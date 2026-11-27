@@ -6,10 +6,11 @@
   a station radio (associated, carrier lost while the supplicant searches,
   administratively down, deleted) and must read RUNNING the way the kernel and
   `ifconfig` do. The watcher half drives a fake child and fake timers: a carrier
-  loss that outlasts the hold marks the link once (after sysfs agrees), a
-  roam-length gap or a blip marks nothing, a returned carrier clears the mark
-  after the settle, a stranded mark is cleared by the sysfs check, and only
-  Wi-Fi station interfaces are followed. The child's lifetime is checked too:
+  loss that outlasts the hold marks the link once (after sysfs agrees, bound to
+  its ifindex), a roam-length gap or a blip marks nothing, a returned carrier
+  clears the mark after the settle, a stranded mark is cleared by the sysfs
+  check, a deleted or replaced netdev drops its mark, the watch never samples
+  the netif rows, and only Wi-Fi station interfaces are followed. The child's lifetime is checked too:
   a dead reader is reaped, buffered lines after a stop are ignored, and only a
   child that lived resets the restart delay.
 */
@@ -27,6 +28,7 @@ import {
 	parseLinkStateLine,
 	READMIT_SETTLE_MS,
 	RESTART_MIN_MS,
+	sysfsOperational,
 	WifiCarrierWatch,
 	type WifiCarrierWatchDeps,
 } from "./wifi-carrier-watch.ts";
@@ -48,7 +50,9 @@ const NO_CARRIER = "NO-CARRIER,BROADCAST,MULTICAST,UP";
 
 describe("parseLinkStateLine", () => {
 	test("an associated station is running", () => {
-		expect(parseLinkStateLine(linkLine("wlan0", ASSOCIATED, "UP"))).toEqual({
+		expect(
+			parseLinkStateLine(linkLine("wlan0", ASSOCIATED, "UP")),
+		).toMatchObject({
 			ifname: "wlan0",
 			running: true,
 		});
@@ -57,43 +61,48 @@ describe("parseLinkStateLine", () => {
 	test("a station that lost its AP is not running", () => {
 		expect(
 			parseLinkStateLine(linkLine("wlxd8448974ef48", NO_CARRIER, "DOWN")),
-		).toEqual({ ifname: "wlxd8448974ef48", running: false });
+		).toMatchObject({ ifname: "wlxd8448974ef48", running: false });
 		// Carrier back, WPA handshake not finished: the supplicant has not set
 		// the link up yet, so RUNNING is still clear.
 		expect(
 			parseLinkStateLine(linkLine("wlan0", ASSOCIATED, "DORMANT")),
-		).toEqual({ ifname: "wlan0", running: false });
+		).toMatchObject({ ifname: "wlan0", running: false });
 	});
 
 	test("UNKNOWN counts as running only with the carrier", () => {
 		expect(
 			parseLinkStateLine(linkLine("wlan0", ASSOCIATED, "UNKNOWN")),
-		).toEqual({ ifname: "wlan0", running: true });
+		).toMatchObject({ ifname: "wlan0", running: true });
 		expect(
 			parseLinkStateLine(linkLine("wlan0", NO_CARRIER, "UNKNOWN")),
-		).toEqual({ ifname: "wlan0", running: false });
+		).toMatchObject({ ifname: "wlan0", running: false });
 	});
 
 	test("an administratively down or deleted link is not running", () => {
 		expect(
 			parseLinkStateLine(linkLine("wlan0", "BROADCAST,MULTICAST", "DOWN")),
-		).toEqual({ ifname: "wlan0", running: false });
+		).toMatchObject({ ifname: "wlan0", running: false });
 		expect(
 			parseLinkStateLine(
 				`Deleted ${linkLine("wlan1", "BROADCAST,MULTICAST", "DOWN", 7)}`,
 			),
-		).toEqual({ ifname: "wlan1", running: false });
+		).toMatchObject({
+			ifname: "wlan1",
+			running: false,
+			deleted: true,
+			ifindex: 7,
+		});
 	});
 
 	test("accepts a peer suffix and a bracketed object prefix", () => {
 		expect(
 			parseLinkStateLine(`[LINK]${linkLine("wlan0", ASSOCIATED, "UP")}`),
-		).toEqual({ ifname: "wlan0", running: true });
+		).toMatchObject({ ifname: "wlan0", running: true });
 		expect(
 			parseLinkStateLine(
 				"5: veth1@if4: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default",
 			),
-		).toEqual({ ifname: "veth1", running: true });
+		).toMatchObject({ ifname: "veth1", running: true });
 	});
 
 	test("ignores lines that are not link state", () => {
@@ -122,16 +131,16 @@ type Child = {
 	aborted: () => boolean;
 };
 
-function harness(options: { stations?: string[]; rows?: Set<string> } = {}) {
+function harness(options: { stations?: string[] } = {}) {
 	const stations = options.stations ?? ["wlan0", "wlan1"];
-	const rows = options.rows ?? new Set(stations);
 	const carrier = new Map<string, boolean>();
 	let clock = 0;
 	const scheduled: Scheduled[] = [];
 	const spawned: string[][] = [];
 	const marks: Array<[string, boolean]> = [];
+	const markIndex = new Map<string, number | undefined>();
 	const lost = new Set<string>();
-	let refreshes = 0;
+	const down = new Set<string>();
 	const children: Child[] = [];
 
 	const deps: WifiCarrierWatchDeps = {
@@ -187,14 +196,15 @@ function harness(options: { stations?: string[]; rows?: Set<string> } = {}) {
 		},
 		isWifiStation: (ifname) => stations.includes(ifname),
 		isOperational: (ifname) => carrier.get(ifname) !== false,
-		setLost: (ifname, value) => {
+		setLost: (ifname, value, ifindex) => {
 			marks.push([ifname, value]);
+			markIndex.set(ifname, ifindex);
 			if (value) lost.add(ifname);
 			else lost.delete(ifname);
 		},
-		needsReadmit: (ifname) => !rows.has(ifname),
-		refresh: () => {
-			refreshes++;
+		setDown: (ifname, value) => {
+			if (value) down.add(ifname);
+			else down.delete(ifname);
 		},
 		now: () => clock,
 		setTimeout: (callback, ms) => {
@@ -225,25 +235,32 @@ function harness(options: { stations?: string[]; rows?: Set<string> } = {}) {
 	};
 	const watch = new WifiCarrierWatch(deps);
 	/** The kernel changes a link's carrier and the monitor prints the edge. */
-	const edge = (ifname: string, up: boolean, state = up ? "UP" : "DORMANT") => {
+	const edge = (
+		ifname: string,
+		up: boolean,
+		state = up ? "UP" : "DORMANT",
+		index = 3,
+	) => {
 		carrier.set(ifname, up);
-		watch.handleLine(linkLine(ifname, up ? ASSOCIATED : NO_CARRIER, state));
+		watch.handleLine(
+			linkLine(ifname, up ? ASSOCIATED : NO_CARRIER, state, index),
+		);
 	};
 	return {
 		deps,
 		watch,
-		rows,
 		stations,
 		carrier,
 		spawned,
 		marks,
+		markIndex,
 		lost,
+		down,
 		children,
 		advance,
 		flush,
 		edge,
 		pending: () => scheduled.filter((entry) => !entry.cleared),
-		refreshes: () => refreshes,
 	};
 }
 
@@ -270,13 +287,14 @@ describe("WifiCarrierWatch marks", () => {
 		expect(h.marks).toEqual([]);
 		h.advance(1);
 		expect(h.marks).toEqual([["wlan0", true]]);
+		expect(h.markIndex.get("wlan0")).toBe(3);
+		expect(h.down.has("wlan0")).toBe(true);
 		h.advance(3 * MARK_CHECK_MS);
 		expect(h.marks).toEqual([["wlan0", true]]);
-		expect(h.refreshes()).toBe(0);
 		h.watch.stop();
 	});
 
-	test("the carrier back clears the mark after the settle, without a refresh", () => {
+	test("the carrier back clears the mark after the settle", () => {
 		const h = harness();
 		h.watch.start();
 		h.edge("wlan0", true);
@@ -290,7 +308,7 @@ describe("WifiCarrierWatch marks", () => {
 			["wlan0", true],
 			["wlan0", false],
 		]);
-		expect(h.refreshes()).toBe(0);
+		expect(h.down.has("wlan0")).toBe(false);
 		h.watch.stop();
 	});
 
@@ -368,6 +386,11 @@ describe("WifiCarrierWatch marks", () => {
 		h.carrier.set("wlan0", true);
 		h.advance(CARRIER_LOSS_HOLD_MS);
 		expect(h.marks).toEqual([]);
+		expect(h.down.has("wlan0")).toBe(false);
+		// The kernel's state was taken: the next real loss is an edge again.
+		h.edge("wlan0", false);
+		h.advance(CARRIER_LOSS_HOLD_MS);
+		expect(h.marks).toEqual([["wlan0", true]]);
 		h.watch.stop();
 	});
 
@@ -383,31 +406,54 @@ describe("WifiCarrierWatch marks", () => {
 		h.advance(MARK_CHECK_MS);
 		expect(h.lost.has("wlan0")).toBe(false);
 		expect(h.pending()).toEqual([]);
+		// A second loss after the recovered line is still seen and marked.
+		h.edge("wlan0", false);
+		h.advance(CARRIER_LOSS_HOLD_MS);
+		expect(h.lost.has("wlan0")).toBe(true);
 		h.watch.stop();
 	});
 
-	test("a returned radio whose row the poll withdrew is refreshed back", () => {
+	test("a deleted netdev drops its mark at once", () => {
 		const h = harness();
 		h.watch.start();
 		h.edge("wlan1", true);
 		h.edge("wlan1", false);
 		h.advance(CARRIER_LOSS_HOLD_MS);
-		// The 5 s poll saw RUNNING clear and withdrew the row meanwhile.
-		h.rows.delete("wlan1");
-		h.advance(6_000);
-		h.edge("wlan1", true);
-		h.advance(READMIT_SETTLE_MS);
-		expect(h.refreshes()).toBe(1);
+		expect(h.lost.has("wlan1")).toBe(true);
+		h.watch.handleLine(
+			`Deleted ${linkLine("wlan1", "BROADCAST,MULTICAST", "DOWN")}`,
+		);
 		expect(h.lost.has("wlan1")).toBe(false);
+		expect(h.down.has("wlan1")).toBe(false);
+		// The sysfs check finds nothing left to check and lapses.
+		h.advance(MARK_CHECK_MS);
+		expect(h.pending()).toEqual([]);
 		h.watch.stop();
 	});
 
-	test("a still-published running radio is not refreshed on its up edge", () => {
+	test("another netdev under the name does not inherit the mark", () => {
+		const h = harness();
+		h.watch.start();
+		h.edge("wlan1", true, "UP", 7);
+		h.edge("wlan1", false, "DORMANT", 7);
+		h.advance(CARRIER_LOSS_HOLD_MS);
+		expect(h.markIndex.get("wlan1")).toBe(7);
+		// A replugged radio appears under the same name with a new ifindex.
+		h.edge("wlan1", false, "DOWN", 9);
+		expect(h.lost.has("wlan1")).toBe(false);
+		h.advance(CARRIER_LOSS_HOLD_MS);
+		expect(h.markIndex.get("wlan1")).toBe(9);
+		h.watch.stop();
+	});
+
+	test("an up edge without a mark schedules nothing", () => {
 		const h = harness();
 		h.watch.start();
 		h.edge("wlan0", true);
+		h.edge("wlan1", false);
+		h.edge("wlan1", true);
 		h.advance(10_000);
-		expect(h.refreshes()).toBe(0);
+		expect(h.marks).toEqual([]);
 		expect(h.pending()).toEqual([]);
 		h.watch.stop();
 	});
@@ -591,16 +637,7 @@ describe("WifiCarrierWatch child lifetime", () => {
 		watch.stop();
 	});
 
-	test("a refresh that rejects is contained", async () => {
-		const h = harness({ rows: new Set() });
-		const watch = new WifiCarrierWatch({
-			...h.deps,
-			refresh: () => Promise.reject(new Error("ifconfig failed")),
-		});
-		watch.start();
-		watch.handleLine(linkLine("wlan0", ASSOCIATED, "UP"));
-		expect(() => h.advance(READMIT_SETTLE_MS)).not.toThrow();
-		await h.flush();
-		watch.stop();
+	test("sysfs that cannot be read never sets a mark", () => {
+		expect(sysfsOperational("osb-no-such-netdev0")).toBe(true);
 	});
 });

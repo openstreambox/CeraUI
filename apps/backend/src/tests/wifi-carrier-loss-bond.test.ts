@@ -14,11 +14,13 @@
  * the operator's toggle and every gate still decide membership, the netif rows
  * are never touched, and a modem is never marked.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 import type { ManagedProcess, WatcherHandle } from "../helpers/spawn-policy.ts";
+import { netdevPresence } from "../modules/network/netdev-lifetime.ts";
 import {
 	getNetworkInterfaces,
+	onNetworkInterfaceSourcesChange,
 	processIfconfigOutput,
 	resetBondOptOut,
 	resetNetifSnapshotForTest,
@@ -28,9 +30,10 @@ import {
 } from "../modules/network/network-interfaces.ts";
 import { setNetifState } from "../modules/network/state/netif-state.ts";
 import {
-	isWifiCarrierLost,
 	resetWifiCarrierLostForTest,
+	setWifiCarrierDown,
 	setWifiCarrierLost,
+	wifiCarrierLostMark,
 } from "../modules/network/wifi-carrier-lost.ts";
 import {
 	CARRIER_LOSS_HOLD_MS,
@@ -88,7 +91,6 @@ function linkLine(ifname: string, carrier: boolean): string {
 function bench() {
 	const carrier = new Map(ALL.map((link) => [link.name, true]));
 	let clock = 0;
-	let refreshes = 0;
 	const timers: Array<{ at: number; fn: () => void; live: boolean }> = [];
 	const noChild = (): WatcherHandle => {
 		const proc: ManagedProcess = {
@@ -106,10 +108,7 @@ function bench() {
 		isWifiStation: (ifname) => ifname.startsWith("wl"),
 		isOperational: (ifname) => carrier.get(ifname) === true,
 		setLost: setWifiCarrierLost,
-		needsReadmit: (ifname) => getNetworkInterfaces()[ifname] === undefined,
-		refresh: () => {
-			refreshes++;
-		},
+		setDown: setWifiCarrierDown,
 		now: () => clock,
 		setTimeout: (fn, ms) => {
 			timers.push({ at: clock + ms, fn, live: true });
@@ -139,7 +138,10 @@ function bench() {
 		watch.handleLine(linkLine(ifname, up));
 	};
 	/** What a live refresh would hand the sender for `receiver`. */
-	const published = async (receiver = RECEIVER): Promise<string[]> => {
+	const published = async (
+		receiver = RECEIVER,
+		purpose: "launch" | "refresh" = "refresh",
+	): Promise<string[]> => {
 		let written: readonly BondEntry[] = [];
 		await prepareSrtlaIpAddresses(
 			receiver,
@@ -152,23 +154,19 @@ function bench() {
 					return { ok: true, changed: true } as unknown as BindMapPublication;
 				},
 			},
-			"refresh",
+			purpose,
 		);
 		return written.map((entry) => entry.iface).sort();
 	};
 	processIfconfigOutput(ALL.map(stanza).join("\n\n"));
 	watch.start();
 	for (const link of ALL) watch.handleLine(linkLine(link.name, true));
-	return {
-		watch,
-		advance,
-		setCarrier,
-		published,
-		refreshes: () => refreshes,
-	};
+	return { watch, advance, setCarrier, published };
 }
 
 beforeEach(() => {
+	// Every fixture netdev answers with the ifindex its monitor lines carry.
+	spyOn(netdevPresence, "ifindex").mockReturnValue(3);
 	resetNetifSnapshotForTest();
 	const netif = getNetworkInterfaces();
 	for (const name of Object.keys(netif)) delete netif[name];
@@ -180,8 +178,14 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	// Leave no fixture rows, Wi-Fi devices, snapshot or delayed discovery behind.
+	processIfconfigOutput("");
 	stopWifiUpdateLoopForTest();
+	resetNetifSnapshotForTest();
+	setNetifState({});
+	resetBondOptOut();
 	resetWifiCarrierLostForTest();
+	(netdevPresence.ifindex as unknown as { mockRestore(): void }).mockRestore();
 });
 
 describe("Wi-Fi carrier loss and the published bond", () => {
@@ -196,7 +200,6 @@ describe("Wi-Fi carrier loss and the published bond", () => {
 		// The netif row, its toggle state and the modem are untouched.
 		expect(getNetworkInterfaces()[RADIO_A.name]?.enabled).toBe(true);
 		expect(getNetworkInterfaces()[MODEM.name]?.enabled).toBe(true);
-		expect(b.refreshes()).toBe(0);
 		b.watch.stop();
 	});
 
@@ -211,8 +214,6 @@ describe("Wi-Fi carrier loss and the published bond", () => {
 		expect(await b.published()).toEqual(["wlan1", "wwan0"]);
 		b.advance(1);
 		expect(await b.published()).toEqual(["wlan0", "wlan1", "wwan0"]);
-		// Its row never left, so no netif refresh was needed.
-		expect(b.refreshes()).toBe(0);
 		b.watch.stop();
 	});
 
@@ -222,7 +223,7 @@ describe("Wi-Fi carrier loss and the published bond", () => {
 		expect(await b.published(LAN_RECEIVER)).toEqual(["wlan0"]);
 		b.setCarrier(RADIO_A.name, false);
 		b.advance(CARRIER_LOSS_HOLD_MS);
-		expect(isWifiCarrierLost(RADIO_A.name)).toBe(true);
+		expect(wifiCarrierLostMark(RADIO_A.name)).toBeDefined();
 		// The modem elsewhere is no survivor for this receiver: nothing is emptied.
 		expect(await b.published(LAN_RECEIVER)).toEqual(["wlan0"]);
 		b.watch.stop();
@@ -265,7 +266,7 @@ describe("Wi-Fi carrier loss and the published bond", () => {
 		b.advance(CARRIER_LOSS_HOLD_MS - 100);
 		b.setCarrier(RADIO_B.name, true);
 		b.advance(10_000);
-		expect(isWifiCarrierLost(RADIO_B.name)).toBe(false);
+		expect(wifiCarrierLostMark(RADIO_B.name)).toBeUndefined();
 		expect(await b.published()).toEqual(["wlan0", "wlan1", "wwan0"]);
 		b.watch.stop();
 	});
@@ -274,7 +275,7 @@ describe("Wi-Fi carrier loss and the published bond", () => {
 		const b = bench();
 		b.setCarrier(MODEM.name, false);
 		b.advance(10_000);
-		expect(isWifiCarrierLost(MODEM.name)).toBe(false);
+		expect(wifiCarrierLostMark(MODEM.name)).toBeUndefined();
 		expect(await b.published()).toEqual(["wlan0", "wlan1", "wwan0"]);
 		b.watch.stop();
 	});
@@ -286,5 +287,120 @@ describe("Wi-Fi carrier loss and the published bond", () => {
 		expect(await b.published()).toEqual(["wlan1", "wwan0"]);
 		b.watch.stop();
 		expect(await b.published()).toEqual(["wlan0", "wlan1", "wwan0"]);
+	});
+
+	test("a mark change drives the live refresh", async () => {
+		const b = bench();
+		let refreshes = 0;
+		const unsubscribe = onNetworkInterfaceSourcesChange(() => {
+			refreshes++;
+		});
+		try {
+			b.setCarrier(RADIO_A.name, false);
+			b.advance(CARRIER_LOSS_HOLD_MS);
+			expect(refreshes).toBe(1);
+			b.setCarrier(RADIO_A.name, true);
+			b.advance(READMIT_SETTLE_MS);
+			expect(refreshes).toBe(2);
+		} finally {
+			unsubscribe();
+			b.watch.stop();
+		}
+	});
+
+	test("a launch ignores marks, so nothing is stranded outside a sender", async () => {
+		const b = bench();
+		b.setCarrier(RADIO_A.name, false);
+		b.advance(CARRIER_LOSS_HOLD_MS);
+		expect(await b.published(RECEIVER, "launch")).toEqual([
+			"wlan0",
+			"wlan1",
+			"wwan0",
+		]);
+		b.watch.stop();
+	});
+
+	test("a staggered loss of both radios does not cycle the first one", async () => {
+		setBondOptOut(MODEM.name, true);
+		const b = bench();
+		b.setCarrier(RADIO_A.name, false);
+		b.advance(CARRIER_LOSS_HOLD_MS - 300);
+		b.setCarrier(RADIO_B.name, false);
+		b.advance(300);
+		// wlan0 is marked while wlan1 is still inside its hold: no survivor.
+		expect(await b.published()).toEqual(["wlan0", "wlan1"]);
+		b.advance(CARRIER_LOSS_HOLD_MS);
+		expect(await b.published()).toEqual(["wlan0", "wlan1"]);
+		b.watch.stop();
+	});
+
+	test("a mark on a netdev the name no longer holds is ignored", async () => {
+		const b = bench();
+		b.setCarrier(RADIO_A.name, false);
+		b.advance(CARRIER_LOSS_HOLD_MS);
+		expect(await b.published()).toEqual(["wlan1", "wwan0"]);
+		// Another netdev took the name before its monitor line arrived.
+		(
+			netdevPresence.ifindex as unknown as { mockReturnValue(v: number): void }
+		).mockReturnValue(12);
+		expect(await b.published()).toEqual(["wlan0", "wlan1", "wwan0"]);
+		b.watch.stop();
+	});
+});
+
+describe("the carrier rule at publication", () => {
+	const entry = (iface: string, parentIface?: string) =>
+		({
+			iface,
+			ip: "192.0.2.1",
+			...(parentIface ? { parentIface } : {}),
+		}) as unknown as BondEntry;
+	const publish = async (
+		entries: BondEntry[],
+		lost: readonly string[],
+		down: readonly string[] = lost,
+	) => {
+		let written: readonly BondEntry[] = [];
+		await prepareSrtlaIpAddresses(
+			RECEIVER,
+			{
+				isLocal: () => false,
+				localList: () => [],
+				bondedList: () => entries,
+				writeList: async (list) => {
+					written = list;
+					return { ok: true, changed: true } as unknown as BindMapPublication;
+				},
+				carrierLost: (ifname) => lost.includes(ifname),
+				carrierDown: (ifname) => down.includes(ifname),
+			},
+			"refresh",
+		);
+		return written.map((e) => e.iface);
+	};
+
+	test("a CLAT translator row alone is no survivor", async () => {
+		expect(
+			await publish([entry("wlan0"), entry("clat0", "wwan0")], ["wlan0"]),
+		).toEqual(["wlan0", "clat0"]);
+		expect(
+			await publish(
+				[entry("wlan0"), entry("clat0", "wwan0"), entry("eth0")],
+				["wlan0"],
+			),
+		).toEqual(["clat0", "eth0"]);
+	});
+
+	test("a link whose carrier is down is no survivor before its mark", async () => {
+		expect(
+			await publish(
+				[entry("wlan0"), entry("wlan1")],
+				["wlan0"],
+				["wlan0", "wlan1"],
+			),
+		).toEqual(["wlan0", "wlan1"]);
+		expect(
+			await publish([entry("wlan0"), entry("wlan1")], ["wlan0"], ["wlan0"]),
+		).toEqual(["wlan1"]);
 	});
 });

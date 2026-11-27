@@ -20,7 +20,11 @@
 
 import { isLocalIp } from "../../../helpers/ip-addresses.ts";
 import { logger } from "../../../helpers/logger.ts";
-import { isWifiCarrierLost } from "../../network/wifi-carrier-lost.ts";
+import { netdevPresence } from "../../network/netdev-lifetime.ts";
+import {
+	isWifiCarrierDown,
+	wifiCarrierLostMark,
+} from "../../network/wifi-carrier-lost.ts";
 import type { BondEntry } from "../bind-map.ts";
 import type { BindMapPublication } from "../bind-map-writer.ts";
 import {
@@ -39,6 +43,8 @@ export type SrtlaIpPreparationDeps = {
 	) => Promise<BindMapPublication>;
 	/** A Wi-Fi link whose radio has lost its access point (the carrier watch). */
 	readonly carrierLost?: (ifname: string) => boolean;
+	/** A Wi-Fi link whose carrier is down right now, marked or not. */
+	readonly carrierDown?: (ifname: string) => boolean;
 };
 
 const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
@@ -58,20 +64,42 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
 
   A radio that lost its access point keeps its netif row until the next poll,
   and the sender would keep assigning packets to it. The carrier watch marks it
-  (`network/wifi-carrier-lost.ts`), and the list handed to the sender leaves it
-  out, for whichever receiver this bond serves (a LAN receiver's subnet subset
-  included). When every link in that list is marked, the list keeps them all:
-  an empty list would make the sender drop every connection, and radios that
-  lost one access point together usually re-associate within a second or two
-  with their sockets intact.
+  (`network/wifi-carrier-lost.ts`), and a live refresh leaves it out of the
+  list for whichever receiver this bond serves (a LAN receiver's subnet subset
+  included). It is left out only while another entry can carry: one that is
+  not marked, whose carrier is not down right now, and that is not a CLAT
+  translator row (write-time revalidation may still drop those). Otherwise the
+  list keeps every entry: an empty list would make the sender drop every
+  connection, and radios that lost one access point together usually
+  re-associate within a second or two with their sockets intact.
+
+  A launch (manual start, ingest forward without a live refresh, restoration)
+  ignores marks: nothing would bring a link left out there back.
 */
+function liveCarrierLost(ifname: string): boolean {
+	const mark = wifiCarrierLostMark(ifname);
+	if (mark === undefined) return false;
+	// A mark binds the netdev it was set on; an unreadable index fails open.
+	return (
+		mark.ifindex === undefined ||
+		netdevPresence.ifindex(ifname) === mark.ifindex
+	);
+}
+
 function withoutDeafWifi(
 	entries: BondEntry[],
 	carrierLost: (ifname: string) => boolean,
+	carrierDown: (ifname: string) => boolean,
 ): BondEntry[] {
 	const deaf = entries.filter((entry) => carrierLost(entry.iface));
 	if (deaf.length === 0) return entries;
-	if (deaf.length === entries.length) {
+	const carries = entries.some(
+		(entry) =>
+			entry.parentIface === undefined &&
+			!carrierLost(entry.iface) &&
+			!carrierDown(entry.iface),
+	);
+	if (!carries) {
 		logger.info("Wi-Fi links without carrier kept: no other bond link", {
 			ifnames: deaf.map((entry) => entry.iface),
 		});
@@ -93,10 +121,15 @@ export async function prepareSrtlaIpAddresses(
 	purpose: "launch" | "refresh" = "launch",
 ): Promise<BindMapPublication> {
 	const local = deps.isLocal(srtlaAddr);
-	const entries = withoutDeafWifi(
-		local ? deps.localList(srtlaAddr) : deps.bondedList(),
-		deps.carrierLost ?? isWifiCarrierLost,
-	);
+	const collected = local ? deps.localList(srtlaAddr) : deps.bondedList();
+	const entries =
+		purpose === "refresh"
+			? withoutDeafWifi(
+					collected,
+					deps.carrierLost ?? liveCarrierLost,
+					deps.carrierDown ?? isWifiCarrierDown,
+				)
+			: collected;
 	if (purpose === "launch" && entries.length === 0) {
 		throw new Error("no_available_network_connections");
 	}

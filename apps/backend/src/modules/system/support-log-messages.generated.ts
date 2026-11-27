@@ -1375,7 +1375,6 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	],
 	["wifi capabilities: nmcli properties unavailable: ", ""],
 	["wifi capabilities: refresh failed: ", ""],
-	["wifi carrier watch: refresh failed: ", ""],
 	["wifi carrier watch: spawn failed: ", ""],
 	["wifi carrier watch: stream ended: ", ""],
 	[

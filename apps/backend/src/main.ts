@@ -101,7 +101,6 @@ import {
 	createMonitorManager,
 	NmcliMonitorManager,
 } from "./modules/network/monitor/monitor-manager.ts";
-import { netdevRunning } from "./modules/network/netdev-lifetime.ts";
 import { startNetworkChangeSafety } from "./modules/network/network-change-runtime.ts";
 import {
 	buildGatewayProbe,
@@ -111,7 +110,6 @@ import {
 import { reconcileIngestDesiredState } from "./modules/network/network-ingest-control.ts";
 import {
 	bondDisableSimulationSelected,
-	getNetworkInterfaces,
 	handleNetifMonitorEvent,
 	initNetworkInterfaceMonitoring,
 	isWifiApInterface,
@@ -126,10 +124,14 @@ import {
 	tickUplinkShaper,
 } from "./modules/network/uplink-shaper/runtime.ts";
 import { initUplinkSteering } from "./modules/network/uplink-steering/runtime.ts";
-import { setWifiCarrierLost } from "./modules/network/wifi-carrier-lost.ts";
+import {
+	setWifiCarrierDown,
+	setWifiCarrierLost,
+} from "./modules/network/wifi-carrier-lost.ts";
 import {
 	startWifiCarrierWatch,
 	stopWifiCarrierWatch,
+	sysfsOperational,
 } from "./modules/network/wifi-carrier-watch.ts";
 import {
 	initWifiRoaming,
@@ -697,13 +699,9 @@ if (!shouldUseMocks())
 			!isWifiApInterface(ifname) &&
 			(wifiInterfaceReaders.pathExists(`/sys/class/net/${ifname}/phy80211`) ||
 				wifiInterfaceReaders.pathExists(`/sys/class/net/${ifname}/wireless`)),
-		isOperational: netdevRunning,
+		isOperational: sysfsOperational,
 		setLost: setWifiCarrierLost,
-		needsReadmit: (ifname) => {
-			const row = getNetworkInterfaces()[ifname];
-			return row === undefined || (!row.ip && !row.ipv6);
-		},
-		refresh: () => updateNetif(),
+		setDown: setWifiCarrierDown,
 	});
 
 // Hotspot NM-confirmation: flips station↔hotspot once NM reports the switch
