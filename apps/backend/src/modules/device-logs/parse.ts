@@ -1,11 +1,15 @@
 import type { LogEntry, LogLevel } from "@ceraui/rpc/schemas";
 import { z } from "zod";
+import { configLogView } from "../../helpers/config-log-view.ts";
+import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import {
+	REDACTED,
 	redactKeyValueText,
 	redactSensitiveKeys,
 } from "../../helpers/logger.ts";
 import { redactSrtPassphrases } from "../../helpers/srt-secret-redaction.ts";
 import { redactStreamIdText } from "../../helpers/stream-id-secret.ts";
+import { isSensitiveProcedure } from "../../rpc/rpc-logging.ts";
 import { sourceOfUnit } from "./catalog.ts";
 
 export type RawJournalRecord = LogEntry & {
@@ -31,6 +35,22 @@ const LEGACY_LEVELS: Readonly<Record<string, LogLevel>> = {
 };
 const stringField = (value: unknown): string | null =>
 	typeof value === "string" && value.length > 0 ? value : null;
+
+const RPC_TRACE_RE = /^RPC ([A-Za-z0-9.]{1,200}) (?:ok|err)$/;
+
+/**
+ * Write-time rules an older build didn't have, applied to its records on
+ * replay: a `config loaded` record keeps only the allowlisted config fields,
+ * and an RPC trace of a procedure whose arguments are never logged loses them.
+ */
+function replayedMeta(msg: string, meta: object): object {
+	if (Array.isArray(meta)) return meta;
+	if (msg === "config loaded") return configLogView(meta as RuntimeConfig);
+	const rpc = RPC_TRACE_RE.exec(msg);
+	if (rpc?.[1] && "args" in meta && isSensitiveProcedure(rpc[1].split(".")))
+		return { ...meta, args: REDACTED };
+	return meta;
+}
 
 export function parseRecord(input: unknown): RawJournalRecord | null {
 	const parsed = objectSchema.safeParse(input);
@@ -97,7 +117,7 @@ export function parseRecord(input: unknown): RawJournalRecord | null {
 				}
 				text = `${typeof data.module === "string" && data.module ? `[${data.module}] ` : ""}${data.msg}${
 					data.meta !== null && typeof data.meta === "object"
-						? ` ${JSON.stringify(redactSensitiveKeys(data.meta))}`
+						? ` ${JSON.stringify(redactSensitiveKeys(replayedMeta(String(data.msg), data.meta)))}`
 						: ""
 				}`;
 				if (

@@ -46,7 +46,10 @@ invalid message bytes. Invalid UTF-8 in the JSON transport itself is an error.
 Read-side key redaction: records written before a key joined the logger's
 rules stay in the persistent journal for its retention, so `parseRecord`
 applies the logger's key rules again before clipping. A parsed backend record's
-metadata goes through `redactSensitiveKeys` (key rules only, no held-value
+metadata first gets the write-time rules an older build lacked (a `config
+loaded` record keeps only the allowlisted config fields; an RPC trace of a
+procedure whose arguments are never logged loses them), then goes through
+`redactSensitiveKeys` (key rules only, no held-value
 matchers, so a scan stays within its budget), and every message text,
 including split or unparseable records and other units' lines, goes through
 `redactKeyValueText`. That one reads `"key": value` pairs with the JSON escape

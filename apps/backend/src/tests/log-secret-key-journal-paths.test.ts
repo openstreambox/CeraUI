@@ -33,6 +33,8 @@ const sshPassHash = "$6$fixturesalt$fixturehashfixturehash";
 const staleRemoteKey = "stale-remote-key-93";
 const staleFrameKey = "stale-frame-remote-key-47";
 const staleSrtPass = "stale-srt-uri-pass-58";
+const staleAddonValue = "stale-addon-setting-72";
+const staleClaimCode = "stale-claim-code-83";
 const leaked = [
 	staleSshPass,
 	sshPassHash,
@@ -40,6 +42,8 @@ const leaked = [
 	currentSshPass,
 	staleFrameKey,
 	staleSrtPass,
+	staleAddonValue,
+	staleClaimCode,
 ];
 
 // The exact record shape a 5.1 to 6.2 build writes on every start.
@@ -53,6 +57,15 @@ const legacyConfigLoaded = JSON.stringify({
 		ssh_pass_hash: sshPassHash,
 		remote_key: staleRemoteKey,
 		max_br: 5000,
+		// An add-on setting whose name no key rule recognises.
+		addons: {
+			demo: {
+				enabled: true,
+				phase: "active",
+				autoDisabled: false,
+				userConfig: { enrolment: staleAddonValue },
+			},
+		},
 	},
 });
 // The same record as journald stores it once split at its line limit: the
@@ -79,6 +92,17 @@ const legacySrtUri = JSON.stringify({
 	level: "info",
 	msg: "sender target",
 	meta: { target: `srt://198.51.100.7:9000?passphrase=${staleSrtPass}` },
+});
+
+// An RPC trace an older build wrote: the claim code under the generic `code`.
+const legacyPairingTrace = JSON.stringify({
+	ts: "2026-11-27T00:00:03.000Z",
+	level: "debug",
+	msg: "RPC pairing.completePairing ok",
+	meta: {
+		procedure: "pairing.completePairing",
+		args: { code: staleClaimCode },
+	},
 });
 
 let fixture: ReturnType<typeof queryFixture>;
@@ -123,6 +147,7 @@ beforeEach(() => {
 			record(3, { MESSAGE: splitConfigLoaded }),
 			record(4, { MESSAGE: legacyFramePreview }),
 			record(5, { MESSAGE: legacySrtUri }),
+			record(6, { MESSAGE: legacyPairingTrace }),
 		]),
 	);
 });
@@ -153,7 +178,7 @@ test("the log view export carries no credential an older build logged", async ()
 	// The split record's cut-off value, too.
 	expect(text).not.toContain("stale-remote");
 	expect(text).toContain("config loaded");
-	expect(text).toEndWith("# complete: 5 entries\n");
+	expect(text).toEndWith("# complete: 6 entries\n");
 });
 
 test("the support bundle carries no credential an older build logged", async () => {
