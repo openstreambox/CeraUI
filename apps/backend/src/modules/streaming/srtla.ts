@@ -247,17 +247,20 @@ function isLocalBondCandidate(
 		parent = currentParent;
 	}
 	return (
-		!isUsbReplacementPending(owner) && !isHeldOutByModemBlock(owner, parent)
+		!isUsbReplacementPending(owner) &&
+		!isHeldOutByModemBlock(owner, parent) &&
+		isBondCandidate(name, int)
 	);
 }
 
 /**
- * The local-subnet variant, now equally interface-aware.
+ * The bonded links on a private receiver's subnet.
  *
- * It deliberately keeps its own membership rule — reaching a receiver on the
- * LAN is a routing question, not a bonding one, so it does not consult the
- * bond toggle — but it must still describe each link, or a same-subnet pair of
- * twins would collapse exactly as the bonded pair used to.
+ * A receiver on the LAN narrows the bond to the links that share its subnet;
+ * it never widens it. Every rule `isBondCandidate` applies (the user's bond
+ * toggle, hotspot and shared-LAN exclusions, pending identity) holds here too.
+ * It must still describe each link, or a same-subnet pair of twins would
+ * collapse exactly as the bonded pair used to.
  */
 export function genSrtlaBondEntriesForLocalIpAddress(
 	ipAddress: string,
@@ -266,6 +269,22 @@ export function genSrtlaBondEntriesForLocalIpAddress(
 		(name, int) => isLocalBondCandidate(name, int, ipAddress),
 		true,
 	);
+}
+
+/**
+ * Every addressed interface on the receiver's subnet, bonded or not. Only for
+ * saying which links could have reached a LAN receiver but are out of the bond.
+ */
+export function interfacesOnSubnet(ipAddress: string): string[] {
+	const networkInterfaces = getNetworkInterfaces();
+	return Object.keys(networkInterfaces).filter((name) => {
+		const int = networkInterfaces[name];
+		return (
+			int?.ip !== undefined &&
+			int.netmask !== undefined &&
+			isSameSubnet(ipAddress, int.ip, int.netmask)
+		);
+	});
 }
 
 export function genSrtlaIpList(): string[] {

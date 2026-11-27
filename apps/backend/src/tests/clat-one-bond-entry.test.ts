@@ -61,6 +61,7 @@ import {
 } from "../modules/streaming/bond-entry.ts";
 import {
 	genSrtlaBondEntries,
+	genSrtlaBondEntriesForLocalIpAddress,
 	resolveSrtla,
 	revalidateClatBondEntries,
 } from "../modules/streaming/srtla.ts";
@@ -310,8 +311,9 @@ test("the local sender keeps a translated subnet route through write-time revali
 	setup.bind_map_file = `${ips}.bindmap.json`;
 	resetBindMapWriter();
 	try {
-		setBondOptOut("wwan0", true);
-		expect(genSrtlaBondEntries()).toEqual([]);
+		expect(
+			genSrtlaBondEntriesForLocalIpAddress(receiver).map((e) => e.iface),
+		).toEqual(["clat2"]);
 		expect((await prepareSrtlaIpAddresses(receiver)).ok).toBe(true);
 		expect(readFileSync(ips, "utf8").trim()).toBe(receiver);
 
@@ -326,7 +328,6 @@ test("the local sender keeps a translated subnet route through write-time revali
 		).toBe(true);
 		expect(readFileSync(ips, "utf8")).toBe("");
 	} finally {
-		setBondOptOut("wwan0", false);
 		setConfigFilePath(configPath);
 		if (ipsPath === undefined) delete setup.ips_file;
 		else setup.ips_file = ipsPath;
@@ -334,6 +335,21 @@ test("the local sender keeps a translated subnet route through write-time revali
 		else setup.bind_map_file = bindMapPath;
 		read.mockRestore();
 		resetBindMapWriter();
+	}
+});
+
+test("a translated link follows its modem's bond toggle for a LAN receiver too", async () => {
+	await scanBox();
+	const receiver = "10.254.0.2";
+	setBondOptOut("wwan0", true);
+	try {
+		expect(genSrtlaBondEntries()).toEqual([]);
+		expect(genSrtlaBondEntriesForLocalIpAddress(receiver)).toEqual([]);
+		await expect(prepareSrtlaIpAddresses(receiver)).rejects.toThrow(
+			"no_available_network_connections",
+		);
+	} finally {
+		setBondOptOut("wwan0", false);
 	}
 });
 
