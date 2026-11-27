@@ -234,3 +234,66 @@ it.each([
 		expect(configure).toHaveBeenCalledTimes(1);
 	},
 );
+
+it.each([
+	["deactivating", { transition: "deactivating" }],
+	["leaving", { leaving: "hotspot" }],
+] as const)(
+	"keeps an editor that first mounts while the token is withheld (%s)",
+	async (_case, marker) => {
+		await push(liveRow("radio-A"));
+		view = render(WifiSection, { props: props(liveRow("radio-A")) });
+		const button = await screen.findByTestId("open-hotspot-setup");
+		// The click captures radio-A; the restart withholds the token before the
+		// lazy editor renders its first frame.
+		button.click();
+		wire.message("status", { wifi: { "0": withheld(marker) } });
+		const pending = view.rerender(props(withheld(marker)));
+		await pending;
+		await screen.findByTestId("hotspot-status");
+		await push(withheld(marker));
+		expect(screen.getByTestId("hotspot-status")).toBeTruthy();
+		await push(liveRow("radio-A"));
+		expect(screen.getByTestId("hotspot-status")).toBeTruthy();
+		expect(toast.warning).not.toHaveBeenCalled();
+	},
+);
+
+it("closes an editor that first mounts after its radio was replaced", async () => {
+	await push(liveRow("radio-A"));
+	view = render(WifiSection, { props: props(liveRow("radio-A")) });
+	const button = await screen.findByTestId("open-hotspot-setup");
+	button.click();
+	wire.message("status", {
+		wifi: { "0": withheld({ transition: "activating" }) },
+	});
+	await view.rerender(props(withheld({ transition: "activating" })));
+	await screen.findByTestId("hotspot-status");
+	await push(liveRow("radio-B"));
+	await closedWithNotice();
+});
+
+it("settles a detached Save after Setup is reopened on the replacement radio", async () => {
+	await push(liveRow("radio-A"));
+	await openEditor();
+	await fireEvent.click(screen.getByTestId("hotspot-save"));
+	await waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
+	const original = wifiHotspotConfigOpKey("0", "radio-A");
+	await push(liveRow("radio-B"));
+	await closedWithNotice();
+
+	await fireEvent.click(screen.getByTestId("open-hotspot-setup"));
+	await screen.findByTestId("hotspot-status");
+	expect(getOperationPhase(original)).toBe("pending");
+
+	wire.message("wifi", {
+		hotspot: { config: { device: 0, incarnation: "radio-A", success: true } },
+	});
+	await tick();
+	expect(getOperationPhase(original)).toBe("confirmed");
+	expect(getOperationPhase(wifiHotspotConfigOpKey("0", "radio-B"))).toBe(
+		"idle",
+	);
+	expect(screen.getByTestId("hotspot-status")).toBeTruthy();
+	expect(configure).toHaveBeenCalledTimes(1);
+});

@@ -614,5 +614,6 @@ $effect(() => {
 		bind:open={hotspotDialogOpen}
 		deviceId={hotspotDialogTarget.id}
 		iface={hotspotIface}
+		openedIncarnation={hotspotDialogTarget.incarnation}
 	/>
 {/if}
