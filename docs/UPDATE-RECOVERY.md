@@ -1898,12 +1898,18 @@ and it still refuses the stream while a unit under the name commits (the wire
 or the commit-stage probe). A refusal seen only after the probe's wait, or a
 phase the tick moved meanwhile, is decided on what is there then, and a launch
 that replaced the probed one is admitted afresh. The last refusal check and
-the stop run in one turn, with no wait between them. Nothing is stopped for a
-refused launch: whatever holds the name is not this install's. A second start
+the stop run in one turn, with no wait between them, so nothing is stopped for
+a refusal already recorded at that check: whatever holds the name is not this
+install's. A refusal the monitor records only after that check (its own
+continuation had not run yet) still meets the stop of the fixed name, as on the
+base. A second start
 while one waits for discovery is refused (`already_updating`) instead of being
 reported started, so a ticket always belongs to the launch that runs. Settling
 clears `pending-packages.json`, as a start refused up front does (if that
-fails, the retry clears it before it launches, or does not launch); taking the
+fails, a retry in the same process clears it before it launches, or does not
+launch; the mark does not survive a restart, so after one a retry from a wire
+other than the offer can still keep that record, the limitation under "Still
+open"); taking the
 refusal withdraws it from the wire if the wire shows it, so the offer is back
 and the retry saves the record from it, as a first launch does. If the wire
 shows something else then (a later failure of a Packages card start), the
