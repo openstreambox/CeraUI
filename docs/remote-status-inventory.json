@@ -199,124 +199,6 @@
       ]
     },
     {
-      "source": "apps/backend/src/modules/network/uplink-steering/status.ts",
-      "call": "broadcastMsg",
-      "message": "\"uplink-steering\"",
-      "fields": [
-        {
-          "path": "state",
-          "types": [
-            "\"available\"",
-            "\"steering_unavailable\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "reason",
-          "types": [
-            "\"bond_candidate_client_zone\"",
-            "\"mark_collision\"",
-            "\"overlapping_subnet\"",
-            "\"policy_route_missing\"",
-            "\"ruleset_publish_failed\"",
-            "\"ruleset_reload_failed\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "detail",
-          "types": [
-            "undefined",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        }
-      ]
-    },
-    {
-      "source": "apps/backend/src/modules/network/uplink-steering/runtime.ts",
-      "call": "broadcastMsg",
-      "message": "\"uplink-flows-reset\"",
-      "fields": [
-        {
-          "path": "iface",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "linkId",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        }
-      ]
-    },
-    {
-      "source": "apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts",
-      "call": "broadcastMsg",
-      "message": "\"wifi\"",
-      "fields": [
-        {
-          "path": "hotspot.*.attempt",
-          "types": [
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "hotspot.*.device",
-          "types": [
-            "string",
-            "number"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "hotspot.*.pending",
-          "types": [
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "hotspot.*.reason",
-          "types": [
-            "undefined",
-            "\"steering-readiness-timeout\"",
-            "string"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "hotspot.*.success",
-          "types": [
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        },
-        {
-          "path": "hotspot.*.error",
-          "types": [
-            "\"binding-required\"",
-            "\"radio-changed\"",
-            "\"radio-unverified\"",
-            "\"DEVICE_BUSY\"",
-            "\"no-device\"",
-            "\"unsupported\"",
-            "\"activation-failed\"",
-            "\"not-confirmed\"",
-            "\"deactivation-failed\""
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        }
-      ]
-    },
-    {
       "source": "apps/backend/src/modules/network/network-ingest.ts",
       "call": "broadcastMsg",
       "message": "\"status\"",
@@ -538,9 +420,9 @@
         {
           "path": "servers.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -575,9 +457,9 @@
         {
           "path": "accounts.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
@@ -7943,10 +7825,10 @@
           "path": "modems.*.radio_health.registration.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -7992,10 +7874,10 @@
           "path": "modems.*.radio_health.layer.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -8041,10 +7923,10 @@
           "path": "modems.*.radio_health.band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -8090,10 +7972,10 @@
           "path": "modems.*.radio_health.metrics.*.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -8146,10 +8028,10 @@
           "path": "modems.*.radio_health.neighbours[].band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -8322,10 +8204,10 @@
           "path": "modems.*.radio_health.timeline[].observation.band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -8371,10 +8253,10 @@
           "path": "modems.*.radio_health.timeline[].observation.rsrp.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -8420,10 +8302,10 @@
           "path": "modems.*.radio_health.timeline[].observation.quality.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -8483,10 +8365,10 @@
           "path": "modems.*.radio_health.timeline[].observation.neighbours[].band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -8678,8 +8560,8 @@
           "types": [
             "undefined",
             "\"unknown\"",
-            "\"available\"",
             "\"unavailable\"",
+            "\"available\"",
             "\"current\"",
             "\"forbidden\""
           ],
@@ -9020,10 +8902,10 @@
         {
           "path": "modems.*.signal_detail.quality_recent.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -9048,10 +8930,10 @@
         {
           "path": "modems.*.signal_detail.rsrp.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -9076,10 +8958,10 @@
         {
           "path": "modems.*.signal_detail.rsrq.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -9104,10 +8986,10 @@
         {
           "path": "modems.*.signal_detail.snr.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -9132,10 +9014,10 @@
         {
           "path": "modems.*.signal_detail.sinr.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -9160,10 +9042,10 @@
         {
           "path": "modems.*.registration_context.operator_name.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -9188,10 +9070,10 @@
         {
           "path": "modems.*.registration_context.operator_code.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -9216,10 +9098,10 @@
         {
           "path": "modems.*.registration_context.cell_id.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -9244,10 +9126,10 @@
         {
           "path": "modems.*.registration_context.tac.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -9434,9 +9316,9 @@
         {
           "path": "modems.*.router_admin.signal.bars.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -9460,9 +9342,9 @@
         {
           "path": "modems.*.router_admin.signal.max_bars.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -9486,9 +9368,9 @@
         {
           "path": "modems.*.router_admin.signal.dbm.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -9512,9 +9394,9 @@
         {
           "path": "modems.*.router_admin.signal.rsrp.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -9538,9 +9420,9 @@
         {
           "path": "modems.*.router_admin.signal.rsrq.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -9564,9 +9446,9 @@
         {
           "path": "modems.*.router_admin.signal.snr.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -9590,9 +9472,9 @@
         {
           "path": "modems.*.router_admin.signal.sinr.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -10154,10 +10036,10 @@
         {
           "path": "modems.*.five_g_preference.history[].outcome",
           "types": [
-            "\"not-confirmed\"",
             "\"would-try\"",
             "\"would-not-try\"",
-            "\"applied\""
+            "\"applied\"",
+            "\"not-confirmed\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
@@ -10424,10 +10306,10 @@
           "path": "modems.*.radio_health.registration.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -10473,10 +10355,10 @@
           "path": "modems.*.radio_health.layer.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -10522,10 +10404,10 @@
           "path": "modems.*.radio_health.band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -10571,10 +10453,10 @@
           "path": "modems.*.radio_health.metrics.*.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -10627,10 +10509,10 @@
           "path": "modems.*.radio_health.neighbours[].band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -10803,10 +10685,10 @@
           "path": "modems.*.radio_health.timeline[].observation.band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -10852,10 +10734,10 @@
           "path": "modems.*.radio_health.timeline[].observation.rsrp.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -10901,10 +10783,10 @@
           "path": "modems.*.radio_health.timeline[].observation.quality.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -10964,10 +10846,10 @@
           "path": "modems.*.radio_health.timeline[].observation.neighbours[].band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -11282,6 +11164,81 @@
           "path": ".*",
           "types": [
             "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
+      "source": "apps/backend/src/modules/system/sensors.ts",
+      "call": "broadcastMsg",
+      "message": "\"sensors\"",
+      "fields": [
+        {
+          "path": ".*",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
+      "source": "apps/backend/src/modules/system/tailscale.ts",
+      "call": "broadcastMsg",
+      "message": "\"status\"",
+      "fields": [
+        {
+          "path": "tailscale.state",
+          "types": [
+            "\"unknown\"",
+            "\"unavailable\"",
+            "\"connected\"",
+            "\"off\"",
+            "\"needs_key\"",
+            "\"needs_approval\"",
+            "\"joining\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.hostname",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.address",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.tailnet",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.keyExpiry",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.notice",
+          "types": [
+            "undefined",
+            "\"ssh_off_by_tailnet\"",
+            "\"updates_not_pinned\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
@@ -11946,8 +11903,8 @@
         {
           "path": "unclaimed_adapters[].kind",
           "types": [
-            "\"wifi\"",
             "\"bluetooth\"",
+            "\"wifi\"",
             "\"wireless\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -12038,6 +11995,14 @@
           "decision": "needed: typed diagnostic"
         },
         {
+          "path": "linkTelemetry.links[].carrying",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "linkTelemetry.links[].stale",
           "types": [
             "false",
@@ -12072,6 +12037,13 @@
             "number"
           ],
           "decision": "needed: typed scalar or closed enum"
+        },
+        {
+          "path": "linkTelemetry.not_carrying_ifaces[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
           "path": "linkTelemetry.lastReadMs",
@@ -12576,9 +12548,9 @@
         {
           "path": "update_orchestrator.phase",
           "types": [
-            "\"available\"",
             "\"idle\"",
             "\"checking\"",
+            "\"available\"",
             "\"downloading\"",
             "\"failed\"",
             "\"awaiting-idle\"",
@@ -12684,6 +12656,67 @@
           "types": [
             "false",
             "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.state",
+          "types": [
+            "\"unknown\"",
+            "\"unavailable\"",
+            "\"connected\"",
+            "\"off\"",
+            "\"needs_key\"",
+            "\"needs_approval\"",
+            "\"joining\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.hostname",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.address",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.tailnet",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.keyExpiry",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.notice",
+          "types": [
+            "undefined",
+            "\"ssh_off_by_tailnet\"",
+            "\"updates_not_pinned\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -13152,10 +13185,10 @@
           "path": "modems.*.radio_health.registration.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -13201,10 +13234,10 @@
           "path": "modems.*.radio_health.layer.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -13250,10 +13283,10 @@
           "path": "modems.*.radio_health.band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -13299,10 +13332,10 @@
           "path": "modems.*.radio_health.metrics.*.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -13355,10 +13388,10 @@
           "path": "modems.*.radio_health.neighbours[].band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -13531,10 +13564,10 @@
           "path": "modems.*.radio_health.timeline[].observation.band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -13580,10 +13613,10 @@
           "path": "modems.*.radio_health.timeline[].observation.rsrp.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -13629,10 +13662,10 @@
           "path": "modems.*.radio_health.timeline[].observation.quality.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -13692,10 +13725,10 @@
           "path": "modems.*.radio_health.timeline[].observation.neighbours[].band.reason",
           "types": [
             "undefined",
-            "\"unsupported\"",
             "\"not-reported\"",
             "\"not-observed\"",
             "\"stale\"",
+            "\"unsupported\"",
             "\"not-available\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -13887,8 +13920,8 @@
           "types": [
             "undefined",
             "\"unknown\"",
-            "\"available\"",
             "\"unavailable\"",
+            "\"available\"",
             "\"current\"",
             "\"forbidden\""
           ],
@@ -14229,10 +14262,10 @@
         {
           "path": "modems.*.signal_detail.quality_recent.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -14257,10 +14290,10 @@
         {
           "path": "modems.*.signal_detail.rsrp.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -14285,10 +14318,10 @@
         {
           "path": "modems.*.signal_detail.rsrq.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -14313,10 +14346,10 @@
         {
           "path": "modems.*.signal_detail.snr.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -14341,10 +14374,10 @@
         {
           "path": "modems.*.signal_detail.sinr.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -14369,10 +14402,10 @@
         {
           "path": "modems.*.registration_context.operator_name.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -14397,10 +14430,10 @@
         {
           "path": "modems.*.registration_context.operator_code.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -14425,10 +14458,10 @@
         {
           "path": "modems.*.registration_context.cell_id.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -14453,10 +14486,10 @@
         {
           "path": "modems.*.registration_context.tac.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
             "\"not-observed\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\"",
             "\"refused\""
@@ -14643,9 +14676,9 @@
         {
           "path": "modems.*.router_admin.signal.bars.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -14669,9 +14702,9 @@
         {
           "path": "modems.*.router_admin.signal.max_bars.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -14695,9 +14728,9 @@
         {
           "path": "modems.*.router_admin.signal.dbm.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -14721,9 +14754,9 @@
         {
           "path": "modems.*.router_admin.signal.rsrp.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -14747,9 +14780,9 @@
         {
           "path": "modems.*.router_admin.signal.rsrq.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -14773,9 +14806,9 @@
         {
           "path": "modems.*.router_admin.signal.snr.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -14799,9 +14832,9 @@
         {
           "path": "modems.*.router_admin.signal.sinr.reason",
           "types": [
-            "\"unsupported\"",
             "\"unreachable\"",
             "\"not-reported\"",
+            "\"unsupported\"",
             "\"malformed\"",
             "\"auth-expired\""
           ],
@@ -15363,10 +15396,10 @@
         {
           "path": "modems.*.five_g_preference.history[].outcome",
           "types": [
-            "\"not-confirmed\"",
             "\"would-try\"",
             "\"would-not-try\"",
-            "\"applied\""
+            "\"applied\"",
+            "\"not-confirmed\""
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
@@ -15838,8 +15871,8 @@
           "path": "stream_profile",
           "types": [
             "undefined",
-            "\"custom\"",
             "\"balanced\"",
+            "\"custom\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
@@ -16314,9 +16347,9 @@
           "path": "remote_provider",
           "types": [
             "undefined",
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -16462,9 +16495,9 @@
           "path": "addons.*.phase",
           "types": [
             "\"error\"",
-            "\"pending\"",
             "\"idle\"",
             "\"installing\"",
+            "\"pending\"",
             "\"active\"",
             "\"disabling\""
           ],
@@ -17305,9 +17338,9 @@
         {
           "path": "servers.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -17342,9 +17375,9 @@
         {
           "path": "accounts.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
@@ -21823,9 +21856,9 @@
         {
           "path": "update_orchestrator.phase",
           "types": [
-            "\"available\"",
             "\"idle\"",
             "\"checking\"",
+            "\"available\"",
             "\"downloading\"",
             "\"failed\"",
             "\"awaiting-idle\"",
@@ -21942,16 +21975,16 @@
           "path": "adapter_mode.error",
           "types": [
             "undefined",
+            "\"unsupported\"",
+            "\"not-confirmed\"",
             "\"binding-required\"",
             "\"radio-changed\"",
             "\"radio-unverified\"",
             "\"DEVICE_BUSY\"",
             "\"no-device\"",
-            "\"unsupported\"",
+            "\"capability-unproven\"",
             "\"activation-failed\"",
-            "\"not-confirmed\"",
-            "\"deactivation-failed\"",
-            "\"capability-unproven\""
+            "\"deactivation-failed\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -24022,59 +24055,120 @@
       ]
     },
     {
-      "source": "apps/backend/src/modules/modems/modem-network-scan.ts",
+      "source": "apps/backend/src/modules/network/uplink-steering/status.ts",
       "call": "broadcastMsg",
-      "message": "\"status\"",
+      "message": "\"uplink-steering\"",
       "fields": [
         {
-          "path": "modems.*.available_networks.*.name",
+          "path": "state",
+          "types": [
+            "\"available\"",
+            "\"steering_unavailable\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "reason",
+          "types": [
+            "\"bond_candidate_client_zone\"",
+            "\"mark_collision\"",
+            "\"overlapping_subnet\"",
+            "\"policy_route_missing\"",
+            "\"ruleset_publish_failed\"",
+            "\"ruleset_reload_failed\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "detail",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
+      "source": "apps/backend/src/modules/network/uplink-steering/runtime.ts",
+      "call": "broadcastMsg",
+      "message": "\"uplink-flows-reset\"",
+      "fields": [
+        {
+          "path": "iface",
           "types": [
             "string"
           ],
-          "decision": "not needed remotely: withhold local network identity, account or management detail"
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
-          "path": "modems.*.available_networks.*.availability",
+          "path": "linkId",
           "types": [
-            "undefined",
-            "\"unknown\"",
-            "\"available\"",
-            "\"unavailable\"",
-            "\"current\"",
-            "\"forbidden\""
+            "string"
           ],
-          "decision": "not needed remotely: withhold local network identity, account or management detail"
-        },
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
+      "source": "apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts",
+      "call": "broadcastMsg",
+      "message": "\"wifi\"",
+      "fields": [
         {
-          "path": "modems.*.network_scan",
+          "path": "hotspot.*.attempt",
           "types": [
-            "undefined"
+            "string"
           ],
-          "decision": "not needed remotely: withhold local network identity, account or management detail"
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
-          "path": "modems.*.network_scan.generation",
+          "path": "hotspot.*.device",
           "types": [
+            "string",
             "number"
           ],
-          "decision": "not needed remotely: withhold local network identity, account or management detail"
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
-          "path": "modems.*.network_scan.phase",
+          "path": "hotspot.*.pending",
           "types": [
-            "\"failed\"",
-            "\"scanning\"",
-            "\"completed\""
+            "false",
+            "true"
           ],
-          "decision": "not needed remotely: withhold local network identity, account or management detail"
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
-          "path": "modems.*.network_scan.failure",
+          "path": "hotspot.*.reason",
           "types": [
-            "\"failed\"",
-            "\"timed_out\""
+            "undefined",
+            "\"steering-readiness-timeout\"",
+            "string"
           ],
-          "decision": "not needed remotely: withhold local network identity, account or management detail"
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "hotspot.*.success",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "hotspot.*.error",
+          "types": [
+            "\"unsupported\"",
+            "\"not-confirmed\"",
+            "\"binding-required\"",
+            "\"radio-changed\"",
+            "\"radio-unverified\"",
+            "\"DEVICE_BUSY\"",
+            "\"no-device\"",
+            "\"activation-failed\"",
+            "\"deactivation-failed\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
       ]
     },
@@ -24329,8 +24423,8 @@
         {
           "path": "unclaimed_adapters[].kind",
           "types": [
-            "\"wifi\"",
             "\"bluetooth\"",
+            "\"wifi\"",
             "\"wireless\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -24766,6 +24860,63 @@
       ]
     },
     {
+      "source": "apps/backend/src/modules/modems/modem-network-scan.ts",
+      "call": "broadcastMsg",
+      "message": "\"status\"",
+      "fields": [
+        {
+          "path": "modems.*.available_networks.*.name",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": "modems.*.available_networks.*.availability",
+          "types": [
+            "undefined",
+            "\"unknown\"",
+            "\"unavailable\"",
+            "\"available\"",
+            "\"current\"",
+            "\"forbidden\""
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": "modems.*.network_scan",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": "modems.*.network_scan.generation",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": "modems.*.network_scan.phase",
+          "types": [
+            "\"failed\"",
+            "\"scanning\"",
+            "\"completed\""
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": "modems.*.network_scan.failure",
+          "types": [
+            "\"failed\"",
+            "\"timed_out\""
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        }
+      ]
+    },
+    {
       "source": "apps/backend/src/modules/streaming/link-telemetry.ts",
       "call": "broadcastMsg",
       "message": "\"status\"",
@@ -24932,6 +25083,14 @@
           "decision": "needed: typed diagnostic"
         },
         {
+          "path": "linkTelemetry.links[].carrying",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "linkTelemetry.links[].stale",
           "types": [
             "false",
@@ -24968,6 +25127,13 @@
           "decision": "needed: typed scalar or closed enum"
         },
         {
+          "path": "linkTelemetry.not_carrying_ifaces[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "linkTelemetry.lastReadMs",
           "types": [
             "number"
@@ -25000,8 +25166,8 @@
           "path": "[].kind",
           "types": [
             "\"cellular\"",
-            "\"wifi\"",
             "\"other\"",
+            "\"wifi\"",
             "\"ethernet\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -26029,8 +26195,8 @@
           "path": "stream_profile",
           "types": [
             "undefined",
-            "\"custom\"",
             "\"balanced\"",
+            "\"custom\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
@@ -26505,9 +26671,9 @@
           "path": "remote_provider",
           "types": [
             "undefined",
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -26653,9 +26819,9 @@
           "path": "addons.*.phase",
           "types": [
             "\"error\"",
-            "\"pending\"",
             "\"idle\"",
             "\"installing\"",
+            "\"pending\"",
             "\"active\"",
             "\"disabling\""
           ],
@@ -27099,9 +27265,9 @@
           "path": ".*.phase",
           "types": [
             "\"error\"",
-            "\"pending\"",
             "\"idle\"",
             "\"installing\"",
+            "\"pending\"",
             "\"active\"",
             "\"disabling\""
           ],
@@ -27427,9 +27593,9 @@
         {
           "path": "servers.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -27464,9 +27630,9 @@
         {
           "path": "accounts.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
@@ -27529,9 +27695,9 @@
         {
           "path": "servers.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -27566,9 +27732,9 @@
         {
           "path": "accounts.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
@@ -28382,9 +28548,9 @@
         {
           "path": "servers.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -28419,9 +28585,9 @@
         {
           "path": "accounts.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
@@ -28500,9 +28666,9 @@
         {
           "path": "servers.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -28537,9 +28703,9 @@
         {
           "path": "accounts.*.provider.kind",
           "types": [
-            "\"custom\"",
             "\"ceralive\"",
-            "\"belabox\""
+            "\"belabox\"",
+            "\"custom\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
@@ -28880,7 +29046,7 @@
   ],
   "dependencies": {
     "apps/backend/src/helpers/config-schemas.ts": "0b000a65929292aec789294fa84024c2c9e92db0c8ae842acaeef603cc906c0e",
-    "apps/backend/src/main.ts": "075de00aa9f83f7222b457f4b15d1706491952763874b8fc30c3787656921756",
+    "apps/backend/src/main.ts": "668d63bbbf4d7d6446ef8272b7c0bed8137f42148e0bc352141445ec0017f088",
     "apps/backend/src/mocks/mock-service.ts": "e7547acc0be1355d2310d9aa39457159a94093a48be13fcffad3239bfc36d19b",
     "apps/backend/src/mocks/providers/streaming.ts": "75b66fd2f9522b848218dba5f0338473434c0837c5878bab5d3747c12177c925",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -28892,8 +29058,8 @@
     "apps/backend/src/modules/modems/modem-wire-projection.ts": "b9bb66d675403b4e4f62c28e0664b0a77925cab78909c1547b6546a8a0b88c29",
     "apps/backend/src/modules/modems/modems-state.ts": "664049da3a73481068a483da604719cbea8abe290995f907a9e07eebc69cc3a5",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
-    "apps/backend/src/modules/network/network-ingest.ts": "29234fe5c8db5cce9344d24253b1938857f5dcf3bb2643dbe5fd468f66abc128",
-    "apps/backend/src/modules/network/network-interfaces.ts": "46092ceb58b85bc27dc9507ec2bda19375b6668514e8f50578c09874663e2a43",
+    "apps/backend/src/modules/network/network-ingest.ts": "fcb33cbff26195a53375f9ae12c5f85bbb76cc2bbb7d63d76a90cf2562eb8e77",
+    "apps/backend/src/modules/network/network-interfaces.ts": "77fc460a585e4cd017260d9113b3bde759fd65eb8c2db6ed60d236e2cb52e0b3",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "2221782a8312e2ffddc545a6f4434e62cf53d0f82948d49987a5a9263fe60d26",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "59e35c76047fe4bfa5484cbbeaae996507cc0f1f778641eb83dc6248f72b6395",
@@ -28901,27 +29067,27 @@
     "apps/backend/src/modules/network/uplink-shaper/status.ts": "f2ef210a8e62db8310afad2083ce02ba17e5a094e6e7081e2b94c396228bfd35",
     "apps/backend/src/modules/network/uplink-steering/runtime.ts": "fd1051a665a1972798e2377ba70f64b131c67b574add48b41f1e05d13ff17753",
     "apps/backend/src/modules/network/uplink-steering/status.ts": "9c305c576faa8d32bfab922275f0bd7e69a327575185c82abd9138139eab9f65",
-    "apps/backend/src/modules/remote/remote-relays.ts": "959575c9693682fc291db1f7f0382c448820a0c266b2d337cc0dbd38bed552bd",
-    "apps/backend/src/modules/remote/remote.ts": "ffb6cb76d4b544e3070dbf03fa2eab798dba140e5ecb06eeeda89bf9b09bff40",
+    "apps/backend/src/modules/remote/remote-relays.ts": "92bbef969cc15cd778c2a6cba6a86155fac3be84e417ae527f574dda7ea653ef",
+    "apps/backend/src/modules/remote/remote.ts": "1a45c95edea286d63d04559d5fe5033de6a1d6e4eb31c9fb03c653616f1e0e03",
     "apps/backend/src/modules/streaming/audio-meter-bridge.ts": "d416b84d6d8ee44273da7292aa96ee6f9d605b2fe16ef55e85db9de9bd38e621",
     "apps/backend/src/modules/streaming/audio.ts": "9afba6dca4f9a5e538d72df06f5c417e9e67b983355cd6cd29c8f9858f9286e5",
     "apps/backend/src/modules/streaming/auto-audio.ts": "187bb2e9df6f02a3b67b074749e71d21912b711326fc32bd564a67c69dda3bab",
-    "apps/backend/src/modules/streaming/capabilities.ts": "8a2617336bee51475bad735e899f67d6247eb2bc7629d5ef61727d5379866d81",
-    "apps/backend/src/modules/streaming/cerastream-backend.ts": "ef477cb42b5681cd9df17f7b9005d93dc8e0d6a9b00fb0beeb3d6893a915fa13",
-    "apps/backend/src/modules/streaming/config-change-bridge.ts": "6e102a747e481b4eca010c75ad295787afd6649289603febd6eef47b276fcaf5",
+    "apps/backend/src/modules/streaming/capabilities.ts": "4ef50d3ab986628b127be8bb2a548438e3f60dc6b76a580ef586d8b8455adc3e",
+    "apps/backend/src/modules/streaming/cerastream-backend.ts": "4edb363782c3325d8492284df357308f29e8965a15786c0bc2c461f76449a13a",
+    "apps/backend/src/modules/streaming/config-change-bridge.ts": "c69aa207a8a9f7c642a19e65a91f1422f9b4e078c6f3384a9de31bc8ad1b7468",
     "apps/backend/src/modules/streaming/connection-restarting.ts": "61efbdeb6bfa9a171a1225473cd0b0eaa43679033ffee7496fe8c47f4ca82c25",
     "apps/backend/src/modules/streaming/devices.ts": "7bf9595dc19aaebd65a43f789f74d245319e1af6c1efb8cf33d95ceb8fa790ce",
     "apps/backend/src/modules/streaming/engine-reconnect.ts": "8e7d9c8ab923af922f5caa0d474b0941ce860f96fe9acf8f72b7291039185fc2",
-    "apps/backend/src/modules/streaming/link-telemetry-rows.ts": "c5bed2c7e327a7b29116a156caf4519bce5ea0a73823434c67144bc182cd664d",
-    "apps/backend/src/modules/streaming/link-telemetry.ts": "5c951313eecd37e5e22b7e5f95d290d1315e4442f5d72f629cfe0b2f089bb620",
+    "apps/backend/src/modules/streaming/link-telemetry-rows.ts": "b310b30d70ac97aacc33674af41aefd25afd5ba9b8f3eca6f2957c440bc890a6",
+    "apps/backend/src/modules/streaming/link-telemetry.ts": "a818bb77f6bf80a5d1cc6820437b008bd33975d4c0f2c63dc89107608b35a55f",
     "apps/backend/src/modules/streaming/pipeline-sources.ts": "505bc662c4f18ee63770d0e6e327f69018590056bb06ebdcd19fae838535b1e2",
     "apps/backend/src/modules/streaming/pipelines.ts": "ae4583ee7b41116e4161e8ef447e5466ba0c024f8a8a2f74f1f843eb9897ef9e",
     "apps/backend/src/modules/streaming/sources.ts": "54aeb3f274c5cc323b2ad98db9e044892c88ccb688e6a9c8570d410828206c32",
     "apps/backend/src/modules/streaming/stream-lifecycle-status.ts": "33aa1a07d69097df21fb3288ef4af93078d71a44e85a7f22d1b79d928357aa80",
-    "apps/backend/src/modules/streaming/streaming.ts": "481e5a072bc71a9a39eec1aeb52fa4590133623b1e2772f7c880184b1b8bef5f",
+    "apps/backend/src/modules/streaming/streaming.ts": "23c15756441476805f27bd156c71445554ef038417d0c869405e2888c4290147",
     "apps/backend/src/modules/system/apt-progress.ts": "d7813bc7d07cef5c4e0c0c8199272a5e3ebe0d7c8f6a8c197c30a50b30dc7a8a",
-    "apps/backend/src/modules/system/carrying-runtime.ts": "3838afd09f85ab992772ae14c46b0de3b54262467153b70f53f62ad37e4a0090",
-    "apps/backend/src/modules/system/carrying.ts": "9d67bcedfe40111e4012dab997c0ae007a94d594d19154b43c68af4c3fc3e3fa",
+    "apps/backend/src/modules/system/carrying-runtime.ts": "3e885cf7736e3ec69a6f1aea2fc7310288567417209cae2f00747975e8a5c1a1",
+    "apps/backend/src/modules/system/carrying.ts": "2ebddf550a97b1d7a2978afe98cca50423daf8e779b30dc1112c99e05adb539c",
     "apps/backend/src/modules/system/collectors/cpufreq.ts": "9d47ec1f943ad148334baa4629d58f5ab140337071e5eba1c584f738e0d5f5a8",
     "apps/backend/src/modules/system/collectors/ddr.ts": "04b912ca2207f7921fb597005a83de98cdc78c724b542b97d5f28ca2b8d09a15",
     "apps/backend/src/modules/system/collectors/gpu.ts": "376b311b6431f74018414c9733bbb6924acd328a7ff1b7be556fc95c915f3b21",
@@ -28929,16 +29095,17 @@
     "apps/backend/src/modules/system/cpu.ts": "0ff71159eeabb9d0b05ba6b5078d3ea2a7416810ae583d1e4b82768c2265a5c9",
     "apps/backend/src/modules/system/device-stats.ts": "50549f8192a08c1cfb2cd1344744fb6a9a2cba8366fc09073bcc3df945e92c0e",
     "apps/backend/src/modules/system/encoder-load.ts": "edc310e16747a331b232b09d0b7d3ee7fc811621241840268a85ebda2b9729db",
-    "apps/backend/src/modules/system/fan.ts": "e73086dbfd02c219c8c6d644687f1e10fcee62e4bb21d2e9a527a4d5a64180f3",
+    "apps/backend/src/modules/system/fan.ts": "cfdd9d1bc579dc0f8e11fcf7bfa184f1f7b557392f720c3326ee561f532d5c51",
     "apps/backend/src/modules/system/kiosk.ts": "921df84e43d6960e9a1ab0bfd8768a7a85a7fe682fccc185bd8585f88823e96a",
     "apps/backend/src/modules/system/logs.ts": "8005a72398610c33562bd5b1d681c5656a14479b0c0e71ad3fe8f74433048109",
     "apps/backend/src/modules/system/readiness.ts": "6c2725aae677f8a4a22d0dcce028b4e0d42a83916d3b4f7ba6b94e67cfe03e22",
-    "apps/backend/src/modules/system/sensors.ts": "e6fdcc8d57f4decc10b3247fdcd2cbc11e9fb23a489bbe546e3ee3e7a3f1adc7",
+    "apps/backend/src/modules/system/sensors.ts": "a8b7c1792525f429bd06018831c18832fa56f588fdf8f8345b265768375f4e4c",
     "apps/backend/src/modules/system/software-updates.ts": "f03de94da07813adb2bb0f63a50b28098a7691ebcd0af2e7a0543a60b35ec88d",
     "apps/backend/src/modules/system/ssh.ts": "0d61d24518011133de8a4bb8ebab7d8fd268ed799b0657049f160f86ac74e46e",
+    "apps/backend/src/modules/system/tailscale.ts": "b2731b7eed6258db2efef8de0187b03dbf66cdeed37cee035f4c5788dc7f2fdf",
     "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "20df5ec7d7d25f057c79f094c25dfced7f35be4ca224605345030dc21a0ec934",
     "apps/backend/src/modules/ui/notifications.ts": "0b5c970aeb198d2e90b8fde2f0f1ab11121218dba159447757efd7c03b91dfb5",
-    "apps/backend/src/modules/ui/status.ts": "f023fbded26004821b4cc72928f4d471bb5378c75746d46a61268d3ef9931ec5",
+    "apps/backend/src/modules/ui/status.ts": "f01abfa0b80c990ba846502bfa6096e9bebb5c486b36954d8f6fa9ea6bce6935",
     "apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "e2c3ce9b12f5eba0d9a91779327bb0990eb240656dcf5aa8d6b160e974700cac",
     "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "81ce3006cdb0437edcc66c87134703c36fb2642eac2b5a862396c9ef546972d4",
     "apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts": "8e599c2a0b7b2fc1772892d89ef51346eb88b77371bf458074b8f1da6f96aea7",
@@ -28948,9 +29115,9 @@
     "apps/backend/src/rpc/compat.ts": "72b36615b97ab0a66ff668280a088fcef088de4dbf9c4546bd8694bf0373969c",
     "apps/backend/src/rpc/config-broadcast.ts": "8fac59e6becfa70e2c55ad6623b1f19182801f041c05722cf6f2c14dcc9b44bc",
     "apps/backend/src/rpc/procedures/captive-portal.procedure.ts": "79c1fabf54a4b83f35b35519716e920d18bdb57113cb28f7ded6e6fa406d8656",
-    "apps/backend/src/rpc/procedures/network.procedure.ts": "64c7b15f4efe979e31f7fc7d2c4e4ed05e72580cf431f6dacc27ebbf48777bf3",
-    "apps/backend/src/rpc/procedures/streaming.procedure.ts": "8fc36a89833fbbe740c73ecc37e2a5bca77cc1ed94f4dd6f2815dff7e8e1b58b",
-    "bun.lock": "e4b62215f7177c79acfb7891bf25c98b43ea58d8979dbbabf15118c5eb8c7600",
+    "apps/backend/src/rpc/procedures/network.procedure.ts": "a44dfdcbe37ac32f9c65392671072332b072e50b841344e13dc467954d207640",
+    "apps/backend/src/rpc/procedures/streaming.procedure.ts": "1beba963d32f3c469cd83b992e646069defb81ae9edab4efd736028a52c3e593",
+    "bun.lock": "311175002287ebf799cc23dabe3e294949bc3e12c86b409a1436c747f87a7fd2",
     "packages/rpc/src/schemas/addons.schema.ts": "4d03862d5f9a8a2353a37ece742a96213d926e0e7ddc735b98329959dbb22ae6",
     "packages/rpc/src/schemas/audio-level.schema.ts": "eb4bd01a1d605776e8f11eab8c8acb5f8333c6868e0bbab5802a4118f507a225",
     "packages/rpc/src/schemas/bluetooth.schema.ts": "92d0d2837dd66aeed312188efff6bc8ff31d0a9f88559d422c3d7aaaef21215d",
@@ -28960,15 +29127,15 @@
     "packages/rpc/src/schemas/logs.schema.ts": "d56584362e084a92eeb4c5d91d753a317b9f29140b4909ebc3f714e05a723038",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
     "packages/rpc/src/schemas/modems.schema.ts": "c5d1897ac132d539b8e6ed1bff5a9c17946083cbe34ae5e91097d6500e3b6245",
-    "packages/rpc/src/schemas/network.schema.ts": "3038e31d908d42c65b1dfb4d936040edfe08f72e1ba8ddbe5862aef44622fb38",
+    "packages/rpc/src/schemas/network.schema.ts": "fd3ccb0b89bd33488e52125e541f4a68ad9a6d9eaa2119769972d58bf961220e",
     "packages/rpc/src/schemas/notifications.schema.ts": "6c13851bf6dbb6cdece71effbd24c48e4e5ee12fe45125eedb9aad8b135126fd",
     "packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",
     "packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",
     "packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
-    "packages/rpc/src/schemas/status.schema.ts": "cda1d52e87f81e117c5ef7c9233c245d74c7c642f776ad2da760b73e551218c2",
+    "packages/rpc/src/schemas/status.schema.ts": "999e1d46134048750d47cdeae84589bde23a3c1d56bbc5cf9e8b176bb8a74ba7",
     "packages/rpc/src/schemas/streaming.schema.ts": "7efcdedaddbc65598d39f1b58b221158c6223d5898295c07748f762fe95791c1",
-    "packages/rpc/src/schemas/system.schema.ts": "3620e50eeed3ca1314a74e743dcfc4516380f664c31d07db0579c1019da7e939",
+    "packages/rpc/src/schemas/system.schema.ts": "be2db8dd7bbfcc4e6cba2812d4ad49f3d74d75d96216eec59532eb136f1ec009",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "ac5e6859c7723d4381f1502246d9778262c663d80d06b5b2eb5aaf1796da5613",
     "packages/rpc/src/schemas/wifi.schema.ts": "c2c949e08227d7be2ee3ce9b6bd2db9006df222c2934336ac32c6cf7bb89a8ff"
   }
