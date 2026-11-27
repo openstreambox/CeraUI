@@ -7,7 +7,7 @@ import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { bindQuery, encodePosition } from "./continuation.ts";
 import { compileFilter } from "./filter.ts";
 import { scanMockJournal } from "./mock-journal.ts";
-import { type RawJournalRecord, toLogEntry } from "./parse.ts";
+import { type RawJournalRecord, toViewerEntry } from "./parse.ts";
 import { scanJournal } from "./reader.ts";
 import { realtimeSeekOptions, scanPage } from "./scan-page.ts";
 
@@ -76,6 +76,7 @@ export async function locatePagesAround(
 		...scope,
 		bootId: input.bootId,
 		acceptConcurrentCleanExit: true as const,
+		project: toViewerEntry,
 	};
 	// Internal anchor tokens use exactly the same binding as ordinary continuation.
 	const positionAt = (query: typeof olderQuery, cursor: string) =>
@@ -124,7 +125,7 @@ export async function locatePagesAround(
 	if (!newer.ok) return newer;
 	return {
 		ok: true,
-		anchor: anchor ? toLogEntry(anchor) : null,
+		anchor: anchor ? toViewerEntry(anchor) : null,
 		approximate: anchor === null,
 		older,
 		newer,

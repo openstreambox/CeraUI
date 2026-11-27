@@ -42,6 +42,26 @@ Missing priority defaults to info. Missing message remains empty with an
 explicit truncation flag; oversized messages retain their first 16 KiB.
 Journal byte arrays decode as UTF-8, retaining replacement characters for
 invalid message bytes. Invalid UTF-8 in the JSON transport itself is an error.
+
+Read-side key redaction: records written before a key joined the logger's
+rules stay in the persistent journal for its retention, so `parseRecord`
+applies the logger's key rules again before clipping. A parsed backend record's
+metadata first gets the write-time rules an older build lacked (a `config
+loaded` record keeps only the allowlisted config fields; an RPC trace of a
+procedure whose arguments are never logged loses them), then goes through
+`redactSensitiveKeys` (key rules only, no held-value matchers, so a scan stays
+within its budget). Every message text, split or unparseable records and other
+units' lines included, goes through `redactJsonKeyValueText`: the shared lexer
+in `helpers/secret-text-lexer.ts`, reading JSON fields only. It decodes each
+string with its own escapes, recursively, and masks a sensitive key's string or
+number value, to the end of the text when the value is cut off. URI and prose
+`key=` assignments are left to the next stage, so the export's and the
+bundle's typed held-secret markers aren't pre-empted. The viewer (query,
+around, follow) projects with `toViewerEntry`, which adds the logger's typed
+SRT passphrase and stream-id scrubbers and the full text rule, assignments
+included, once per record. Not covered: a split piece that starts inside a
+value, and an object or array under a sensitive key in unparsed text. Both are
+rare at journald's 48 KiB line limit.
 Classifier fields `messageId`, `unitField` and `pid` stay internal;
 `toLogEntry` removes them at the wire boundary.
 

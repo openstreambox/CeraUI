@@ -2,6 +2,7 @@
 import { Writable } from "node:stream";
 import winston from "winston";
 import { isDevelopment } from "../mocks/mock-config.ts";
+import { maskSecretValues, type SecretTextRules } from "./secret-text-lexer.ts";
 import { redactSrtPassphrases } from "./srt-secret-redaction.ts";
 import { isStreamIdKey, redactStreamIdText } from "./stream-id-secret.ts";
 
@@ -218,6 +219,165 @@ export function isCredentialSensitiveKey(key: string): boolean {
 }
 
 /**
+ * Credential words matched as WHOLE tokens of a key, after splitting on
+ * separators (`_`, `-`, `.`, spaces) and camelCase boundaries.
+ *
+ * {@link SENSITIVE_KEY_RE} is a SUBSTRING match, so it can only hold words that
+ * never occur inside innocent keys. `pass` and `key` are the opposite: as
+ * substrings they would blank `passthrough`, `bypass` and every `keyframe`, so
+ * they were left out, and with them `ssh_pass`, `ssh_pass_hash` and
+ * `remote_key`, which the boot-time `config loaded` record then carried in
+ * clear text into the journal. Matching tokens closes that without the
+ * over-redaction: `ssh_pass` and `sshPass` split to `ssh` + `pass`, while
+ * `video_passthrough` and `bypass` keep their single, different token.
+ */
+const SECRET_KEY_TOKENS: ReadonlySet<string> = new Set<string>([
+	"pass",
+	"passwd",
+	"pwd",
+	"psk",
+	"passcode",
+	"passkey",
+	"apikey",
+	"authkey",
+	"privkey",
+	"privatekey",
+	"cookie",
+	"sshpass",
+	"puk",
+]);
+
+/**
+ * A `key` token is a credential only when the token before it says which
+ * kind: `remote_key`, `api_key`, `stream_key`, `pre_shared_key`. A bare `key`,
+ * and identifiers such as `stableKey` or `sortKey`, stay readable.
+ */
+const SECRET_KEY_QUALIFIERS: ReadonlySet<string> = new Set<string>([
+	"access",
+	"api",
+	"auth",
+	"bcrp",
+	"control",
+	"encryption",
+	"enrol",
+	"enroll",
+	"ingest",
+	"pairing",
+	"pre",
+	"preshared",
+	"private",
+	"priv",
+	"relay",
+	"remote",
+	"secret",
+	"session",
+	"shared",
+	"signing",
+	"ssh",
+	"stream",
+	"tailscale",
+	"wifi",
+	"wpa",
+]);
+
+function keyTokens(key: string): string[] {
+	return key
+		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+		.replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+		.toLowerCase()
+		.split(/[^a-z0-9]+/)
+		.filter(Boolean);
+}
+
+/** Whole-token credential test; see {@link SECRET_KEY_TOKENS}. */
+export function isSecretTokenKey(key: string): boolean {
+	const tokens = keyTokens(key);
+	return tokens.some(
+		(token, index) =>
+			// `passThrough` / `pass-through` is a mode, not a credential.
+			(SECRET_KEY_TOKENS.has(token) &&
+				!(token === "pass" && tokens[index + 1] === "through")) ||
+			((token === "key" || token === "keys") &&
+				index > 0 &&
+				SECRET_KEY_QUALIFIERS.has(tokens[index - 1] ?? "")),
+	);
+}
+
+/**
+ * Every key-side rule in one place, so the plain-object walk, the Error
+ * projection and the top-level record format can't drift apart.
+ */
+export function isSensitiveKey(key: string): boolean {
+	return (
+		isStreamIdKey(key) ||
+		SENSITIVE_KEY_RE.test(key) ||
+		isSecretTokenKey(key) ||
+		isSmsSensitiveKey(key) ||
+		isGpsSensitiveKey(key) ||
+		isUssdSensitiveKey(key) ||
+		isOwnNumberSensitiveKey(key) ||
+		isCredentialSensitiveKey(key)
+	);
+}
+
+/**
+ * SRT passphrase fields are left to their own typed masking (`redactSrtPassphrases`
+ * at write time and in the viewer, the named-passphrase rules of the export and
+ * the bundle), which keeps the `[REDACTED:srt_passphrase]` markers and the
+ * bundle's counts.
+ */
+const TEXT_RULES: SecretTextRules = {
+	isSecretKey: (key) => isSensitiveKey(key) && !/passphrase/i.test(key),
+	marker: () => REDACTED,
+};
+
+/**
+ * The key rules applied to JSON and assignments that are already TEXT: a
+ * template message that interpolated `JSON.stringify(...)`, a `key=value`
+ * phrase, or a journal record that journald split or that no longer parses.
+ * Read with the shared lexer (`secret-text-lexer.ts`), so escapes, nested
+ * strings, URI queries and cut-off values follow the same rules everywhere.
+ */
+export function redactKeyValueText(text: string): string {
+	return maskSecretValues(text, TEXT_RULES);
+}
+
+const JSON_TEXT_RULES: SecretTextRules = { ...TEXT_RULES, assignments: false };
+
+/**
+ * {@link redactKeyValueText} for JSON fields only. The journal read side uses
+ * it on every record: the export and the bundle mask `key=` assignments of
+ * held secrets themselves with typed markers, which a generic marker written
+ * first would pre-empt.
+ */
+export function redactJsonKeyValueText(text: string): string {
+	return maskSecretValues(text, JSON_TEXT_RULES);
+}
+
+const KEY_WALK_MAX_DEPTH = 16;
+
+/**
+ * The key rules alone, for records read back from the journal: masks values
+ * under sensitive keys (and sensitive pairs inside string leaves) without the
+ * write-time value matchers, which rebuild their held-secret variants per
+ * string and cost too much across a journal scan. Deeper than
+ * {@link KEY_WALK_MAX_DEPTH} levels is masked whole.
+ */
+export function redactSensitiveKeys(value: unknown, depth = 0): unknown {
+	if (typeof value === "string") return redactJsonKeyValueText(value);
+	if (value === null || typeof value !== "object") return value;
+	if (depth >= KEY_WALK_MAX_DEPTH) return REDACTED;
+	if (Array.isArray(value))
+		return value.map((item) => redactSensitiveKeys(item, depth + 1));
+	const out: Record<string, unknown> = {};
+	for (const [key, inner] of Object.entries(value))
+		out[key] = isSensitiveKey(key)
+			? REDACTED
+			: redactSensitiveKeys(inner, depth + 1);
+	return out;
+}
+
+/**
  * Backstop for the VALUE side: a raw `mmcli -K -s <path>` record pasted into a
  * free-text log line carries the body and the originator on its face. The
  * backend's SMS module is content-free by construction, so this should never
@@ -299,18 +459,14 @@ function redactValue(value: unknown): unknown {
 			name === value.name &&
 			message === value.message &&
 			stack === value.stack &&
-			!Object.keys(value).some(
-				(key) => isStreamIdKey(key) || SENSITIVE_KEY_RE.test(key),
-			)
+			!Object.keys(value).some(isSensitiveKey)
 		)
 			return value;
 		return {
 			...Object.fromEntries(
 				Object.entries(value).map(([key, inner]) => [
 					key,
-					isStreamIdKey(key) || SENSITIVE_KEY_RE.test(key)
-						? REDACTED
-						: redactValue(inner),
+					isSensitiveKey(key) ? REDACTED : redactValue(inner),
 				]),
 			),
 			name,
@@ -321,7 +477,7 @@ function redactValue(value: unknown): unknown {
 	if (typeof value === "string") {
 		return looksSecret(value)
 			? REDACTED
-			: redactStreamIdText(redactSrtPassphrases(value));
+			: redactKeyValueText(redactStreamIdText(redactSrtPassphrases(value)));
 	}
 	if (Array.isArray(value)) {
 		return value.map(redactValue);
@@ -329,16 +485,7 @@ function redactValue(value: unknown): unknown {
 	if (isRedactablePlainObject(value)) {
 		const out: Record<string, unknown> = {};
 		for (const [key, inner] of Object.entries(value)) {
-			out[key] =
-				isStreamIdKey(key) ||
-				SENSITIVE_KEY_RE.test(key) ||
-				isSmsSensitiveKey(key) ||
-				isGpsSensitiveKey(key) ||
-				isUssdSensitiveKey(key) ||
-				isOwnNumberSensitiveKey(key) ||
-				isCredentialSensitiveKey(key)
-					? REDACTED
-					: redactValue(inner);
+			out[key] = isSensitiveKey(key) ? REDACTED : redactValue(inner);
 		}
 		return out;
 	}
@@ -361,16 +508,7 @@ export function logRedact(value: unknown): unknown {
  */
 export const redact = winston.format((info) => {
 	for (const key of Object.keys(info)) {
-		info[key] =
-			isStreamIdKey(key) ||
-			SENSITIVE_KEY_RE.test(key) ||
-			isSmsSensitiveKey(key) ||
-			isGpsSensitiveKey(key) ||
-			isUssdSensitiveKey(key) ||
-			isOwnNumberSensitiveKey(key) ||
-			isCredentialSensitiveKey(key)
-				? REDACTED
-				: redactValue(info[key]);
+		info[key] = isSensitiveKey(key) ? REDACTED : redactValue(info[key]);
 	}
 	return info;
 });

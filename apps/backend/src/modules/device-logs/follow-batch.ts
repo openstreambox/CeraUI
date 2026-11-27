@@ -1,5 +1,5 @@
 import type { LogFollowMessage } from "@ceraui/rpc/schemas";
-import { type RawJournalRecord, toLogEntry } from "./parse.ts";
+import { type RawJournalRecord, toViewerEntry } from "./parse.ts";
 
 export type FollowBatch = Pick<
 	LogFollowMessage,
@@ -18,7 +18,7 @@ export function appendFollowRecord(
 ): FollowBatch {
 	const next = { ...batch, checkpointCursor: record.cursor };
 	if (!keep) return next;
-	const entry = toLogEntry(record);
+	const entry = toViewerEntry(record);
 	const bytes = new TextEncoder().encode(JSON.stringify(entry)).byteLength;
 	if (batch.entries.length >= 200 || batch.bytes + bytes > 256 * 1024)
 		return { ...next, dropped: batch.dropped + 1 };

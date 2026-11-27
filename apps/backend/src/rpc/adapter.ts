@@ -13,7 +13,7 @@ import {
 } from "@orpc/server";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 
-import { logger, logRedact } from "../helpers/logger.ts";
+import { logger, logRedact, REDACTED } from "../helpers/logger.ts";
 import { isRuntimeConfigAvailable } from "../modules/config.ts";
 import { stopFollow } from "../modules/device-logs/follow.ts";
 import { replayAuthenticatedUsbDevices } from "../modules/devices/usb-devices-wire.ts";
@@ -63,6 +63,22 @@ import type {
 
 /** Cap on the redacted frame preview so a stray giant payload never bloats a log. */
 const FRAME_PREVIEW_MAX_CHARS = 100;
+
+/**
+ * A clipped, redacted preview of a frame. A preview whose raw text already
+ * looks like a credential is masked whole; otherwise the frame is redacted as a
+ * structure before it is clipped, because once clipped it is only text and a
+ * cut can fall inside a credential.
+ */
+function framePreview(parsed: unknown): unknown {
+	const raw = logRedact(
+		JSON.stringify(parsed).slice(0, FRAME_PREVIEW_MAX_CHARS),
+	);
+	if (raw === REDACTED) return REDACTED;
+	return logRedact(
+		JSON.stringify(logRedact(parsed)).slice(0, FRAME_PREVIEW_MAX_CHARS),
+	);
+}
 
 /**
  * ORPC message format
@@ -123,9 +139,7 @@ export function parseMessage(
 			bytes: data.length,
 			keys: Object.keys(parsed),
 			hasId: "id" in parsed,
-			preview: logRedact(
-				JSON.stringify(parsed).slice(0, FRAME_PREVIEW_MAX_CHARS),
-			),
+			preview: framePreview(parsed),
 		});
 		return null;
 	} catch (error) {

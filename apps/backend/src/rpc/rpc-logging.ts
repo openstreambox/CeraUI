@@ -27,7 +27,12 @@ import type { RPCContext } from "./types.ts";
  * Procedure-path namespaces whose ARGS must never be logged. The whole `auth.*`
  * surface (login/setPassword/logout) carries raw credentials in its input.
  */
-const SENSITIVE_NAMESPACES: ReadonlySet<string> = new Set(["auth", "moblink"]);
+const SENSITIVE_NAMESPACES: ReadonlySet<string> = new Set([
+	"auth",
+	"moblink",
+	// The claim code completes a pairing: a credential under the generic key `code`.
+	"pairing",
+]);
 
 /**
  * Individual procedures whose ARGS must never be logged, outside a namespace
@@ -45,6 +50,11 @@ const SENSITIVE_PROCEDURES: ReadonlySet<string> = new Set([
 	"modems.setCredentials",
 	"modems.clearCredentials",
 	"modems.verifyCredentials",
+	// A PUK and the new PIN that goes with it.
+	"modems.unlockSimPuk",
+	// Free-form add-on settings: nothing says which of them are secrets.
+	"addons.install",
+	"addons.configure",
 ]);
 
 /** Length of the per-call correlation id (first hex chars of a UUIDv4). */
