@@ -39,7 +39,8 @@ export function rememberConfigSent(config: object): void {
 }
 
 // The one raw `config` send; the cloud relay projects `relay` by its allowlist.
-function sendConfig(frame: object, relay: RuntimeConfig): void {
+// Typed as the runtime config so the remote-status inventory sees its fields.
+function sendConfig(frame: RuntimeConfig, relay: RuntimeConfig): void {
 	broadcastMsg("config", frame, 0, true, relay);
 }
 
@@ -70,7 +71,8 @@ export function broadcastConfigFields(
 	frame.relay_streamid_override_configured = Boolean(
 		config.relay_streamid_override,
 	);
-	sendConfig(frame, config);
+	// The flags are wire-only, outside the stored schema.
+	sendConfig(frame as RuntimeConfig, config);
 	rememberConfigSent(frame);
 }
 
