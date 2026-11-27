@@ -211,6 +211,10 @@ async function streamThenCheckNow(
 	});
 	if (check) expect(probed).toBe(true);
 	box.counts.parkChecks = false;
+	// Nothing is parked any more, but the waiting check may still be reading
+	// its store from disk, which no wait stands for: it ends before its image
+	// check is counted.
+	if (check) await check;
 	await checkNowFindsTheOffer(box, check);
 	if (check) expect(box.counts.osChecks).toBe(os + 1);
 	// The ended install submitted nothing, and its end was said once. (A

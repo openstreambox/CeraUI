@@ -253,7 +253,11 @@ describe("the scheduled retry and an install that still drains", () => {
 				.finally(() => {
 					returned = true;
 				});
-			await settleEventLoop(10);
+			// Nothing releases the install's refresh meanwhile, so a tick that
+			// waited for the drain would never return. Its own store is on disk:
+			// it is given time, not a number of turns.
+			for (const until = Date.now() + 5_000; !returned && Date.now() < until; )
+				await settleEventLoop(1);
 			// It did not wait for the drain: it deferred the package check and
 			// ran the image check.
 			expect(returned).toBe(true);
