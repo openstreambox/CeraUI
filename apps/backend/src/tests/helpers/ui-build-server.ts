@@ -40,6 +40,7 @@ Object.assign(process.env, {
 	MOCK_SCENARIO: "caps-full",
 	CERALIVE_DEVICE_TYPE: "emulated",
 	CERALIVE_EVENTS_DIR: resolve("events"),
+	CERALIVE_DATA_DIR: resolve("data"),
 	CERALIVE_STREAMING_MARKER: resolve("streaming"),
 	NOTIFY_SOCKET: "",
 	PORT: "0",
