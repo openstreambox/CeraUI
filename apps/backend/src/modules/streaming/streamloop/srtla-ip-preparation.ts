@@ -71,6 +71,14 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
   link on its subnet that is out of the bond. Only an empty bond refuses a
   launch.
 */
+/** Mask the MAC an `enx`/`wlx` name carries, keeping the vendor half. */
+export function maskMacDerivedIfname(name: string): string {
+	return name.replace(
+		/^(enx|wlx)([0-9a-f]{6})[0-9a-f]{6}$/i,
+		(_match, prefix: string, vendor: string) => `${prefix}${vendor}******`,
+	);
+}
+
 function selectReceiverLinks(
 	srtlaAddr: string,
 	deps: SrtlaIpPreparationDeps,
@@ -82,9 +90,9 @@ function selectReceiverLinks(
 	if (onSubnet.length > 0)
 		return { entries: onSubnet, localReceiver: srtlaAddr };
 	if (purpose === "launch" && bonded.length > 0) {
-		const outside = (deps.onSubnet?.(srtlaAddr) ?? []).filter(
-			(name) => !bonded.some((entry) => entry.iface === name),
-		);
+		const outside = (deps.onSubnet?.(srtlaAddr) ?? [])
+			.filter((name) => !bonded.some((entry) => entry.iface === name))
+			.map(maskMacDerivedIfname);
 		deps.warn?.(
 			`Receiver ${srtlaAddr} is a private address and no bonded link is on its subnet` +
 				(outside.length > 0

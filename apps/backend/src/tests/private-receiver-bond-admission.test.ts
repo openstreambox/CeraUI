@@ -31,8 +31,10 @@ import {
 	genSrtlaBondEntries,
 	genSrtlaBondEntriesForLocalIpAddress,
 	interfacesOnSubnet,
+	resolveSrtla,
 } from "../modules/streaming/srtla.ts";
 import {
+	maskMacDerivedIfname,
 	prepareSrtlaIpAddresses,
 	type SrtlaIpPreparationDeps,
 } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
@@ -117,7 +119,9 @@ beforeEach(() => {
 	resetBondFixture();
 	getConfig().bond_opt_out = {};
 });
-afterEach(() => {
+afterEach(async () => {
+	// Back to an IPv4 receiver for the next file in this process.
+	await resolveSrtla("192.0.2.2");
 	resetBondFixture();
 	getConfig().bond_opt_out = {};
 	setConfigFilePath(savedConfigPath);
@@ -168,6 +172,25 @@ describe("same-subnet private receiver", () => {
 	});
 });
 
+describe("receiver family", () => {
+	test("an IPv4 LAN receiver after an IPv6-only one still gets IPv4 sources", async () => {
+		add("wlan0", "192.168.50.12", { ipv6: "2001:db8:50::12" });
+		add("enx0", "10.64.0.10", { ipv6: "2001:db8:64::10" });
+		await resolveSrtla("2001:db8:2::10");
+		expect(genSrtlaBondEntries().map((e) => e.ip)).toEqual([
+			"2001:db8:50::12",
+			"2001:db8:64::10",
+		]);
+
+		expect(
+			genSrtlaBondEntriesForLocalIpAddress("192.168.50.20").map((e) => [
+				e.iface,
+				e.ip,
+			]),
+		).toEqual([["wlan0", "192.168.50.12"]]);
+	});
+});
+
 describe("private receiver no bonded link shares a subnet with", () => {
 	test("a routed private receiver gets the whole bond, not zero links", async () => {
 		seedBench();
@@ -194,6 +217,19 @@ describe("private receiver no bonded link shares a subnet with", () => {
 		expect(result.localReceiver).toBeUndefined();
 		expect(result.warnings).toHaveLength(1);
 		expect(result.warnings[0]).toContain("eth0");
+	});
+
+	test("the warning masks the MAC an interface name carries", async () => {
+		add("enx00e04c680a1b", "192.168.50.11");
+		add("enx0", "10.64.0.10");
+		netif.setBondOptOut("enx00e04c680a1b", true);
+
+		const result = await prepare("192.168.50.20");
+
+		expect(result.warnings[0]).toContain("enx00e04c******");
+		expect(result.warnings[0]).not.toContain("680a1b");
+		expect(maskMacDerivedIfname("wlx0200005e0001")).toBe("wlx020000******");
+		expect(maskMacDerivedIfname("wlan0")).toBe("wlan0");
 	});
 
 	test("an empty bond is still refused at launch", async () => {

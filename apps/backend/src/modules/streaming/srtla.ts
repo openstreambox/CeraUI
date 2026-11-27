@@ -159,10 +159,12 @@ function admitEntry(int: NetworkInterface, entry: BondEntry): boolean {
 function collectBondEntries(
 	accept: (name: string, int: NetworkInterface) => boolean,
 	requireMappableDuplicate: boolean,
+	family: "receiver" | "ipv4" = "receiver",
 ): BondEntry[] {
 	const entries: BondEntry[] = [];
 	const networkInterfaces = getNetworkInterfaces();
-	const preferIpv6 = receiverIpv6Only && !requireMappableDuplicate;
+	const preferIpv6 =
+		family === "receiver" && receiverIpv6Only && !requireMappableDuplicate;
 	for (const name in networkInterfaces) {
 		const networkInterface = networkInterfaces[name];
 		const ip = requireMappableDuplicate
@@ -224,6 +226,11 @@ export function genSrtlaBondEntries(): BondEntry[] {
 	return collectBondEntries(isBondCandidate, false);
 }
 
+/** The bond as an IPv4 receiver gets it, whatever the last receiver was. */
+function genIpv4SrtlaBondEntries(): BondEntry[] {
+	return collectBondEntries(isBondCandidate, false, "ipv4");
+}
+
 function isLocalBondCandidate(
 	name: string,
 	int: NetworkInterface,
@@ -268,8 +275,9 @@ function isOnReceiverSubnet(entry: BondEntry, receiver: string): boolean {
  * The bonded links on a private receiver's subnet.
  *
  * A receiver on the LAN narrows the bond to the rows that share its subnet; it
- * never widens it. The narrowing runs on the finished bond, after family
- * selection and one-row-per-modem deduplication, so it can only drop rows the
+ * never widens it. The narrowing runs on the finished IPv4 bond (the receiver
+ * is an IPv4 literal, whatever family the previous receiver preferred), after
+ * one-row-per-modem deduplication, so it can only drop rows the
  * normal bond publishes, never swap one in (a modem's translator for its native
  * IPv4, say). Every rule `isBondCandidate` applies (the user's bond toggle,
  * hotspot and shared-LAN exclusions, pending identity) holds here too.
@@ -277,7 +285,7 @@ function isOnReceiverSubnet(entry: BondEntry, receiver: string): boolean {
 export function genSrtlaBondEntriesForLocalIpAddress(
 	ipAddress: string,
 ): BondEntry[] {
-	return genSrtlaBondEntries().filter((entry) =>
+	return genIpv4SrtlaBondEntries().filter((entry) =>
 		isOnReceiverSubnet(entry, ipAddress),
 	);
 }
