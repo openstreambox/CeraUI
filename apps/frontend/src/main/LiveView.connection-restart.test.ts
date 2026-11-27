@@ -238,10 +238,19 @@ describe("LiveView after every link was lost", () => {
 		});
 		expect(screen.queryByText(m["live.notStreaming"]())).toBeNull();
 
+		// Frames apart: the restarting flag drops while the last reconnect status
+		// still says reconnecting. The session stays held, no summary flashes.
+		hudRestart.restarting = false;
+		flushSync();
+		expect(cockpit(container)).toMatchObject({
+			live: true,
+			summary: false,
+			restarting: true,
+		});
+
 		// The window ran out: nothing retries, but the streamer has not stopped,
 		// so the cockpit holds with Keep trying and Stop, and no summary opens.
 		hudRestart.reconnect = { state: "expired", reason: "no_link", token: "w1" };
-		hudRestart.restarting = false;
 		flushSync();
 		expect(headerChip()).toBe("Couldn't reconnect");
 		expect(cockpit(container)).toEqual({

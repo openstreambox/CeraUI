@@ -7,28 +7,44 @@
   when a link comes back. This window does: until the streamer presses Stop, it
   starts the stream again for up to the box's maximum retry time (default two
   minutes, `auto_reconnect_max_s`), and says "Stream reconnected" when it is
-  back. The setting `auto_reconnect: false` turns the window off.
+  back. The setting `auto_reconnect: false` turns the automatic window off.
+
+  WHEN IT OPENS. Only after every link was lost: the restart was for a total
+  loss, or no link source is left when its Start fails. A restart that failed
+  for another reason while links are up (a capture device gone, say) does not
+  retry on its own; it goes straight to the end state below, where the streamer
+  can still choose "Keep trying".
 
   WHEN IT TRIES. On an edge, not on a clock: a link source the last attempt did
   not have (netif `sourcesChange`, which a Wi-Fi carrier mark clearing and a
   modem bearer getting its address both raise, or a committed USB-net scan)
   starts an attempt at once, at most one per EDGE_SPACING_MS. A Start that fails
   while links are up backs off (BACKOFF_MIN_MS doubling to BACKOFF_MAX_MS). With
-  no link to try, a quiet attempt runs at most once per NO_LINK_PROBE_MS, in case
-  an edge was missed. One attempt runs at a time and one timer is armed.
+  no link to try, a quiet attempt runs at most once per probe interval
+  (NO_LINK_PROBE_MS, or a third of a shorter window), in case an edge was missed.
+  One attempt runs at a time, one retry timer and one deadline timer are armed,
+  and no attempt starts once the deadline has passed. An attempt already
+  running at the deadline may finish: its success is the stream coming back,
+  its failure ends the window.
 
   STOP WINS. An operator Stop ends the window at once, wherever it is, including
-  during an attempt (the session orchestrator cancels that Start) and after the
-  window ran out. The window never retries after a Stop.
+  during an attempt and after the window ran out. Every attempt hands its Start
+  a check that the window is still current, which the Start makes after its
+  last await and before the session supervisor takes it, so a Stop in between
+  cannot be overtaken. The window never retries after a Stop.
 
   WHAT EVERY SURFACE SEES. While the window runs, `connection_restarting` stays
   up (the box is reconnecting, the receiver shows its BRB scene), and
-  `stream_reconnect` says `reconnecting` with the time left. When the window
-  runs out, nothing retries: `stream_reconnect` says `expired` with what was
-  missing, the persistent restart-failed notice offers "Keep trying", and stream
-  restoration is disarmed, so a later reboot does not bring the stream back on
-  its own either. "Keep trying" (the notice or the Live banner) restarts the full
-  window, in either state (A1004 A).
+  `stream_reconnect` says `reconnecting` with the time left and a token for this
+  run of the window. When the window runs out, nothing retries: `stream_reconnect`
+  says `expired` with what was missing (published before the restarting flag
+  drops, so no surface sees the session end in between), the persistent
+  restart-failed notice offers "Keep trying", and stream restoration is
+  disarmed, so a later reboot does not bring the stream back on its own either.
+  "Keep trying" (the notice or the Live banner) restarts the full window in
+  either state (A1004 A), with a new token; it is the streamer's own request, so
+  it runs even with the automatic window switched off, and it rearms
+  restoration.
 */
 
 /** What the reconnect window publishes; `null` when there is none. */
@@ -63,13 +79,13 @@ export const BACKOFF_MIN_MS = 2_000;
 export const BACKOFF_MAX_MS = 30_000;
 export const NO_LINK_PROBE_MS = 30_000;
 
-export type StreamReconnectDeps<Conn> = {
+export type StreamReconnectDeps = {
 	readonly now: () => number;
 	/** Runs `run` after `ms`; the returned function cancels it. */
 	readonly schedule: (run: () => void, ms: number) => () => void;
 	readonly token: () => string;
 	readonly settings: () => StreamReconnectSettings;
-	/** The link sources a Start would bond now. */
+	/** The link sources a Start would bond now, for the configured receiver. */
 	readonly linkSources: () => readonly string[];
 	/** Calls back when the bond's link sources may have changed. */
 	readonly onLinkChange: (listener: () => void) => () => void;
@@ -77,8 +93,14 @@ export type StreamReconnectDeps<Conn> = {
 	readonly isStreaming: () => boolean;
 	/** Raises `connection_restarting`; the returned function lowers it, once. */
 	readonly beginRestart: () => () => void;
-	/** A full, supervised Start of the session that stopped. Never rejects. */
-	readonly start: (conn: Conn) => Promise<{ readonly result: string }>;
+	/**
+	 * A full, supervised Start of the session that stopped. It checks
+	 * `stillWanted` after its last await, before the supervisor takes it, and
+	 * does not start when it says no. Never rejects.
+	 */
+	readonly start: (
+		stillWanted: () => boolean,
+	) => Promise<{ readonly result: string }>;
 	readonly publish: (status: StreamReconnectStatus | null) => void;
 	readonly announceReconnected: () => void;
 	readonly announceExpired: (
@@ -87,18 +109,30 @@ export type StreamReconnectDeps<Conn> = {
 	) => void;
 	readonly clearExpired: () => void;
 	readonly disarmRestoration: () => void;
+	/** "Keep trying" asks for the stream again: restoration may bring it back. */
+	readonly rearmRestoration: () => void;
 	readonly log: (event: string, meta: Record<string, unknown>) => void;
 };
 
 export type KeepTryingResult = "reconnecting" | "refused";
 
-type Episode<Conn> = {
-	readonly token: string;
-	conn: Conn;
+export type RestartFailure = {
+	/** The restart was for every link lost. */
+	readonly totalLoss: boolean;
+};
+
+type Episode = {
+	/** This run of the window; Keep trying starts a new one. */
+	token: string;
 	phase: "reconnecting" | "expired";
+	/** Keep trying: the streamer's own window, which the off switch leaves alone. */
+	manual: boolean;
 	/** Set when the window ran out: what was missing then. */
 	reason: StreamReconnectExpiry;
 	deadline: number;
+	/** The deadline passed during an attempt: no new attempt starts. */
+	closing: boolean;
+	probeMs: number;
 	attempts: number;
 	failures: number;
 	inFlight: boolean;
@@ -108,13 +142,14 @@ type Episode<Conn> = {
 	lastAttemptEndedAt: number;
 	nextAt: number;
 	cancelTimer: (() => void) | undefined;
+	cancelDeadline: (() => void) | undefined;
 	endRestart: (() => void) | undefined;
 	removeLinkListener: (() => void) | undefined;
 	readonly removeStopListener: () => void;
 };
 
-export function createStreamReconnect<Conn>(deps: StreamReconnectDeps<Conn>) {
-	let episode: Episode<Conn> | undefined;
+export function createStreamReconnect(deps: StreamReconnectDeps) {
+	let episode: Episode | undefined;
 
 	const status = (): StreamReconnectStatus | null => {
 		const ep = episode;
@@ -129,59 +164,70 @@ export function createStreamReconnect<Conn>(deps: StreamReconnectDeps<Conn>) {
 	};
 	const publish = () => deps.publish(status());
 
-	const stopRetrying = (ep: Episode<Conn>) => {
+	/** Cancels both timers and the link listener; the restarting flag stays. */
+	const stopTrying = (ep: Episode) => {
 		ep.cancelTimer?.();
 		ep.cancelTimer = undefined;
+		ep.cancelDeadline?.();
+		ep.cancelDeadline = undefined;
 		ep.removeLinkListener?.();
 		ep.removeLinkListener = undefined;
+	};
+	const endRestart = (ep: Episode) => {
 		ep.endRestart?.();
 		ep.endRestart = undefined;
 	};
 
 	/** Ends the episode, in either phase; no later edge or timer acts on it. */
-	const end = (ep: Episode<Conn>, why: string) => {
+	const end = (ep: Episode, why: string) => {
 		if (episode !== ep) return;
 		episode = undefined;
-		stopRetrying(ep);
+		stopTrying(ep);
+		endRestart(ep);
 		ep.removeStopListener();
 		deps.log("ended", { why, attempts: ep.attempts });
 		publish();
 	};
 
-	const nextDue = (ep: Episode<Conn>): number =>
+	const automaticOff = (ep: Episode) => !ep.manual && !deps.settings().enabled;
+	const overdue = (ep: Episode) => deps.now() >= ep.deadline;
+
+	const nextDue = (ep: Episode): number =>
 		deps.linkSources().length > 0
 			? ep.nextAt
-			: Math.max(ep.nextAt, ep.lastAttemptStartedAt + NO_LINK_PROBE_MS);
+			: Math.max(ep.nextAt, ep.lastAttemptStartedAt + ep.probeMs);
 
-	const arm = (ep: Episode<Conn>) => {
+	const arm = (ep: Episode) => {
 		ep.cancelTimer?.();
-		const at = Math.min(nextDue(ep), ep.deadline);
 		ep.cancelTimer = deps.schedule(
 			() => onTimer(ep),
-			Math.max(0, at - deps.now()),
+			Math.max(0, nextDue(ep) - deps.now()),
 		);
 	};
 
-	const expire = (ep: Episode<Conn>) => {
+	const expire = (ep: Episode) => {
 		if (episode !== ep || ep.phase !== "reconnecting") return;
 		ep.phase = "expired";
+		ep.closing = false;
 		ep.reason = deps.linkSources().length > 0 ? "start_failed" : "no_link";
-		stopRetrying(ep);
+		stopTrying(ep);
 		deps.log("window ran out", { attempts: ep.attempts, reason: ep.reason });
 		// Nothing retries now, a reboot included.
 		deps.disarmRestoration();
 		deps.announceExpired(ep.reason, ep.token);
+		// The end state first, then the restarting flag: the session stays held.
 		publish();
+		endRestart(ep);
 	};
 
-	const succeed = (ep: Episode<Conn>) => {
+	const succeed = (ep: Episode) => {
 		if (episode !== ep) return;
 		const wasReconnecting = ep.phase === "reconnecting";
 		end(ep, "reconnected");
 		if (wasReconnecting) deps.announceReconnected();
 	};
 
-	const attempt = (ep: Episode<Conn>) => {
+	const attempt = (ep: Episode) => {
 		const sources = deps.linkSources();
 		ep.cancelTimer?.();
 		ep.cancelTimer = undefined;
@@ -192,7 +238,7 @@ export function createStreamReconnect<Conn>(deps: StreamReconnectDeps<Conn>) {
 		ep.attempts++;
 		deps.log("attempt", { attempt: ep.attempts, links: sources.length });
 		void deps
-			.start(ep.conn)
+			.start(() => episode === ep && ep.phase === "reconnecting")
 			.then(
 				(outcome) => outcome.result,
 				() => "failed",
@@ -212,7 +258,8 @@ export function createStreamReconnect<Conn>(deps: StreamReconnectDeps<Conn>) {
 				);
 				ep.nextAt = deps.now() + backoff;
 				deps.log("attempt failed", { attempt: ep.attempts, result, backoff });
-				if (deps.now() >= ep.deadline || !deps.settings().enabled) {
+				if (ep.phase !== "reconnecting") return;
+				if (ep.closing || overdue(ep) || automaticOff(ep)) {
 					expire(ep);
 					return;
 				}
@@ -221,21 +268,30 @@ export function createStreamReconnect<Conn>(deps: StreamReconnectDeps<Conn>) {
 			});
 	};
 
-	/** True when the edge started an attempt. */
-	const onEdge = (ep: Episode<Conn>): boolean => {
-		if (episode !== ep || ep.phase !== "reconnecting") return false;
-		if (deps.isStreaming()) return false;
-		if (ep.inFlight) {
-			ep.edgePending = true;
+	/** May an attempt start now? Ends the window when it may never again. */
+	const mayAttempt = (ep: Episode): boolean => {
+		if (episode !== ep || ep.phase !== "reconnecting" || ep.closing)
+			return false;
+		if (overdue(ep) || automaticOff(ep)) {
+			if (!ep.inFlight) expire(ep);
 			return false;
 		}
+		return !deps.isStreaming();
+	};
+
+	/** True when the edge started an attempt. */
+	const onEdge = (ep: Episode): boolean => {
+		if (ep.inFlight) {
+			if (episode === ep) ep.edgePending = true;
+			return false;
+		}
+		if (!mayAttempt(ep)) return false;
 		const fresh = deps
 			.linkSources()
 			.some((source) => !ep.lastSources.has(source));
 		if (!fresh) return false;
-		const now = deps.now();
 		const spaced = ep.lastAttemptEndedAt + EDGE_SPACING_MS;
-		if (now < spaced) {
+		if (deps.now() < spaced) {
 			// A new link may skip the backoff, not the spacing.
 			ep.nextAt = Math.min(ep.nextAt, spaced);
 			arm(ep);
@@ -245,43 +301,57 @@ export function createStreamReconnect<Conn>(deps: StreamReconnectDeps<Conn>) {
 		return true;
 	};
 
-	const onTimer = (ep: Episode<Conn>) => {
-		if (episode !== ep || ep.phase !== "reconnecting") return;
+	const onTimer = (ep: Episode) => {
+		if (episode !== ep) return;
 		ep.cancelTimer = undefined;
-		if (ep.inFlight) return;
-		if (deps.now() >= ep.deadline || !deps.settings().enabled) {
-			expire(ep);
-			return;
-		}
-		if (deps.isStreaming()) {
-			arm(ep);
-			return;
-		}
+		if (ep.inFlight || !mayAttempt(ep)) return;
 		if (deps.now() >= nextDue(ep)) attempt(ep);
 		else arm(ep);
 	};
 
+	const onDeadline = (ep: Episode) => {
+		if (episode !== ep || ep.phase !== "reconnecting") return;
+		ep.cancelDeadline = undefined;
+		if (ep.inFlight) {
+			// The attempt that is running decides: back, or the end state.
+			ep.closing = true;
+			ep.cancelTimer?.();
+			ep.cancelTimer = undefined;
+			deps.log("deadline during an attempt", { attempt: ep.attempts });
+			return;
+		}
+		expire(ep);
+	};
+
 	/** Starts retrying in `ep`, for a full window from now. */
-	const run = (ep: Episode<Conn>, immediately: boolean) => {
+	const run = (ep: Episode, immediately: boolean) => {
+		const { maxMs } = deps.settings();
 		ep.phase = "reconnecting";
-		ep.deadline = deps.now() + deps.settings().maxMs;
+		ep.closing = false;
+		ep.deadline = deps.now() + maxMs;
+		ep.probeMs = Math.min(NO_LINK_PROBE_MS, Math.floor(maxMs / 3));
 		ep.endRestart ??= deps.beginRestart();
 		ep.removeLinkListener ??= deps.onLinkChange(() => {
 			onEdge(ep);
 		});
+		ep.cancelDeadline?.();
+		ep.cancelDeadline = deps.schedule(() => onDeadline(ep), maxMs);
 		publish();
-		if (immediately && !ep.inFlight && deps.linkSources().length > 0)
+		if (ep.inFlight) return;
+		if (immediately && deps.linkSources().length > 0 && !deps.isStreaming())
 			attempt(ep);
-		else if (!ep.inFlight) arm(ep);
+		else arm(ep);
 	};
 
-	const open = (conn: Conn): Episode<Conn> => {
-		const ep: Episode<Conn> = {
+	const open = (): Episode => {
+		const ep: Episode = {
 			token: deps.token(),
-			conn,
 			phase: "reconnecting",
+			manual: false,
 			reason: "no_link",
 			deadline: deps.now(),
+			closing: false,
+			probeMs: NO_LINK_PROBE_MS,
 			attempts: 0,
 			failures: 0,
 			inFlight: false,
@@ -291,6 +361,7 @@ export function createStreamReconnect<Conn>(deps: StreamReconnectDeps<Conn>) {
 			lastAttemptEndedAt: deps.now(),
 			nextAt: deps.now() + BACKOFF_MIN_MS,
 			cancelTimer: undefined,
+			cancelDeadline: undefined,
 			endRestart: undefined,
 			removeLinkListener: undefined,
 			removeStopListener: deps.onOperatorStop(() => {
@@ -306,14 +377,20 @@ export function createStreamReconnect<Conn>(deps: StreamReconnectDeps<Conn>) {
 	return {
 		/**
 		 * A connection restart stopped the stream and its Start did not start it
-		 * again. With the window on, it opens; with it off, the expired state
-		 * (the notice with "Keep trying") stands at once and nothing retries.
+		 * again. After every link was lost, with the window on, it opens; for any
+		 * other failure, or with it off, the end state (the notice with "Keep
+		 * trying") stands at once and nothing retries.
 		 */
-		afterRestartStartFailed(conn: Conn): void {
+		afterRestartStartFailed(failure: RestartFailure): void {
 			if (episode !== undefined || deps.isStreaming()) return;
-			const ep = open(conn);
-			if (!deps.settings().enabled) {
-				deps.log("reconnect is off", {});
+			const ep = open();
+			const noLink = deps.linkSources().length === 0;
+			if (!deps.settings().enabled || !(failure.totalLoss || noLink)) {
+				deps.log("not reconnecting on its own", {
+					enabled: deps.settings().enabled,
+					totalLoss: failure.totalLoss,
+					noLink,
+				});
 				expire(ep);
 				return;
 			}
@@ -324,22 +401,24 @@ export function createStreamReconnect<Conn>(deps: StreamReconnectDeps<Conn>) {
 		/**
 		 * "Keep trying": another full window, both while reconnecting and after
 		 * the window ran out. Refused without a current window or with a token
-		 * from an earlier one.
+		 * from an earlier run of it.
 		 */
-		keepTrying(token: string, conn: Conn): KeepTryingResult {
+		keepTrying(token: string): KeepTryingResult {
 			const ep = episode;
 			if (ep === undefined || ep.token !== token || deps.isStreaming()) {
 				deps.log("keep trying refused", {});
 				return "refused";
 			}
-			ep.conn = conn;
 			const expired = ep.phase === "expired";
 			if (expired) {
 				deps.clearExpired();
+				deps.rearmRestoration();
 				ep.failures = 0;
 				ep.lastSources = new Set();
 				ep.nextAt = deps.now();
 			}
+			ep.manual = true;
+			ep.token = deps.token();
 			deps.log("keep trying", { expired });
 			run(ep, expired);
 			return "reconnecting";
@@ -355,7 +434,8 @@ export function createStreamReconnect<Conn>(deps: StreamReconnectDeps<Conn>) {
 		/** Tests only. */
 		resetForTest(): void {
 			if (episode !== undefined) {
-				stopRetrying(episode);
+				stopTrying(episode);
+				endRestart(episode);
 				episode.removeStopListener();
 			}
 			episode = undefined;
@@ -363,9 +443,7 @@ export function createStreamReconnect<Conn>(deps: StreamReconnectDeps<Conn>) {
 	};
 }
 
-export type StreamReconnect<Conn> = ReturnType<
-	typeof createStreamReconnect<Conn>
->;
+export type StreamReconnect = ReturnType<typeof createStreamReconnect>;
 
 /** Reads the box's two settings, with the defaults for a config without them. */
 export function reconnectSettings(config: {

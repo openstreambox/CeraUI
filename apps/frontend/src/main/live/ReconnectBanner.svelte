@@ -32,6 +32,8 @@ let busy = $state(false);
 // countdown from its own `remaining_ms`.
 $effect.pre(() => {
 	if (reconnect.state !== 'reconnecting') return;
+	// A new token is a new window run (Keep trying), even at the same time left.
+	void reconnect.token;
 	const remaining = reconnect.remaining_ms;
 	const start = now();
 	deadline = start + remaining;

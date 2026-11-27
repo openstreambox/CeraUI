@@ -632,6 +632,69 @@ describe("a Stop requested while the new socket is being signed in", () => {
 		expect(sentCount("streaming.stop")).toBe(1);
 	});
 
+	it.each([
+		[
+			"reconnecting after every link was lost",
+			{
+				connection_restarting: true,
+				stream_reconnect: {
+					state: "reconnecting",
+					remaining_ms: 60_000,
+					token: "w1",
+				},
+			},
+		],
+		[
+			"holding the session after its reconnect window ran out",
+			{
+				connection_restarting: false,
+				stream_reconnect: { state: "expired", reason: "no_link", token: "w1" },
+			},
+		],
+	] as const)(
+		"is sent when the device is %s, though its lifecycle reads idle",
+		async (_state, held) => {
+			// A returning link (or a pending Keep trying) would otherwise start the
+			// stream the streamer stopped.
+			await signInFromForm(false);
+			live();
+			await reconnect();
+			void stopStreaming().catch(() => undefined);
+			await flush();
+
+			answer("auth.login", { success: true });
+			await flush();
+			answer("status.getStatus", {
+				is_streaming: false,
+				stream_lifecycle: "idle",
+				...held,
+			});
+			await flush();
+
+			expect(sentCount("streaming.stop")).toBe(1);
+		},
+	);
+
+	it("is not sent when the device is idle with no reconnect window", async () => {
+		await signInFromForm(false);
+		live();
+		await reconnect();
+		void stopStreaming().catch(() => undefined);
+		await flush();
+
+		answer("auth.login", { success: true });
+		await flush();
+		answer("status.getStatus", {
+			is_streaming: false,
+			stream_lifecycle: "idle",
+			connection_restarting: false,
+			stream_reconnect: null,
+		});
+		await flush();
+
+		expect(sentCount("streaming.stop")).toBe(0);
+	});
+
 	it("tells the operator when it arrives after the session already ended", async () => {
 		// Signed out: there is no session to keep a Stop for.
 		const error = await stopOnceSignedIn(async () => undefined).catch(

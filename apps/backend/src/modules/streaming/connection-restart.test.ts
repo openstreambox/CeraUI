@@ -35,8 +35,15 @@ function fixture(overrides: Partial<ConnectionRestartDeps> = {}) {
 			return { result: "started" };
 		},
 		announce: (kind) => calls.push(`announce:${kind}`),
-		reconnect: (stillWanted) =>
-			calls.push(stillWanted() ? "reconnect" : "reconnect:unwanted"),
+		reconnect: (stillWanted, failure) => {
+			calls.push(
+				stillWanted()
+					? failure.totalLoss
+						? "reconnect:total-loss"
+						: "reconnect"
+					: "reconnect:unwanted",
+			);
+		},
 		announceFailure: (failed) => calls.push(`failed:${failed}`),
 		log: () => {},
 		...overrides,
@@ -242,8 +249,7 @@ describe("restart connection tap", () => {
 			"notificationRemove",
 		).mockImplementation(() => ({ remove: [] }));
 		try {
-			const conn = {} as unknown as import("ws").default;
-			const deps = await connectionRestartDeps(conn, "link-recovery");
+			const deps = await connectionRestartDeps("link-recovery");
 			deps.announceFailure("stop");
 			deps.announce("new_address");
 			deps.announce("reconnected");
@@ -290,16 +296,15 @@ describe("restart connection tap", () => {
 			attemptId: "a",
 		});
 		try {
-			const conn = {} as unknown as import("ws").default;
-			const tap = await connectionRestartDeps(conn, "ui");
+			const tap = await connectionRestartDeps("ui");
 			await tap.stop();
-			await tap.start();
+			await tap.start(() => true);
 			expect(stop).toHaveBeenCalledWith("reconfigure");
 			expect(start.mock.calls[0]?.[0].origin).toBe("ui");
 			// The device's own restart is not the operator's: its own origin, which
 			// waits for the modem replay barrier instead of being refused.
-			const auto = await connectionRestartDeps(conn, "link-recovery");
-			await auto.start();
+			const auto = await connectionRestartDeps("link-recovery");
+			await auto.start(() => true);
 			expect(start.mock.calls[1]?.[0].origin).toBe("link-recovery");
 			// The restart and the reconnect window explain a failed Start themselves.
 			expect(start.mock.calls[0]?.[0].quietTerminalFailure).toBe(true);
@@ -311,6 +316,31 @@ describe("restart connection tap", () => {
 			expect(INTERNAL_LAUNCH_ORIGINS.has("ui")).toBe(false);
 		} finally {
 			stop.mockRestore();
+			start.mockRestore();
+		}
+	});
+
+	test("production wiring: a Stop that lands while the Start loads its modules is not overtaken", async () => {
+		const owner = await import("./stream-session-orchestrator.ts");
+		const { spyOn } = await import("bun:test");
+		const { restartStart } = await import("./connection-restart.ts");
+		const start = spyOn(owner, "startStreamSession").mockResolvedValue({
+			result: "started",
+			attemptId: "a",
+		});
+		try {
+			let wanted = true;
+			const pending = restartStart(() => wanted, "link-recovery");
+			// The operator's Stop, before the imports have resolved.
+			wanted = false;
+			expect(await pending).toEqual({ result: "cancelled" });
+			expect(start).not.toHaveBeenCalled();
+			// Still wanted after the imports: the supervisor takes it at once.
+			expect((await restartStart(() => true, "link-recovery")).result).toBe(
+				"started",
+			);
+			expect(start).toHaveBeenCalledTimes(1);
+		} finally {
 			start.mockRestore();
 		}
 	});
@@ -365,6 +395,10 @@ describe("automatic restart when nothing else carries the stream", () => {
 		expect(lost.result).toBe("restarting");
 		await lost.done;
 		expect(f.calls.at(-1)).toBe("announce:reconnected");
+		// A total-loss restart whose Start fails says so to the window.
+		const failing = fixture({ start: async () => ({ result: "failed" }) });
+		await a.restarts.request(9, failing.deps, { totalLoss: true }).done;
+		expect(failing.calls).toContain("reconnect:total-loss");
 		// The stale-address cooldown still counts from the stale-address restart.
 		a.advance(239_999);
 		expect(a.restarts.request(9, f.deps).result).toBe("held");

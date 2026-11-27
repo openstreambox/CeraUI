@@ -296,17 +296,21 @@ goes on:
 
 #### Reconnecting after every link was lost [EXISTS]
 
-When a connection restart's Start fails because no link is left, the device
-keeps reconnecting (`status.stream_reconnect`, backend
-`modules/streaming/stream-reconnect.ts`) for the box's maximum retry time
-(Settings, Streaming: "Reconnect after losing every link", default on, two
-minutes):
+When a connection restart's Start fails after every link was lost (the restart
+was for a total loss, or no link is left), the device keeps reconnecting
+(`status.stream_reconnect`, backend `modules/streaming/stream-reconnect.ts`)
+for the box's maximum retry time (Settings, Streaming: "Reconnect after losing
+every link", default on, two minutes). A restart that failed for another reason
+while links are up, or any failure with the setting off, goes straight to the
+`expired` state below, where Keep trying is the streamer's own choice and runs
+a full window even with the setting off:
 
 - `reconnecting` (with `connection_restarting` still true): the session is held
   as during a restart. `live-reconnect-banner` replaces the restart band with
   "Reconnecting the stream · 1:24 left", counted down from the moment the
-  status arrived, and "Keep trying", which gives another full window. The
-  header chip and the HUD say "Reconnecting". Never "not live" or "offline": the
+  status arrived, and "Keep trying", which gives another full window under a new
+  token. An attempt still running when the time is up may finish (the banner
+  shows 0:00 meanwhile). The header chip and the HUD say "Reconnecting". Never "not live" or "offline": the
   receiver shows its BRB scene meanwhile.
 - `expired` (`connection_restarting` false): nothing retries. The session is
   still held, without a summary, and the banner says what was missing ("no
@@ -315,7 +319,10 @@ minutes):
   offers the same `keep-reconnecting` command. The header chip says "Couldn't
   reconnect".
 - Stop stays in `live-bar` in both states and always wins: the device drops the
-  window at once, and only then does the session summary open.
+  window at once, and only then does the session summary open. Either field
+  (`connection_restarting` or a non-null `stream_reconnect`) holds the session,
+  and a Stop queued while the socket signs in again is still sent in both
+  states, though the lifecycle reads idle.
 
 #### Link names
 

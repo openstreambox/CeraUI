@@ -194,8 +194,10 @@ const connectionRestarting = $derived(getStatus()?.connection_restarting === tru
 // time (`reconnecting`, with `connection_restarting` up), and after that holds
 // the session with "Keep trying" and Stop (`expired`) until the streamer picks.
 const streamReconnect = $derived(getStatus()?.stream_reconnect ?? null);
-const reconnectExpired = $derived(streamReconnect?.state === 'expired');
-const connectionHeld = $derived(connectionRestarting || reconnectExpired);
+// Either flag holds the session, so a frame that carries one before the other
+// (the restart's own flag dropping as the window's end state arrives) never
+// reads as the stream having ended.
+const connectionHeld = $derived(connectionRestarting || streamReconnect !== null);
 
 // Reconcile optimism to authoritative is_streaming broadcast. A connection
 // restart is still the operator's session: a Stop pressed during it settles

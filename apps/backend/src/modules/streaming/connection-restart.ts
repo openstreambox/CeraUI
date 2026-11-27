@@ -56,15 +56,23 @@ export type ConnectionRestartDeps = {
 	/** Marks the restart as running for the status; the result ends it. */
 	readonly beginRestart: () => () => void;
 	readonly stop: () => Promise<StopOutcome>;
-	readonly start: () => Promise<StartOutcome>;
+	/**
+	 * Checks `stillWanted` after its last await, right before the session
+	 * supervisor takes the Start, and does not start when it says no.
+	 */
+	readonly start: (stillWanted: () => boolean) => Promise<StartOutcome>;
 	/** After an automatic restart has started the new session. */
 	readonly announce: (kind: RestartAnnouncement) => void;
 	/**
 	 * The old session stopped and the new one did not start, and no operator
-	 * Stop came in between (`stillWanted`): the reconnect window takes over.
-	 * Runs before the restarting status drops.
+	 * Stop came in between (`stillWanted`): the reconnect window takes over,
+	 * retrying on its own only after every link was lost (`totalLoss`, or no
+	 * link left). Runs before the restarting status drops.
 	 */
-	readonly reconnect: (stillWanted: () => boolean) => void | Promise<void>;
+	readonly reconnect: (
+		stillWanted: () => boolean,
+		failure: { readonly totalLoss: boolean },
+	) => void | Promise<void>;
 	/** The old session did not stop. Never for an operator Stop. */
 	readonly announceFailure: (failed: RestartFailure) => void;
 	readonly log: (message: string, meta: Record<string, unknown>) => void;
@@ -89,6 +97,7 @@ function runRestart(
 	deps: ConnectionRestartDeps,
 	generation: number,
 	origin: "tap" | "automatic",
+	totalLoss = false,
 ): Promise<string> {
 	const end = deps.beginRestart();
 	let stoppedOld = false;
@@ -106,7 +115,7 @@ function runRestart(
 			deps.log("Stop during restart; not starting", { origin });
 			return "cancelled";
 		}
-		const started = await deps.start();
+		const started = await deps.start(intent);
 		deps.log("finished", { origin, generation, started: started.result });
 		return started.result;
 	})()
@@ -118,8 +127,9 @@ function runRestart(
 			// Before `end`: the window raises its own restarting status first, so
 			// the stream never reads as stopped between the two.
 			if (stoppedOld && result !== "started" && result !== "cancelled")
-				await (async () => deps.reconnect(intent))().catch((error: unknown) =>
-					deps.log("reconnect failed to open", { error: String(error) }),
+				await (async () => deps.reconnect(intent, { totalLoss }))().catch(
+					(error: unknown) =>
+						deps.log("reconnect failed to open", { error: String(error) }),
 				);
 			return result;
 		})
@@ -191,12 +201,14 @@ export function createAutoRestart(
 				return { result: "not_current", done: Promise.resolve("not_current") };
 			if (!totalLoss) lastAt = now();
 			inFlight = true;
-			const done = runRestart(deps, generation, "automatic").then((result) => {
-				inFlight = false;
-				if (result === "started")
-					deps.announce(totalLoss ? "reconnected" : "new_address");
-				return result;
-			});
+			const done = runRestart(deps, generation, "automatic", totalLoss).then(
+				(result) => {
+					inFlight = false;
+					if (result === "started")
+						deps.announce(totalLoss ? "reconnected" : "new_address");
+					return result;
+				},
+			);
 			return { result: "restarting", done };
 		},
 		/** Tests only. */
@@ -217,7 +229,6 @@ export type ConnectionRestartOrigin = Extract<
 
 /** Production wiring, resolved lazily for the streaming graph's load order. */
 export async function connectionRestartDeps(
-	conn: import("ws").default,
 	origin: ConnectionRestartOrigin,
 ): Promise<ConnectionRestartDeps> {
 	const [
@@ -240,7 +251,7 @@ export async function connectionRestartDeps(
 		captureStopIntent: captureOperatorStopIntent,
 		beginRestart: () => beginConnectionRestart(),
 		stop: () => stopStreamSession("reconfigure"),
-		start: () => restartStart(conn, origin),
+		start: (stillWanted) => restartStart(stillWanted, origin),
 		announce: (kind) =>
 			kind === "reconnected"
 				? notificationBroadcast(
@@ -263,11 +274,12 @@ export async function connectionRestartDeps(
 						true,
 						"notifications.connectionRestartedNewAddress",
 					),
-		reconnect: async (stillWanted) => {
+		reconnect: async (stillWanted, failure) => {
 			const { reconnectAfterRestartFailure } = await import(
 				"./stream-reconnect-wiring.ts"
 			);
-			if (stillWanted()) await reconnectAfterRestartFailure(conn, stillWanted);
+			if (stillWanted())
+				await reconnectAfterRestartFailure(failure, stillWanted);
 		},
 		announceFailure: announceRestartFailure,
 		log: (event, meta) => logger.info("connection restart", { event, ...meta }),
@@ -275,12 +287,27 @@ export async function connectionRestartDeps(
 }
 
 /**
+ * The Start's own socket: a restart and the reconnect window have no operator
+ * socket to answer, and say what happened through their own notices, so a
+ * start error the session raises reaches nobody.
+ */
+const restartSocket = {
+	send: () => {
+		/* no socket: the restart and the window report for themselves */
+	},
+	data: { isAuthenticated: true, lastActive: Date.now() },
+} as unknown as import("ws").default;
+
+/**
  * A full, supervised Start of the session that just stopped, for a restart and
  * for the reconnect window. Its failures stay off the start-failure notice:
- * the restart and the window say what happened instead. Never rejects.
+ * the restart and the window say what happened instead. `stillWanted` is
+ * checked after the last await, so an operator Stop that landed while the
+ * modules loaded is not overtaken: the supervisor takes the Start in the same
+ * turn and captures the Stop intent as it is now. Never rejects.
  */
 export async function restartStart(
-	conn: import("ws").default,
+	stillWanted: () => boolean,
 	origin: ConnectionRestartOrigin,
 ): Promise<StartOutcome> {
 	const [
@@ -292,6 +319,7 @@ export async function restartStart(
 		import("./streamloop/session.ts"),
 		import("./start-failure-taxonomy.ts"),
 	]);
+	if (!stillWanted()) return { result: "cancelled" };
 	try {
 		return await startStreamSession({
 			origin,
@@ -299,7 +327,12 @@ export async function restartStart(
 			launch: async ({ attemptId, generation }) => {
 				// Empty params: the start reads the persisted config of the session
 				// that just stopped.
-				const result = await startStream(conn, {}, generation, attemptId);
+				const result = await startStream(
+					restartSocket,
+					{},
+					generation,
+					attemptId,
+				);
 				if (!result.success) {
 					throw new StreamStartFailure(
 						result.failureClass !== undefined

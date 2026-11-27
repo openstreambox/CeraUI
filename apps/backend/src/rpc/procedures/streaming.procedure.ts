@@ -507,16 +507,13 @@ export const streamingStartProcedure = authedProcedure
 export const restartConnectionProcedure = authedProcedure
 	.input(restartConnectionInputSchema)
 	.output(restartConnectionOutputSchema)
-	.handler(async ({ input, context }) => {
+	.handler(async ({ input }) => {
 		const { connectionRestartDeps, requestConnectionRestart } = await import(
 			"../../modules/streaming/connection-restart.ts"
 		);
 		const request = requestConnectionRestart(
 			input.token,
-			await connectionRestartDeps(
-				context.ws as unknown as import("ws").default,
-				"ui",
-			),
+			await connectionRestartDeps("ui"),
 		);
 		void request.done;
 		return request.output;
@@ -529,14 +526,11 @@ export const restartConnectionProcedure = authedProcedure
 export const keepReconnectingProcedure = authedProcedure
 	.input(keepReconnectingInputSchema)
 	.output(keepReconnectingOutputSchema)
-	.handler(async ({ input, context }) => {
+	.handler(async ({ input }) => {
 		const { keepReconnecting } = await import(
 			"../../modules/streaming/stream-reconnect-wiring.ts"
 		);
-		const result = await keepReconnecting(
-			input.token,
-			context.ws as unknown as import("ws").default,
-		);
+		const result = await keepReconnecting(input.token);
 		return result === "reconnecting"
 			? { success: true, result }
 			: { success: false, result, error: "reconnect_not_current" };
@@ -545,7 +539,9 @@ export const keepReconnectingProcedure = authedProcedure
 /**
  * The box's reconnect settings. A running window keeps its deadline; the new
  * maximum applies from the next window (or "Keep trying"), and turning it off
- * ends a running window at its next step.
+ * ends a running automatic window at its next step. A save that fails changes
+ * nothing. Only the two fields are echoed: the full config carries secrets the
+ * other tabs must not receive.
  */
 export const setReconnectProcedure = authedProcedure
 	.input(setReconnectInputSchema)
@@ -555,10 +551,23 @@ export const setReconnectProcedure = authedProcedure
 			"../../modules/streaming/stream-reconnect.ts"
 		);
 		const config = getConfig();
+		const before = {
+			auto_reconnect: config.auto_reconnect,
+			auto_reconnect_max_s: config.auto_reconnect_max_s,
+		};
 		if (input.enabled !== undefined) config.auto_reconnect = input.enabled;
 		if (input.max_s !== undefined) config.auto_reconnect_max_s = input.max_s;
-		saveConfig();
-		broadcastMsg("config", config);
+		try {
+			saveConfig();
+		} catch (error) {
+			config.auto_reconnect = before.auto_reconnect;
+			config.auto_reconnect_max_s = before.auto_reconnect_max_s;
+			throw error;
+		}
+		broadcastMsg("config", {
+			auto_reconnect: config.auto_reconnect,
+			auto_reconnect_max_s: config.auto_reconnect_max_s,
+		});
 		const applied = reconnectSettings(config);
 		return {
 			success: true,

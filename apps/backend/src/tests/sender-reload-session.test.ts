@@ -599,6 +599,36 @@ test("every link gone, then Stop during the window: a returning link starts noth
 	expect(shown).toEqual([]);
 });
 
+test("a stale-address restart whose Start fails while another link is up does not retry on its own: the end state with Keep trying", async () => {
+	await startLive();
+	carriedBy = null;
+	startResults = ["failed"];
+	linkSources = [WIRED];
+	renumber();
+	await settle(400);
+	expect(restarts).toEqual(["stop:reconfigure", "start:link-recovery"]);
+	expect(getStreamReconnectStatus()).toMatchObject({
+		state: "expired",
+		reason: "start_failed",
+	});
+	expect(isConnectionRestarting()).toBe(false);
+	expect(shown.map((n) => n.key)).toEqual([
+		"notifications.reconnectExpiredStartFailed",
+	]);
+	expect(shown[0]?.action).toMatchObject({
+		kind: "command",
+		command: "keep-reconnecting",
+	});
+	// The end state was published while the session was still held.
+	expect(restartingAtNotice).toEqual([true]);
+	await settle(2_100);
+	linkBack(NEW);
+	await settle(100);
+	expect(restarts).toHaveLength(2);
+	noteOperatorStopIntent();
+	expect(getStreamReconnectStatus()).toBeNull();
+});
+
 test("every link gone within the stale-address cooldown still restarts: the cooldown is for stale addresses", async () => {
 	await startLive();
 	bound = [OLD];

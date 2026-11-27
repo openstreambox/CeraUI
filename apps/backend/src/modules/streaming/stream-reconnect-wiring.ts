@@ -7,20 +7,20 @@
 */
 
 import { randomUUID } from "node:crypto";
-import type WebSocket from "ws";
 
 import { logger } from "../../helpers/logger.ts";
 import {
 	createStreamReconnect,
 	type KeepTryingResult,
+	type RestartFailure,
 	reconnectSettings,
 	type StreamReconnect,
 	type StreamReconnectExpiry,
 	type StreamReconnectStatus,
 } from "./stream-reconnect.ts";
 
-let instance: StreamReconnect<WebSocket> | undefined;
-let building: Promise<StreamReconnect<WebSocket>> | undefined;
+let instance: StreamReconnect | undefined;
+let building: Promise<StreamReconnect> | undefined;
 
 /** The window's state for every status snapshot; `null` without one. */
 export function getStreamReconnectStatus(): StreamReconnectStatus | null {
@@ -41,10 +41,11 @@ const EXPIRED_MESSAGES: Record<
 	},
 };
 
-async function build(): Promise<StreamReconnect<WebSocket>> {
+async function build(): Promise<StreamReconnect> {
 	const [
 		{ getConfig },
-		{ genSrtlaIpList },
+		{ genSrtlaIpList, genSrtlaIpListForLocalIpAddress },
+		{ isLocalIp },
 		{ onNetworkInterfaceSourcesChange },
 		{ onUsbNetScanCommitted },
 		{ onOperatorStopIntent },
@@ -54,9 +55,11 @@ async function build(): Promise<StreamReconnect<WebSocket>> {
 		{ broadcastMsg },
 		{ notificationBroadcast, notificationRemove },
 		{ clearArmedStreamMarker },
+		{ armStreamRestoration },
 	] = await Promise.all([
 		import("../config.ts"),
 		import("./srtla.ts"),
+		import("../../helpers/ip-addresses.ts"),
 		import("../network/network-interfaces.ts"),
 		import("../network/router-cellular-scan.ts"),
 		import("./operator-stop-intent.ts"),
@@ -66,8 +69,9 @@ async function build(): Promise<StreamReconnect<WebSocket>> {
 		import("../ui/websocket-server.ts"),
 		import("../ui/notifications.ts"),
 		import("./armed-stream-marker.ts"),
+		import("./stream-restoration.ts"),
 	]);
-	return createStreamReconnect<WebSocket>({
+	return createStreamReconnect({
 		now: Date.now,
 		schedule: (run, ms) => {
 			const timer = setTimeout(run, ms);
@@ -75,7 +79,14 @@ async function build(): Promise<StreamReconnect<WebSocket>> {
 		},
 		token: randomUUID,
 		settings: () => reconnectSettings(getConfig()),
-		linkSources: genSrtlaIpList,
+		// The same list a launch would bond: a receiver on a local subnet takes
+		// its own links (prepareSrtlaIpAddresses), any other the bond.
+		linkSources: () => {
+			const receiver = getConfig().srtla_addr;
+			return receiver !== undefined && isLocalIp(receiver)
+				? genSrtlaIpListForLocalIpAddress(receiver)
+				: genSrtlaIpList();
+		},
 		onLinkChange: (listener) => {
 			const removeNetif = onNetworkInterfaceSourcesChange(listener);
 			const removeScan = onUsbNetScanCommitted(listener);
@@ -87,7 +98,7 @@ async function build(): Promise<StreamReconnect<WebSocket>> {
 		onOperatorStop: onOperatorStopIntent,
 		isStreaming: getIsStreaming,
 		beginRestart: () => beginConnectionRestart(),
-		start: (conn) => restartStart(conn, "link-recovery"),
+		start: (stillWanted) => restartStart(stillWanted, "link-recovery"),
 		publish: (status) => broadcastMsg("status", { stream_reconnect: status }),
 		announceReconnected: () =>
 			notificationBroadcast(
@@ -127,12 +138,15 @@ async function build(): Promise<StreamReconnect<WebSocket>> {
 			notificationRemove(CONNECTION_RESTART_FAILED);
 		},
 		disarmRestoration: () => clearArmedStreamMarker(),
+		rearmRestoration: () => {
+			armStreamRestoration();
+		},
 		log: (event, meta) => logger.info("stream reconnect", { event, ...meta }),
 	});
 }
 
 /** The production window, built once. */
-export function streamReconnect(): Promise<StreamReconnect<WebSocket>> {
+export function streamReconnect(): Promise<StreamReconnect> {
 	if (instance !== undefined) return Promise.resolve(instance);
 	building ??= build().then((built) => {
 		instance = built;
@@ -143,19 +157,18 @@ export function streamReconnect(): Promise<StreamReconnect<WebSocket>> {
 
 /** A restart's Start failed after its Stop: open the window (or its end). */
 export async function reconnectAfterRestartFailure(
-	conn: WebSocket,
+	failure: RestartFailure,
 	stillWanted: () => boolean,
 ): Promise<void> {
 	const reconnect = await streamReconnect();
 	// An operator Stop while the window was being built: nothing opens.
-	if (stillWanted()) reconnect.afterRestartStartFailed(conn);
+	if (stillWanted()) reconnect.afterRestartStartFailed(failure);
 }
 
 export async function keepReconnecting(
 	token: string,
-	conn: WebSocket,
 ): Promise<KeepTryingResult> {
-	return (await streamReconnect()).keepTrying(token, conn);
+	return (await streamReconnect()).keepTrying(token);
 }
 
 /** A session committed: a running window has done its job. */

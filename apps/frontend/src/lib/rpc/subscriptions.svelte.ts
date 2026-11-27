@@ -1610,6 +1610,16 @@ const MAX_REAUTH_STALLS = 3;
  * reconfiguring or reconciling, and the device parks a Stop in those states.
  */
 function deviceStillStreams(): boolean {
+	// A connection restart or a reconnect window (or its end, which waits for
+	// Keep trying or Stop) is still the session the Stop was for, though the
+	// lifecycle reads idle: the Stop must reach the device, or a returning link
+	// would start the stream the streamer stopped.
+	if (
+		statusState?.connection_restarting === true ||
+		(statusState?.stream_reconnect !== undefined &&
+			statusState.stream_reconnect !== null)
+	)
+		return true;
 	const lifecycle = statusState?.stream_lifecycle;
 	return lifecycle !== undefined ? lifecycle !== "idle" : isStreamingState;
 }

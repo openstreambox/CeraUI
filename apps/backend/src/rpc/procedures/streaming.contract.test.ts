@@ -263,6 +263,40 @@ describe("streaming setter-contract — contains-envelope (S3)", () => {
 		).rejects.toThrow();
 	});
 
+	test("setReconnect echoes only its two fields to the other tabs, and a failed save changes nothing", async () => {
+		const { spyOn } = await import("bun:test");
+		const sockets = await import("../../modules/ui/websocket-server.ts");
+		const configModule = await import("../../modules/config.ts");
+		const sent: Array<[string, unknown]> = [];
+		const broadcast = spyOn(sockets, "broadcastMsg").mockImplementation(
+			(type: string, data: unknown) => {
+				sent.push([type, data]);
+			},
+		);
+		try {
+			await callMutation(setReconnectProcedure, { max_s: 600 });
+			expect(sent).toEqual([
+				["config", { auto_reconnect: true, auto_reconnect_max_s: 600 }],
+			]);
+			const save = spyOn(configModule, "saveConfig").mockImplementation(() => {
+				throw new Error("disk full");
+			});
+			try {
+				await expect(
+					callMutation(setReconnectProcedure, { enabled: false, max_s: 60 }),
+				).rejects.toThrow();
+			} finally {
+				save.mockRestore();
+			}
+			expect(getConfig().auto_reconnect).toBe(true);
+			expect(getConfig().auto_reconnect_max_s).toBe(600);
+			expect(sent).toHaveLength(1);
+		} finally {
+			broadcast.mockRestore();
+			await callMutation(setReconnectProcedure, { enabled: true, max_s: 120 });
+		}
+	});
+
 	test("domain-rich mutations carry success WITHOUT a forced applied field", async () => {
 		resetStreamingIdle();
 		const audio = await callMutation(switchAudioProcedure, {

@@ -153,6 +153,21 @@ describe("LiveCockpit while the stream reconnects after every link was lost", ()
 		expect(getByTestId("live-reconnect-left").textContent).toBe("2:00 left");
 	});
 
+	it("restarts the countdown for a new window run even at the same time left", async () => {
+		const { getByTestId, rerender } = render(LiveCockpit, {
+			props: props({
+				restarting: true,
+				reconnect: reconnecting(120_000, "w1"),
+			}),
+		});
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(getByTestId("live-reconnect-left").textContent).toBe("1:30 left");
+		await rerender(
+			props({ restarting: true, reconnect: reconnecting(120_000, "w2") }),
+		);
+		expect(getByTestId("live-reconnect-left").textContent).toBe("2:00 left");
+	});
+
 	it.each([
 		["no_link", "Couldn't reconnect: no network link came back."],
 		[

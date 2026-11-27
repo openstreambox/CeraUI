@@ -155,7 +155,7 @@ async function respondToStaleSource(
 			offer();
 			return;
 		case "restart": {
-			const deps = await connectionRestartDeps(conn, "link-recovery");
+			const deps = await connectionRestartDeps("link-recovery");
 			if (!current()) return;
 			// The stream is already down: a restart costs nothing extra. Held by the
 			// cooldown (or one already running), the operator gets the offer
