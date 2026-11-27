@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 import { updateSettingsSchema } from "@ceraui/rpc/schemas";
 import { resolveBoardUpdates } from "../modules/system/board-updates.ts";
 import { kernelPackage } from "../modules/system/update-orchestrator/kernel-state.ts";
@@ -58,7 +59,7 @@ test("record identity must match RAUC before selecting its channel", async () =>
 		"../modules/system/update-orchestrator/os-identity.ts"
 	);
 	const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
-	const directory = await mkdtemp("/var/tmp/board-updates-");
+	const directory = await mkdtemp(`${tmpdir()}/board-updates-`);
 	try {
 		const path = `${directory}/system.conf`;
 		await writeFile(path, "[system]\ncompatible=ceralive-example\n");
@@ -92,7 +93,7 @@ test("channel address is persisted in rollback-compatible image preferences", as
 	const { saveUpdateSettings, loadUpdateSettings } = await import(
 		"../modules/system/update-settings.ts"
 	);
-	const dir = await mkdtemp("/var/tmp/channel-setting-");
+	const dir = await mkdtemp(`${tmpdir()}/channel-setting-`);
 	try {
 		const path = `${dir}/update-settings.json`;
 		saveUpdateSettings(
@@ -147,7 +148,7 @@ test("transport preflight resolves the configured image host", async () => {
 	const { selectUpdateTransport } = await import(
 		"../modules/system/update-transport/executor.ts"
 	);
-	const dir = await mkdtemp("/var/tmp/channel-probe-");
+	const dir = await mkdtemp(`${tmpdir()}/channel-probe-`);
 	const path = `${dir}/update-settings.json`;
 	const calls: string[][] = [];
 	setUpdateSettingsFilePathForTest(path);

@@ -1,12 +1,13 @@
 import { expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { retireStagedReceipt } from "../modules/system/update-orchestrator/os-staged-receipt-retirement.ts";
 import { receiptJudgment } from "./helpers/os-receipt-judgment.ts";
 
 test("replays the native directory fsync after real rename survives EIO", () => {
 	// Given actual inodes and a fault at the native fsync boundary, not a new API argument.
-	const dir = fs.mkdtempSync("/var/tmp/ceraui-receipt-native-sync-");
+	const dir = fs.mkdtempSync(`${tmpdir()}/ceraui-receipt-native-sync-`);
 	const receipt = {
 		schema: 1 as const,
 		version: "2026.10.64",

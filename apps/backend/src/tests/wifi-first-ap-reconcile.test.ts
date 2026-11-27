@@ -32,6 +32,7 @@ import {
 } from "../modules/wifi/wifi-hotspot-config.ts";
 import * as interfaces from "../modules/wifi/wifi-interfaces.ts";
 import { wifiRadioIdentity } from "../modules/wifi/wifi-radio-identity.ts";
+import { backendTestRunner } from "./helpers/run-test-command.ts";
 import {
 	firstAp,
 	MAC,
@@ -185,7 +186,7 @@ test("startup disarms failed first-start provenance while preserving legacy miss
 			const child = Bun.spawn(
 				[
 					process.execPath,
-					"test",
+					backendTestRunner,
 					"--timeout",
 					"15000",
 					"./apps/backend/src/tests/helpers/wifi-first-ap-restart.ts",

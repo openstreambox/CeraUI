@@ -19,7 +19,10 @@ import {
 	kernelReceipt,
 	preflight,
 } from "./helpers/kernel-namespace.ts";
-import { runTestCommand } from "./helpers/run-test-command.ts";
+import {
+	backendTestRunner,
+	runTestCommand,
+} from "./helpers/run-test-command.ts";
 import suites from "./kernel-suites.json";
 
 const file = import.meta.filename;
@@ -114,7 +117,7 @@ async function crashAfter(operation: "add" | "replace", ifname: string) {
 	const result = await runTestCommand(
 		[
 			process.execPath,
-			"test",
+			backendTestRunner,
 			file,
 			"--test-name-pattern",
 			"^process crash boundary$",
