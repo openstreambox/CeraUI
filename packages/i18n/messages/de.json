@@ -3362,6 +3362,7 @@
 	"live.phone.moblinBusy": "Warte, bis die Box bestätigt, dass kein Stream sie nutzt, bevor du das Moblin-Passwort änderst.",
 	"live.audioMixer.error.audio_input_primary": "Der Haupteingang bleibt immer im Mix. Wähle eine andere Audioquelle, um ihn auszuschalten.",
 	"live.layout.insetCancel": "Drücke Esc, bevor du loslässt, um die vorherige Position wiederherzustellen.",
+	"network.sharing.ipv6Only": "Geräte im WLAN der Box können über diese Verbindung noch keine IPv4-Seiten erreichen.",
 	"systemLogs.tabs.label": "Protokollansichten",
 	"systemLogs.tabs.events": "Ereignisse",
 	"systemLogs.tabs.raw": "Rohprotokolle",

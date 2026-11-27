@@ -3142,6 +3142,7 @@
 	"live.phone.moblinBusy": "Moblin のパスワードを変更する前に、ボックスがどの配信にも使われていないと確認するまでお待ちください。",
 	"live.audioMixer.error.audio_input_primary": "メイン入力は常にミックスに含まれます。オフにするには、別のオーディオソースを選択してください。",
 	"live.layout.insetCancel": "離す前に Esc を押すと、元の位置に戻ります。",
+	"network.sharing.ipv6Only": "この機器の Wi-Fi に接続した端末は、この回線経由で IPv4 サイトにまだアクセスできません。",
 	"systemLogs.tabs.label": "ログの表示",
 	"systemLogs.tabs.events": "イベント",
 	"systemLogs.tabs.raw": "生ログ",
