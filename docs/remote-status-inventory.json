@@ -16236,6 +16236,26 @@
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
+					"path": "wifi_roaming",
+					"types": ["undefined"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "wifi_roaming.level",
+					"types": ["\"off\"", "\"observe\""],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "wifi_roaming.exclude",
+					"types": ["undefined"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "wifi_roaming.exclude[]",
+					"types": ["string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
 					"path": "network_ingest",
 					"types": ["undefined"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -20539,6 +20559,26 @@
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
+					"path": "wifi_roaming",
+					"types": ["undefined"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "wifi_roaming.level",
+					"types": ["\"off\"", "\"observe\""],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "wifi_roaming.exclude",
+					"types": ["undefined"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "wifi_roaming.exclude[]",
+					"types": ["string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
 					"path": "network_ingest",
 					"types": ["undefined"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -22024,8 +22064,8 @@
 		}
 	],
 	"dependencies": {
-		"apps/backend/src/helpers/config-schemas.ts": "b018bacef01534d9904fe8b3fcf3d1b52d5bbedb6dbc70bec707475a04ca5290",
-		"apps/backend/src/main.ts": "5fdc0834ba20359e6c7d859cdc200a49ad72f981dd33712060c58ca3212329a0",
+		"apps/backend/src/helpers/config-schemas.ts": "9fbc23665164d9af7404be5a0537910c72f38347c455f221b1b7954691ab9fc9",
+		"apps/backend/src/main.ts": "08707d3cfb94130c9525387121f58f9484fba2f30e2973edbc4845cc79c767d4",
 		"apps/backend/src/mocks/mock-service.ts": "e7547acc0be1355d2310d9aa39457159a94093a48be13fcffad3239bfc36d19b",
 		"apps/backend/src/mocks/providers/streaming.ts": "75b66fd2f9522b848218dba5f0338473434c0837c5878bab5d3747c12177c925",
 		"apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",

@@ -4,8 +4,10 @@ import { unlinkSync } from "node:fs";
 import {
 	createControlClient,
 	JSON_RPC_METHOD_NOT_FOUND,
+	MAX_CONTROL_LINE_CHARS,
 	SENDER_CONTROL_METHODS,
 	STATS_TOPIC,
+	senderStatsSchema,
 	senderStatsToTelemetry,
 	supportsStatsSubscription,
 	topicNotificationMethod,
@@ -303,6 +305,28 @@ describe("get_capabilities", () => {
 });
 
 describe("get_stats and the stats-topic projection", () => {
+	test("a request after the sender closed the socket fails at once, not after the timeout", async () => {
+		const { path } = await startServer(socketPath("restart"), (frame) => [
+			JSON.stringify({ jsonrpc: "2.0", result: statsResult(), id: frame.id }),
+		]);
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 3000,
+		});
+		expect(await client?.getStats()).not.toBeNull();
+		// The sender exits: its end of the socket goes away.
+		servers.pop()?.stop();
+		await Bun.sleep(50);
+		const started = Date.now();
+		const outcome = await client?.getStats().then(
+			() => "resolved",
+			() => "rejected",
+		);
+		expect(outcome).toBe("rejected");
+		expect(Date.now() - started).toBeLessThan(1000);
+		client?.close();
+	});
+
 	test("get_stats parses the snapshot and keeps the ADR-003 pair", async () => {
 		const { path } = await startServer(socketPath("stats"), (frame) => [
 			JSON.stringify({ jsonrpc: "2.0", result: statsResult(), id: frame.id }),
@@ -617,5 +641,292 @@ describe("setters echo the APPLIED value", () => {
 		});
 		expect(await client?.setConnTimeout(999_999)).toBe(60_000);
 		client?.close();
+	});
+});
+
+describe("per-link arrival reports and sender health", () => {
+	const link = {
+		conn_id: 0,
+		connected: true,
+		timed_out: false,
+		window: 8192,
+		in_flight: 10,
+		rtt_ms: 30,
+		nak_count: 0,
+		bitrate_bytes_per_sec: 100_000,
+		base_score: 81,
+		quality_multiplier: 1,
+	};
+
+	test("keeps the arrival counters, the epoch and the health flags", () => {
+		const parsed = senderStatsSchema.parse({
+			mode: "enhanced",
+			negotiated_latency_ms: 2000,
+			links: [
+				{
+					...link,
+					ip: "10.0.0.2",
+					data_packets_queued_total: 735,
+					srtla_ack_entries_total: 730,
+					last_srtla_ack_age_ms: 120,
+					srtla_ack_epoch: 7,
+					rtt_min_ms: 21.5,
+					weak: false,
+					weak_reason: "healthy",
+					cc_target_bps: 4_000_000,
+					cc_state: "climbing",
+					cc_loss_permille: 3,
+					cc_loss_degraded: false,
+					stall_gated: false,
+					sole_carrier_excluded: false,
+					in_flight_cap_active: false,
+				},
+			],
+		});
+		expect(parsed.negotiated_latency_ms).toBe(2000);
+		expect(parsed.links[0]).toMatchObject({
+			ip: "10.0.0.2",
+			data_packets_queued_total: 735,
+			srtla_ack_entries_total: 730,
+			last_srtla_ack_age_ms: 120,
+			srtla_ack_epoch: 7,
+			weak: false,
+			cc_target_bps: 4_000_000,
+			cc_state: "climbing",
+			cc_loss_permille: 3,
+			stall_gated: false,
+			sole_carrier_excluded: false,
+			in_flight_cap_active: false,
+		});
+	});
+
+	test("a sender without them still parses, and the age may be absent", () => {
+		const old = senderStatsSchema.parse({ mode: "enhanced", links: [link] });
+		expect(old.links[0]?.srtla_ack_epoch).toBeUndefined();
+		const beforeFirstAck = senderStatsSchema.parse({
+			mode: "enhanced",
+			links: [
+				{
+					...link,
+					data_packets_queued_total: 3,
+					srtla_ack_entries_total: 0,
+					srtla_ack_epoch: 1,
+				},
+			],
+		});
+		expect(beforeFirstAck.links[0]?.last_srtla_ack_age_ms).toBeUndefined();
+		expect(beforeFirstAck.links[0]?.srtla_ack_epoch).toBe(1);
+	});
+
+	test("a malformed new field is dropped, not the whole frame", () => {
+		const parsed = senderStatsSchema.safeParse({
+			mode: "enhanced",
+			negotiated_latency_ms: -1,
+			links: [
+				{
+					...link,
+					data_packets_queued_total: 1.5,
+					srtla_ack_epoch: "seven",
+					weak: "no",
+					cc_state: 3,
+					ip: "",
+				},
+			],
+		});
+		expect(parsed.success).toBe(true);
+		expect(parsed.data?.negotiated_latency_ms).toBeUndefined();
+		expect(parsed.data?.links[0]).toMatchObject({ conn_id: 0, rtt_ms: 30 });
+		for (const key of [
+			"data_packets_queued_total",
+			"srtla_ack_epoch",
+			"weak",
+			"cc_state",
+			"ip",
+		])
+			expect(
+				(parsed.data?.links[0] as Record<string, unknown> | undefined)?.[key],
+			).toBeUndefined();
+	});
+
+	test("a malformed field the projection relies on still rejects the frame", () => {
+		expect(
+			senderStatsSchema.safeParse({
+				mode: "enhanced",
+				links: [{ ...link, rtt_ms: "slow" }],
+			}).success,
+		).toBe(false);
+	});
+});
+
+describe("line size ceiling", () => {
+	/**
+	 * A peer that answers a request (or, with `pushOnOpen`, a subscription) with
+	 * one endless line, written in chunks until it is past the ceiling.
+	 */
+	async function floodServer(tag: string, ackSubscribe = false) {
+		const path = socketPath(tag);
+		try {
+			unlinkSync(path);
+		} catch {
+			// first run for this path
+		}
+		const flood = async (socket: { write: (d: string) => number }) => {
+			const chunk = "x".repeat(65_536);
+			let sent = 0;
+			while (sent <= MAX_CONTROL_LINE_CHARS + 16) {
+				const n = socket.write(chunk);
+				sent += n;
+				if (n < chunk.length) await Bun.sleep(2);
+			}
+		};
+		const server = Bun.listen<undefined>({
+			unix: path,
+			socket: {
+				data(socket, chunk) {
+					const line = new TextDecoder().decode(chunk).trim();
+					const frame = JSON.parse(line.split("\n")[0] as string) as {
+						id: number;
+						method: string;
+					};
+					if (ackSubscribe && frame.method === "subscribe")
+						socket.write(
+							`${JSON.stringify({ jsonrpc: "2.0", result: { subscription_id: "sub-0" }, id: frame.id })}\n`,
+						);
+					void flood(socket);
+				},
+			},
+		});
+		servers.push({ stop: () => server.stop(true) });
+		return path;
+	}
+
+	test("a peer that sends an over-long line is dropped, and a pending request fails at once", async () => {
+		const path = await floodServer("huge");
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 5000,
+		});
+		const started = Date.now();
+		const outcome = await client?.getStats().then(
+			() => "resolved",
+			() => "rejected",
+		);
+		expect(outcome).toBe("rejected");
+		expect(Date.now() - started).toBeLessThan(4000);
+		// The connection is gone: the next request fails at once too.
+		const next = await client?.getStats().then(
+			() => "resolved",
+			() => "rejected",
+		);
+		expect(next).toBe("rejected");
+		client?.close();
+	});
+
+	test("an over-long line that ends with its newline is not parsed either", async () => {
+		// The head stays under the ceiling, the whole line goes over it.
+		expect(MAX_CONTROL_LINE_CHARS - 200).toBeLessThan(MAX_CONTROL_LINE_CHARS);
+		// Pinned: everything but the last 400 bytes arrives first (below the
+		// ceiling, no newline), then the rest crosses the ceiling together
+		// with the newline. Only the complete-line check can catch it.
+		const path = socketPath("hugeline");
+		const server = Bun.listen<undefined>({
+			unix: path,
+			socket: {
+				data(socket, chunk) {
+					const frame = JSON.parse(
+						new TextDecoder().decode(chunk).trim().split("\n")[0] as string,
+					) as { id: number };
+					const reply = (pad: string) =>
+						JSON.stringify({
+							jsonrpc: "2.0",
+							id: frame.id,
+							result: statsResult(),
+							pad,
+						});
+					// The line (without its newline) is the ceiling plus 200.
+					const pad = "z".repeat(
+						MAX_CONTROL_LINE_CHARS + 200 - reply("").length,
+					);
+					const line = `${reply(pad)}\n`;
+					const head = line.slice(0, line.length - 400);
+					const tail = line.slice(line.length - 400);
+					void (async () => {
+						let at = 0;
+						while (at < head.length) {
+							const n = socket.write(head.slice(at, at + 65_536));
+							at += n;
+							if (n === 0) await Bun.sleep(2);
+						}
+						// Let the client take the head in before the tail is sent.
+						await Bun.sleep(100);
+						socket.write(tail);
+					})();
+				},
+			},
+		});
+		servers.push({ stop: () => server.stop(true) });
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 5000,
+		});
+		const started = Date.now();
+		const outcome = await client?.getStats().then(
+			(v) => (v === null ? "null" : "resolved"),
+			() => "rejected",
+		);
+		expect(outcome).toBe("rejected");
+		// Rejected by the disconnect, not by the request timeout.
+		expect(Date.now() - started).toBeLessThan(4000);
+		client?.close();
+	});
+
+	test("a subscription push with a malformed new field still projects", async () => {
+		const server = await startServer(socketPath("tolerantpush"), (frame) =>
+			frame.method === "subscribe"
+				? [
+						JSON.stringify({
+							jsonrpc: "2.0",
+							result: { subscription_id: "sub-0" },
+							id: frame.id,
+						}),
+					]
+				: null,
+		);
+		const client = await createControlClient({
+			socketPath: server.path,
+			timeoutMs: 2000,
+		});
+		const seen: Array<unknown> = [];
+		const stop = client?.subscribeStats((snapshot) => seen.push(snapshot));
+		await Bun.sleep(30);
+		const stats = statsResult() as { links: Record<string, unknown>[] };
+		for (const link of stats.links) {
+			link.srtla_ack_epoch = "seven";
+			link.cc_loss_permille = -3;
+		}
+		server.push(
+			JSON.stringify({
+				jsonrpc: "2.0",
+				method: "stats.update",
+				params: { subscription_id: "sub-0", data: stats },
+			}),
+		);
+		await Bun.sleep(30);
+		expect(seen).toHaveLength(1);
+		expect(seen[0]).not.toBeNull();
+		stop?.();
+	});
+
+	test("a subscription sees an over-long push as a disconnect", async () => {
+		const path = await floodServer("hugepush", true);
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 5000,
+		});
+		const seen: Array<unknown> = [];
+		const stop = client?.subscribeStats((snapshot) => seen.push(snapshot));
+		for (let i = 0; i < 100 && !seen.includes(null); i++) await Bun.sleep(20);
+		expect(seen).toContain(null);
+		stop?.();
 	});
 });

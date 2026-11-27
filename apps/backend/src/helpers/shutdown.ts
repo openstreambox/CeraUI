@@ -13,6 +13,8 @@ export interface BackendShutdownDeps {
 	readonly stopSrtIngest: () => Promise<void>;
 	readonly stopDmesgWatchers: () => void;
 	readonly stopUplinkShaper?: () => Promise<void>;
+	/** Stops the Wi-Fi roaming observer and drains its round in flight. */
+	readonly stopWifiRoaming?: () => Promise<void>;
 	readonly stopGatewayRoutes?: () => Promise<void>;
 	readonly exit: (code: number) => void;
 }
@@ -55,6 +57,8 @@ export function handleTerminationSignal(
 	void (async () => {
 		if (deps.stopRecoveryRetries)
 			await settleCleanup("recovery retries", deps.stopRecoveryRetries);
+		if (deps.stopWifiRoaming)
+			await settleCleanup("wifi roaming", deps.stopWifiRoaming);
 		if (deps.stopGatewayRoutes)
 			await settleCleanup("host route preference", deps.stopGatewayRoutes);
 		await settleCleanup("SRT ingest", deps.stopSrtIngest);
