@@ -1,4 +1,5 @@
 import { radioHealthListSchema } from "@ceraui/rpc/schemas";
+import { confirmUnreadableRecord } from "../../modules/modems/mutation-damage.ts";
 import { getRadioHealth } from "../../modules/modems/radio-health-runtime.ts";
 /**
  * Modems Procedures
@@ -13,6 +14,7 @@ import {
 	modemBandsInputSchema,
 	modemBandsOutputSchema,
 	modemCapabilitiesOutputSchema,
+	modemClearUnreadableRecordInputSchema,
 	modemConfigInputSchema,
 	modemConfigOutputSchema,
 	modemGpsInputSchema,
@@ -139,7 +141,8 @@ const baseProcedure = os.$context<RPCContext>();
 // three deliberately skip the cellular readiness gate below.
 export const authedProcedure = baseProcedure.use(authMiddleware);
 
-// Procedures that read the live cellular backend must pass this readiness gate.
+// Procedures that access modems require a ready cellular stack. Disk-only recovery
+// and configuration remain available while ModemManager is initializing.
 export const modemProcedure = authedProcedure.use(cellularReadyMiddleware);
 
 /**
@@ -629,6 +632,13 @@ export const acknowledgeMutationProcedure = authedProcedure
 	.handler(({ input, signal }) =>
 		acknowledgeMutation(input.stableKey, input.mode, signal),
 	);
+
+// Operates only on an outstanding journal offer. It needs authentication but
+// no initialized MM adapter or modem row to repair on-disk recovery state.
+export const clearUnreadableRecordProcedure = authedProcedure
+	.input(modemClearUnreadableRecordInputSchema)
+	.output(modemMutationAckOutputSchema)
+	.handler(({ input }) => confirmUnreadableRecord(input.token));
 
 export const decommissionMutationProcedure = authedProcedure
 	.input(modemMutationDecommissionInputSchema)

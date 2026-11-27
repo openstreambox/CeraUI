@@ -36,22 +36,37 @@ import {
 	type ModemMutationRefusal,
 	type ModemMutationState,
 } from "@ceraui/rpc/schemas";
-
 import { logger } from "../../helpers/logger.ts";
+import { readUdevDeviceProperties } from "../network/router-cellular-scan.ts";
 import {
 	type MutationBlock,
 	setMutationBlocks,
+	tryAcquireModemJournalKey,
 } from "../streaming/lifecycle-admission.ts";
-
+import {
+	beginRecoveryBarrier,
+	isRecoveryPending,
+} from "../streaming/recovery-barrier.ts";
 import { syncHeldOutModemNotices } from "./held-out-modem-notice.ts";
 import { readMutationUdevExportDb } from "./modem-id-path-source.ts";
-import { listMutationEntries, mutationSlotName } from "./mutation-journal.ts";
+import {
+	commitMutationEntry,
+	journalNow,
+	listMutationEntries,
+	mutationSlotName,
+	nextEntry,
+	readMutationEntry,
+} from "./mutation-journal.ts";
 import {
 	assertMutationJournalRevision,
 	isMutationJournalRevisionCurrent,
 	mutationJournalRevision,
 } from "./mutation-journal-revision.ts";
-import { blocksMutations, blocksStreaming } from "./mutation-journal-state.ts";
+import {
+	blocksMutations,
+	blocksStreaming,
+	presenceRecheckTarget,
+} from "./mutation-journal-state.ts";
 
 const REFUSAL_BY_STATE: Readonly<
 	Partial<Record<ModemMutationState, ModemMutationRefusal>>
@@ -68,7 +83,7 @@ export interface MutationBlockDeps {
 	listEntries(
 		onUnreadable: (slot: string) => void,
 	): Promise<readonly ModemMutationEntry[]>;
-	presentStableKeys(): Promise<ReadonlySet<string>>;
+	presentStableKeys(paths?: Map<string, string>): Promise<ReadonlySet<string>>;
 }
 
 /**
@@ -77,7 +92,9 @@ export interface MutationBlockDeps {
  */
 export const PRESENCE_UNKNOWN: ReadonlySet<string> = new Set<string>();
 
-async function enumeratePresentKeys(): Promise<ReadonlySet<string>> {
+async function enumeratePresentKeys(
+	paths?: Map<string, string>,
+): Promise<ReadonlySet<string>> {
 	const present = new Set<string>();
 	try {
 		const devices = await createUsbEnumerator({
@@ -85,7 +102,10 @@ async function enumeratePresentKeys(): Promise<ReadonlySet<string>> {
 		}).enumerate();
 		for (const device of devices) {
 			const key = deriveModemStableKey(device.physicalUid);
-			if (key !== undefined) present.add(key);
+			if (key !== undefined) {
+				present.add(key);
+				if (device.sysfsPath) paths?.set(key, device.sysfsPath);
+			}
 		}
 	} catch (err) {
 		// An unreadable bus is a statement about the READ, never about the devices.
@@ -99,15 +119,26 @@ async function enumeratePresentKeys(): Promise<ReadonlySet<string>> {
 	return present;
 }
 
-export const defaultMutationBlockDeps: MutationBlockDeps = {
+interface ReturnBlockDeps extends MutationBlockDeps {
+	confirmPresent(key: string, sysfsPath: string | undefined): Promise<boolean>;
+}
+
+export const defaultMutationBlockDeps: ReturnBlockDeps = {
+	async confirmPresent(key, path) {
+		return (
+			path !== undefined &&
+			deriveModemStableKey((await readUdevDeviceProperties(path)).idPath) ===
+				key
+		);
+	},
 	listEntries: (onUnreadable) =>
 		listMutationEntries(undefined, false, onUnreadable),
 	presentStableKeys: enumeratePresentKeys,
 };
 
-let activeDeps: MutationBlockDeps = defaultMutationBlockDeps;
+let activeDeps: ReturnBlockDeps = defaultMutationBlockDeps;
 
-export function setMutationBlockDeps(deps: Partial<MutationBlockDeps>): void {
+export function setMutationBlockDeps(deps: Partial<ReturnBlockDeps>): void {
 	activeDeps = { ...defaultMutationBlockDeps, ...deps };
 }
 
@@ -120,6 +151,8 @@ interface MutationBlockPublication {
 	readonly readableKeys: ReadonlySet<string>;
 	readonly revision: bigint;
 }
+
+let lastInterlock: readonly MutationBlock[] = [];
 
 let publication: MutationBlockPublication = {
 	blocks: [],
@@ -206,14 +239,11 @@ export async function reconcileMutationBlocks(
 
 	assertMutationJournalRevision(revision);
 	// Damage is not absence: a slot that cannot be read keeps its published row.
-	const blocks = [
-		...readable,
-		...publication.blocks.filter((block) =>
-			unreadable.includes(`${mutationSlotName(block.stableKey)}.json`),
-		),
-	];
-	setMutationBlocks(
-		blocking.map((entry): MutationBlock => {
+	const damaged = (block: { readonly stableKey: string }) =>
+		unreadable.includes(`${mutationSlotName(block.stableKey)}.json`);
+	const blocks = [...readable, ...publication.blocks.filter(damaged)];
+	const interlock = [
+		...blocking.map((entry): MutationBlock => {
 			const prior = entry.preState.vidPid;
 			const deviceVidPid =
 				entry.deviceVidPid ??
@@ -231,7 +261,11 @@ export async function reconcileMutationBlocks(
 				blocksStreaming: blocksStreaming(entry.state),
 			};
 		}),
-	);
+		// The interlock row keeps its unit link and USB identity with it.
+		...lastInterlock.filter(damaged),
+	];
+	setMutationBlocks(interlock);
+	lastInterlock = interlock;
 	publication = {
 		blocks,
 		readableKeys: new Set(blocking.map((entry) => entry.stableKey)),
@@ -239,4 +273,68 @@ export async function reconcileMutationBlocks(
 	};
 	syncHeldOutModemNotices(blocks);
 	return { blocks, unreadable };
+}
+
+/** A return after replay needs the same terminal disposition as a return at boot.
+ * Take the journal-only key, re-read the slot and require positive USB identity.
+ * This poll never submits a rollback or clears the block. */
+let returnPass: Promise<void> | undefined;
+
+export function reconcileReturnedMutationBlocks(): Promise<void> {
+	returnPass ??= reconcileReturns(activeDeps).finally(() => {
+		returnPass = undefined;
+	});
+	return returnPass;
+}
+
+async function reconcileReturns(deps: ReturnBlockDeps): Promise<void> {
+	const candidates = publication.blocks.filter(
+		(block) => presenceRecheckTarget(block.state, true) !== undefined,
+	);
+	if (!candidates.length || isRecoveryPending()) return;
+	let changed = false;
+	try {
+		const paths = new Map<string, string>();
+		const present = new Set(await deps.presentStableKeys(paths));
+		for (const block of candidates) {
+			if (!present.has(block.stableKey) || isRecoveryPending()) continue;
+			const lease = tryAcquireModemJournalKey(block.stableKey);
+			if (!lease) continue;
+			try {
+				const entry = await readMutationEntry(block.stableKey);
+				if (!entry || entry.state !== block.state) continue;
+				const current = await deps.confirmPresent(
+					entry.stableKey,
+					paths.get(entry.stableKey),
+				);
+				if (!current) present.delete(entry.stableKey);
+				const target = presenceRecheckTarget(entry.state, current);
+				if (!target || isRecoveryPending()) continue;
+				await commitMutationEntry(
+					nextEntry(
+						entry,
+						target,
+						journalNow(),
+						"device present after recovery",
+					),
+				);
+				changed = true;
+			} finally {
+				lease.release();
+			}
+		}
+		if (changed)
+			await refreshMutationBlocks({
+				...deps,
+				presentStableKeys: async () => present,
+			});
+	} catch (err) {
+		// A visible rename can precede a failed fsync. Have the existing owner
+		// verify durable authority and republish even after a partial pass.
+		beginRecoveryBarrier();
+		logger.warn("modem return reconciliation incomplete", {
+			module: "modems",
+			err,
+		});
+	}
 }

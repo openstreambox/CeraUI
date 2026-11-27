@@ -36,6 +36,7 @@ describe("generated support vocabularies", () => {
 	test("error texts the code throws are collected", () => {
 		const texts = SUPPORT_ERROR_TEMPLATES.map((template) => template.join("…"));
 		expect(texts).toContain("binary not allowlisted: …");
+		expect(texts).toContain("Private authority migration is busy");
 		expect([...SUPPORT_ERROR_TEMPLATES]).toEqual(collectErrorTemplates());
 	});
 	test("templates hold fixed text only", () => {

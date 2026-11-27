@@ -1,7 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as leases from "../../helpers/private-state-lease.ts";
+import {
+	isRecoveryPending,
+	resetRecoveryBarrier,
+} from "../streaming/recovery-barrier.ts";
 import {
 	CellularAuthorityBusy,
 	readCellularSlot,
@@ -91,6 +96,40 @@ test("a reader defers a slot write without raising the global journal barrier", 
 		expect(await readCellularSlot({ dir }, key)).toEqual({ cursor: 2 });
 	} finally {
 		release();
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("migration lease contention on a slot does not close admission on the other links", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "slot-migration-"));
+	const key = "c".repeat(64);
+	const acquire = leases.acquirePrivateStateLease;
+	const held = await acquire({ dir }, key);
+	if (!held) throw new Error("fixture lease busy");
+	// Redirect only the kernel lock's directory. The second open uses the
+	// production migration path and must refuse before reading any host store.
+	const lock = spyOn(leases, "acquirePrivateStateLease").mockImplementation(
+		(_store, slot) => acquire({ dir }, slot),
+	);
+	try {
+		const revision = mutationJournalRevision();
+		await expect(
+			accessCellularAuthority(
+				"cellular-preparation",
+				key,
+				(v) => v,
+				async (v) => v,
+				undefined,
+				true,
+				"slot",
+			),
+		).rejects.toThrow("busy");
+		expect(isRecoveryPending()).toBe(false);
+		expect(mutationJournalRevision()).toBe(revision);
+	} finally {
+		lock.mockRestore();
+		held.release();
+		resetRecoveryBarrier();
 		await rm(dir, { recursive: true, force: true });
 	}
 });

@@ -28,6 +28,7 @@ import {
 	isRecoveryPending,
 } from "../streaming/recovery-barrier.ts";
 import { reconciledMutationJournalRevision } from "./mutation-blocks.ts";
+import { stopMutationDamageMonitor } from "./mutation-damage.ts";
 import {
 	isMutationJournalRevisionCurrent,
 	mutationJournalRevision,
@@ -47,7 +48,11 @@ export interface MutationRecoveryDeps {
 export const MUTATION_RECOVERY_BASE_MS = 1000;
 export const MUTATION_RECOVERY_CEILING_MS = 60_000;
 
-let running: AbortController | undefined;
+interface RetryOwner {
+	// Confirmation can interrupt a backoff or request another pass during I/O.
+	wait: AbortController;
+}
+let running: RetryOwner | undefined;
 let stopped = false;
 
 export function sleepUnlessAborted(
@@ -88,16 +93,19 @@ async function attempt(
 async function retry(
 	deps: MutationRecoveryDeps,
 	mode: MutationRecoveryMode,
-	own: AbortController,
+	own: RetryOwner,
 ): Promise<void> {
 	try {
 		for (let delay = MUTATION_RECOVERY_BASE_MS; ; ) {
-			await deps.sleep(delay, own.signal);
-			if (own.signal.aborted || !isRecoveryPending()) return;
+			const wake = own.wait.signal;
+			if (!wake.aborted) await deps.sleep(delay, wake);
+			if (running !== own || !isRecoveryPending()) return;
+			if (wake.aborted) delay = MUTATION_RECOVERY_BASE_MS;
+			own.wait = new AbortController();
 			consumeRecoveryBarrierRaise();
 			const revision = mutationJournalRevision();
 			const complete = await attempt(deps, mode);
-			if (own.signal.aborted) return;
+			if (running !== own) return;
 			if (complete) {
 				const finalRevision =
 					mode === "replay" ? reconciledMutationJournalRevision() : revision;
@@ -128,14 +136,20 @@ export function scheduleMutationRecovery(
 	mode: MutationRecoveryMode,
 ): void {
 	if (stopped || running !== undefined) return;
-	const own = new AbortController();
+	const own = { wait: new AbortController() };
 	running = own;
 	void retry(deps, mode, own);
 }
 
+/** Recheck immediately after confirmation, even when the previous pass is still running. */
+export function requestMutationRecoveryCheck(): void {
+	running?.wait.abort();
+}
+
 export function stopMutationRecovery(): void {
 	stopped = true;
-	running?.abort();
+	stopMutationDamageMonitor();
+	running?.wait.abort();
 	running = undefined;
 }
 
