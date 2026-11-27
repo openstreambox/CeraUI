@@ -27,6 +27,7 @@ import {
 	refreshMutationBlocks,
 	resetMutationBlockDeps,
 } from "../../modules/modems/mutation-blocks.ts";
+import { netdevPresence } from "../../modules/network/netdev-lifetime.ts";
 import {
 	getNetworkInterfaceIncarnation,
 	processIfconfigOutput,
@@ -156,6 +157,12 @@ export async function realisticBox(): Promise<RealisticBox> {
 	resetNetifSnapshotForTest();
 	resetUsbNetMarkers();
 	// Only the fixture's own radios carry the kernel's cfg80211 link.
+	// The kernel's sysfs ifindex is the one `ip` reports, for as long as the
+	// name stays present; a name that goes away loses it.
+	const sysfsIndices = new Map<string, number>();
+	const sysfsIndex = spyOn(netdevPresence, "ifindex").mockImplementation(
+		(name) => sysfsIndices.get(name),
+	);
 	const wireless = spyOn(wifiInterfaceReaders, "pathExists").mockImplementation(
 		(path) =>
 			present.some(
@@ -167,6 +174,11 @@ export async function realisticBox(): Promise<RealisticBox> {
 	const box: RealisticBox = {
 		async scan(links = present, options = {}) {
 			present = links;
+			for (const name of sysfsIndices.keys())
+				if (!links.some((link) => link.ifname === name))
+					sysfsIndices.delete(name);
+			for (const [name, index] of options.ifindices ?? [])
+				sysfsIndices.set(name, index);
 			setModemIdPathReader(async () => {
 				if (options.failIdPaths) throw new Error("udev read failed");
 				return new Map(
@@ -225,6 +237,7 @@ export async function realisticBox(): Promise<RealisticBox> {
 		},
 		close() {
 			wireless.mockRestore();
+			sysfsIndex.mockRestore();
 			resetUsbNetMarkers();
 			setModemIdPathReader(null);
 			resetMutationBlockDeps();

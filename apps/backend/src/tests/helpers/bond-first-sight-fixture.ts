@@ -61,6 +61,9 @@ export function firstSightScan(
 	let sysfsIndexUnavailable = false;
 	let sysfsNodeUnavailable = false;
 	let ifconfigGate: Promise<void> | undefined;
+	// A node a test pins for a name, independent of its index (a reused index).
+	const nodes = new Map<string, bigint>();
+	let afterIpAddr: (() => void) | undefined;
 	const fixture = options.usbReader ?? constructedTwinDeps(options.devices);
 	const reads = new Map<
 		string,
@@ -142,7 +145,7 @@ export function firstSightScan(
 			const name = match[1] ?? "";
 			const index = indices.get(name);
 			return listed(name) && index !== undefined && !sysfsNodeUnavailable
-				? { dev: 1n, ino: BigInt(index) }
+				? { dev: 1n, ino: nodes.get(name) ?? BigInt(index) }
 				: undefined;
 		}) as typeof fs.statSync);
 	}
@@ -153,7 +156,7 @@ export function firstSightScan(
 		}
 		if (ipUnavailable) throw new Error("fixture address command unavailable");
 		if (!options.indexed) return "";
-		return output
+		const listing = output
 			.split("\n\n")
 			.flatMap((entry) => {
 				const name = entry.split(":")[0];
@@ -162,12 +165,23 @@ export function firstSightScan(
 				return [`${indices.get(name)}: ${name}: <UP> mtu 1500`];
 			})
 			.join("\n");
+		const hook = afterIpAddr;
+		afterIpAddr = undefined;
+		hook?.();
+		return listing;
 	});
 	return {
 		clock,
 		block,
 		busCounts,
 		setIndex: (name: string, index: number) => indices.set(name, index),
+		/** Pin the sysfs node of a name apart from its index; undefined unpins. */
+		setNode: (name: string, node: number | undefined) =>
+			node === undefined ? nodes.delete(name) : nodes.set(name, BigInt(node)),
+		/** Run once right after the next `ip addr` listing is taken. */
+		afterIpAddr: (hook: () => void) => {
+			afterIpAddr = hook;
+		},
 		setIpUnavailable: () => {
 			ipUnavailable = true;
 		},
