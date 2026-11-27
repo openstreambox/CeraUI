@@ -20,6 +20,8 @@ import {
 	wifiOperationGuard,
 } from "../modules/wifi/wifi-operation-binding.ts";
 import { radioIdentityReaders } from "../modules/wifi/wifi-radio-identity.ts";
+import { addClient, removeClient } from "../rpc/events.ts";
+import { statusClient } from "./helpers/status-client.ts";
 import { firstAp, MAC } from "./helpers/wifi-first-ap-fixture.ts";
 import {
 	connectRemoteWifiStatus,
@@ -36,6 +38,9 @@ test.each([false, true])(
 		const previousKey = config.remote_key;
 		config.remote_key = "synthetic-remote-key";
 		const relay: string[] = [];
+		const local: string[] = [];
+		const client = statusClient((bytes) => local.push(bytes));
+		addClient(client);
 		resetStatusRelay();
 		const delay = f.delayDown();
 		try {
@@ -113,8 +118,19 @@ test.each([false, true])(
 			expect(rows(relay, "payload").map((row) => row?.mode)).toEqual(
 				guarded ? ["hotspot", "station"] : ["hotspot", "station", "station"],
 			);
-			// The local wire took the marker and has cleared it after the settled
-			// status and the reconnect.
+			// The local wire published the inherited marker and cleared it in the
+			// settled status, the reconnect and the later broadcast.
+			const localRows = wifiStatusFrames(local).map((bytes) => {
+				const row = JSON.parse(bytes).status.wifi?.["0"];
+				return [row?.mode, row?.transition];
+			});
+			expect(localRows).toEqual([
+				["hotspot", undefined],
+				["hotspot", "deactivating"],
+				["station", undefined],
+				["station", undefined],
+				...(guarded ? [] : [["station", undefined]]),
+			]);
 			expect(f.row.hotspot.transition).toBeUndefined();
 			expect(
 				(wifiBuildMsg() as Record<number, { transition?: string }>)[f.row.id]
@@ -122,6 +138,7 @@ test.each([false, true])(
 			).toBeUndefined();
 		} finally {
 			delay.finish();
+			removeClient(client);
 			resetStatusRelay();
 			cancelWifiAdapterReconciliation();
 			config.remote_key = previousKey;
