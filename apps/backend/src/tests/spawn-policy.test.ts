@@ -29,8 +29,8 @@ const alive = (proc: ManagedProcess): boolean =>
 	proc.exitCode === null && proc.signalCode === null;
 
 describe("spawn-policy registry consistency", () => {
-	it("classifies all 82 production spawn sites with unique ids", () => {
-		expect(SPAWN_POLICY).toHaveLength(82);
+	it("classifies all 83 production spawn sites with unique ids", () => {
+		expect(SPAWN_POLICY).toHaveLength(83);
 		expect(getSpawnSite("ingest.srtForward")).toMatchObject({
 			file: "modules/ingest/srt-forward.ts",
 			class: "supervised-worker",
@@ -60,7 +60,7 @@ describe("spawn-policy registry consistency", () => {
 			},
 		});
 		const ids = new Set(SPAWN_POLICY.map((s) => s.id));
-		expect(ids.size).toBe(82);
+		expect(ids.size).toBe(83);
 		expect([...ids].sort()).toEqual(expectedIds);
 		expect(getSpawnSite("updateRecovery.probe")).toMatchObject({
 			file: "modules/system/update-orchestrator/recovery-probes.ts",

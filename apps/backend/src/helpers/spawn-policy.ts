@@ -712,6 +712,23 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 			"spawnWatcher runs iw event only while a hotspot is up; stopHotspotStationEvents aborts it at shutdown and when the last hotspot stops; restarts back off to one a minute",
 	},
 	{
+		id: "network.wifiCarrierWatch",
+		file: "modules/network/wifi-carrier-watch.ts",
+		symbol: "WifiCarrierWatch (spawnWatcher ip -o monitor link)",
+		command: "[ip, -o, monitor, link]",
+		class: "watcher",
+		contract: {
+			timed: false,
+			startupTimeout: false,
+			shutdownCleanup: false,
+			shutdownAbort: true,
+			lifetimeTimeoutExempt: true,
+		},
+		status: "enforced",
+		mechanism:
+			"spawnWatcher runs ip monitor link on a device (never under mocks); stopWifiCarrierWatch aborts it at shutdown; restarts back off to one a minute and the 5 s netif poll covers any gap",
+	},
+	{
 		id: "sensors.dmesgRk3588",
 		file: "modules/system/sensors.ts",
 		symbol: "initSensors (rk3588 dmesg -w)",
