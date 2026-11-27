@@ -37,6 +37,11 @@ import {
 	publishBondMapping,
 	resetBindMapWriter,
 } from "../modules/streaming/bind-map-writer.ts";
+import {
+	bondRowHeldSince,
+	resetBondRowAgesForTest,
+	setBondRowClockForTest,
+} from "../modules/streaming/bond-row-age.ts";
 import * as srtla from "../modules/streaming/srtla.ts";
 import {
 	noteSenderLaunchBond,
@@ -554,6 +559,81 @@ describe("telemetry after a timeout", () => {
 		});
 		await Bun.sleep(40);
 		expect(registered).toEqual([["eth0"]]);
+	});
+});
+
+describe("bond row ages for the carrier rule", () => {
+	afterEach(() => resetBondRowAgesForTest());
+
+	test("a written row is stamped when the write settles, not when it was submitted", async () => {
+		resetBondRowAgesForTest();
+		let now = 0;
+		setBondRowClockForTest(() => now);
+		const fs = memoryFs(10_000);
+		const deps = {
+			...fs.deps,
+			renameFile: async (from: string, to: string) => {
+				// A slow disk: the IP list lands 8 s after submission.
+				if (to === IPS) now = 8_000;
+				await fs.deps.renameFile(from, to);
+			},
+		};
+		await publishSrtlaBond(link("eth0", "192.0.2.9"), deps, notStreaming);
+		expect(bondRowHeldSince({ iface: "eth0", ip: "192.0.2.9" })).toBe(8_000);
+	});
+
+	test("a publication that never reached the sender leaves the ages as they were", async () => {
+		resetBondRowAgesForTest();
+		let now = 100;
+		setBondRowClockForTest(() => now);
+		const fs = memoryFs(10);
+		await publishSrtlaBond(link("eth0", "192.0.2.1"), fs.deps, notStreaming);
+		now = 200;
+		const stuck = {
+			...fs.deps,
+			retryDelaysMs: [1_000],
+			writeFile: () => new Promise<void>(() => {}),
+		};
+		expect(
+			await publishSrtlaBond(link("eth0", "192.0.2.2"), stuck, notStreaming),
+		).toMatchObject({ reason: "timed_out" });
+		expect(bondRowHeldSince({ iface: "eth0", ip: "192.0.2.1" })).toBe(100);
+		expect(
+			bondRowHeldSince({ iface: "eth0", ip: "192.0.2.2" }),
+		).toBeUndefined();
+	});
+
+	test("the writer's own republication after a failed write stamps its rows", async () => {
+		resetBondRowAgesForTest();
+		let now = 0;
+		setBondRowClockForTest(() => now);
+		const fs = memoryFs();
+		await publishSrtlaBond(link("eth0", "192.0.2.1"), fs.deps, notStreaming);
+		let failures = 1;
+		const deps = {
+			...fs.deps,
+			retryDelaysMs: [10],
+			writeFile: async (path: string, bytes: string) => {
+				if (path.startsWith(IPS) && failures > 0) {
+					failures -= 1;
+					throw new Error("EIO");
+				}
+				await fs.deps.writeFile(path, bytes);
+			},
+		};
+		now = 1_000;
+		expect(
+			await publishSrtlaBond(link("eth0", "192.0.2.2"), deps, notStreaming),
+		).toMatchObject({ ok: false, reason: "ips_write_failed" });
+		// The failed write left the old address's age in place ...
+		expect(bondRowHeldSince({ iface: "eth0", ip: "192.0.2.1" })).toBe(0);
+		now = 2_000;
+		await eventually(() => !getBindMapPublicationHealth().stale);
+		// ... and the retry that landed retired it and stamped the new one.
+		expect(
+			bondRowHeldSince({ iface: "eth0", ip: "192.0.2.1" }),
+		).toBeUndefined();
+		expect(bondRowHeldSince({ iface: "eth0", ip: "192.0.2.2" })).toBe(2_000);
 	});
 });
 

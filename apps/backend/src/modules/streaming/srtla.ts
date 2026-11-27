@@ -52,6 +52,7 @@ import {
 	isBondLinkMappable,
 	setBondIdentityResolverForTest,
 } from "./bond-entry.ts";
+import { noteBondRowsWritten } from "./bond-row-age.ts";
 import { registerSrtlaBond } from "./link-telemetry.ts";
 import { signalSenders } from "./streamloop/process-runner.ts";
 
@@ -375,6 +376,7 @@ export async function publishSrtlaBond(
 			// write the sender still reads the previous list.
 			if (wroteIpList(publication)) {
 				(options.registerBond ?? registerSrtlaBond)(published);
+				noteBondRowsWritten(published);
 			}
 			lastBond = { entries: [...published], publication };
 			if (wroteIpList(publication) && publication.changed)

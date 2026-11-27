@@ -29,6 +29,7 @@ import {
 } from "../../network/wifi-carrier-lost.ts";
 import type { BondEntry } from "../bind-map.ts";
 import type { BindMapPublication } from "../bind-map-writer.ts";
+import { bondRowClock, bondRowHeldSince } from "../bond-row-age.ts";
 import {
 	LINK_CARRYING_EVIDENCE_MS,
 	LINK_CARRYING_SHOW_MS,
@@ -55,7 +56,7 @@ export type SrtlaIpPreparationDeps = {
 	readonly carrierDown?: (ifname: string) => boolean;
 	/** Interfaces the sender's telemetry shows carrying the stream right now. */
 	readonly carryingIfaces?: () => ReadonlySet<string>;
-	/** Wall clock for the held-row ages. */
+	/** The clock row ages are measured on (`bondRowClock`, monotonic). */
 	readonly now?: () => number;
 };
 
@@ -136,40 +137,16 @@ export function carryingIfacesFrom(
 }
 
 /*
-  How long each `iface ip` row has been in every applied publication. Telemetry
-  is keyed by interface, so after an address change the interface's `carrying`
-  can still describe the old socket. `carrying` means progress within
-  LINK_CARRYING_SHOW_MS, over snapshots at most LINK_CARRYING_EVIDENCE_MS
-  apart: once a row has been held longer than both, that progress was made
-  while the sender held this address.
+  A survivor's `iface ip` row must have been in every IP list the sender read
+  (`bond-row-age.ts`, stamped when the writer settles) for longer than the
+  telemetry's carrying window plus its largest snapshot gap: `carrying` means
+  progress within LINK_CARRYING_SHOW_MS over snapshots at most
+  LINK_CARRYING_EVIDENCE_MS apart, so that progress was made while the sender
+  held this address. (It assumes the sender's reload follows the settled write
+  within the snapshot gap, which the session's refresh does at once.)
 */
 export const SURVIVOR_ROW_AGE_MS =
 	LINK_CARRYING_SHOW_MS + LINK_CARRYING_EVIDENCE_MS;
-const heldSince = new Map<string, number>();
-
-const rowKey = (entry: BondEntry) => `${entry.iface} ${entry.ip}`;
-
-function noteApplied(
-	entries: readonly BondEntry[],
-	publication: BindMapPublication,
-	at: number,
-): void {
-	// Nothing reached the sender: the record stays as it was.
-	if (
-		!publication.ok &&
-		(publication.reason === "ips_write_failed" ||
-			publication.reason === "timed_out")
-	)
-		return;
-	const keys = new Set(entries.map(rowKey));
-	for (const key of [...heldSince.keys()])
-		if (!keys.has(key)) heldSince.delete(key);
-	for (const key of keys) if (!heldSince.has(key)) heldSince.set(key, at);
-}
-
-export function resetHeldRowsForTest(): void {
-	heldSince.clear();
-}
 
 function withoutDeafWifi(
 	entries: BondEntry[],
@@ -189,7 +166,7 @@ function withoutDeafWifi(
 	const family = (entry: BondEntry) => isIP(entry.ip);
 	const carrying = carryingIfaces();
 	const heldLongEnough = (entry: BondEntry) => {
-		const since = heldSince.get(rowKey(entry));
+		const since = bondRowHeldSince(entry);
 		return since !== undefined && now - since >= SURVIVOR_ROW_AGE_MS;
 	};
 	const carriers = new Set(
@@ -229,7 +206,7 @@ export async function prepareSrtlaIpAddresses(
 	deps: SrtlaIpPreparationDeps = defaultSrtlaIpPreparationDeps,
 	purpose: "launch" | "refresh" = "launch",
 ): Promise<BindMapPublication> {
-	const at = (deps.now ?? Date.now)();
+	const at = (deps.now ?? bondRowClock)();
 	const local = deps.isLocal(srtlaAddr);
 	const collected = local ? deps.localList(srtlaAddr) : deps.bondedList();
 	const entries =
@@ -246,10 +223,5 @@ export async function prepareSrtlaIpAddresses(
 	if (purpose === "launch" && entries.length === 0) {
 		throw new Error("no_available_network_connections");
 	}
-	const publication = await deps.writeList(
-		entries,
-		local ? srtlaAddr : undefined,
-	);
-	noteApplied(entries, publication, at);
-	return publication;
+	return deps.writeList(entries, local ? srtlaAddr : undefined);
 }
