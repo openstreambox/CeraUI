@@ -77,8 +77,8 @@ export function oweBondMarkerRetractions(anchor: unknown) {
 		expect(anchor).toMatchObject({
 			netif: { [name]: { [key]: expect.any(Object) } },
 		});
-	invalidateUsbNetReading("wwu-router", 1);
-	invalidateUsbNetReading("wwu-modem", 1);
+	invalidateUsbNetReading("wwu-router", 1, false);
+	invalidateUsbNetReading("wwu-modem", 1, false);
 	resetDongleMetadata();
 }
 

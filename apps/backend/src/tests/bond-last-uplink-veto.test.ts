@@ -48,7 +48,8 @@ import {
 	type BondStorageFault,
 	bondStorageFaults,
 	configFileSnapshot,
-	configStage,
+	configStageSnapshot,
+	maskConfigStage,
 	watchConfigWrite,
 } from "./helpers/bond-config-faults.ts";
 import {
@@ -241,7 +242,7 @@ function snapshot(file: string) {
 		preferences: getConfig().bond_opt_out,
 		overlay: [...getMockState().netifConfigs],
 		disk: configFileSnapshot(file),
-		stage: configFileSnapshot(configStage(file)),
+		stage: configStageSnapshot(file),
 	});
 }
 
@@ -581,9 +582,7 @@ async function replay(
 				}
 				return {
 					source,
-					frame: frame
-						.replaceAll(configStage(file), "<stage>")
-						.replaceAll(file, "<config>"),
+					frame: maskConfigStage(file, frame).replaceAll(file, "<config>"),
 				};
 			});
 			const after = snapshot(file);
@@ -773,12 +772,16 @@ for (const fault of bondStorageFaults)
 						"rename",
 					]);
 				} else {
+					// The atomic config writer refuses a target that is not a regular
+					// file before it stages anything, and removes a failed stage.
 					const code =
 						fault === "unwritable-dir"
 							? "EACCES"
 							: fault === "once-fsync" || fault === "final-rename"
 								? "EIO"
-								: fault;
+								: fault === "EISDIR"
+									? "Target must be a regular file"
+									: fault;
 					expect(row.frames.at(-1)).toMatchObject({
 						id: "request-0",
 						error: {
@@ -786,12 +789,17 @@ for (const fault of bondStorageFaults)
 							message: expect.stringContaining(code),
 						},
 					});
-					expect(row.steps.filter((step) => step === "open")).toEqual(["open"]);
+					if (fault === "EISDIR") expect(row.steps).toEqual([]);
+					else
+						expect(row.steps.filter((step) => step === "open")).toEqual([
+							"open",
+						]);
 					expect(row.after.disk).toEqual(row.before.disk);
-					if (fault === "EISDIR" || fault === "final-rename")
+					expect(row.after.stage).toBeNull();
+					if (fault === "final-rename")
 						expect(row.steps.slice(-2)).toEqual(["rename", "unlink"]);
 					if (fault === "once-fsync")
-						expect(row.steps.slice(-2)).toEqual(["fsync", "close"]);
+						expect(row.steps.slice(-3)).toEqual(["fsync", "close", "unlink"]);
 				}
 			}
 		});
