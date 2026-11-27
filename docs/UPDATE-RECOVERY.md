@@ -1905,11 +1905,14 @@ continuation had not run yet) still meets the stop of the fixed name, as on the
 base. A second start
 while one waits for discovery is refused (`already_updating`) instead of being
 reported started, so a ticket always belongs to the launch that runs. Settling
-clears `pending-packages.json`, as a start refused up front does (if that
-fails, a retry in the same process clears it before it launches, or does not
-launch; the mark does not survive a restart, so after one a retry from a wire
-other than the offer can still keep that record, the limitation under "Still
-open"); taking the
+clears `pending-packages.json`, as a start refused up front does, and only
+then queues the install again. While clearing fails the phase stays
+`downloading` (nothing of the launch runs, so a stream start stops nothing and
+Install now answers `busy`), and each tick tries again; a restart in that state
+resumes it as an interrupted download whose unit is proven gone, which goes to
+`idle` with the package check due, so the next launch comes from a fresh offer
+and saves its own plan. No new persisted key is needed, so an older CeraUI
+reading the state file after a rollback still accepts it. Taking the
 refusal withdraws it from the wire if the wire shows it, so the offer is back
 and the retry saves the record from it, as a first launch does. If the wire
 shows something else then (a later failure of a Packages card start), the

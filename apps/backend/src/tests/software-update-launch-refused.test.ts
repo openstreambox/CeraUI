@@ -31,6 +31,7 @@ import {
 } from "../modules/system/software-updates.ts";
 import { DownloadPausedLedger } from "../modules/system/update-orchestrator/download-paused-ledger.ts";
 import { DownloadPausedNotices } from "../modules/system/update-orchestrator/download-paused-notices.ts";
+import { resumeOrchestratorState } from "../modules/system/update-orchestrator/resume.ts";
 import {
 	admitAndPrepareStreamStart,
 	getOrchestratorState,
@@ -621,26 +622,24 @@ test("a launch that replaced the probed one during the probe is decided afresh",
 	expect(admission.allowed).toBe(false);
 });
 
-test("a refused plan whose clearing failed is cleared before the retry launches", async () => {
-	// Given a refused launch whose pending list could not be cleared.
+test("a refused launch whose plan cannot be cleared is queued again only once it is", async () => {
+	// Given a refused launch whose pending list cannot be cleared yet.
 	const quarantine = testQuarantine();
 	let clearFails = true;
-	let clears = 0;
 	quarantine.clearPending = async () => {
-		clears++;
 		if (clearFails) throw new Error("EIO");
 	};
 	quarantine.savePending = async () => {};
 	let refused = false;
-	let wire: UpdateState = {
-		kind: "downloading",
-		progress: { total: 0, downloading: 0, unpacking: 0, setting_up: 0 },
-	};
+	let stops = 0;
 	let launches = 0;
 	setOrchestratorRuntimeDepsForTest(
 		fakeDeps({
 			quarantine,
-			getPackageInstallWireState: () => wire,
+			getPackageInstallWireState: () => ({
+				kind: "downloading",
+				progress: { total: 0, downloading: 0, unpacking: 0, setting_up: 0 },
+			}),
 			takePackageLaunchRefusal: () => {
 				const once = refused;
 				refused = false;
@@ -649,6 +648,9 @@ test("a refused plan whose clearing failed is cleared before the retry launches"
 			startPackageInstall: () => {
 				launches++;
 				return { started: true };
+			},
+			stopPackageInstallUnit: async () => {
+				stops++;
 			},
 			isIdle: async () => false,
 		}),
@@ -659,21 +661,45 @@ test("a refused plan whose clearing failed is cleared before the retry launches"
 	});
 	expect(await installUpdatesNow()).toEqual({ started: true });
 	refused = true;
+	// When the tick settles it while the list stays on disk.
+	await runOrchestratorTick();
+	// Then it is not queued again: the phase stays `downloading`, so a restart
+	// now resumes it as an interrupted download (unit gone: a fresh check).
+	expect(getOrchestratorState().phase).toBe("downloading");
+	expect(await installUpdatesNow()).toEqual({
+		started: false,
+		reason: "busy",
+	});
+	// And a stream start still stops nothing for it.
+	expect(await admitAndPrepareStreamStart()).toEqual({ allowed: true });
+	expect(stops).toBe(0);
+	// Once the list is cleared, the next tick queues the install again.
+	clearFails = false;
 	await runOrchestratorTick();
 	expect(getOrchestratorState().phase).toBe("awaiting-idle");
-	// When the retry starts from a wire that shows a Packages card failure.
-	wire = { kind: "failed", reason: "E: broken" };
-	// Then it does not launch while the old plan stays,
-	await installUpdatesNow().catch(() => undefined);
-	expect(launches).toBe(1);
-	expect(getOrchestratorState().phase).toBe("awaiting-idle");
-	// and launches once the old plan is gone.
-	clearFails = false;
 	expect(await installUpdatesNow()).toEqual({ started: true });
 	expect(launches).toBe(2);
-	expect(clears).toBeGreaterThanOrEqual(3);
 });
 
+test("a restart while a refused plan stays on disk resumes to a fresh check", async () => {
+	// Given the persisted `downloading` of a refused launch, its unit proven gone.
+	const persisted = {
+		...initialOrchestratorState(0),
+		phase: "downloading" as const,
+		enteredAt: 10,
+	};
+	// When CeraUI starts again.
+	const resumed = await resumeOrchestratorState(persisted, {
+		recoverSoftwareUpdateIfRunning: async () => false,
+		lastInstallUnitVerdict: () => "absent",
+		getUpdateState: () => ({ kind: "idle" }),
+		now: () => 50,
+	});
+	// Then it goes to `idle` with the package check due: the next launch comes
+	// from a fresh offer, which saves its own plan.
+	expect(resumed.phase).toBe("idle");
+	expect(resumed.packageCheck.nextAttemptAt).toBe(50);
+});
 test("a commit stage under the name still refuses the stream after a settled refusal", async () => {
 	// Given a refused launch whose name another transaction holds, in dpkg.
 	setOrchestratorRuntimeDepsForTest(

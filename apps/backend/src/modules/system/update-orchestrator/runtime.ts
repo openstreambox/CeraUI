@@ -570,8 +570,10 @@ let packageInstallStarting = false;
 // refused before its unit was submitted.
 let startedLaunch: PackageLaunchTicket | null = null;
 let launchRefusalSettling: Promise<boolean> | null = null;
-// A refused launch's pending list stayed on disk (its clearing failed).
-let refusedPlanStale = false;
+// A refused launch whose pending list is not cleared yet: it stays
+// `downloading` (nothing of it runs) until the list is gone.
+let refusedPlanPending = false;
+let refusedPlanClearFailing = false;
 let packageHoldAttempt: DownloadInterruption | undefined;
 let updateAdmissionProbe: Promise<boolean> | undefined;
 let osForceActivated = false;
@@ -723,7 +725,8 @@ export function resetOrchestratorRuntimeForTest(): void {
 	packageHoldAttempt = undefined;
 	startedLaunch = null;
 	launchRefusalSettling = null;
-	refusedPlanStale = false;
+	refusedPlanPending = false;
+	refusedPlanClearFailing = false;
 	resetDisruptiveActionReservationForTest();
 	if (tickTimer) clearTimeout(tickTimer);
 	tickTimer = undefined;
@@ -1441,12 +1444,6 @@ async function maybeStartPackageInstall(opts: {
 						...(item.version ? { version: item.version } : {}),
 					})) ?? available.identity.packages.map((name) => ({ name })),
 			);
-			refusedPlanStale = false;
-		} else if (refusedPlanStale) {
-			// A refused launch's plan that could not be cleared must not ride
-			// into this launch's commit; a failure here leaves it queued.
-			await deps.quarantine.clearPending();
-			refusedPlanStale = false;
 		}
 		if (opts.isCurrent && !opts.isCurrent()) {
 			await deps.quarantine.clearPending();
@@ -1489,6 +1486,8 @@ async function maybeStartPackageInstall(opts: {
 			return result; // stays awaiting-idle; retried next tick
 		}
 		startedLaunch = ticket;
+		refusedPlanPending = false;
+		refusedPlanClearFailing = false;
 		const previousHold = packageHoldAttempt;
 		packageHoldAttempt = packageDownloadAttempt(available);
 		dispatch({
@@ -1526,22 +1525,33 @@ function settleRefusedLaunch(): Promise<boolean> | false {
 	// Nothing to settle answers synchronously, so a caller can act on that
 	// answer in the same turn (the stream start's stop does).
 	if (launchRefusalSettling) return launchRefusalSettling;
-	if (state.phase !== "downloading" || startedLaunch === null) return false;
-	if (!(deps.takePackageLaunchRefusal?.(startedLaunch) ?? false)) return false;
-	startedLaunch = null;
+	if (state.phase !== "downloading") return false;
+	if (!refusedPlanPending) {
+		if (startedLaunch === null) return false;
+		if (!(deps.takePackageLaunchRefusal?.(startedLaunch) ?? false))
+			return false;
+		startedLaunch = null;
+		refusedPlanPending = true;
+	}
 	const settling = (async () => {
 		// As a start refused up front: its plan goes with it, and the retry
-		// saves its own.
+		// saves its own. Not queued again while the plan stays on disk: a
+		// later launch from a wire without the offer would keep it, and a
+		// restart now resumes this `downloading` with its unit proven gone,
+		// which goes to `idle` and a fresh check instead.
 		try {
 			await deps.quarantine.clearPending();
 		} catch (error) {
-			// The retry clears it before it launches, or does not launch.
-			refusedPlanStale = true;
-			logger.warn(
-				"update-orchestrator: clearing a refused launch's pending list failed",
-				{ error },
-			);
+			if (!refusedPlanClearFailing)
+				logger.warn(
+					"update-orchestrator: clearing a refused launch's pending list failed; the install is queued again once it is cleared",
+					{ error },
+				);
+			refusedPlanClearFailing = true;
+			return true;
 		}
+		refusedPlanPending = false;
+		refusedPlanClearFailing = false;
 		if (state.phase === "downloading")
 			dispatch({ type: "INSTALL_LAUNCH_REFUSED", now: deps.now() });
 		return true;
