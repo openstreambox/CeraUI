@@ -42,7 +42,7 @@
 	"osStage.slotObservation",
 	"osStage.startupGuardianProbe",
 	"revisions.installedPackageVersion",
-	"revisions.readRevision",
+	"revisions.probe",
 	"run.spawnCollect",
 	"selfFencing.spawnOp",
 	"sensors.dmesgJetson",
