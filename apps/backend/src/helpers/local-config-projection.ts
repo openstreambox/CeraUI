@@ -13,6 +13,9 @@
  * capability or secret is on (`modem_capabilities.ussd`, `*_configured`), never
  * what the secret is.
  *
+ * Add-on state (`addons` frames and the `addons.list` and `addons.getStatus`
+ * replies) gets the same rule for its owner-typed `userConfig`.
+ *
  * Two top-level keys are read back on purpose by the signed-in owner's own
  * dialogs, and stay: {@link OWNER_READABLE_CONFIG_KEYS}. Remote transports never
  * see them; they build their frames from a separate allowlist.
@@ -59,8 +62,8 @@ function project(value: unknown, depth: number): unknown {
  */
 export function publicLocalConfig(payload: unknown): unknown {
 	const srtFree = publicSrtConfig(payload);
-	if (typeof srtFree !== "object" || srtFree === null || Array.isArray(srtFree))
-		return srtFree;
+	if (Array.isArray(srtFree)) return project(srtFree, 0);
+	if (typeof srtFree !== "object" || srtFree === null) return srtFree;
 	const flagged: Record<string, unknown> = publicStreamIds(
 		srtFree as Record<string, unknown>,
 	);
@@ -74,4 +77,25 @@ export function publicLocalConfig(payload: unknown): unknown {
 		out[key] = project(item, 1);
 	}
 	return out;
+}
+
+/**
+ * One add-on's state for local clients. Its `userConfig` holds whatever the
+ * owner typed at install, so a secret-named field there gets the same rule as
+ * the config frame. Nothing in the page reads `userConfig` back.
+ */
+export function publicAddonState<T>(state: T): T {
+	if (typeof state !== "object" || state === null) return state;
+	const { userConfig } = state as { userConfig?: unknown };
+	if (typeof userConfig !== "object" || userConfig === null) return state;
+	return { ...state, userConfig: project(userConfig, 1) };
+}
+
+/** The `addons` event: a map of add-on id to state. */
+export function publicAddonStates(payload: unknown): unknown {
+	if (typeof payload !== "object" || payload === null || Array.isArray(payload))
+		return payload;
+	return Object.fromEntries(
+		Object.entries(payload).map(([id, state]) => [id, publicAddonState(state)]),
+	);
 }

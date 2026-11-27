@@ -24,6 +24,7 @@ import {
 import { os } from "@orpc/server";
 import { z } from "zod";
 
+import { publicAddonState } from "../../helpers/local-config-projection.ts";
 import { logger } from "../../helpers/logger.ts";
 import { readAddonDescriptor } from "../../modules/addons/descriptor-authority.ts";
 import {
@@ -173,7 +174,7 @@ function buildItem(
 ): z.infer<typeof addonListItemSchema> {
 	const managerPhase = deps.getAddonPhase(descriptor.id);
 	const state = deps.getAddonState(descriptor.id) ?? toAddonState(managerPhase);
-	return { descriptor, state, managerPhase };
+	return { descriptor, state: publicAddonState(state), managerPhase };
 }
 
 async function findDescriptor(

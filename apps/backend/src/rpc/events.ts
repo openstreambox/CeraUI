@@ -3,9 +3,13 @@
  * Manages subscriptions and broadcasts for real-time data
  */
 
-import { publicLocalConfig } from "../helpers/local-config-projection.ts";
+import {
+	publicAddonStates,
+	publicLocalConfig,
+} from "../helpers/local-config-projection.ts";
 import { logger } from "../helpers/logger.ts";
 import { isDevelopment } from "../mocks/mock-config.ts";
+import { ADDON_EVENT } from "../modules/addons/manager.ts";
 import {
 	type CoalesceState,
 	getCoalesceWindowMs,
@@ -339,7 +343,9 @@ export function buildMessage(
 	return JSON.stringify(obj);
 }
 
-/** The local wire form of an event; a `config` frame never carries a secret. */
+/** The local wire form of an event; `config` and `addons` never carry a secret. */
 export function publicEventData(type: string, data: unknown): unknown {
-	return type === "config" ? publicLocalConfig(data) : data;
+	if (type === "config") return publicLocalConfig(data);
+	if (type === ADDON_EVENT) return publicAddonStates(data);
+	return data;
 }

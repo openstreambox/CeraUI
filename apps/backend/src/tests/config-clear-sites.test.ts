@@ -1180,7 +1180,16 @@ describe("through the device's other writers", () => {
 			broadcastConfig(getConfig());
 			await Bun.write("first.json", JSON.stringify(sent));
 			sent = [];
-			await call(setPasswordProcedure, { password: "a-new-password" }, { context: createContext(ws) });
+			const { getPasswordHash } = await import(root + "/rpc/state/password.ts");
+			const before = getPasswordHash();
+			const result = await call(setPasswordProcedure, { password: "a-new-password" }, { context: createContext(ws) });
+			const hash = getPasswordHash();
+			await Bun.write("after.json", JSON.stringify({
+				result,
+				plaintextGone: getConfig().password === undefined,
+				hashReplaced: typeof hash === "string" && hash !== before,
+				hashMatches: typeof hash === "string" && (await Bun.password.verify("a-new-password", hash)),
+			}));
 			const heard = sent.map((m) => JSON.parse(m)).filter((f) => "config" in f || "config_clear" in f)
 				.map((f) => ("config" in f ? "config" : f.config_clear));
 			await Bun.write("heard.json", JSON.stringify(heard));
@@ -1203,6 +1212,14 @@ describe("through the device's other writers", () => {
 		expect(await child.exited, stderr).toBe(0);
 
 		// A tab is never sent the legacy password, so clearing it publishes nothing.
+		expect(
+			await Bun.file(join(tab.directory, "after.json")).json(),
+		).toMatchObject({
+			result: { success: true },
+			plaintextGone: true,
+			hashReplaced: true,
+			hashMatches: true,
+		});
 		const first = await Bun.file(join(tab.directory, "first.json")).text();
 		expect(first).toContain("config");
 		expect(first).not.toContain("legacy");

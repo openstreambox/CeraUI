@@ -5,10 +5,13 @@
  * writer's broadcast, and a single-socket push. Those frames used to be the
  * runtime config with only the SRT passphrase and the Stream IDs projected, so
  * the pairing claim-code seed (and any other secret-named key, at any depth)
- * reached every tab, and an Autostart toggle echoed all of it again. The owner's
+ * reached every tab, and an Autostart toggle echoed all of it again. Add-on
+ * state carried its owner-typed `userConfig` the same way. The owner's
  * `ssh_pass` and `remote_key` stay: the SSH and cloud-remote dialogs read them.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { AddonDescriptorSchema } from "@ceraui/rpc/schemas";
 import { call } from "@orpc/server";
 import { runtimeConfigSchema } from "../helpers/config-schemas.ts";
 import {
@@ -16,16 +19,23 @@ import {
 	publicLocalConfig,
 } from "../helpers/local-config-projection.ts";
 import { isSensitiveKey } from "../helpers/logger.ts";
+import { ADDON_EVENT } from "../modules/addons/manager.ts";
 import { getConfig } from "../modules/config.ts";
 import {
 	resetStatusRelay,
 	setControlChannel,
 } from "../modules/remote-control/status-relay.ts";
 import { setAutostart } from "../modules/streaming/streamloop/autostart.ts";
-import { buildMsg } from "../rpc/compat.ts";
+import { broadcastMsg, buildMsg } from "../rpc/compat.ts";
 import { broadcastConfig } from "../rpc/config-broadcast.ts";
 import { createContext } from "../rpc/context.ts";
 import { buildMessage, sendToClient } from "../rpc/events.ts";
+import {
+	getAddonStatusProcedure,
+	listAddonsProcedure,
+	resetAddonProcedureDeps,
+	setAddonProcedureDeps,
+} from "../rpc/procedures/addons.procedure.ts";
 import { captivePortalProcedure } from "../rpc/procedures/captive-portal.procedure.ts";
 import type { AppWebSocket } from "../rpc/types.ts";
 import { useConfigClient } from "./helpers/config-client.ts";
@@ -58,7 +68,7 @@ function storeSecrets(): void {
 		addons: {
 			example: {
 				enabled: true,
-				phase: "running",
+				phase: "active",
 				autoDisabled: false,
 				userConfig: { api_token: ADDON_TOKEN, label: "kept" },
 			},
@@ -204,11 +214,77 @@ test("every secret-named key of the config schema is withheld locally", () => {
 });
 
 test("a subtree deeper than any config shape is withheld, not sent raw", () => {
-	let deep: Record<string, unknown> = { token: "SYNTHETIC_DEEP_TOKEN" };
+	let deep: Record<string, unknown> = { label: "SYNTHETIC_DEEP_LEAF" };
 	for (let i = 0; i < 20; i++) deep = { level: deep };
 
 	const frame = JSON.stringify(publicLocalConfig({ deep, max_br: 1 }));
 
-	expect(frame).not.toContain("SYNTHETIC_DEEP_TOKEN");
+	expect(frame).not.toContain("SYNTHETIC_DEEP_LEAF");
 	expect(frame).toContain('"max_br":1');
+});
+
+test("a config payload sent as an array has each element projected", () => {
+	const frame = JSON.stringify(
+		publicLocalConfig([{ pairing_secret: SEED, max_br: 1 }, "kept"]),
+	);
+
+	expect(frame).toBe('[{"max_br":1},"kept"]');
+});
+
+const descriptor = AddonDescriptorSchema.parse(
+	await Bun.file(
+		join(import.meta.dir, "../../tests/fixtures/addons/test-addon-a.json"),
+	).json(),
+);
+
+describe("add-on state withholds secret-named userConfig fields", () => {
+	const state = {
+		enabled: true,
+		phase: "active",
+		autoDisabled: false,
+		userConfig: { api_token: ADDON_TOKEN, label: "kept" },
+	} as const;
+
+	afterEach(() => resetAddonProcedureDeps());
+
+	test("the addons push (login snapshot and manager broadcast)", () => {
+		const sent: string[] = [];
+		sendToClient(
+			{ send: (m: string) => sent.push(m) } as unknown as AppWebSocket,
+			ADDON_EVENT,
+			{ [descriptor.id]: state },
+		);
+		tab.sent = [];
+		broadcastMsg(ADDON_EVENT, { [descriptor.id]: state });
+		const wire = [...sent, ...tab.sent].join("\n");
+
+		expect(wire).not.toContain(ADDON_TOKEN);
+		expect(JSON.parse(sent[0] ?? "{}")).toEqual({
+			addons: { [descriptor.id]: { ...state, userConfig: { label: "kept" } } },
+		});
+		expect(state.userConfig.api_token).toBe(ADDON_TOKEN);
+	});
+
+	test("addons.list and addons.getStatus", async () => {
+		setAddonProcedureDeps({
+			readDescriptors: async () => [descriptor],
+			getAddonState: () => state,
+		});
+		const context = {
+			context: createContext({
+				data: { isAuthenticated: true, lastActive: 0 },
+			} as unknown as AppWebSocket),
+		};
+
+		const list = await call(listAddonsProcedure, undefined, context);
+		const one = await call(
+			getAddonStatusProcedure,
+			{ id: descriptor.id },
+			context,
+		);
+
+		expect(JSON.stringify([list, one])).not.toContain(ADDON_TOKEN);
+		expect(one?.state.userConfig).toEqual({ label: "kept" });
+		expect(list.addons[0]?.state.userConfig).toEqual({ label: "kept" });
+	});
 });
