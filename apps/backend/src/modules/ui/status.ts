@@ -73,6 +73,8 @@ import { getPipelinesMessage } from "../streaming/pipelines.ts";
 import { getPreviewEncoderRealizedStatus } from "../streaming/preview-encoder-status.ts";
 import { getSourcesMessage } from "../streaming/sources.ts";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
+import type { StreamReconnectStatus } from "../streaming/stream-reconnect.ts";
+import { getStreamReconnectStatus } from "../streaming/stream-reconnect-wiring.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import { getCarryingStatus } from "../system/carrying.ts";
 import { CPU_EVENT, getCpuInfo } from "../system/cpu.ts";
@@ -132,6 +134,7 @@ export type StatusResponseMessage = {
 	preview_encoder_realized?: PreviewEncoderRealized | null;
 	cellular_initializing?: boolean;
 	connection_restarting?: boolean;
+	stream_reconnect?: StreamReconnectStatus | null;
 	// Explicitly `| undefined`: the field carries a THIRD state beyond present /
 	// absent-because-empty — "the probe has not answered yet" — and under
 	// `exactOptionalPropertyTypes` that is the only shape that can express it.
@@ -178,6 +181,7 @@ export function sendStatus(conn: WebSocket, buildWifi = wifiBuildMsg) {
 			preview_encoder_realized: getPreviewEncoderRealizedStatus(),
 			cellular_initializing: !getCellularStack().ready,
 			connection_restarting: isConnectionRestarting(),
+			stream_reconnect: getStreamReconnectStatus(),
 			unclaimed_adapters: getUnclaimedAdapters(),
 			usb_devices: getUsbDevicesWire(),
 			...(usbHelper === null ? {} : { usb_helper: usbHelper }),

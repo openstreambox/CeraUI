@@ -43,7 +43,10 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => {
 		getNetif: () => ({}),
 		getRelays: () => undefined,
 		getManagedIngestAccounts: () => [],
-		getStatus: () => ({ connection_restarting: state.restarting }),
+		getStatus: () => ({
+			connection_restarting: state.restarting,
+			stream_reconnect: state.reconnect,
+		}),
 		getPipelines: () => ({ pipelines: {} }),
 		getSources: () => undefined,
 	};
@@ -97,6 +100,10 @@ function cockpit(container: HTMLElement) {
 		idle: container.querySelector('[data-testid="idle-cockpit"]') !== null,
 		summary: live?.getAttribute("data-summary-mode") === "true",
 		restarting: live?.getAttribute("data-restarting") === "true",
+		...(live?.getAttribute("data-reconnect") &&
+		live.getAttribute("data-reconnect") !== "none"
+			? { reconnect: live.getAttribute("data-reconnect") }
+			: {}),
 	};
 }
 
@@ -206,6 +213,58 @@ describe("LiveView during a supervised connection restart", () => {
 		expect(reconcile).toHaveBeenLastCalledWith(true);
 		hudRestart.restarting = false;
 		flushSync();
+		expect(reconcile).toHaveBeenLastCalledWith(false);
+	});
+});
+
+describe("LiveView after every link was lost", () => {
+	it("says the stream is reconnecting through the window, then holds the session with the window's end until Stop", () => {
+		const { container } = render(LiveView);
+		liveThenRestartStop(container);
+		// The restart's Start failed; the device's window takes over without a gap.
+		hudRestart.reconnect = {
+			state: "reconnecting",
+			remaining_ms: 120_000,
+			token: "w1",
+		};
+		flushSync();
+		expect(headerChip()).toBe("Reconnecting");
+		expect(cockpit(container)).toEqual({
+			live: true,
+			idle: false,
+			summary: false,
+			restarting: true,
+			reconnect: "reconnecting",
+		});
+		expect(screen.queryByText(m["live.notStreaming"]())).toBeNull();
+
+		// The window ran out: nothing retries, but the streamer has not stopped,
+		// so the cockpit holds with Keep trying and Stop, and no summary opens.
+		hudRestart.reconnect = { state: "expired", reason: "no_link", token: "w1" };
+		hudRestart.restarting = false;
+		flushSync();
+		expect(headerChip()).toBe("Couldn't reconnect");
+		expect(cockpit(container)).toEqual({
+			live: true,
+			idle: false,
+			summary: false,
+			restarting: true,
+			reconnect: "expired",
+		});
+		expect(reconcile).toHaveBeenLastCalledWith(true);
+		vi.advanceTimersByTime(SUMMARY_WINDOW_MS * 2);
+		flushSync();
+		expect(cockpit(container).summary).toBe(false);
+
+		// Stop: the device drops the window, and only now the session ends.
+		hudRestart.reconnect = null;
+		flushSync();
+		expect(cockpit(container)).toEqual({
+			live: true,
+			idle: false,
+			summary: true,
+			restarting: false,
+		});
 		expect(reconcile).toHaveBeenLastCalledWith(false);
 	});
 });

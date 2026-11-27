@@ -22,6 +22,7 @@
 
 import type WebSocket from "ws";
 import { logger } from "../../../helpers/logger.ts";
+import { getConfig } from "../../config.ts";
 import { onNetworkInterfaceSourcesChange } from "../../network/network-interfaces.ts";
 import { onUsbNetScanCommitted } from "../../network/router-cellular-scan.ts";
 import { isUpdating } from "../../system/software-updates.ts";
@@ -66,6 +67,7 @@ import {
 	assertStreamLaunchOwnership,
 	currentStreamLaunchOwner,
 } from "../stream-launch-ownership.ts";
+import { reconnectSettings } from "../stream-reconnect.ts";
 import {
 	type ConfigParameters,
 	getIsStreaming,
@@ -124,6 +126,7 @@ async function respondToStaleSource(
 	ifaceFor: (ip: string) => string | undefined,
 	verdict: CarryVerdict,
 	current: () => boolean,
+	totalLoss: boolean,
 ): Promise<void> {
 	const ifaces = stale.map(ifaceFor);
 	const known = ifaces.every((iface) => iface !== undefined);
@@ -158,7 +161,11 @@ async function respondToStaleSource(
 			// cooldown (or one already running), the operator gets the offer
 			// instead, even inside the notice's own cooldown: nothing else is
 			// carrying, so silence would leave the operator with no word at all.
-			const request = autoRestart.request(generation, deps);
+			// Every link gone is not the stale-address loop the cooldown guards;
+			// with reconnecting on, the reconnect window bounds it instead.
+			const request = autoRestart.request(generation, deps, {
+				totalLoss: totalLoss && reconnectSettings(getConfig()).enabled,
+			});
 			if (request.result === "held") offer({ pastCooldown: true });
 			void request.done;
 			return;
@@ -317,6 +324,8 @@ export async function start(
 						bond.entries.map((entry) => entry.iface),
 					),
 					() => !signal.aborted && ownsSession(),
+					// The publication being checked withdrew the last link.
+					sources.length === 0,
 				);
 		});
 	});

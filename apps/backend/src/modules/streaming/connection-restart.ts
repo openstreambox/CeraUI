@@ -16,11 +16,18 @@
   status says the connection is restarting (connection-restarting.ts), so no
   surface reads the gap between Stop and Start as "Not streaming".
 
-  A restart that does not end with the new session running says so to every
-  client, once the restarting status has dropped: a Start refused before launch
-  or a launch failure otherwise reaches only a log line, or a socket that may
-  have closed long ago. An operator Stop during the restart says nothing; the
-  operator chose it.
+  A restart whose Start does not start the new session hands it to the
+  reconnect window (stream-reconnect.ts) before the restarting status drops, so
+  no surface sees a gap: the window keeps the stream reconnecting until a link
+  is back, the streamer presses Stop, or the box's maximum retry time ran out,
+  and then leaves the notice with "Keep trying". A restart whose Stop did not
+  complete says so to every client, once the restarting status has dropped. An
+  operator Stop during the restart says nothing; the operator chose it.
+
+  A restart after every link was lost (`totalLoss`) is not the stale-address
+  case the cooldown guards: its Start cannot loop on an address that keeps
+  going stale, and the reconnect window bounds it. With reconnecting on, it
+  neither waits for nor starts the cooldown.
 */
 
 import type { RestartConnectionOutput } from "@ceraui/rpc/schemas";
@@ -51,12 +58,14 @@ export type ConnectionRestartDeps = {
 	readonly stop: () => Promise<StopOutcome>;
 	readonly start: () => Promise<StartOutcome>;
 	/** After an automatic restart has started the new session. */
-	readonly announce: () => void;
+	readonly announce: (kind: RestartAnnouncement) => void;
 	/**
-	 * After a restart that did not end with the new session running: `start`
-	 * when the old session stopped and the new one did not start, `stop` when
-	 * the old session did not stop. Never for an operator Stop.
+	 * The old session stopped and the new one did not start, and no operator
+	 * Stop came in between (`stillWanted`): the reconnect window takes over.
+	 * Runs before the restarting status drops.
 	 */
+	readonly reconnect: (stillWanted: () => boolean) => void | Promise<void>;
+	/** The old session did not stop. Never for an operator Stop. */
 	readonly announceFailure: (failed: RestartFailure) => void;
 	readonly log: (message: string, meta: Record<string, unknown>) => void;
 };
@@ -67,7 +76,10 @@ export type ConnectionRestartRequest = {
 	readonly done: Promise<string>;
 };
 
-export type RestartFailure = "start" | "stop";
+export type RestartFailure = "stop";
+
+/** `new_address`: a link kept an old address; `reconnected`: every link was lost. */
+export type RestartAnnouncement = "new_address" | "reconnected";
 
 /** The persistent notice a restart that did not finish leaves on screen. */
 export const CONNECTION_RESTART_FAILED = "connection_restart_failed";
@@ -80,10 +92,10 @@ function runRestart(
 ): Promise<string> {
 	const end = deps.beginRestart();
 	let stoppedOld = false;
+	// `reconfigure`, not `operator`: this Stop is the first half of a restart,
+	// so restoration stays armed. An operator Stop during it still wins.
+	const intent = deps.captureStopIntent();
 	return (async () => {
-		// `reconfigure`, not `operator`: this Stop is the first half of a restart,
-		// so restoration stays armed. An operator Stop during it still wins.
-		const intent = deps.captureStopIntent();
 		const stopped = await deps.stop();
 		if (stopped.result !== "stopped") {
 			deps.log("stop did not complete", { origin, stopped });
@@ -102,12 +114,21 @@ function runRestart(
 			deps.log("failed", { origin, error: String(error) });
 			return "failed";
 		})
+		.then(async (result) => {
+			// Before `end`: the window raises its own restarting status first, so
+			// the stream never reads as stopped between the two.
+			if (stoppedOld && result !== "started" && result !== "cancelled")
+				await (async () => deps.reconnect(intent))().catch((error: unknown) =>
+					deps.log("reconnect failed to open", { error: String(error) }),
+				);
+			return result;
+		})
 		.finally(end)
 		.then((result) => {
 			// After `end`, so no surface still says "Restarting connection" beside
 			// a notice that the restart did not finish.
-			if (result !== "started" && result !== "cancelled")
-				deps.announceFailure(stoppedOld ? "start" : "stop");
+			if (!stoppedOld && result !== "started" && result !== "cancelled")
+				deps.announceFailure("stop");
 			return result;
 		});
 }
@@ -141,6 +162,14 @@ export type AutoRestartRequest = {
 	readonly done: Promise<string>;
 };
 
+export type AutoRestartOptions = {
+	/**
+	 * Every link was lost and reconnecting is on: the cooldown neither holds
+	 * this restart nor starts from it.
+	 */
+	readonly totalLoss?: boolean;
+};
+
 export function createAutoRestart(
 	now: () => number = Date.now,
 	cooldownMs = AUTO_RESTART_COOLDOWN_MS,
@@ -151,18 +180,21 @@ export function createAutoRestart(
 		request(
 			generation: number,
 			deps: ConnectionRestartDeps,
+			options: AutoRestartOptions = {},
 		): AutoRestartRequest {
-			if (inFlight || now() - lastAt < cooldownMs) {
+			const totalLoss = options.totalLoss === true;
+			if (inFlight || (!totalLoss && now() - lastAt < cooldownMs)) {
 				deps.log("automatic restart held", { generation, inFlight });
 				return { result: "held", done: Promise.resolve("held") };
 			}
 			if (!deps.isStreaming() || deps.generation() !== generation)
 				return { result: "not_current", done: Promise.resolve("not_current") };
-			lastAt = now();
+			if (!totalLoss) lastAt = now();
 			inFlight = true;
 			const done = runRestart(deps, generation, "automatic").then((result) => {
 				inFlight = false;
-				if (result === "started") deps.announce();
+				if (result === "started")
+					deps.announce(totalLoss ? "reconnected" : "new_address");
 				return result;
 			});
 			return { result: "restarting", done };
@@ -190,18 +222,16 @@ export async function connectionRestartDeps(
 ): Promise<ConnectionRestartDeps> {
 	const [
 		{ captureOperatorStopIntent },
-		{ startStreamSession, stopStreamSession },
+		{ stopStreamSession },
 		{ getIsStreaming },
-		{ start: startStream, currentSessionGeneration },
+		{ currentSessionGeneration },
 		{ staleLinkNotice },
-		{ classifyStartFailure, StreamStartFailure, typedStartFailure },
 	] = await Promise.all([
 		import("./operator-stop-intent.ts"),
 		import("./stream-session-orchestrator.ts"),
 		import("./streaming.ts"),
 		import("./streamloop/session.ts"),
 		import("./stale-link-notice.ts"),
-		import("./start-failure-taxonomy.ts"),
 	]);
 	return {
 		generation: currentSessionGeneration,
@@ -210,57 +240,87 @@ export async function connectionRestartDeps(
 		captureStopIntent: captureOperatorStopIntent,
 		beginRestart: () => beginConnectionRestart(),
 		stop: () => stopStreamSession("reconfigure"),
-		start: () =>
-			startStreamSession({
-				origin,
-				launch: async ({ attemptId, generation }) => {
-					// Empty params: the start reads the persisted config of the session
-					// that just stopped.
-					const result = await startStream(conn, {}, generation, attemptId);
-					if (!result.success) {
-						throw new StreamStartFailure(
-							result.failureClass !== undefined
-								? typedStartFailure(
-										attemptId,
-										result.phase,
-										result.failureClass,
-										result.error,
-									)
-								: classifyStartFailure(result.phase, result.error, attemptId),
-						);
-					}
-				},
-			}),
-		announce: () =>
-			notificationBroadcast(
-				"connection_restarted",
-				"info",
-				"Restarted the connection to use the new address.",
-				10,
-				false,
-				true,
-				true,
-				"notifications.connectionRestartedNewAddress",
-			),
+		start: () => restartStart(conn, origin),
+		announce: (kind) =>
+			kind === "reconnected"
+				? notificationBroadcast(
+						"connection_restarted",
+						"info",
+						"Stream reconnected.",
+						10,
+						false,
+						true,
+						true,
+						"notifications.streamReconnected",
+					)
+				: notificationBroadcast(
+						"connection_restarted",
+						"info",
+						"Restarted the connection to use the new address.",
+						10,
+						false,
+						true,
+						true,
+						"notifications.connectionRestartedNewAddress",
+					),
+		reconnect: async (stillWanted) => {
+			const { reconnectAfterRestartFailure } = await import(
+				"./stream-reconnect-wiring.ts"
+			);
+			if (stillWanted()) await reconnectAfterRestartFailure(conn, stillWanted);
+		},
 		announceFailure: announceRestartFailure,
 		log: (event, meta) => logger.info("connection restart", { event, ...meta }),
 	};
 }
 
-function announceRestartFailure(failed: RestartFailure): void {
-	if (failed === "start") {
-		notificationBroadcast(
-			CONNECTION_RESTART_FAILED,
-			"error",
-			"Couldn't restart the connection: the stream stopped but didn't start again. Your settings and links are unchanged, and viewers see your BRB screen. Start the stream to continue.",
-			0,
-			true,
-			true,
-			true,
-			"notifications.connectionRestartStartFailed",
-		);
-		return;
+/**
+ * A full, supervised Start of the session that just stopped, for a restart and
+ * for the reconnect window. Its failures stay off the start-failure notice:
+ * the restart and the window say what happened instead. Never rejects.
+ */
+export async function restartStart(
+	conn: import("ws").default,
+	origin: ConnectionRestartOrigin,
+): Promise<StartOutcome> {
+	const [
+		{ startStreamSession },
+		{ start: startStream },
+		{ classifyStartFailure, StreamStartFailure, typedStartFailure },
+	] = await Promise.all([
+		import("./stream-session-orchestrator.ts"),
+		import("./streamloop/session.ts"),
+		import("./start-failure-taxonomy.ts"),
+	]);
+	try {
+		return await startStreamSession({
+			origin,
+			quietTerminalFailure: true,
+			launch: async ({ attemptId, generation }) => {
+				// Empty params: the start reads the persisted config of the session
+				// that just stopped.
+				const result = await startStream(conn, {}, generation, attemptId);
+				if (!result.success) {
+					throw new StreamStartFailure(
+						result.failureClass !== undefined
+							? typedStartFailure(
+									attemptId,
+									result.phase,
+									result.failureClass,
+									result.error,
+								)
+							: classifyStartFailure(result.phase, result.error, attemptId),
+					);
+				}
+			},
+		});
+	} catch (error) {
+		logger.warn("connection restart start threw", { error });
+		return { result: "failed" };
 	}
+}
+
+function announceRestartFailure(_failed: RestartFailure): void {
 	notificationBroadcast(
 		CONNECTION_RESTART_FAILED,
 		"warning",

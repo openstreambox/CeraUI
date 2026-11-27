@@ -292,6 +292,29 @@ goes on:
   ended") opens only when the restart ends without the stream running again.
 - The header chip says "Restarting connection" instead of "Not streaming".
 
+#### Reconnecting after every link was lost [EXISTS]
+
+When a connection restart's Start fails because no link is left, the device
+keeps reconnecting (`status.stream_reconnect`, backend
+`modules/streaming/stream-reconnect.ts`) for the box's maximum retry time
+(Settings, Streaming: "Reconnect after losing every link", default on, two
+minutes):
+
+- `reconnecting` (with `connection_restarting` still true): the session is held
+  as during a restart. `live-reconnect-banner` replaces the restart band with
+  "Reconnecting the stream · 1:24 left", counted down from the moment the
+  status arrived, and "Keep trying", which gives another full window. The
+  header chip and the HUD say "Reconnecting". Never "not live" or "offline": the
+  receiver shows its BRB scene meanwhile.
+- `expired` (`connection_restarting` false): nothing retries. The session is
+  still held, without a summary, and the banner says what was missing ("no
+  network link came back", or the links were up but the stream did not start)
+  with "Keep trying" again; the persistent `connection_restart_failed` notice
+  offers the same `keep-reconnecting` command. The header chip says "Couldn't
+  reconnect".
+- Stop stays in `live-bar` in both states and always wins: the device drops the
+  window at once, and only then does the session summary open.
+
 #### Link names
 
 Live, the HUD and Network's Bonded Links use one label projection from

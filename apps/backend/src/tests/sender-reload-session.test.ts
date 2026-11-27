@@ -36,12 +36,17 @@ import {
 import * as labels from "../modules/streaming/link-label.ts";
 import * as telemetry from "../modules/streaming/link-telemetry.ts";
 import type { LinkTelemetryMessage } from "../modules/streaming/link-telemetry-rows.ts";
+import { noteOperatorStopIntent } from "../modules/streaming/operator-stop-intent.ts";
 import * as sockets from "../modules/streaming/sender-sockets.ts";
 import * as srtla from "../modules/streaming/srtla.ts";
 import {
 	STALE_LINK_NOTICE,
 	staleLinkNotice,
 } from "../modules/streaming/stale-link-notice.ts";
+import {
+	getStreamReconnectStatus,
+	resetStreamReconnectForTest,
+} from "../modules/streaming/stream-reconnect-wiring.ts";
 import * as owner from "../modules/streaming/stream-session-orchestrator.ts";
 import * as streaming from "../modules/streaming/streaming.ts";
 import { getStreamingBackend } from "../modules/streaming/streaming-engine.ts";
@@ -102,6 +107,13 @@ let carriedBy: string | null | undefined;
 let restarts: string[] = [];
 /** Whether the status said "restarting" when each Start began. */
 let restartingAtStart: boolean[] = [];
+/** What `getIsStreaming` answers; a restart's Stop and Start move it. */
+let live = false;
+/** The results the next restart Starts return, in order; then "started". */
+let startResults: string[] = [];
+/** The link sources a Start would bond now, for the reconnect window. */
+let linkSources: string[] = [];
+let sourceListeners: Array<() => void> = [];
 
 function frame(carrier: string | null): LinkTelemetryMessage {
 	const links = ["wwan0", "eth0"].map((iface) => ({
@@ -141,15 +153,34 @@ beforeEach(() => {
 	spyOn(telemetry, "buildLinkTelemetry").mockImplementation(() =>
 		carriedBy === undefined ? null : frame(carriedBy),
 	);
+	live = false;
+	startResults = [];
+	linkSources = [];
+	sourceListeners = [];
+	resetStreamReconnectForTest();
 	spyOn(owner, "stopStreamSession").mockImplementation(async (cause) => {
 		restarts.push(`stop:${cause}`);
+		live = false;
 		return { result: "stopped" };
 	});
 	spyOn(owner, "startStreamSession").mockImplementation(async (request) => {
 		restarts.push(`start:${request.origin}`);
 		restartingAtStart.push(isConnectionRestarting());
-		return { result: "started", attemptId: "auto" };
+		const result = startResults.shift() ?? "started";
+		if (result === "started") live = true;
+		return { result, attemptId: "auto" } as Awaited<
+			ReturnType<typeof owner.startStreamSession>
+		>;
 	});
+	spyOn(srtla, "genSrtlaIpList").mockImplementation(() => [...linkSources]);
+	spyOn(netif, "onNetworkInterfaceSourcesChange").mockImplementation(
+		(listener) => {
+			sourceListeners.push(listener);
+			return () => {
+				sourceListeners = sourceListeners.filter((l) => l !== listener);
+			};
+		},
+	);
 	bond = publish(
 		[
 			{ ip: OLD, iface: "wwan0" },
@@ -214,11 +245,12 @@ afterEach(async () => {
 	session.setSenderReloadTimingForTest(null);
 	staleLinkNotice.resetForTest();
 	autoRestart.resetForTest();
+	resetStreamReconnectForTest();
 });
 
 let launches = 0;
 async function startLive() {
-	let live = false;
+	live = false;
 	launches = 0;
 	spyOn(streaming, "getIsStreaming").mockImplementation(() => live);
 	spyOn(streaming, "updateConfig").mockResolvedValue({
@@ -490,25 +522,103 @@ test("the only link stuck: restart on its own, exactly once, then announce it", 
 	expect(isConnectionRestarting()).toBe(false);
 });
 
-test("the only link stuck and the restart's Start refused: say so, after the status drops", async () => {
-	spyOn(owner, "startStreamSession").mockImplementation(async (request) => {
-		restarts.push(`start:${request.origin}`);
-		return { result: "busy", attemptId: "auto" };
-	});
+test("the only link stuck and the restart's Start refused: the stream keeps reconnecting, with no gap and no failure notice", async () => {
+	startResults = ["busy"];
 	await startLive();
 	bond = publish([{ ip: OLD, iface: "wwan0" }], 1);
 	bound = [OLD];
 	renumberOnlyLink();
 	await settle(400);
 	expect(restarts).toEqual(["stop:reconfigure", "start:link-recovery"]);
-	// One notice, and not "Restarted the connection".
-	expect(shown.map((n) => n.key)).toEqual([
-		"notifications.connectionRestartStartFailed",
-	]);
-	expect(shown[0]?.name).toBe(restart.CONNECTION_RESTART_FAILED);
-	// Never beside a surface still saying "Restarting connection".
-	expect(restartingAtNotice).toEqual([false]);
+	// Not "Restarted the connection", and not "couldn't restart" while the
+	// window still tries.
+	expect(shown).toEqual([]);
+	expect(isConnectionRestarting()).toBe(true);
+	expect(getStreamReconnectStatus()?.state).toBe("reconnecting");
+	noteOperatorStopIntent();
 	expect(isConnectionRestarting()).toBe(false);
+});
+
+/** Every link gone: the publication withdraws the last one. */
+function withdrawLastLink() {
+	bond = publish([], 2);
+	observer?.(Promise.resolve(true));
+}
+
+function linkBack(ip: string) {
+	// The stopped session's own listener refreshes too: an unchanged bond.
+	spyOn(preparation, "prepareSrtlaIpAddresses").mockResolvedValue({
+		changed: false,
+	} as never);
+	linkSources = [ip];
+	for (const listener of [...sourceListeners]) listener();
+}
+
+test("every link gone (gonepinF): the restart's Start fails, the window holds the stream reconnecting, and a returning link brings it back", async () => {
+	await startLive();
+	bond = publish([{ ip: OLD, iface: "wlan0" }], 1);
+	bound = [OLD];
+	startResults = ["failed"];
+	withdrawLastLink();
+	await settle(400);
+	expect(restarts).toEqual(["stop:reconfigure", "start:link-recovery"]);
+	// No gap between the restart and the window: the status never dropped.
+	expect(isConnectionRestarting()).toBe(true);
+	expect(getStreamReconnectStatus()).toMatchObject({ state: "reconnecting" });
+	expect(shown).toEqual([]);
+	// The link comes back after the edge spacing: one Start, and it says so.
+	await settle(2_100);
+	linkBack(NEW);
+	await settle(100);
+	expect(restarts).toEqual([
+		"stop:reconfigure",
+		"start:link-recovery",
+		"start:link-recovery",
+	]);
+	expect(shown.map((n) => n.key)).toEqual(["notifications.streamReconnected"]);
+	expect(isConnectionRestarting()).toBe(false);
+	expect(getStreamReconnectStatus()).toBeNull();
+});
+
+test("every link gone, then Stop during the window: a returning link starts nothing", async () => {
+	await startLive();
+	bond = publish([{ ip: OLD, iface: "wlan0" }], 1);
+	bound = [OLD];
+	startResults = ["failed"];
+	withdrawLastLink();
+	await settle(400);
+	expect(getStreamReconnectStatus()?.state).toBe("reconnecting");
+	// What the orchestrator does first on an operator Stop.
+	noteOperatorStopIntent();
+	expect(isConnectionRestarting()).toBe(false);
+	expect(getStreamReconnectStatus()).toBeNull();
+	await settle(2_100);
+	linkBack(NEW);
+	await settle(100);
+	expect(restarts).toEqual(["stop:reconfigure", "start:link-recovery"]);
+	expect(shown).toEqual([]);
+});
+
+test("every link gone within the stale-address cooldown still restarts: the cooldown is for stale addresses", async () => {
+	await startLive();
+	bound = [OLD];
+	renumberOnlyLink();
+	await settle(400);
+	expect(restarts).toHaveLength(2);
+	// Inside the five minutes, the last link is withdrawn and still bound.
+	bound = [NEW];
+	withdrawLastLink();
+	await settle(400);
+	expect(restarts).toEqual([
+		"stop:reconfigure",
+		"start:link-recovery",
+		"stop:reconfigure",
+		"start:link-recovery",
+	]);
+	expect(shown.map((n) => n.key)).toEqual([
+		"notifications.connectionRestartedNewAddress",
+		"notifications.streamReconnected",
+	]);
 });
 
 test("the only link stuck again within the cooldown: the offer, not a second restart", async () => {

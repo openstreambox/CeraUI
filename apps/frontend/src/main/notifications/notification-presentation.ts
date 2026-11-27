@@ -117,6 +117,10 @@ export async function runNotificationAction(
 			return;
 		case "command": {
 			dismiss(name);
+			if (action.command === "keep-reconnecting") {
+				await keepReconnecting(action.token);
+				return;
+			}
 			let result: "restarting" | "refused" | "unreachable";
 			try {
 				result = (
@@ -132,4 +136,22 @@ export async function runNotificationAction(
 			return;
 		}
 	}
+}
+
+/**
+ * "Keep trying" after every link was lost, from the notice or the Live banner:
+ * the device opens another full reconnect window. A refusal means that window
+ * is no longer current (the stream is back, or it was stopped); a request that
+ * failed in transit may or may not have reached the device.
+ */
+export async function keepReconnecting(token: string): Promise<void> {
+	let result: "reconnecting" | "refused" | "unreachable";
+	try {
+		result = (await rpc.streaming.keepReconnecting({ token })).result;
+	} catch {
+		result = "unreachable";
+	}
+	if (result === "refused") toast.info(m["notifications.keepTryingRefused"]());
+	else if (result === "unreachable")
+		toast.warning(m["notifications.keepTryingUnreachable"]());
 }

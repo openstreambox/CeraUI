@@ -10,6 +10,8 @@ import {
 	configMessageSchema,
 	getEngineOutputSchema,
 	getMockHardwareOutputSchema,
+	keepReconnectingInputSchema,
+	keepReconnectingOutputSchema,
 	listDevicesOutputSchema,
 	pipelinesSchema,
 	reloadAudioDelayInputSchema,
@@ -22,6 +24,8 @@ import {
 	setMockDeviceAttachedOutputSchema,
 	setMockHardwareInputSchema,
 	setMockHardwareOutputSchema,
+	setReconnectInputSchema,
+	setReconnectOutputSchema,
 	setSourceVisibilityInputSchema,
 	setSourceVisibilityOutputSchema,
 	streamHealthOutputSchema,
@@ -51,6 +55,16 @@ export const streamingContract = oc.router({
 	 * Restart the stream session from the stale-link notice's one-tap offer
 	 */
 	restartConnection: oc.input(restartConnectionInputSchema).output(restartConnectionOutputSchema),
+
+	/**
+	 * "Keep trying": another full reconnect window after every link was lost
+	 */
+	keepReconnecting: oc.input(keepReconnectingInputSchema).output(keepReconnectingOutputSchema),
+
+	/**
+	 * The box's reconnect settings (on/off, maximum retry time)
+	 */
+	setReconnect: oc.input(setReconnectInputSchema).output(setReconnectOutputSchema),
 
 	/**
 	 * Set bitrate during streaming

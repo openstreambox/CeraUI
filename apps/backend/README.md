@@ -633,10 +633,19 @@ control, set-profile, and the automatic connection restart (`link-recovery`, whi
 waits for the modem replay barrier like autostart) cannot launch parallel engine
 sessions. While a supervised connection restart runs, `status.connection_restarting`
 is `true`, so the gap between its Stop and Start reads as a restart, not as a stop. A restart
-that does not end with the new session running leaves one persistent notice for every
-client (`connection_restart_failed`): either the stream stopped and did not start again,
-or it did not stop cleanly. An operator Stop during the restart leaves none, and the next
-committed session removes it. The backend
+whose Start does not start the new session hands it to the reconnect window
+(`stream-reconnect.ts`) before that flag drops: until an operator Stop, it starts the
+stream again when a link source appears (netif `sourcesChange`, which a Wi-Fi carrier
+mark clearing and a modem bearer getting its address raise, or a committed USB-net scan),
+with a bounded backoff while links are up and a quiet probe every 30 s without one, for
+up to `auto_reconnect_max_s` (default 120 s; `auto_reconnect: false` turns it off).
+`status.stream_reconnect` publishes `reconnecting` with the time left, or `expired`;
+on expiry the persistent `connection_restart_failed` notice offers "Keep trying"
+(`streaming.keepReconnecting`, another full window) and stream restoration is
+disarmed. A restart after every link was lost bypasses the five-minute stale-address
+cooldown. A restart whose Stop did not complete leaves that notice saying so. An
+operator Stop during the restart or the window leaves none, and the next committed
+session removes it. The backend
 publishes additive `status.stream_lifecycle` transitions and keeps legacy
 `is_streaming=false` until the engine confirms the stream. Boot/reconnect
 reconciliation adopts a stream that survived a backend process restart. A timeout,

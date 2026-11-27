@@ -190,12 +190,18 @@ const configChangeApplying = $derived(isConfigChangeInFlight(getConfigChange()))
 // A supervised connection restart (the stale-link tap, or the device's own
 // restart when nothing else carried the stream) is between Stop and Start.
 const connectionRestarting = $derived(getStatus()?.connection_restarting === true);
+// After every link was lost the device keeps reconnecting for its maximum retry
+// time (`reconnecting`, with `connection_restarting` up), and after that holds
+// the session with "Keep trying" and Stop (`expired`) until the streamer picks.
+const streamReconnect = $derived(getStatus()?.stream_reconnect ?? null);
+const reconnectExpired = $derived(streamReconnect?.state === 'expired');
+const connectionHeld = $derived(connectionRestarting || reconnectExpired);
 
 // Reconcile optimism to authoritative is_streaming broadcast. A connection
 // restart is still the operator's session: a Stop pressed during it settles
 // once the restart has ended without starting, not on the restart's own Stop.
 $effect(() => {
-	reconcileStreamingOptimism(isStreaming || connectionRestarting);
+	reconcileStreamingOptimism(isStreaming || connectionHeld);
 });
 
 // The device's own lifecycle outranks a local `starting` (FIX-16-C3). A start
@@ -268,8 +274,8 @@ let lastStreamingState = false;
 // A supervised connection restart is part of the session it restarts: the
 // stream did not end, so the summary window opens only when the stream stops
 // and no restart is holding it, and the cockpit stays live through the gap.
-const sessionHeld = $derived(isStreaming || connectionRestarting);
-const restartHolding = $derived(connectionRestarting && !isStreaming);
+const sessionHeld = $derived(isStreaming || connectionHeld);
+const restartHolding = $derived(connectionHeld && !isStreaming);
 
 // `$effect.pre` (not `$effect`): the window flag must flip BEFORE the cockpit
 // gate renders. A post-render `$effect` lags one tick, so on the stop edge the
@@ -1283,7 +1289,12 @@ const configRows = $derived<ConfigRow[]>([
 </script>
 
 <div bind:this={liveRoot} class="mx-auto w-full max-w-3xl space-y-6 p-4 sm:p-6 lg:max-w-6xl" class:short-live={isStreaming}>
-	<LiveHeader {isStreaming} unconfirmed={streamOutcomeUnknown} restarting={connectionRestarting} />
+	<LiveHeader
+		{isStreaming}
+		unconfirmed={streamOutcomeUnknown}
+		restarting={connectionHeld}
+		reconnect={streamReconnect?.state ?? null}
+	/>
 	<PowerStatus {sensors} connected={getConnectionState() === "connected"} />
 
 	<DeviceCalmLine calm={getStatus()?.device_calm} onOpen={openDevices} />
@@ -1399,6 +1410,7 @@ const configRows = $derived<ConfigRow[]>([
 			optimismState={streamingOptimismState}
 			{summaryMode}
 			restarting={restartHolding}
+			reconnect={restartHolding ? streamReconnect : null}
 			onStop={handleStop}
 			onCloseSummary={closeSummary}
 		/>

@@ -13,6 +13,8 @@ const toastCalls: { level: string; text: string }[] = [];
 const clearRecord = vi.fn(async (_input: unknown) => ({ success: true }));
 const restartCalls: unknown[] = [];
 let restartResult: "restarting" | "refused" | "transport-error" = "restarting";
+const keepCalls: unknown[] = [];
+let keepResult: "reconnecting" | "refused" | "transport-error" = "reconnecting";
 
 vi.mock("svelte-sonner", () => {
 	const record =
@@ -36,6 +38,15 @@ vi.mock("$lib/rpc", () => ({
 		modems: { clearUnreadableRecord: (input: unknown) => clearRecord(input) },
 		notifications: { dismiss: () => Promise.resolve({}) },
 		streaming: {
+			keepReconnecting: (input: unknown) => {
+				keepCalls.push(input);
+				if (keepResult === "transport-error")
+					return Promise.reject(new Error("socket closed"));
+				return Promise.resolve({
+					success: keepResult === "reconnecting",
+					result: keepResult,
+				});
+			},
 			restartConnection: (input: unknown) => {
 				restartCalls.push(input);
 				if (restartResult === "transport-error")
@@ -76,8 +87,27 @@ function staleLink(): Notification {
 	};
 }
 
-async function tap() {
-	push(staleLink());
+function reconnectExpired(): Notification {
+	return {
+		name: "connection_restart_failed",
+		type: "error",
+		msg: "Couldn't reconnect: no network link came back. Nothing is retrying now.",
+		key: "notifications.reconnectExpiredNoLink",
+		duration: 0,
+		is_persistent: true,
+		is_dismissable: true,
+		action: {
+			schema: 1,
+			kind: "command",
+			command: "keep-reconnecting",
+			token: "window-1",
+			labelKey: "notifications.keepTrying",
+		},
+	};
+}
+
+async function tap(notice: Notification = staleLink()) {
+	push(notice);
 	const { container } = render(PersistentNotices);
 	flushSync();
 	const button = container.querySelector<HTMLButtonElement>(
@@ -93,6 +123,8 @@ beforeEach(() => {
 	toastCalls.length = 0;
 	restartCalls.length = 0;
 	restartResult = "restarting";
+	keepCalls.length = 0;
+	keepResult = "reconnecting";
 	clearNotifications();
 });
 
@@ -132,6 +164,45 @@ describe("a command action on a persistent notice", () => {
 			},
 		]);
 		expect(toastCalls[0]?.text).not.toContain("nothing was restarted");
+	});
+});
+
+describe("Keep trying on the reconnect notice", () => {
+	it("is labelled Keep trying and sends the window's token, never a restart", async () => {
+		push(reconnectExpired());
+		const { container } = render(PersistentNotices);
+		flushSync();
+		const button = container.querySelector<HTMLButtonElement>(
+			'[data-testid="persistent-notice-action"]',
+		);
+		expect(button?.textContent?.trim()).toBe("Keep trying");
+		clearNotifications();
+		await tap(reconnectExpired());
+		expect(keepCalls).toEqual([{ token: "window-1" }]);
+		expect(restartCalls).toEqual([]);
+		expect(toastCalls).toEqual([]);
+	});
+
+	it("says there is nothing to retry when the device refuses an old window", async () => {
+		keepResult = "refused";
+		await tap(reconnectExpired());
+		expect(toastCalls).toEqual([
+			{
+				level: "info",
+				text: "Nothing to retry: the stream is back or was stopped.",
+			},
+		]);
+	});
+
+	it("never claims anything about retrying when the device could not be reached", async () => {
+		keepResult = "transport-error";
+		await tap(reconnectExpired());
+		expect(toastCalls).toEqual([
+			{
+				level: "warning",
+				text: "Couldn't reach the device, so it may not be retrying. Check Live.",
+			},
+		]);
 	});
 });
 

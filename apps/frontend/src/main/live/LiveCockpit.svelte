@@ -46,6 +46,7 @@ import type {
 	ConfigMessage,
 	LinkTelemetryMessage,
 	SourcesMessage,
+	StreamReconnectStatus,
 } from '@ceraui/rpc/schemas';
 import { Gauge, Layers, MonitorOff, RefreshCw, Repeat, TriangleAlert } from '@lucide/svelte';
 import { MediaQuery } from 'svelte/reactivity';
@@ -72,6 +73,7 @@ import LiveSourceSwitch from './LiveSourceSwitch.svelte';
 import LiveSummaryStrip from './LiveSummaryStrip.svelte';
 import PhoneBitrateControl from './PhoneBitrateControl.svelte';
 import ProgramDesk from './ProgramDesk.svelte';
+import ReconnectBanner from './ReconnectBanner.svelte';
 import StreamControlButton from './StreamControlButton.svelte';
 import StreamTelemetryStrip from './StreamTelemetryStrip.svelte';
 
@@ -149,6 +151,10 @@ interface Props {
 	// A supervised connection restart is between its Stop and its Start. The
 	// session goes on: Stop stays, and the restart band replaces the live bands.
 	restarting?: boolean;
+	// After every link was lost: the reconnect window, or its end. Replaces the
+	// restart band's copy with the time left (or what was missing) and "Keep
+	// trying"; Stop stays in the Live bar.
+	reconnect?: StreamReconnectStatus | null;
 	// ── Post-stream summary window ─────────────────────────────────────────────
 	// When true the stream has stopped but LiveView is holding this cockpit mounted
 	// so IngestStats can show its historical summary; collapse to summary-only.
@@ -204,6 +210,7 @@ const {
 	optimismState,
 	onStop,
 	restarting = false,
+	reconnect = null,
 	summaryMode = false,
 	onCloseSummary = undefined,
 }: Props = $props();
@@ -317,7 +324,9 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 	<!-- Banners lead the cards column. -->
 	{#if hasBanners}
 		<div class="flex min-w-0 flex-col gap-6 lg:col-span-2 lg:col-start-4">
-			{#if showRestarting}
+			{#if showRestarting && reconnect}
+				<ReconnectBanner {reconnect} />
+			{:else if showRestarting}
 				<div class={BAND_CLASS} data-testid="live-restarting-banner" role="status">
 					<RefreshCw aria-hidden={true} class="{BAND_ICON_CLASS} motion-safe:animate-spin" />
 					<div class="min-w-0 space-y-0.5">

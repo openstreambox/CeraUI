@@ -37,6 +37,7 @@ const unrelatedFields: ReadonlySet<string> = new Set([
 	"network_ingest",
 	"cellular_initializing",
 	"connection_restarting",
+	"stream_reconnect",
 	"unclaimed_adapters",
 ] satisfies readonly (keyof StatusResponse)[]);
 
