@@ -3885,6 +3885,8 @@
 	"notifications.power.restingWeak": "El banco {bank} está débil y en reposo.",
 	"notifications.power.resting": "El banco {bank} está en reposo.",
 	"notifications.power.peer": "El banco {bank} alimenta el equipo.",
+	"notifications.power.restLost": "El banco {bank} dejó de responder mientras estaba en reposo. Puede que se haya apagado solo: presiona su botón o vuelve a conectarlo.",
+	"notifications.power.restLostHot": "El banco {bank} dejó de responder mientras estaba en reposo. Puede que se haya apagado solo: deja que se enfríe y luego presiona su botón o vuelve a conectarlo.",
 	"notifications.power.bench": "La protección está en modo de prueba: solo informa.",
 	"notifications.power.protection": "La placa de alimentación indica protección reducida. Necesita una revisión.",
 	"notifications.power.calibration": "La reserva no tiene protección térmica: su sensor no está configurado.",
