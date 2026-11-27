@@ -1036,15 +1036,28 @@ function wifiNew(conn: MessageSocket, msg: WifiNewMessage["new"]) {
 	if (plan.mode === "refused") return refuse();
 	if (plan.mode === "verify-open") {
 		const ifname = wifiInterface.ifname;
-		return planOpenWifiJoin(msg.ssid, ifname, msg.bssid).then((open) => {
-			if (
-				!open ||
-				getWifiInterfaceByMacAddress(macAddress) !== wifiInterface ||
-				wifiInterface.ifname !== ifname
-			)
-				return refuse("open-target-unverified");
-			return runWifiNew(conn, msg, macAddress, open, senderId);
-		});
+		// The diversity check leaves this radio alone from the open AP's
+		// verification scan until the join has settled.
+		const choice = beginWifiOperatorChoice(macAddress);
+		return planOpenWifiJoin(msg.ssid, ifname, msg.bssid)
+			.then((open) => {
+				if (
+					!open ||
+					getWifiInterfaceByMacAddress(macAddress) !== wifiInterface ||
+					wifiInterface.ifname !== ifname
+				)
+					return refuse("open-target-unverified");
+				return runWifiNew(
+					conn,
+					msg,
+					macAddress,
+					open,
+					senderId,
+					choice,
+					wifiInterface.saved[msg.ssid],
+				);
+			})
+			.finally(choice.release);
 	}
 
 	// The diversity check leaves this radio alone until the join has settled
