@@ -174,6 +174,8 @@ describe("LiveView: a real Start answered busy", () => {
 		expect(toastError.mock.calls[0]?.[0]).toBe("Stop the stream above first");
 		expect(getStreamingOptimismState()).toBe("idle");
 		expect(container.textContent).toContain("Stream state not confirmed");
+		// The bar points to the same Stop the toast names.
+		expect(container.textContent).toContain("Stop the stream above first");
 		expect(
 			within(container).getByRole("button", { name: /stop stream/i }),
 		).toHaveProperty("disabled", false);

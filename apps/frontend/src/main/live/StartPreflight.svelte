@@ -51,7 +51,7 @@ const summary = $derived.by(() => {
 		case 'ready': return m['live.goLive.readyTitle']();
 		case 'starting': return m['live.starting']();
 		case 'stopping': return m['live.stopping']();
-		case 'unconfirmed': return m['live.unconfirmedStream.title']();
+		case 'unconfirmed': return m['live.unconfirmedStream.stopFirst']();
 		case 'live': return m['hud.live']();
 	}
 });
