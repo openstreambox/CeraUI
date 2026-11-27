@@ -201,6 +201,8 @@ export const senderLinkStatsSchema = z.object({
 	weak_reason: z.string().optional(),
 	/** Per-link capacity estimate in bits/s; 0 means no signal. */
 	cc_target_bps: z.number().int().min(0).optional(),
+	/** `bootstrap`, `climbing`, `holding`, `backing_off` or `drain`. */
+	cc_state: z.string().optional(),
 	/** Loss the per-link congestion control sees, per mille. */
 	cc_loss_permille: z.number().int().min(0).optional(),
 	cc_loss_degraded: z.boolean().optional(),
@@ -450,8 +452,13 @@ class LineConnection {
 		}
 	}
 
-	/** Called by Bun's socket close/error callbacks. Fails every waiter. */
+	/**
+	 * Called by Bun's socket close/error callbacks. Fails every waiter, and
+	 * marks the connection closed so a later request fails at once instead of
+	 * waiting out its timeout on a socket that is gone.
+	 */
 	onDisconnect(): void {
+		this.closed = true;
 		const handler = this.disconnectHandler;
 		for (const [, waiter] of this.pending) {
 			clearTimeout(waiter.timer);
