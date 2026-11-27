@@ -18,6 +18,7 @@ import type { ManagedProcess, WatcherHandle } from "../helpers/spawn-policy.ts";
 import { netdevPresence } from "../modules/network/netdev-lifetime.ts";
 import {
 	getNetworkInterfaces,
+	isBondCandidate,
 	processIfconfigOutput,
 	resetBondOptOut,
 	resetNetifSnapshotForTest,
@@ -128,6 +129,10 @@ function bench() {
 		spawn: noChild,
 		isWifiStation: (ifname) => ifname.startsWith("wl"),
 		isPublished: (ifname) => getNetworkInterfaces()[ifname] !== undefined,
+		bondMembers: () =>
+			Object.entries(getNetworkInterfaces())
+				.filter(([name, int]) => isBondCandidate(name, int))
+				.map(([name]) => name),
 		refresh: () => {
 			refreshes++;
 			return sample();
@@ -290,6 +295,26 @@ describe("Wi-Fi carrier loss and the bond", () => {
 		await b.advance(10_000);
 		expect(b.refreshes()).toBe(0);
 		expect(genSrtlaIpList()).toContain(RADIO_B.ip);
+		b.watch.stop();
+	});
+
+	test("both radios on a lost AP stay in a bond with nothing else", async () => {
+		const b = bench();
+		setBondOptOut(MODEM.name, true);
+		await b.sample();
+		b.watch.start();
+		for (const link of ALL) b.watch.handleLine(linkLine(link.name, true));
+		expect(genSrtlaIpList().sort()).toEqual([RADIO_A.ip, RADIO_B.ip].sort());
+		b.setCarrier(RADIO_A.name, false);
+		b.setCarrier(RADIO_B.name, false);
+		await b.advance(1_200);
+		// An empty bond would drop every sender connection: nothing moved.
+		expect(b.refreshes()).toBe(0);
+		expect(genSrtlaIpList().sort()).toEqual([RADIO_A.ip, RADIO_B.ip].sort());
+		// RADIO_B finds the other AP; RADIO_A stays down and is withdrawn then.
+		b.setCarrier(RADIO_B.name, true);
+		await b.advance(READMIT_SETTLE_MS);
+		expect(genSrtlaIpList()).toEqual([RADIO_B.ip]);
 		b.watch.stop();
 	});
 

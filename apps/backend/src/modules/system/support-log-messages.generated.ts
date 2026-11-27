@@ -460,6 +460,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Wi-Fi profile authority retired"],
 	["Wi-Fi station carrier is back; refreshing the bond"],
 	["Wi-Fi station carrier returned within the hold"],
+	["Wi-Fi station lost its carrier; kept as the last link"],
 	["Wi-Fi station lost its carrier; refreshing the bond"],
 	["Wifi connection does not have an SSID!"],
 	["Wifi interfaces refreshed"],

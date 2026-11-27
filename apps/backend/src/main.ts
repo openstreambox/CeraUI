@@ -113,6 +113,7 @@ import {
 	getNetworkInterfaces,
 	handleNetifMonitorEvent,
 	initNetworkInterfaceMonitoring,
+	isBondCandidate,
 	isWifiApInterface,
 	setBondDisableGuardContext,
 	updateNetif,
@@ -690,6 +691,10 @@ if (!shouldUseMocks())
 		isWifiStation: (ifname) =>
 			isSupportedWifiIfname(ifname) && !isWifiApInterface(ifname),
 		isPublished: (ifname) => getNetworkInterfaces()[ifname] !== undefined,
+		bondMembers: () =>
+			Object.entries(getNetworkInterfaces())
+				.filter(([name, int]) => isBondCandidate(name, int))
+				.map(([name]) => name),
 		refresh: () => updateNetif(),
 	});
 

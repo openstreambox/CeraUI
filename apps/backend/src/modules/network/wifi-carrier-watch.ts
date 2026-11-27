@@ -50,6 +50,15 @@
   nothing is refreshed. Each withdrawal therefore needs the carrier to stay
   down for the whole hold, which bounds the bond changes one radio can cause.
 
+  NEVER THE LAST LINK. A live refresh publishes an empty bond when nothing is
+  left, and the sender then drops every connection and has to register from
+  nothing once a radio returns. When both radios sit on the access point that
+  goes, that is worse than the outage itself: they usually re-associate within
+  a second or two and their sockets carry on. So a hold that expires while no
+  other bond link has a carrier withdraws nothing and keeps the link, and the
+  backstop poll treats it as before. Once another radio's carrier is back and
+  has settled, a link still down is withdrawn then.
+
   ONLY WI-FI STATIONS. Cellular modems, Ethernet, tunnels, a hotspot's own AP
   interface and the concurrent-AP netdev are ignored, and their membership
   keeps following the NetworkManager events and the poll as before.
@@ -112,6 +121,8 @@ export type WifiCarrierWatchDeps = {
 	readonly isWifiStation: (ifname: string) => boolean;
 	/** The interface has a row in the published netif map. */
 	readonly isPublished: (ifname: string) => boolean;
+	/** The interfaces the bond admits now (any kind). */
+	readonly bondMembers: () => readonly string[];
 	/** Run the netif refresh the backstop poll runs. */
 	readonly refresh: () => Promise<void> | void;
 	readonly now: () => number;
@@ -124,6 +135,8 @@ type LinkTrack = {
 	downSince: number | undefined;
 	hold: Timer | undefined;
 	readmit: Timer | undefined;
+	/** The hold expired with no other link to carry, so the link was kept. */
+	kept: boolean;
 };
 
 export class WifiCarrierWatch {
@@ -181,6 +194,7 @@ export class WifiCarrierWatch {
 				downSince: undefined,
 				hold: undefined,
 				readmit: undefined,
+				kept: false,
 			};
 			this.#links.set(ifname, track);
 		}
@@ -205,6 +219,13 @@ export class WifiCarrierWatch {
 			if (!this.#wanted || track.running !== false) return;
 			// The backstop poll may have withdrawn it during the hold already.
 			if (!this.deps.isPublished(ifname)) return;
+			if (!this.#hasSurvivor(ifname)) {
+				track.kept = true;
+				logger.info("Wi-Fi station lost its carrier; kept as the last link", {
+					ifname,
+				});
+				return;
+			}
 			logger.info("Wi-Fi station lost its carrier; refreshing the bond", {
 				ifname,
 				down_ms: this.deps.now() - (track.downSince ?? this.deps.now()),
@@ -223,16 +244,54 @@ export class WifiCarrierWatch {
 			});
 		}
 		track.downSince = undefined;
-		if (this.deps.isPublished(ifname) || track.readmit !== undefined) return;
+		track.kept = false;
+		if (track.readmit !== undefined) return;
+		// Nothing to readmit and no kept link this one could now relieve.
+		if (this.deps.isPublished(ifname) && !this.#anyKept()) return;
 		track.readmit = this.deps.setTimeout(() => {
 			track.readmit = undefined;
 			if (!this.#wanted || track.running !== true) return;
-			if (this.deps.isPublished(ifname)) return;
+			const readmit = !this.deps.isPublished(ifname);
+			const relieved = this.#withdrawableKept();
+			if (!readmit && relieved.length === 0) return;
+			for (const name of relieved) {
+				const kept = this.#links.get(name);
+				if (kept) kept.kept = false;
+			}
 			logger.info("Wi-Fi station carrier is back; refreshing the bond", {
 				ifname,
+				...(relieved.length > 0 ? { withdrawing: relieved } : {}),
 			});
 			this.#refresh();
 		}, READMIT_SETTLE_MS);
+	}
+
+	/** Another bond link that is not a Wi-Fi station known to be down. */
+	#hasSurvivor(ifname: string): boolean {
+		return this.deps
+			.bondMembers()
+			.some(
+				(name) => name !== ifname && this.#links.get(name)?.running !== false,
+			);
+	}
+
+	#anyKept(): boolean {
+		for (const track of this.#links.values()) if (track.kept) return true;
+		return false;
+	}
+
+	/** Kept links still down and still in the bond that now have a survivor. */
+	#withdrawableKept(): string[] {
+		const names: string[] = [];
+		for (const [name, track] of this.#links) {
+			if (!track.kept) continue;
+			if (track.running !== false || !this.deps.isPublished(name)) {
+				track.kept = false;
+				continue;
+			}
+			if (this.#hasSurvivor(name)) names.push(name);
+		}
+		return names;
 	}
 
 	#refresh(): void {
@@ -250,6 +309,7 @@ export class WifiCarrierWatch {
 		if (track.readmit !== undefined) this.deps.clearTimeout(track.readmit);
 		track.hold = undefined;
 		track.readmit = undefined;
+		track.kept = false;
 	}
 
 	#start(): void {

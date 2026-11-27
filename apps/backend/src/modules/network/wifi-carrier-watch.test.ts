@@ -116,6 +116,8 @@ function harness(
 	options: {
 		stations?: readonly string[];
 		published?: Set<string>;
+		/** Bond members that are not Wi-Fi stations (a modem, Ethernet). */
+		others?: readonly string[];
 		refresh?: () => void;
 	} = {},
 ) {
@@ -177,6 +179,7 @@ function harness(
 		},
 		isWifiStation: (ifname) => stations.includes(ifname),
 		isPublished: (ifname) => published.has(ifname),
+		bondMembers: () => [...published, ...(options.others ?? [])],
 		refresh: () => {
 			refreshes++;
 			options.refresh?.();
@@ -444,6 +447,85 @@ describe("WifiCarrierWatch", () => {
 		watch.handleLine(linkLine("wlan0", NO_CARRIER, "DORMANT"));
 		expect(() => h.advance(CARRIER_LOSS_HOLD_MS)).not.toThrow();
 		await h.flush();
+		watch.stop();
+	});
+});
+
+describe("WifiCarrierWatch never withdraws the last link", () => {
+	test("both radios losing a shared AP and re-associating refresh nothing", () => {
+		const h = harness();
+		const watch = new WifiCarrierWatch(h.deps);
+		watch.start();
+		for (const name of ["wlan0", "wlan1"])
+			watch.handleLine(linkLine(name, ASSOCIATED, "UP"));
+		watch.handleLine(linkLine("wlan0", NO_CARRIER, "DORMANT"));
+		watch.handleLine(linkLine("wlan1", NO_CARRIER, "DORMANT"));
+		h.advance(1_200);
+		// Both re-associate with the other AP within a few milliseconds.
+		watch.handleLine(linkLine("wlan0", ASSOCIATED, "UP"));
+		watch.handleLine(linkLine("wlan1", ASSOCIATED, "UP"));
+		h.advance(10_000);
+		expect(h.refreshes()).toBe(0);
+		watch.stop();
+	});
+
+	test("a kept radio is withdrawn once the other radio is back and settled", () => {
+		const h = harness();
+		const watch = new WifiCarrierWatch(h.deps);
+		watch.start();
+		for (const name of ["wlan0", "wlan1"])
+			watch.handleLine(linkLine(name, ASSOCIATED, "UP"));
+		watch.handleLine(linkLine("wlan0", NO_CARRIER, "DORMANT"));
+		watch.handleLine(linkLine("wlan1", NO_CARRIER, "DORMANT"));
+		h.advance(1_500);
+		expect(h.refreshes()).toBe(0);
+		// wlan1 finds the other AP; wlan0 (locked to the dead one) does not.
+		watch.handleLine(linkLine("wlan1", ASSOCIATED, "UP"));
+		h.advance(READMIT_SETTLE_MS - 1);
+		expect(h.refreshes()).toBe(0);
+		h.advance(1);
+		expect(h.refreshes()).toBe(1);
+		h.advance(10_000);
+		expect(h.refreshes()).toBe(1);
+		watch.stop();
+	});
+
+	test("a returning radio that drops again before the settle relieves nothing", () => {
+		const h = harness();
+		const watch = new WifiCarrierWatch(h.deps);
+		watch.start();
+		for (const name of ["wlan0", "wlan1"])
+			watch.handleLine(linkLine(name, ASSOCIATED, "UP"));
+		watch.handleLine(linkLine("wlan0", NO_CARRIER, "DORMANT"));
+		watch.handleLine(linkLine("wlan1", NO_CARRIER, "DORMANT"));
+		h.advance(1_500);
+		watch.handleLine(linkLine("wlan1", ASSOCIATED, "UP"));
+		h.advance(READMIT_SETTLE_MS / 2);
+		watch.handleLine(linkLine("wlan1", NO_CARRIER, "DORMANT"));
+		h.advance(10_000);
+		expect(h.refreshes()).toBe(0);
+		watch.stop();
+	});
+
+	test("the only link in the bond is kept", () => {
+		const h = harness({ stations: ["wlan0"] });
+		const watch = new WifiCarrierWatch(h.deps);
+		watch.start();
+		watch.handleLine(linkLine("wlan0", ASSOCIATED, "UP"));
+		watch.handleLine(linkLine("wlan0", NO_CARRIER, "DORMANT"));
+		h.advance(30_000);
+		expect(h.refreshes()).toBe(0);
+		watch.stop();
+	});
+
+	test("a modem in the bond is a survivor", () => {
+		const h = harness({ stations: ["wlan0"], others: ["wwan0"] });
+		const watch = new WifiCarrierWatch(h.deps);
+		watch.start();
+		watch.handleLine(linkLine("wlan0", ASSOCIATED, "UP"));
+		watch.handleLine(linkLine("wlan0", NO_CARRIER, "DORMANT"));
+		h.advance(CARRIER_LOSS_HOLD_MS);
+		expect(h.refreshes()).toBe(1);
 		watch.stop();
 	});
 });
