@@ -469,6 +469,7 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 				{audioCurrent}
 				{audioPending}
 				{audioEmbedded}
+				held={showRestarting}
 			/>
 
 			<!-- Live capture-source switch: the ONLY reachable surface for a live input

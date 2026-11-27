@@ -964,6 +964,7 @@
 	"live.summary.autoPrefix": "自动",
 	"live.summary.autoResolvedSep": "— 当前：",
 	"live.summary.nowStreaming": "正在直播",
+	"live.summary.held": "直播设置",
 	"live.summary.switchTitle": "切换源",
 	"live.title": "直播",
 	"live.transcode.always": "引擎始终将传入流重新编码为你配置的输出编解码器 — 没有直通。",

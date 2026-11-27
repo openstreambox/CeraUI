@@ -1094,6 +1094,7 @@
 	"live.summary.autoPrefix": "Auto",
 	"live.summary.autoResolvedSep": "— currently:",
 	"live.summary.nowStreaming": "Now streaming",
+	"live.summary.held": "Stream setup",
 	"live.summary.switchTitle": "Switch source",
 	"live.title": "Live",
 	"live.transcode.always": "The engine always re-encodes the incoming stream to your configured output codec — there's no passthrough.",

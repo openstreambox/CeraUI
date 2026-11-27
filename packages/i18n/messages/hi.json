@@ -1064,6 +1064,7 @@
 	"live.summary.autoPrefix": "स्वचालित",
 	"live.summary.autoResolvedSep": "— अभी:",
 	"live.summary.nowStreaming": "अभी लाइव",
+	"live.summary.held": "स्ट्रीम सेटअप",
 	"live.summary.switchTitle": "स्रोत बदलें",
 	"live.title": "लाइव",
 	"live.transcode.always": "इंजन हमेशा आने वाली स्ट्रीम को आपके कॉन्फ़िगर किए गए आउटपुट कोडेक में फिर से एन्कोड करता है — कोई पासथ्रू नहीं है।",

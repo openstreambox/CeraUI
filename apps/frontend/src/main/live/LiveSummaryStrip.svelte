@@ -36,6 +36,11 @@ interface Props {
 	audioPending?: string | undefined;
 	/** Show the read-only "Embedded audio" copy instead of a device label. */
 	audioEmbedded?: boolean;
+	/**
+	 * The session is held while the connection restarts or reconnects: nothing
+	 * is going out, so the strip names the setup instead of "Now streaming".
+	 */
+	held?: boolean;
 }
 
 const {
@@ -44,6 +49,7 @@ const {
 	audioCurrent = undefined,
 	audioPending = undefined,
 	audioEmbedded = false,
+	held = false,
 }: Props = $props();
 
 // The ordered main-line segments. Each segment carries one or more atomic value
@@ -85,9 +91,9 @@ const hasAudioLine = $derived(audioEmbedded || Boolean(audioCurrent) || Boolean(
 	data-testid="live-summary-strip"
 >
 	<div class="flex items-center gap-1.5">
-		<span aria-hidden={true} class="bg-primary size-1.5 animate-pulse rounded-full"></span>
-		<span class="text-primary text-[0.65rem] font-semibold tracking-wide uppercase">
-			{m["live.summary.nowStreaming"]()}
+		<span aria-hidden={true} class={['size-1.5 rounded-full', held ? 'bg-muted-foreground/50' : 'bg-primary animate-pulse']}></span>
+		<span class={['text-[0.65rem] font-semibold tracking-wide uppercase', held ? 'text-muted-foreground' : 'text-primary']} data-testid="live-summary-label">
+			{held ? m["live.summary.held"]() : m["live.summary.nowStreaming"]()}
 		</span>
 	</div>
 

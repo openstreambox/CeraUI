@@ -1101,6 +1101,7 @@
 	"live.summary.autoPrefix": "Automático",
 	"live.summary.autoResolvedSep": "— actualmente:",
 	"live.summary.nowStreaming": "Transmitiendo ahora",
+	"live.summary.held": "Configuración de la transmisión",
 	"live.summary.switchTitle": "Cambiar fuente",
 	"live.title": "Live",
 	"live.transcode.always": "El motor siempre vuelve a codificar la señal entrante al códec de salida configurado; no hay paso directo.",

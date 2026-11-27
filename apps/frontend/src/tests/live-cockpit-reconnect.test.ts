@@ -129,6 +129,10 @@ describe("LiveCockpit while the stream reconnects after every link was lost", ()
 		expect(container.textContent?.toLowerCase()).not.toContain("not live");
 		expect(container.textContent?.toLowerCase()).not.toContain("offline");
 		expect(container.textContent).not.toContain(m["live.notStreaming"]());
+		// Nothing is going out: the strip names the setup, not "Now streaming".
+		expect(getByTestId("live-summary-label").textContent?.trim()).toBe(
+			"Stream setup",
+		);
 
 		await vi.advanceTimersByTimeAsync(4_000);
 		expect(getByTestId("live-reconnect-left").textContent).toBe("1:20 left");

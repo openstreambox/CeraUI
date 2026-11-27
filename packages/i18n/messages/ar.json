@@ -1092,6 +1092,7 @@
 	"live.summary.autoPrefix": "تلقائي",
 	"live.summary.autoResolvedSep": "— حالياً:",
 	"live.summary.nowStreaming": "يبث الآن",
+	"live.summary.held": "إعداد البث",
 	"live.summary.switchTitle": "تغيير المصدر",
 	"live.title": "مباشر",
 	"live.transcode.always": "يعيد المحرك دائمًا ترميز البث الوارد إلى برنامج ترميز الإخراج المُهيّأ — لا يوجد تمرير مباشر.",

@@ -291,6 +291,8 @@ goes on:
 - `IngestStats` keeps the session open. The post-stream summary ("Session
   ended") opens only when the restart ends without the stream running again.
 - The header chip says "Restarting connection" instead of "Not streaming".
+- `live-summary-strip` names the setup ("Stream setup", no pulse) instead of
+  "Now streaming", since nothing is going out.
 
 #### Reconnecting after every link was lost [EXISTS]
 

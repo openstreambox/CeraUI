@@ -964,6 +964,7 @@
 	"live.summary.autoPrefix": "자동",
 	"live.summary.autoResolvedSep": "— 현재:",
 	"live.summary.nowStreaming": "스트리밍 중",
+	"live.summary.held": "스트림 설정",
 	"live.summary.switchTitle": "소스 전환",
 	"live.title": "라이브",
 	"live.transcode.always": "엔진은 들어오는 스트림을 항상 구성된 출력 코덱으로 다시 인코딩합니다. 패스스루는 없습니다.",

@@ -964,6 +964,7 @@
 	"live.summary.autoPrefix": "自動",
 	"live.summary.autoResolvedSep": "— 現在:",
 	"live.summary.nowStreaming": "配信中",
+	"live.summary.held": "配信の設定",
 	"live.summary.switchTitle": "ソースを切り替え",
 	"live.title": "ライブ",
 	"live.transcode.always": "エンジンは受信ストリームを常に設定した出力コーデックに再エンコードします。パススルーはありません。",

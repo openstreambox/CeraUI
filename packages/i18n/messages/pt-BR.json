@@ -1071,6 +1071,7 @@
 	"live.summary.autoPrefix": "Automático",
 	"live.summary.autoResolvedSep": "— atualmente:",
 	"live.summary.nowStreaming": "Transmitindo agora",
+	"live.summary.held": "Configuração da transmissão",
 	"live.summary.switchTitle": "Trocar fonte",
 	"live.title": "Live",
 	"live.transcode.always": "O motor sempre recodifica o stream recebido para o codec de saída configurado — não há passthrough.",

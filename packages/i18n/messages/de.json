@@ -1064,6 +1064,7 @@
 	"live.summary.autoPrefix": "Automatisch",
 	"live.summary.autoResolvedSep": "— aktuell:",
 	"live.summary.nowStreaming": "Jetzt live",
+	"live.summary.held": "Stream-Einstellungen",
 	"live.summary.switchTitle": "Quelle wechseln",
 	"live.title": "Live",
 	"live.transcode.always": "Die Engine kodiert den eingehenden Stream immer in den konfigurierten Ausgabe-Codec um – es gibt keine Durchleitung.",
