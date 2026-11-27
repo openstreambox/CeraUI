@@ -21,6 +21,7 @@ import {
 } from "../modules/system/software-update-service-contract.ts";
 import {
 	getUpdateState,
+	isUpdating,
 	runUpdateDiscoveryAndReport,
 	setAptReachabilityProbeForTest,
 	startSoftwareUpdate,
@@ -429,6 +430,123 @@ test("a refusal that settles while the stream start probes the commit stage stop
 	expect(admission).toEqual({ allowed: true });
 	expect(stops).toBe(0);
 	expect(getOrchestratorState().phase).toBe("awaiting-idle");
+});
+
+test("a refusal the tick takes while the stream probes the commit stage stops nothing", async () => {
+	// Given a refused launch the stream start has not seen yet.
+	let taken = false;
+	let stops = 0;
+	setOrchestratorRuntimeDepsForTest(
+		fakeDeps({
+			quarantine: testQuarantine(),
+			getPackageInstallWireState: () => ({
+				kind: "downloading",
+				progress: { total: 0, downloading: 0, unpacking: 0, setting_up: 0 },
+			}),
+			takePackageLaunchRefusal: () => {
+				if (taken) return false;
+				taken = probing;
+				return taken;
+			},
+			// The tick takes the refusal while the stream's probe waits.
+			isCommitStageRunning: async () => {
+				probing = true;
+				await runOrchestratorTick();
+				return false;
+			},
+			stopPackageInstallUnit: async () => {
+				stops++;
+			},
+		}),
+	);
+	let probing = false;
+	setOrchestratorStateForTest({
+		...initialOrchestratorState(0),
+		phase: "available",
+	});
+	expect(await installUpdatesNow()).toEqual({ started: true });
+	// When a stream starts.
+	const admission = await admitAndPrepareStreamStart();
+	// Then it decides on the requeued install and stops nothing.
+	expect(taken).toBe(true);
+	expect(admission).toEqual({ allowed: true });
+	expect(stops).toBe(0);
+	expect(getOrchestratorState().phase).toBe("awaiting-idle");
+});
+
+test("a stream start that meets the tick settling a refusal waits for it", async () => {
+	// Given a refusal the tick is settling, its pending list still clearing.
+	const cleared = Promise.withResolvers<void>();
+	const quarantine = testQuarantine();
+	quarantine.clearPending = () => cleared.promise;
+	let stops = 0;
+	let refused = false;
+	setOrchestratorRuntimeDepsForTest(
+		fakeDeps({
+			quarantine,
+			getPackageInstallWireState: () => ({
+				kind: "downloading",
+				progress: { total: 0, downloading: 0, unpacking: 0, setting_up: 0 },
+			}),
+			takePackageLaunchRefusal: () => {
+				const once = refused;
+				refused = false;
+				return once;
+			},
+			stopPackageInstallUnit: async () => {
+				stops++;
+			},
+			// Outside the idle window: the queued install waits for Install now.
+			isIdle: async () => false,
+		}),
+	);
+	setOrchestratorStateForTest({
+		...initialOrchestratorState(0),
+		phase: "available",
+	});
+	quarantine.savePending = async () => {};
+	expect(await installUpdatesNow()).toEqual({ started: true });
+	refused = true;
+	const tick = runOrchestratorTick();
+	await Bun.sleep(0);
+	// When a stream starts meanwhile.
+	const admission = admitAndPrepareStreamStart();
+	cleared.resolve();
+	// Then it waits for that settlement and stops nothing.
+	expect(await admission).toEqual({ allowed: true });
+	await tick;
+	expect(stops).toBe(0);
+	expect(getOrchestratorState().phase).toBe("awaiting-idle");
+});
+
+test("a stream start during the refused launch's cache cleanup stops nothing", async () => {
+	// Given a refused launch whose name another transaction holds.
+	const systemd = fakeSystemd();
+	const { h, stops, wireFrames } = await orchestratedInstall(systemd);
+	await using _h = h;
+	expect(await installUpdatesNow()).toEqual({ started: true });
+	systemd.occupy();
+	// When a stream starts while the monitor still cleans the archive cache.
+	let admission: Awaited<ReturnType<typeof admitAndPrepareStreamStart>> | null =
+		null;
+	// The first clean is the space preflight's, before the launch; the second
+	// is the monitor's, after the refusal.
+	let cleans = 0;
+	h.beforeClean = async () => {
+		if (++cleans === 2) admission = await admitAndPrepareStreamStart();
+	};
+	// No terminal frame comes (the refusal was taken), so wait for the monitor.
+	void h.check();
+	for (let i = 0; i < 200 && (admission === null || isUpdating()); i++)
+		await Bun.sleep(5);
+	await runOrchestratorTick();
+	// Then the refusal was already known: the stream goes ahead, nothing is
+	// stopped, and the install is queued again with the offer on the wire.
+	expect(admission).toEqual({ allowed: true });
+	expect(stops()).toBe(0);
+	expect(getOrchestratorState().phase).toBe("awaiting-idle");
+	expect(getUpdateState().kind).toBe("available");
+	expect(wireFrames().some((state) => state.kind === "failed")).toBe(false);
 });
 
 test("a commit stage under the name still refuses the stream after a settled refusal", async () => {

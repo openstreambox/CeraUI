@@ -1265,6 +1265,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	[
 		"update-orchestrator: cannot tell whether the interrupted download's install unit survived; re-checking each tick",
 	],
+	["update-orchestrator: clearing a refused launch's pending list failed"],
 	[
 		"update-orchestrator: commit-stage probe failed; refusing the stream start rather than stopping the install",
 	],

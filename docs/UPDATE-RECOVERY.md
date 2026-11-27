@@ -1879,7 +1879,8 @@ an operator reset, across reboots.
 
 For an install the orchestrator started, the refusal now belongs to that
 launch. The orchestrator hands each start a ticket (`startSoftwareUpdate`'s
-second argument); the process monitor records a refusal against it, publishes
+second argument); the process monitor records a refusal against it as soon as
+the launcher rejects (before its archive cleanup), publishes
 `failed` with `retryable: true` and the cause as the reason, clears the overlay without a
 finished install's result (so no tab announces a failure), and logs a warning
 instead of the "update failed" notification. The orchestrator takes the
@@ -1888,19 +1889,26 @@ when a stream starts, and dispatches `INSTALL_LAUNCH_REFUSED`: the
 phase goes back to `awaiting-idle` with no failure reason and without the
 launch's provenance, where a start refused up front already stays. It never
 reads the refusal off the wire, so a Packages card start of its own, or a check
-that clears the wire first, cannot move another launch. A stream start keeps
-the commit-stage guard (a unit under the name that runs dpkg still refuses the
-stream), then takes a refusal that settled before or during that probe and
-stops nothing: whatever holds the name is not this install's. A second start
+that clears the wire first, cannot move another launch. Settling is single-flight: a stream start that
+meets the tick settling waits for it. A stream start takes a refusal before it
+reads the wire, so another start's commit there is not latched to this launch,
+and it still refuses the stream while a unit under the name commits (the wire
+or the commit-stage probe). A refusal seen only after the probe's wait, or a
+phase the tick moved meanwhile, is decided on what is there then. In each case
+nothing is stopped: whatever holds the name is not this install's. A second start
 while one waits for discovery is refused (`already_updating`) instead of being
-reported started, so a ticket always belongs to the launch that runs. Taking
-the refusal withdraws it from the wire if the wire still shows it, so the offer
-is back and the retry saves `pending-packages.json` from it, as a first launch
-does. That record is the offer's vector; a capable launch rediscovers its own
+reported started, so a ticket always belongs to the launch that runs. Settling
+clears `pending-packages.json`, as a start refused up front does; taking the
+refusal withdraws it from the wire if the wire shows it, so the offer is back
+and the retry saves the record from it, as a first launch does. If the wire
+shows something else then (a later failure of a Packages card start), the
+retry saves nothing and a commit failure quarantines nothing rather than the
+refused plan. That record is the offer's vector; a capable launch rediscovers its own
 before it runs, so the existing limitation under "Still open" above (a commit
 failure can quarantine the earlier plan's versions) applies to the retry as it
 does to any launch. The next tick in the idle window, or Install now,
-launches again (60 s apart at most while the refusal persists); a retry while
+launches again: the next idle tick, about 60 s after the refusal settles, plus
+the launch's own preparation, while the refusal persists; a retry while
 the name is still taken is refused the same way and never submits a unit over
 it.
 

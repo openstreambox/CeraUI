@@ -1732,9 +1732,10 @@ let refusedLaunches = new WeakMap<PackageLaunchTicket, string>();
 
 /**
  * True once, if the install started with `ticket` was refused before its unit
- * was submitted. Taking it also withdraws that refusal from the wire when the
- * wire still shows it, so the offer is back and the retry records the plan it
- * launches.
+ * was submitted. The refusal is recorded as soon as the launcher rejects,
+ * before the cache cleanup. Taking it also withdraws that refusal from the
+ * wire when the wire already shows it, so the offer is back and a retry saves
+ * the offer's plan as any launch does.
  */
 export function takePackageLaunchRefusal(ticket: PackageLaunchTicket): boolean {
 	const failureId = refusedLaunches.get(ticket);
@@ -1904,10 +1905,15 @@ export function createSoftwareUpdateProcessMonitor(
 		// queues it again instead of recording a failed download. A start of
 		// its own (the Packages card's) keeps the plain failure.
 		let refused = false;
+		const failureId = randomUUID();
 		try {
 			code = await completion;
 		} catch (err) {
 			refused = ticket !== null && err instanceof DetachedAptLaunchRefusedError;
+			// Recorded at once, before the cache cleanup below waits: the
+			// orchestrator (a stream start's admission included) must know
+			// there is no unit of this install's to stop.
+			if (refused && ticket !== null) refusedLaunches.set(ticket, failureId);
 			const message = err instanceof Error ? err.message : String(err);
 			aptErr += aptErr.length > 0 ? `\n${message}` : message;
 			code =
@@ -1926,12 +1932,15 @@ export function createSoftwareUpdateProcessMonitor(
 			await withdrawCeraliveOfferIfInstalled(offer);
 
 		if (softUpdateStatus) {
+			// The orchestrator took the refusal during the cleanup and queued
+			// the install again already: the offer stays on the wire.
+			const taken = refused && ticket !== null && !refusedLaunches.has(ticket);
 			const failure =
-				code === 0
+				code === 0 || taken
 					? null
 					: {
 							reason: aptErr.trim() || `apt-get exited with code ${code}`,
-							failure_id: randomUUID(),
+							failure_id: failureId,
 							...((currentUpdateIdentity ?? availableIdentity)
 								? {
 										identity: (currentUpdateIdentity ??
@@ -1947,16 +1956,14 @@ export function createSoftwareUpdateProcessMonitor(
 			lastUpdateSucceeded = code === 0;
 			if (code === 0 && owned) pendingPackageSuccess.observe();
 			lastUpdateFailure = failure;
-			if (ticket !== null && failure?.retryable)
-				refusedLaunches.set(ticket, failure.failure_id);
 			softUpdateStatus.result = code === 0 ? code : aptErr;
 			const settledStatus = softUpdateStatus;
 			softUpdateStatus = null;
 			try {
-				if (failure?.retryable) {
+				if (refused) {
 					logger.warn(
 						"Software update did not start; nothing was installed and the install is retried",
-						{ reason: failure.reason },
+						{ reason: aptErr.trim() },
 					);
 				} else if (failure) {
 					notificationBroadcast(
@@ -1983,7 +1990,7 @@ export function createSoftwareUpdateProcessMonitor(
 				// the overlay clears without a result, so no tab announces a
 				// failure for it.
 				broadcastMsg("status", {
-					updating: failure?.retryable ? null : settledStatus,
+					updating: refused ? null : settledStatus,
 					update_state: getUpdateState(),
 				});
 				broadcastUpdateState();

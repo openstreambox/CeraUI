@@ -569,6 +569,7 @@ let packageInstallStarting = false;
 // The install this orchestrator launched last, to learn whether its launch was
 // refused before its unit was submitted.
 let startedLaunch: PackageLaunchTicket | null = null;
+let launchRefusalSettling: Promise<boolean> | null = null;
 let packageHoldAttempt: DownloadInterruption | undefined;
 let updateAdmissionProbe: Promise<boolean> | undefined;
 let osForceActivated = false;
@@ -719,6 +720,7 @@ export function resetOrchestratorRuntimeForTest(): void {
 	deps.downloadNotices?.dispose();
 	packageHoldAttempt = undefined;
 	startedLaunch = null;
+	launchRefusalSettling = null;
 	resetDisruptiveActionReservationForTest();
 	if (tickTimer) clearTimeout(tickTimer);
 	tickTimer = undefined;
@@ -1185,6 +1187,9 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 	}
 
 	if (state.phase === "downloading") {
+		// A refused launch first: another start's commit on the wire is not
+		// this install's to latch.
+		if (await settleRefusedLaunch()) return admitAfterRefusedLaunch();
 		const freshWire = deps.getPackageInstallWireState();
 		packageHoldAttempt ??= packageDownloadAttempt(freshWire);
 		const interruption = packageHoldAttempt;
@@ -1202,10 +1207,11 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 			return COMMIT_STAGE_REFUSAL;
 		}
 		if (pendingPackageSuccess.pending) return COMMIT_STAGE_REFUSAL;
-		// A launch refused before submission (seen now, after the probe's
-		// wait) has no unit to stop: whatever holds the name is not this
-		// install's. The commit guard above still applied to it.
-		if (settleRefusedLaunch()) return { allowed: true };
+		// The probe waited. A launch refused meanwhile (settled here or by the
+		// tick) has no unit to stop: whatever holds the name is not this
+		// install's, and the probe above was its commit guard.
+		if (await settleRefusedLaunch()) return admitStreamStart(state);
+		if (state.phase !== "downloading") return admitStreamStart(state);
 		await deps.stopPackageInstallUnit();
 		if (pendingPackageSuccess.pending) return COMMIT_STAGE_REFUSAL;
 		dispatch({ type: "DOWNLOAD_ABORTED_FOR_STREAM", now: deps.now() });
@@ -1494,17 +1500,53 @@ async function maybeStartPackageInstall(opts: {
  * package side for that launch only, never read off the wire: a start of the
  * Packages card's own, or a check, can change what the wire shows first.
  */
-function settleRefusedLaunch(): boolean {
-	if (state.phase !== "downloading" || startedLaunch === null) return false;
-	if (!(deps.takePackageLaunchRefusal?.(startedLaunch) ?? false)) return false;
+function settleRefusedLaunch(): Promise<boolean> {
+	// One settlement at a time: a stream start that finds the tick settling
+	// waits for it instead of reading "not refused" and stopping the name.
+	if (launchRefusalSettling) return launchRefusalSettling;
+	if (state.phase !== "downloading" || startedLaunch === null)
+		return Promise.resolve(false);
+	if (!(deps.takePackageLaunchRefusal?.(startedLaunch) ?? false))
+		return Promise.resolve(false);
 	startedLaunch = null;
-	dispatch({ type: "INSTALL_LAUNCH_REFUSED", now: deps.now() });
-	return true;
+	const settling = (async () => {
+		// As a start refused up front: its plan goes with it, and the retry
+		// saves its own.
+		try {
+			await deps.quarantine.clearPending();
+		} catch (error) {
+			logger.warn(
+				"update-orchestrator: clearing a refused launch's pending list failed",
+				{ error },
+			);
+		}
+		if (state.phase === "downloading")
+			dispatch({ type: "INSTALL_LAUNCH_REFUSED", now: deps.now() });
+		return true;
+	})().finally(() => {
+		launchRefusalSettling = null;
+	});
+	launchRefusalSettling = settling;
+	return settling;
+}
+
+/**
+ * Stream admission once this orchestrator's launch was refused: nothing of
+ * this install's runs, so nothing is stopped. A unit under the name that is
+ * committing (another start's) still refuses the stream, as the commit guard
+ * does for any install in that window.
+ */
+async function admitAfterRefusedLaunch(): Promise<StreamStartUpdateAdmission> {
+	const wire = deps.getPackageInstallWireState();
+	if (wire.kind === "installing" || wire.kind === "success")
+		return COMMIT_STAGE_REFUSAL;
+	if (await commitStageRunning()) return COMMIT_STAGE_REFUSAL;
+	return admitStreamStart(state);
 }
 
 async function pollPackageInstallProgress(): Promise<void> {
 	if (state.phase !== "downloading" && state.phase !== "committing") return;
-	if (settleRefusedLaunch()) return;
+	if (await settleRefusedLaunch()) return;
 	const wire = deps.getPackageInstallWireState();
 	const now = deps.now();
 	if (wire.kind === "downloading") {
