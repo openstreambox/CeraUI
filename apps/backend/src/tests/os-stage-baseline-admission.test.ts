@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitStagedManifest } from "../modules/system/update-orchestrator/os-agent.ts";
 import {
@@ -17,7 +18,7 @@ useSessionOwnerForFile();
 
 test("captures admission baseline under real CONTROL and publishes only while that lease remains held", async () => {
 	// Given a real receipt/CONTROL lease and fixture installer, RAUC and owner observations.
-	const dir = mkdtempSync("/var/tmp/ceraui-stage-baseline-admission-");
+	const dir = mkdtempSync(`${tmpdir()}/ceraui-stage-baseline-admission-`);
 	writeFileSync(
 		join(dir, "os-staged.json"),
 		'{"schema":1,"version":"2026.10.64","channel":"drill","stagedAt":1791464043236,"bootId":"070fd8ac-4a40-4b85-9d31-f21502ebd117"}',

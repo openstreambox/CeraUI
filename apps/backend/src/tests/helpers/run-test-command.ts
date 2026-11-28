@@ -1,3 +1,9 @@
+import { fileURLToPath } from "node:url";
+
+export const backendTestRunner = fileURLToPath(
+	new URL("../../../scripts/test-with-temp.mjs", import.meta.url),
+);
+
 export async function runTestCommand(
 	cmd: string[],
 	opts: { readonly cwd?: string; readonly env?: Record<string, string> } = {},

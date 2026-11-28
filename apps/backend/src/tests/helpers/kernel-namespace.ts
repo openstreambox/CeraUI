@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { runTestCommand } from "./run-test-command.ts";
+import { backendTestRunner, runTestCommand } from "./run-test-command.ts";
 
 export async function preflight(unshare = "unshare") {
 	try {
@@ -37,7 +37,7 @@ export async function inNamespace(
 			"unshare",
 			"-Urn",
 			process.execPath,
-			"test",
+			backendTestRunner,
 			file,
 			"--test-name-pattern",
 			`${scenario.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,

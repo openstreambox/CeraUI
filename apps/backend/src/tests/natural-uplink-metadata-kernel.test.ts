@@ -17,6 +17,7 @@ const probe = child
 const unavailable = probe !== undefined && probe.code !== 0;
 
 const ready = Promise.withResolvers<void>();
+// Keep Bun's IPC channel attached to the fixture VM. It uses the parent's temp tree.
 const proc =
 	!child && !unavailable
 		? Bun.spawn(
