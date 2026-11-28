@@ -33,7 +33,9 @@ Install post-acceptance limits: D8 Known gaps (c). Check wire reference:
   the refresh latch so Check answers and scheduled ticks can continue. Existing
   offers retain the documented wire precedence above; the failure survives in
   the port result and `lastCheckFailure`. A stream/concurrent-refresh refusal still
-  returns `busy` without clearing evidence.
+  returns `busy` without clearing evidence. Under mocks the shared
+  `runSoftwareUpdateCheck()` entry returns no error before calling refresh or
+  discovery, matching the legacy background loop and avoiding host APT effects.
 - **Only a complete check, or dpkg showing the offer installed, changes the "CeraLive update is available" notice.**
   The refresh must exit 0 having hit or fetched the `InRelease`/`Release` of every
   CeraLive source the check's own inventory lists (same URI and suite, no `Ign:`),
