@@ -18,6 +18,8 @@ export type RadioFixture = {
 	readonly phy: number;
 	readonly state: string;
 	readonly beforeRead?: (path: string) => Promise<void>;
+	/** The NM device path; `null` reads as unavailable. Default: one per PHY. */
+	readonly devicePath?: string | null;
 };
 
 export type EquivalenceFixture = {
