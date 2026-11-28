@@ -64,19 +64,28 @@ const remoteLegacy = JSON.stringify({
 		linkTelemetry: null,
 	},
 });
-const relayFrames = (payloads: readonly object[]) =>
-	payloads.map((payload, index) => ({
-		v: PROTOCOL_VERSION,
-		kind: "status",
-		type: "status",
-		// The local-only frames are sent outside the broadcast that pins `cid`.
-		cid:
-			payload === remoteLocalOnly
-				? expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-/)
-				: cid,
-		seq: index + 1,
-		payload,
-	}));
+// Serialized like upstream's pinned frames. The local-only frames are sent
+// outside the broadcast that pins `cid`, so theirs is taken from the frame
+// after checking it is a fresh UUID.
+const relayFrames = (relay: readonly string[], payloads: readonly object[]) =>
+	payloads.map((payload, index) => {
+		let frameCid = cid;
+		if (payload === remoteLocalOnly) {
+			frameCid = JSON.parse(relay[index] ?? "{}").cid;
+			expect(frameCid).toMatch(
+				/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+			);
+			expect(frameCid).not.toBe(cid);
+		}
+		return JSON.stringify({
+			v: PROTOCOL_VERSION,
+			kind: "status",
+			type: "status",
+			cid: frameCid,
+			seq: index + 1,
+			payload,
+		});
+	});
 
 test("cleanup debt keeps all legacy Wi-Fi status bytes without relocking local peers", async () => {
 	const f = await firstAp();
@@ -206,10 +215,10 @@ test("cleanup debt keeps all legacy Wi-Fi status bytes without relocking local p
 		// Both remote transports get the projected row, never the raw local one;
 		// the relay also carries the two local-only frames, projected.
 		expect({
-			relay: relay.map((bytes) => JSON.parse(bytes)),
+			relay,
 			legacy: legacyBytes,
 		}).toEqual({
-			relay: relayFrames([
+			relay: relayFrames(relay, [
 				remoteWifi,
 				remoteWifi,
 				remoteLocalOnly,
@@ -342,10 +351,15 @@ test("profile rejection keeps ordered legacy status bytes but retires the local 
 		expect(telemetry).toHaveBeenCalledTimes(7);
 		// Both remote transports get the projected row, never the raw local one.
 		expect({
-			relay: relay.map((bytes) => JSON.parse(bytes)),
+			relay,
 			legacy: wifiStatusFrames(remote.sent),
 		}).toEqual({
-			relay: relayFrames([remoteWifi, remoteWifi, remoteWifi, remoteWifi]),
+			relay: relayFrames(relay, [
+				remoteWifi,
+				remoteWifi,
+				remoteWifi,
+				remoteWifi,
+			]),
 			legacy: [remoteLegacy, remoteLegacy],
 		});
 	} finally {
