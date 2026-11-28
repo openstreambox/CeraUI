@@ -190,9 +190,9 @@ enlace traducido. CeraUI no ejecuta ni configura el traductor.
 
 ## Recovery isolation
 
-A failed or quarantined modem stays out of the stream while healthy uplinks
-remain available. Its persistent warning names the modem when a current row can
-identify it; otherwise it describes a modem that was unplugged or reconnected.
+The box excludes a failed or quarantined modem from the links it uses to send
+the stream. The warning names the modem when a current row identifies it and
+says “a modem” when the row is missing.
 The warning clears after verified recovery releases the journal block. Dismissing
 a warning or reusing an interface name cannot release a block. An operation still
 in progress continues to hold new starts.
@@ -215,9 +215,10 @@ OS reads, journal entries, sender spawning and engine I/O substituted.
 
 ### Aislamiento durante la recuperación
 
-Un módem con una restauración fallida o en cuarentena queda fuera de la
-transmisión; los demás enlaces siguen disponibles. Un aviso persistente muestra
-su nombre cuando se puede identificar, o indica que se desconectó o reconectó.
+La caja excluye a un módem con una restauración fallida o en cuarentena de los
+enlaces que usa para enviar la transmisión. El aviso muestra su nombre cuando
+se puede identificar en la lista de módems. Si no aparece, el aviso dice
+«un módem».
 El aviso desaparece cuando una recuperación verificada libera el bloqueo.
 Cambiar el nombre de la interfaz no lo libera. Una operación todavía en curso
 sigue impidiendo iniciar una nueva transmisión.
