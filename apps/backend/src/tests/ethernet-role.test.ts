@@ -52,6 +52,7 @@ import {
 	getNetifErrorMsg,
 	getNetworkInterfaces,
 	isBondCandidate,
+	NETIF_ERR_NOSIM,
 	NETIF_ERR_SHAREDLAN,
 	type NetworkInterface,
 	netIfBuildMsg,
@@ -445,14 +446,14 @@ describe("flipping back to uplink restores candidacy", () => {
 	test("a port carrying ANOTHER error stays down when the role is released", () => {
 		const interfaces: Record<string, NetworkInterface> = {
 			[SHARED_PORT]: iface({
-				error: NETIF_ERR_SHAREDLAN | 0x01,
+				error: NETIF_ERR_SHAREDLAN | NETIF_ERR_NOSIM,
 				enabled: false,
 			}),
 		};
 
 		applySharedLanBondGate(interfaces, () => false);
 
-		expect(interfaces[SHARED_PORT]?.error).toBe(0x01);
+		expect(interfaces[SHARED_PORT]?.error).toBe(NETIF_ERR_NOSIM);
 		expect(interfaces[SHARED_PORT]?.enabled).toBe(false);
 	});
 });

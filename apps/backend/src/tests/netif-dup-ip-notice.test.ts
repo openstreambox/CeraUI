@@ -31,6 +31,7 @@ import { resolveModemPhysicalIdentity } from "../modules/modems/physical-identit
 import {
 	getNetworkInterfaces,
 	NETIF_DUP_IP_NOTIFICATION,
+	netIfBuildMsg,
 	processIfconfigOutput,
 	resetBondOptOut,
 	resetDupIpNoticeState,
@@ -401,7 +402,7 @@ describe("the notice is decided on none | active | degraded", () => {
 		expect(ifaces).toContain(TWIN_A);
 		expect(ifaces).not.toContain(TWIN_B);
 		expect(isBondLinkMappable(TWIN_B, TWIN_IP)).toBe(false);
-		expect(getNetworkInterfaces()[TWIN_B]?.enabled).toBe(false);
+		expect(netIfBuildMsg()[TWIN_B]?.enabled).toBe(false);
 	});
 
 	test("the same collision reads three different ways across the tri-state", () => {

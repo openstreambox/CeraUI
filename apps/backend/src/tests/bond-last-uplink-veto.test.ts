@@ -219,7 +219,7 @@ function seed(topology: Topology) {
 			netif.setBondOptOut(name, true);
 		}
 	} else if (topology === "duplicate") {
-		add("eth0", { enabled: false, error: netif.NETIF_ERR_DUPIPV4 });
+		add("eth0", { error: netif.NETIF_ERR_DUPIPV4 });
 	} else if (topology === "empty") {
 		add("eth0", { enabled: false });
 	} else if (topology !== "raw-last") {
