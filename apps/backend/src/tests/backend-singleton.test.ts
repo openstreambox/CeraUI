@@ -6,6 +6,7 @@ import {
 	acquireBackendSingleton,
 	BackendSingletonError,
 	enforceBackendSingleton,
+	holdsBackendSingletonLease,
 } from "../helpers/backend-singleton.ts";
 
 test("main acquires singleton ownership before the control bind and update startup", async () => {
@@ -24,9 +25,12 @@ test("main acquires singleton ownership before the control bind and update start
 });
 
 test("only genuine directory creation failure permits singleton fallback", async () => {
+	expect(holdsBackendSingletonLease()).toBe(false);
 	await enforceBackendSingleton(async () => {
 		throw new BackendSingletonError("directory-unavailable");
 	});
+	// Boot goes on, but nothing is held: this process is not the sole backend.
+	expect(holdsBackendSingletonLease()).toBe(false);
 	for (const reason of ["contended", "unproven"] as const) {
 		await expect(
 			enforceBackendSingleton(async () => {
@@ -34,6 +38,15 @@ test("only genuine directory creation failure permits singleton fallback", async
 			}),
 		).rejects.toHaveProperty("reason", reason);
 	}
+});
+
+test("the lease is held once the lock was acquired, and only then", async () => {
+	expect(holdsBackendSingletonLease()).toBe(false);
+	await enforceBackendSingleton(async () => ({
+		exited: new Promise<number>(() => undefined),
+		[Symbol.asyncDispose]: async () => undefined,
+	}));
+	expect(holdsBackendSingletonLease()).toBe(true);
 });
 
 test("a missing directory is distinct from a symlink or missing helper", async () => {

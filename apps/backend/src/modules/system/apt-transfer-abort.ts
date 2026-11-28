@@ -1,7 +1,17 @@
-// Import-free on purpose: stream-abort.ts reaches the in-flight APT fetch without loading the transport graph.
+// Free of transport imports on purpose: stream-abort.ts reaches the in-flight APT fetch without loading the transport graph.
+import type { EffectOwner } from "../../helpers/effect-owner.ts";
+
 let inFlight: AbortController | undefined;
 let admissionEpoch = 0;
-export type AptTransferAdmission = { readonly cancelled: () => boolean };
+export type AptTransferAdmission = {
+	readonly cancelled: () => boolean;
+	/**
+	 * Whom the transaction is opened for (an install on an image with its own
+	 * apt source). Its selection, routing and runs carry that owner; absent for
+	 * every other transaction.
+	 */
+	readonly owner?: EffectOwner;
+};
 
 export function captureAptTransferAdmission(): AptTransferAdmission {
 	const epoch = admissionEpoch;

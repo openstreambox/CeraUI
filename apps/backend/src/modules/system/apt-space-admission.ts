@@ -1,5 +1,6 @@
 import type { BigIntStats, BigIntStatsFs } from "node:fs";
 import { stat, statfs } from "node:fs/promises";
+import { type EffectOwner, ownedAll } from "../../helpers/effect-owner.ts";
 import { spawnWithTimeout } from "../../helpers/spawn-policy.ts";
 import { cleanAptCache } from "./apt-cache-clean.ts";
 import {
@@ -19,6 +20,8 @@ export type AptSpaceDeps = {
 	readonly statfs: (
 		path: string,
 	) => Promise<Pick<BigIntStatsFs, "bavail" | "bsize">>;
+	/** Whom the preflight is run for, when `run` runs its commands for it. */
+	readonly owner?: EffectOwner | undefined;
 };
 
 export const defaultAptSpaceDeps: AptSpaceDeps = {
@@ -31,7 +34,7 @@ export async function preflightAptSpace(
 	installArgs: readonly string[],
 	deps: AptSpaceDeps = defaultAptSpaceDeps,
 ): Promise<void> {
-	if (!(await cleanAptCache(deps.run)))
+	if (!(await cleanAptCache(deps.run, deps.owner)))
 		throw new AptPreflightError("pre_clean_failed");
 	const config = await deps
 		.run(
@@ -62,13 +65,13 @@ export async function preflightAptSpace(
 	const { download_bytes, install_delta_bytes } = parseAptSpaceProbe(
 		probe.stdout,
 	);
-	const [archiveStat, rootStat] = await Promise.all([
+	const [archiveStat, rootStat] = await ownedAll(deps.owner, [
 		deps.stat(archives),
 		deps.stat("/"),
 	]).catch((cause: unknown) => {
 		throw new AptPreflightError("stat_failed", { cause });
 	});
-	const [archiveFs, rootFs] = await Promise.all([
+	const [archiveFs, rootFs] = await ownedAll(deps.owner, [
 		deps.statfs(archives),
 		deps.statfs("/"),
 	]).catch((cause: unknown) => {

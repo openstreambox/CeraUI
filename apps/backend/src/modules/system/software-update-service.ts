@@ -8,7 +8,15 @@
 	(at your option) any later version.
 */
 
+import {
+	assertOwnerMayRead,
+	type EffectOwner,
+} from "../../helpers/effect-owner.ts";
 import { spawnWithTimeout } from "../../helpers/spawn-policy.ts";
+import {
+	imageAptSourceInUse,
+	isImageAptSourcePair,
+} from "./image-apt-source.ts";
 import { classifyPackageLayer } from "./package-layer.ts";
 import {
 	prepareSoftwareUpdateOutput,
@@ -81,7 +89,11 @@ export function buildDetachedAptUpgradeCommand(
 	aptArgs: readonly string[],
 	outputPaths: SoftwareUpdateOutputPaths,
 ): string[] {
-	if (!isExpectedAptUpgradeArgv(["/usr/bin/apt-get", ...aptArgs])) {
+	// The legacy roster upgrade never runs on an image with its own apt source.
+	if (
+		imageAptSourceInUse() ||
+		!isExpectedAptUpgradeArgv(["/usr/bin/apt-get", ...aptArgs])
+	) {
 		throw new InvalidDetachedAptUpgradeArgumentsError();
 	}
 	const installAt = aptArgs.indexOf("install");
@@ -132,6 +144,14 @@ export function buildDetachedAptAllCommand(
 		verdict === "any"
 			? []
 			: ["-o", `Acquire::ForceIPv${verdict === "force_ipv4" ? "4" : "6"}=true`];
+	// An image with its own apt source launches only with its source pair right
+	// before `install` (an earlier backend's unit without it is still adopted).
+	const at = installArgs.indexOf("install");
+	if (
+		imageAptSourceInUse() &&
+		!isImageAptSourcePair(installArgs.slice(at - 4, at))
+	)
+		throw new InvalidDetachedAptUpgradeArgumentsError();
 	const script = expectedAptAllScript(installArgs, family);
 	const trusted = softwareUpdateOutputPaths();
 	if (
@@ -164,9 +184,13 @@ export function buildDetachedAptAllCommand(
 	];
 }
 
-async function requireSuccessfulCommand(command: string[]): Promise<string> {
+async function requireSuccessfulCommand(
+	command: string[],
+	owner?: EffectOwner,
+): Promise<string> {
 	const result = await spawnWithTimeout(command, {
 		timeoutMs: SYSTEMD_COMMAND_TIMEOUT_MS,
+		owner,
 	});
 	if (result.exitCode !== 0) {
 		throw new DetachedAptServiceCommandError(
@@ -178,7 +202,9 @@ async function requireSuccessfulCommand(command: string[]): Promise<string> {
 	return result.stdout;
 }
 
-async function inspectService(): Promise<DetachedAptServiceState> {
+async function inspectService(
+	owner?: EffectOwner,
+): Promise<DetachedAptServiceState> {
 	const command = [
 		"systemctl",
 		"show",
@@ -188,9 +214,14 @@ async function inspectService(): Promise<DetachedAptServiceState> {
 	];
 	const result = await spawnWithTimeout(command, {
 		timeoutMs: SYSTEMD_COMMAND_TIMEOUT_MS,
+		owner,
 	});
 	const state = parseDetachedAptServiceProbe(result, command);
 	if (state.kind !== "absent") {
+		// A look done for the install like the command before it: not made once
+		// the install has ended. (The second look after an uncertain
+		// `systemd-run` is never refused: the launch fence holds the decision.)
+		assertOwnerMayRead(owner, "the unit's fragment");
 		const fragment = await readStoredStateFile(
 			SOFTWARE_UPDATE_FRAGMENT_PATH,
 			STORED_STATE_LIMITS.intent,
@@ -202,25 +233,40 @@ async function inspectService(): Promise<DetachedAptServiceState> {
 	return state;
 }
 
-let detachedAptServiceDepsForTest: DetachedAptServiceDeps | null = null;
+type DetachedAptServiceDepsOverride =
+	| DetachedAptServiceDeps
+	| ((real: DetachedAptServiceDeps) => DetachedAptServiceDeps);
+let detachedAptServiceDepsForTest: DetachedAptServiceDepsOverride | null = null;
 
-/** Tests running real backend processes give them a unit that outlives each one. */
+/**
+ * Tests running real backend processes give them a unit that outlives each
+ * one. A function gets the real deps to replace only part of them.
+ */
 export function setDetachedAptServiceDepsForTest(
-	deps: DetachedAptServiceDeps | null,
+	deps: DetachedAptServiceDepsOverride | null,
 ): void {
 	detachedAptServiceDepsForTest = deps;
 }
 
-export function defaultDetachedAptServiceDeps(): DetachedAptServiceDeps {
-	if (detachedAptServiceDepsForTest) return detachedAptServiceDepsForTest;
+/**
+ * `owner` is the install the unit is launched for (an image with its own apt
+ * source): its look for a unit, its spool setup and its `systemd-run` are
+ * then refused once that install has ended. Observing and cleaning up a
+ * launched unit is not the install's any more and carries no owner.
+ */
+export function defaultDetachedAptServiceDeps(
+	owner?: EffectOwner,
+): DetachedAptServiceDeps {
+	const override = detachedAptServiceDepsForTest;
+	if (override !== null && typeof override !== "function") return override;
 	const paths = softwareUpdateOutputPaths();
-	return {
+	const real: DetachedAptServiceDeps = {
 		outputPaths: paths,
-		prepareOutput: () => prepareSoftwareUpdateOutput(paths),
+		prepareOutput: () => prepareSoftwareUpdateOutput(paths, 0, owner),
 		start: async (command) => {
-			await requireSuccessfulCommand([...command]);
+			await requireSuccessfulCommand([...command], owner);
 		},
-		inspect: inspectService,
+		inspect: () => inspectService(owner),
 		cleanup: async (state) => {
 			await requireSuccessfulCommand([
 				"systemctl",
@@ -231,4 +277,5 @@ export function defaultDetachedAptServiceDeps(): DetachedAptServiceDeps {
 		readOutput: readSoftwareUpdateOutput,
 		sleep: Bun.sleep,
 	};
+	return override === null ? real : override(real);
 }

@@ -1238,6 +1238,239 @@
 			"message": "\"status\"",
 			"fields": [
 				{
+					"path": "updating",
+					"types": ["null"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.kind",
+					"types": [
+						"\"idle\"",
+						"\"checking\"",
+						"\"check_failed\"",
+						"\"available\"",
+						"\"downloading\"",
+						"\"installing\"",
+						"\"update_preflight_failed\"",
+						"\"success\"",
+						"\"failed\""
+					],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.checked_at",
+					"types": ["undefined", "number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.reachability",
+					"types": ["undefined"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.reachability.ipv4",
+					"types": [
+						"\"ok\"",
+						"\"unknown\"",
+						"\"blocked\"",
+						"\"no_route\"",
+						"\"dns_failed\"",
+						"\"captive\"",
+						"\"probe_unavailable\"",
+						"\"credentials_invalid\""
+					],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.reachability.ipv6",
+					"types": [
+						"\"ok\"",
+						"\"unknown\"",
+						"\"blocked\"",
+						"\"no_route\"",
+						"\"dns_failed\"",
+						"\"captive\"",
+						"\"probe_unavailable\"",
+						"\"credentials_invalid\""
+					],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.reachability.used",
+					"types": ["\"any\"", "\"ipv4\"", "\"ipv6\"", "\"none\""],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.reason",
+					"types": [
+						"\"refresh_failed\"",
+						"\"discovery_failed\"",
+						"\"repos_unreachable\"",
+						"\"captive_portal\"",
+						"string"
+					],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.identity.version",
+					"types": ["string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.identity.packages[]",
+					"types": ["string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.package_count",
+					"types": ["number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.download_size",
+					"types": ["undefined", "string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.packages",
+					"types": ["undefined"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.packages[].name",
+					"types": ["string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.packages[].version",
+					"types": ["undefined", "string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.packages[].origin",
+					"types": ["undefined", "string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.packages[].layer",
+					"types": ["undefined", "\"app\"", "\"platform\""],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.packages[].kept_back",
+					"types": ["undefined", "true"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.packages[].actionable",
+					"types": ["undefined", "false", "true"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.actionable_count",
+					"types": ["undefined", "number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.downloading",
+					"types": ["number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.unpacking",
+					"types": ["number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.setting_up",
+					"types": ["number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.total",
+					"types": ["number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.percent",
+					"types": ["undefined", "number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.targets",
+					"types": ["undefined"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.targets[].name",
+					"types": ["string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.targets[].version",
+					"types": ["string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.targets[].arch",
+					"types": ["string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.targets[].from",
+					"types": ["undefined", "string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.run",
+					"types": ["undefined", "number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.progress.result",
+					"types": ["undefined", "string", "number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.identity",
+					"types": ["undefined"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.preflight_reason",
+					"types": [
+						"\"insufficient_space\"",
+						"\"apt_config_failed\"",
+						"\"archive_path_invalid\"",
+						"\"probe_failed\"",
+						"\"probe_no_uri_rows\"",
+						"\"probe_uri_size_malformed\"",
+						"\"probe_delta_malformed\"",
+						"\"stat_failed\"",
+						"\"statfs_failed\"",
+						"\"value_out_of_range\"",
+						"\"pre_clean_failed\""
+					],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.cleanup_warning",
+					"types": ["undefined", "\"post_clean_failed\""],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "update_state.failure_id",
+					"types": ["undefined", "string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				}
+			]
+		},
+		{
+			"source": "apps/backend/src/modules/system/software-updates.ts",
+			"call": "broadcastMsg",
+			"message": "\"status\"",
+			"fields": [
+				{
 					"path": "available_updates.package_count",
 					"types": ["number"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -19752,7 +19985,7 @@
 	],
 	"dependencies": {
 		"apps/backend/src/helpers/config-schemas.ts": "b018bacef01534d9904fe8b3fcf3d1b52d5bbedb6dbc70bec707475a04ca5290",
-		"apps/backend/src/main.ts": "5fdc0834ba20359e6c7d859cdc200a49ad72f981dd33712060c58ca3212329a0",
+		"apps/backend/src/main.ts": "4bc15677c54d0b2ef2b6f578de5873ddc2b2e56f1d8392c996c7e98a4aca4248",
 		"apps/backend/src/mocks/mock-service.ts": "e7547acc0be1355d2310d9aa39457159a94093a48be13fcffad3239bfc36d19b",
 		"apps/backend/src/mocks/providers/streaming.ts": "75b66fd2f9522b848218dba5f0338473434c0837c5878bab5d3747c12177c925",
 		"apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -19807,10 +20040,10 @@
 		"apps/backend/src/modules/system/logs.ts": "8005a72398610c33562bd5b1d681c5656a14479b0c0e71ad3fe8f74433048109",
 		"apps/backend/src/modules/system/readiness.ts": "6c2725aae677f8a4a22d0dcce028b4e0d42a83916d3b4f7ba6b94e67cfe03e22",
 		"apps/backend/src/modules/system/sensors.ts": "292fd2d495c9cb26918cdde8dc76e2206aaedcef41868ed6f9fbc4e28b368b75",
-		"apps/backend/src/modules/system/software-updates.ts": "baa64fa898895d2d3ba78ab3c727329e652861ae5ce94b5aa4e686cc1a8ca89e",
+		"apps/backend/src/modules/system/software-updates.ts": "a138f747facc1e5c99758eb7600be785f2328cf9e1f426abdfc791566dc07aab",
 		"apps/backend/src/modules/system/ssh.ts": "9c5d2b773e5cfc4e6c015814bd5d78d64830691e2a6567e1e8cf67e16a598330",
 		"apps/backend/src/modules/system/tailscale.ts": "b2731b7eed6258db2efef8de0187b03dbf66cdeed37cee035f4c5788dc7f2fdf",
-		"apps/backend/src/modules/system/update-orchestrator/runtime.ts": "3b40f869b3d79fd45064b2c0c3bfac00c3edb43e04d9fb35ec4d0805abf37413",
+		"apps/backend/src/modules/system/update-orchestrator/runtime.ts": "82d6821ee4c0f8856ca6f534c84f817c6a6736b8a090fee0a90b50d0b807326f",
 		"apps/backend/src/modules/ui/notifications.ts": "3d236e5edeea33cf1ccd8b1b935ff8680afbe4785a42ace8262f14204f0835f1",
 		"apps/backend/src/modules/ui/status.ts": "ab9c2055f1bfd2d5489abe9a21875691ff6651847b69a23171b6104db1040eff",
 		"apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "e2c3ce9b12f5eba0d9a91779327bb0990eb240656dcf5aa8d6b160e974700cac",
