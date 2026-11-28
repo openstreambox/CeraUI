@@ -12,7 +12,10 @@ import {
 	readCellularSlot,
 	writeCellularSlot,
 } from "./cellular-authority-revision.ts";
-import { accessCellularAuthority } from "./cellular-authority-store.ts";
+import {
+	accessCellularAuthority,
+	cellularAuthorityMigration,
+} from "./cellular-authority-store.ts";
 import { mutationJournalRevision } from "./mutation-journal-revision.ts";
 
 test("slot-scoped durable cursor writes preserve another modem's global journal revision", async () => {
@@ -131,5 +134,41 @@ test("migration lease contention on a slot does not close admission on the other
 		held.release();
 		resetRecoveryBarrier();
 		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("the data directory override keeps the default stores and their recovery off /data", async () => {
+	const parse = (value: unknown) => value as { cursor: number };
+	expect(
+		cellularAuthorityMigration("automatic-carrier-intent", parse, {})
+			.destination.dir,
+	).toBe("/data/ceralive/automatic-carrier-intent");
+	const data = await mkdtemp(join(tmpdir(), "cellular-data-")),
+		previous = process.env.CERALIVE_DATA_DIR;
+	expect(
+		cellularAuthorityMigration("cellular-preparation", parse, {
+			CERALIVE_DATA_DIR: ` ${data} `,
+		}),
+	).toMatchObject({
+		destination: { dir: join(data, "ceralive", "cellular-preparation") },
+		receipts: { dir: join(data, "ceralive", "cellular-preparation-migration") },
+	});
+	resetRecoveryBarrier();
+	process.env.CERALIVE_DATA_DIR = data;
+	try {
+		expect(
+			await accessCellularAuthority(
+				"automatic-carrier-intent",
+				"c".repeat(64),
+				parse,
+				async (value) => value,
+			),
+		).toBeUndefined();
+		expect(isRecoveryPending()).toBe(false);
+	} finally {
+		if (previous === undefined) delete process.env.CERALIVE_DATA_DIR;
+		else process.env.CERALIVE_DATA_DIR = previous;
+		resetRecoveryBarrier();
+		await rm(data, { recursive: true, force: true });
 	}
 });
