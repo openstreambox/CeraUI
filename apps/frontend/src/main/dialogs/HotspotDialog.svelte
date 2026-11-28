@@ -20,7 +20,8 @@
   • Start never dispatches directly (#413): it opens `HotspotActivationConfirm`,
     which shows the exact credentials the AP will broadcast (or stores the
     operator's own) and needs an explicit acknowledgement. While the hotspot is
-    off, Save prepares an inactive profile; Forget removes its saved setup.
+    off, the edit form is NOT rendered — `hotspotConfigure` only reconfigures a
+    live AP, so fields typed here used to be silently ignored by the start.
   • When the hotspot is active, ONE QR encoding the live credentials can be shown
     so phones can join by scan. It sits behind Show code in `WifiCode` (hidden by
     default, hides itself again) together with the join line and New Wi-Fi
@@ -53,7 +54,6 @@ import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
 import * as Select from '$lib/components/ui/select';
 import { copyToClipboard } from '$lib/helpers/clipboard';
-import { generateWifiQr, hotspotQrSecurity } from '$lib/helpers/NetworkHelper';
 import { classifyWifiMutation, wifiFailureReason } from '$lib/helpers/wifi-mode-outcome';
 import {
 	confirmOperation,
@@ -109,11 +109,8 @@ let { open = $bindable(false), deviceId, iface }: Props = $props();
 
 const bounds = networkConstraints.hotspot;
 
-// "Active" means the AP is broadcasting NOW — read from the radio's live mode and
-// the AP's own state, never from the saved setup the device sends while it is off.
-// Every input is live (`iface` from the wifi snapshot, the adapter-mode cache), so
-// a Start or Stop from the API, another client or the device re-renders this too.
-const isActive = $derived(hotspotIsActive(iface, getWifiAdapterModeEntry(deviceId)));
+// The hotspot is "active" when the interface is currently broadcasting one.
+const isActive = $derived(hotspotIsActive(iface));
 const radioDevice = $derived(deviceId);
 const radioToken = $derived(iface?.incarnation);
 const radioReason = $derived(iface?.degraded_reason);
@@ -442,23 +439,13 @@ const renewOffer = $derived(
 // a `wifi` event carrying `hotspot.config`, which the subscriptions handler routes
 // into `hotspot-config:${deviceId}`. The one-time form sync (`initialized` guard)
 // keeps the live QR/iface re-broadcast from clobbering the in-progress edits.
-async function handleDelete() {
-	await osCommand({
-		key: configKey,
-		rpc: () => rpc.wifi.hotspotDelete({ device: deviceId, radio_id: iface?.radio_identity?.id }),
-		confirmOnResolve: true,
-		failMessage: () => m["network.os.operationFailed"](),
-		busyMessage: () => m["network.os.deviceBusy"](),
-	});
-}
-
 async function handleSave() {
 	const original = formBinding;
 	if (!isFormValid || configuring || !canEditNow || !original?.incarnation) return;
 	const controller = beginAdmission(original);
 	saveReceiptOwner = original;
 	const input = {
-		device: original.device, ...(iface?.radio_identity?.id ? { radio_id: iface.radio_identity.id } : {}), name, password, channel,
+		device: original.device, name, password, channel,
 		...(security !== undefined ? { security } : {}),
 	};
 	const key = wifiHotspotConfigOpKey(original.device, original.incarnation);
@@ -735,8 +722,7 @@ async function copyPassword() {
 					{m["hotspotConfirm.inactiveHint"]()}
 				</p>
 			{/if}
-		{/if}
-		{#if !confirmingStart}
+		{:else}
 		<!-- Name -->
 		<div class="space-y-1.5">
 			<Label class="text-sm font-medium" for="hotspot-name">{m["network.hotspot.name"]()}</Label>

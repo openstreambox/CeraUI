@@ -1,6 +1,5 @@
 import { logger } from "../../helpers/logger.ts";
 import { nmConnGetFields } from "../network/network-manager.ts";
-import { isStreamSessionUnconfirmed } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import {
 	getHotspotCredentials,
