@@ -4,6 +4,7 @@ import {
 	HELD_OUT_KEY,
 	HELD_OUT_UNKNOWN_KEY,
 	type HeldOutNoticeDeps,
+	heldOutMsg,
 	resetHeldOutNoticesForTest,
 	syncHeldOutModemNotices,
 } from "./held-out-modem-notice.ts";
@@ -72,6 +73,15 @@ test("a modem with no current row (unplugged or renamed) still gets a notice", (
 	syncHeldOutModemNotices([block("device-absent-quarantine")], deps);
 	expect(events.at(-1)).toBe(
 		`raise modem_held_out:${KEY} warning true false ${HELD_OUT_KEY} RM520N-GL`,
+	);
+});
+
+test("the notice describes which modem the box leaves out of sending", () => {
+	expect(heldOutMsg(undefined)).toBe(
+		"The box is keeping a modem out of its stream because a setting change on that modem could not be undone.",
+	);
+	expect(heldOutMsg("RM520N-GL")).toBe(
+		"The box is keeping RM520N-GL out of its stream because a setting change on that modem could not be undone.",
 	);
 });
 
