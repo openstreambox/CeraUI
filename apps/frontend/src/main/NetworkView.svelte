@@ -78,6 +78,7 @@ import SharingSection from './network/SharingSection.svelte';
 import { isWiredSectionEntry, modemClaimedIfnames } from './network/section-assignment';
 import UnclaimedAdaptersBand from './network/UnclaimedAdaptersBand.svelte';
 import WifiSection from './network/WifiSection.svelte';
+import { wifiTokenWithheld } from './network/wifi-radio-binding';
 
 // None of these is on the path to first paint — each is its own chunk, fetched
 // on first open.
@@ -134,14 +135,16 @@ const hotspotTarget = $derived(chooseHotspotRadio(wifiEntries, hotspotRadioChoic
 
 // The dialog is bound to the `[id, incarnation]` it was opened for: a later or
 // expired pick never retargets it, and it is handed that row only while the
-// row still carries the same incarnation. Otherwise it gets no row, and the
-// dialog closes itself with a notice instead of following the replacement.
+// row still carries the same incarnation, or withholds its token during a
+// restart (the dialog then sees the transition and keeps its binding until the
+// token returns). Otherwise it gets no row, and the dialog closes itself with
+// a notice instead of following the replacement.
 let hotspotDialogTarget = $state.raw<readonly [string, string]>();
 const hotspotDialogIface = $derived.by(() => {
 	if (!hotspotDialogTarget) return undefined;
 	const [id, incarnation] = hotspotDialogTarget;
 	const row = wifi?.[id];
-	return row?.incarnation === incarnation ? row : undefined;
+	return row?.incarnation === incarnation || wifiTokenWithheld(row) ? row : undefined;
 });
 let hotspotDialogOpen = $state(false);
 
