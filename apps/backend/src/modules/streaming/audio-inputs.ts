@@ -350,8 +350,8 @@ export function projectLaunchAudioInputs(
 	config: RuntimeConfig,
 	inputs: readonly AudioInputSetting[],
 	resolveId: (id: string) => string | undefined = (id) => id,
+	available: ReadonlySet<string> = availableAudioInputIds(config),
 ): AudioInputSetting[] | undefined {
-	const available = availableAudioInputIds(config);
 	const primary = primaryAudioInputId(config);
 	const resolved: AudioInputSetting[] = [];
 	const projected: AudioInputSetting[] = [];
@@ -375,11 +375,35 @@ export function projectLaunchAudioInputs(
 
 function engineAudioInputs(
 	config: RuntimeConfig,
+	assumeLocalInputsAvailable: boolean,
 ): AudioInputConfig[] | undefined | null {
-	const effective = effectiveAudioInputs(config);
-	if (!getLastCapabilities()?.audio_mix || !effective?.length) return undefined;
-	const inputs = projectLaunchAudioInputs(config, effective);
+	if (!getLastCapabilities()?.audio_mix || !config.audio_inputs?.length)
+		return undefined;
+	const available = availableAudioInputIds(config);
 	const primary = primaryAudioInputId(config);
+	let effective: AudioInputSetting[] | undefined;
+	if (assumeLocalInputsAvailable) {
+		// A saved local leg might return, or make room for a different leg at
+		// dispatch. Reject only a track no possible local leg could cover.
+		effective =
+			primary !== undefined &&
+			(available.has(primary) ||
+				(requiresAudioInput(primary) && !isNetworkIngestPipeline(primary))) &&
+			!config.audio_inputs.some(({ id }) => id === primary)
+				? [defaultAudioInput(primary), ...config.audio_inputs]
+				: config.audio_inputs;
+		for (const { id } of effective)
+			if (!isNetworkIngestPipeline(id)) available.add(id);
+	} else {
+		effective = effectiveAudioInputs(config);
+	}
+	if (!effective?.length) return undefined;
+	const inputs = projectLaunchAudioInputs(
+		config,
+		effective,
+		undefined,
+		available,
+	);
 	const ordered = inputs && [
 		...inputs.filter((input) => input.id === primary),
 		...inputs.filter((input) => input.id !== primary),
@@ -409,6 +433,8 @@ export interface LaunchAudioPlan extends AudioModeSelection {
 type LaunchAudioOptions = {
 	readonly audioOff?: boolean | undefined;
 	readonly embeddedAudioActive?: boolean;
+	/** Restore preflight must allow local legs to return or re-enumerate. */
+	readonly assumeLocalInputsAvailable?: boolean;
 };
 
 export function planLaunchAudio(
@@ -416,10 +442,11 @@ export function planLaunchAudio(
 	{
 		audioOff = config.asrc === NO_AUDIO_ID,
 		embeddedAudioActive = isEmbeddedAudioPipeline(config.pipeline),
+		assumeLocalInputsAvailable = false,
 	}: LaunchAudioOptions = {},
 ): LaunchAudioPlan | undefined | null {
 	if (audioOff) return { mode: "none" };
-	const inputs = engineAudioInputs(config);
+	const inputs = engineAudioInputs(config, assumeLocalInputsAvailable);
 	if (inputs === null) return null;
 	if (inputs !== undefined) return { mode: "default", inputs };
 	return config.asrc === undefined

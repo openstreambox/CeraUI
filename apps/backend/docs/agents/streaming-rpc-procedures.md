@@ -127,6 +127,8 @@ every assigned track. Otherwise Start keeps the routing for normal admission
 or refuses an input that cannot be safely resolved. If a saved leg from another
 source is the only input on a track, Start returns `audio_source_unavailable`
 through the normal recovery flow without dispatching or changing saved routing.
+The same captured refusal prevents `device.setProfile` from stopping a live
+stream for that replacement. The profile save still applies to the next Start.
 The engine adapter puts the primary
 first, maps the projected IDs to engine selectors, and sends producer-owned
 `audio.inputs` instead of `audio.device`. Projection does not rewrite the

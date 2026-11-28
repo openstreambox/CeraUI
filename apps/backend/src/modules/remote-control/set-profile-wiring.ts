@@ -36,16 +36,12 @@ import { logger } from "../../helpers/logger.ts";
 import { broadcastConfig } from "../../rpc/config-broadcast.ts";
 import { getConfig, saveConfig } from "../config.ts";
 import { getLastCapabilities } from "../streaming/capabilities.ts";
-import { captureOperatorStopIntent } from "../streaming/operator-stop-intent.ts";
 import {
 	classifyStartFailure,
 	StreamStartFailure,
 	typedStartFailure,
 } from "../streaming/start-failure-taxonomy.ts";
-import {
-	startStreamSession,
-	stopStreamSession,
-} from "../streaming/stream-session-orchestrator.ts";
+import { startStreamSession } from "../streaming/stream-session-orchestrator.ts";
 import { acceptStartConfig, getIsStreaming } from "../streaming/streaming.ts";
 import { start as startStream } from "../streaming/streamloop.ts";
 import { reportActiveProfile } from "./active-profile-reporter.ts";
@@ -63,20 +59,8 @@ function projectCaps(): SetProfileCaps {
 }
 
 async function reconnect(): Promise<void> {
-	const currentIntent = captureOperatorStopIntent();
 	if (!getIsStreaming()) return;
 	const accepted = acceptStartConfig({});
-	// `reconfigure`, not `operator`: this stop is the first half of a restart the
-	// platform asked for, so the armed-stream marker must survive it. Clearing it
-	// here would silently disarm restoration for the rest of the session.
-	const stopped = await stopStreamSession("reconfigure");
-	if (stopped.result !== "stopped") {
-		logger.warn(
-			"set-profile: stream stop failed; persisted config applies on next start",
-		);
-		return;
-	}
-	if (!currentIntent()) return;
 	// The control channel has no UI socket; a no-op stub satisfies the session's
 	// status/error sends. The settings were captured before stopping.
 	const stubConn = {
@@ -110,7 +94,12 @@ async function reconnect(): Promise<void> {
 		},
 	});
 	if (started.result !== "started") {
-		logger.warn("set-profile: stream restart did not complete", { started });
+		logger.warn(
+			"set-profile: restart did not complete; profile saved for next start",
+			{
+				started,
+			},
+		);
 	}
 }
 

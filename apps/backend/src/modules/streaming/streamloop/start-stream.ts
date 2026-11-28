@@ -181,7 +181,6 @@ function launchAudio(
 	startAudio: StartAudio,
 	attemptId: string,
 ) {
-	startAudio.assertAvailable(attemptId);
 	const launchConfig = resolveLaunchConfig(config);
 	const chosen = launchConfig.asrc;
 	const wasAuto = config.asrc === AUDIO_SOURCE_AUTO;
@@ -224,6 +223,7 @@ export async function startStream(
 	startAudio: StartAudio,
 ): Promise<StartStreamResult> {
 	assertStreamLaunchOwnership();
+	if (startAudio.routeUnavailable) throw unavailableAudioRoute(attemptId);
 	startAudio.verifiedMicChoices.clear();
 	// The preview-encoder fence, and the reason it lives HERE. The engine fixes
 	// the preview encoder when it builds the main graph, so the operator's mode

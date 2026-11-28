@@ -297,6 +297,13 @@ Rollback and observation share the existing Stop
 deadline; timeout retains UNKNOWN and retires the probe's authority. An explicit
 Stop on the ordinary, unscoped launch path without a concrete microphone keeps
 its one engine Stop.
+The shared Start lifecycle rejects an already unavailable audio plan before
+engine reconciliation, launch admission, or a replacement Stop. A profile push
+still saves the profile for the next Start; it does not interrupt a working
+stream for a replacement that has already failed preflight. This refusal is
+typed and non-retriable. Restoration first checks whether the engine is still
+live, and still resolves recorded local identities at dispatch: an absent or
+re-enumerated microphone is not treated as a permanent routing conflict.
 Contradictory/transitional current status is not silence: it retains UNKNOWN protection.
 Reboot clears the tmpfs sentinel and permits that empty admission baseline; it
 does not upgrade a silent probe to an affirmative engine-idle observation.

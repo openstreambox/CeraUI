@@ -205,7 +205,7 @@ function waitForRetry(
 	});
 }
 
-function diagnostic(
+export function startRetryDiagnostic(
 	failure: StartFailure,
 	retry: StartRetryDiagnostic["retry"],
 ): StartRetryDiagnostic {
@@ -312,7 +312,7 @@ export async function runStartWithRetry(
 				delayMs < remainingMs
 			) {
 				deps.reportRetry?.(
-					diagnostic(failure, {
+					startRetryDiagnostic(failure, {
 						state: "scheduled",
 						attempt: attempts,
 						nextAttempt: attempts + 1,
@@ -328,7 +328,7 @@ export async function runStartWithRetry(
 			}
 
 			deps.reportTerminalFailure?.(
-				diagnostic(failure, {
+				startRetryDiagnostic(failure, {
 					state: failure.retriable ? "exhausted" : "not_retriable",
 					attempt: attempts,
 					maxAttempts: policy.maxAttempts,

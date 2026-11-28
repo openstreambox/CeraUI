@@ -13,8 +13,8 @@ import {
 import {
 	audioInputEngineId,
 	effectiveAudioInputs,
+	planLaunchAudio,
 	projectLaunchAudioInputs,
-	unavailableAudioRoute,
 } from "./audio-inputs.ts";
 import { getLastCapabilities } from "./capabilities.ts";
 import {
@@ -52,7 +52,7 @@ export interface StartAudio {
 	readonly config: StartAudioConfig;
 	readonly audioEvidence: ReadonlyMap<string, AudioIdentityEvidence>;
 	readonly micChoices: NonNullable<ReturnType<typeof freezeMicChoices>>;
-	readonly assertAvailable: (attemptId: string) => void;
+	readonly routeUnavailable: boolean;
 	readonly autoMicChoices: (
 		config: RuntimeConfig,
 		audioOff: boolean,
@@ -120,27 +120,28 @@ export function acceptStartAudio(
 	}
 	const legacySuccessor = (id: string) =>
 		audioEvidence.has(id) ? undefined : audioIdentitySuccessor(id);
+	const pressedConfig = {
+		...saved,
+		...request,
+		...pressed,
+		pipeline: request.pipeline ?? saved.pipeline,
+		source: request.source ?? saved.source,
+		asrc: pressed.asrc === AUDIO_SOURCE_AUTO ? undefined : pressed.asrc,
+	};
 	const micChoices =
 		restoration === undefined
-			? freezeMicChoices(
-					{
-						...saved,
-						...request,
-						...pressed,
-						pipeline: request.pipeline ?? saved.pipeline,
-						source: request.source ?? saved.source,
-						asrc: pressed.asrc === AUDIO_SOURCE_AUTO ? undefined : pressed.asrc,
-					},
-					savedProofs,
-				)
+			? freezeMicChoices(pressedConfig, savedProofs)
 			: new Map();
 	const startAudio: StartAudio = {
 		audioEvidence,
 		verifiedMicChoices: new Map(),
 		micChoices: micChoices ?? new Map(),
-		assertAvailable: (attemptId) => {
-			if (micChoices === null) throw unavailableAudioRoute(attemptId);
-		},
+		// Restore checks the route shape without observing new proofs at old addresses.
+		routeUnavailable:
+			micChoices === null ||
+			(restoration !== undefined &&
+				planLaunchAudio(pressedConfig, { assumeLocalInputsAvailable: true }) ===
+					null),
 		originalMicChoice: (id) =>
 			startAudio.micChoices.has(id)
 				? id

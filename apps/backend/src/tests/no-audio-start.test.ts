@@ -46,6 +46,7 @@ import {
 	resetSetProfile,
 } from "../modules/remote-control/set-profile.ts";
 import { wireSetProfile } from "../modules/remote-control/set-profile-wiring.ts";
+import { STREAMING_DISPATCH } from "../modules/remote-control/streaming-command-dispatch.ts";
 import { setup } from "../modules/setup.ts";
 import {
 	defaultArmedStreamMarkerDeps,
@@ -88,6 +89,7 @@ import {
 	runStreamRestoration,
 } from "../modules/streaming/stream-restoration.ts";
 import {
+	getStreamSessionSnapshot,
 	noteStreamSessionEngineStatus,
 	reconcileStreamSession,
 	retireLostStreamSession,
@@ -2595,6 +2597,73 @@ async function embeddedStartPeer(extraPipeline?: string) {
 	return peer;
 }
 
+test("a profile push keeps the live RTMP stream when its saved USB replacement has no Track 2", async () => {
+	const usb: CaptureStreamSource = {
+		...HDMI,
+		id: "usb-camera",
+		pipelineId: "libuvch264",
+		kind: "uvc_h264",
+		displayName: "USB camera",
+	};
+	const peer = await embeddedStartPeer(usb.pipelineId);
+	const mix = [entry("Primary", [1]), entry("rtmp", [2])];
+	Object.assign(getConfig(), {
+		pipeline: "rtmp",
+		source: "rtmp",
+		asrc: "Primary",
+	});
+	expect(
+		await call(setConfigProcedure, { audio_inputs: mix }, context()),
+	).toMatchObject({ success: true });
+	expect(await start()).toMatchObject({ success: true });
+	expect(peer.physical()).toBe("ours");
+	expect(peer.starts()).toHaveLength(1);
+	setStreamingProcedureDepsForTest({
+		getSourcesMessage: () => {
+			const sources = getSourcesMessage();
+			return { ...sources, sources: [...sources.sources, usb] };
+		},
+	});
+	wireSetProfile();
+	try {
+		expect(
+			await call(setConfigProcedure, { source: usb.id }, context()),
+		).toMatchObject({ success: true });
+		const savedRouting = {
+			source: usb.id,
+			pipeline: usb.pipelineId,
+			asrc: "Primary",
+			audio_inputs: mix,
+		};
+		expect(await disk()).toMatchObject(savedRouting);
+		const checks = peer.checks.length;
+		const starts = peer.starts();
+		expect(
+			await handleSetProfile({
+				commandId: "11111111-1111-4111-8111-111111111112",
+				config: {
+					presetId: "balanced",
+					latencyMs: 3000,
+					fecEnabled: false,
+					recoveryMode: "standard",
+				},
+			}),
+		).toMatchObject({ status: "applied", effectiveLatencyMs: 3000 });
+		expect(await disk()).toMatchObject({
+			...savedRouting,
+			stream_profile: "balanced",
+			srt_latency: 3000,
+		});
+		expect(peer.starts()).toEqual(starts);
+		expect(peer.checks.slice(checks)).toEqual([]);
+		expect(peer.stops()).toEqual([]);
+		expect(peer.physical()).toBe("ours");
+	} finally {
+		resetSetProfile();
+		setStreamingProcedureDepsForTest(null);
+	}
+});
+
 test.each(["Primary", "Auto"] as const)(
 	"USB Start with %s returns typed recovery if only the saved RTMP leg covers Track 2",
 	async (asrc) => {
@@ -2617,6 +2686,7 @@ test.each(["Primary", "Auto"] as const)(
 		).toMatchObject({ success: true });
 		const before = await Bun.file(getConfigFilePath()).text();
 		const checksBeforeStart = peer.checks.length;
+		const session = getStreamSessionSnapshot();
 		setStreamingProcedureDepsForTest({
 			getSourcesMessage: () => {
 				const sources = getSourcesMessage();
@@ -2642,6 +2712,7 @@ test.each(["Primary", "Auto"] as const)(
 				},
 			});
 			expect(result.attemptId).toBeTruthy();
+			expect(getStreamSessionSnapshot()).toEqual(session);
 			expect(peer.starts()).toEqual([]);
 			expect(peer.checks.slice(checksBeforeStart)).toEqual([]);
 			expect(await Bun.file(getConfigFilePath()).text()).toBe(before);
@@ -2650,6 +2721,90 @@ test.each(["Primary", "Auto"] as const)(
 		}
 	},
 );
+
+test.each(["control-channel Start", "autostart", "restoration"] as const)(
+	"%s refuses a missing Track 2 before opening a Start generation",
+	async (caller) => {
+		const peer = await embeddedStartPeer();
+		Object.assign(getConfig(), {
+			pipeline: "test",
+			asrc: "Primary",
+			audio_inputs: [entry("Primary", [1]), entry("rtmp", [2])],
+		});
+		saveConfig();
+		const before = await Bun.file(getConfigFilePath()).text();
+		const session = getStreamSessionSnapshot();
+		const reports = spyOn(streamSessionProductionDeps, "reportTerminalFailure");
+		const retries = spyOn(streamSessionProductionDeps, "reportRetry");
+		switch (caller) {
+			case "control-channel Start": {
+				const rpc = makeRpcContext();
+				Object.defineProperty(rpc.ws, "remoteAddress", {
+					value: "control-channel",
+				});
+				const dispatch = STREAMING_DISPATCH["streaming.start"];
+				if (dispatch === undefined) throw new Error("No remote Start route");
+				expect(
+					await dispatch(
+						{
+							v: 1,
+							kind: "command",
+							cid: "missing-track",
+							type: "streaming.start",
+						},
+						rpc,
+					),
+				).toMatchObject({
+					result: "failed",
+					failure: { class: "audio_source_unavailable", retriable: false },
+				});
+				break;
+			}
+			case "autostart":
+				spyOn(srtla, "genSrtlaIpList").mockReturnValue(["192.0.2.2"]);
+				await autoStartStream();
+				break;
+			case "restoration":
+				keepMarker();
+				expect(armStreamRestoration()).toBe(true);
+				expect(await restore()).toMatchObject({
+					result: "failed",
+					reason: "start_failed",
+				});
+				break;
+		}
+		expect(reports.mock.calls).toHaveLength(1);
+		expect(reports.mock.calls[0]?.[0]).toMatchObject({
+			class: "audio_source_unavailable",
+			retry: { state: "not_retriable", attempt: 1 },
+		});
+		expect(retries.mock.calls).toEqual([]);
+		expect(getStreamSessionSnapshot()).toEqual(session);
+		expect(peer.capabilityReads()).toEqual([]);
+		expect(peer.checks).toEqual([]);
+		expect(peer.starts()).toEqual([]);
+		expect(peer.stops()).toEqual([]);
+		expect(await Bun.file(getConfigFilePath()).text()).toBe(before);
+	},
+);
+
+test("a missing tagged picker choice does not touch the running engine or saved routing", async () => {
+	const peer = await embeddedStartPeer();
+	expect(await start({ asrc: "Primary" })).toMatchObject({ success: true });
+	const checks = peer.checks.length;
+	const starts = peer.starts();
+	const before = await Bun.file(getConfigFilePath()).text();
+
+	expect(await pick("Missing microphone")).toMatchObject({
+		success: false,
+		error: "audio_source_unavailable",
+	});
+	expect(peer.checks.slice(checks)).toEqual([]);
+	expect(peer.stops()).toEqual([]);
+	expect(peer.starts()).toEqual(starts);
+	expect(peer.physical()).toBe("ours");
+	expect(await Bun.file(getConfigFilePath()).text()).toBe(before);
+});
 
 test.each(
 	networkSources.flatMap((pipeline) =>

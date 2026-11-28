@@ -16,6 +16,7 @@ import {
 import { logger } from "../../helpers/logger.ts";
 import type { StreamStartUpdateAdmission } from "../system/update-orchestrator/runtime.ts";
 import type { StreamStopCause } from "./armed-stream-marker.ts";
+import { unavailableAudioRoute } from "./audio-inputs.ts";
 import { classifyConfigChangeDispatchError as classifyDispatchError } from "./config-change-bridge.ts";
 import { withRuntimeObservationOwner } from "./engine-runtime-observation.ts";
 import {
@@ -29,6 +30,7 @@ import {
 } from "./operator-stop-intent.ts";
 import {
 	classifyStartFailure,
+	DEFAULT_START_RETRY_POLICY,
 	type RetryPolicy,
 	type SuppressionContext,
 	typedStartFailure,
@@ -50,6 +52,7 @@ import { streamSessionProductionDeps } from "./stream-session-production.ts";
 import {
 	runStartWithRetry,
 	type StartRetryDiagnostic,
+	startRetryDiagnostic,
 } from "./stream-start-retry.ts";
 import type { EngineRuntimeState } from "./streaming-backend.ts";
 
@@ -78,7 +81,7 @@ export type StreamStartRequest = {
 	readonly audio?:
 		| Pick<
 				import("./start-audio.ts").StartAudio,
-				"assertAvailable" | "whileInFlight"
+				"routeUnavailable" | "whileInFlight"
 		  >
 		| undefined;
 	readonly launch: (context: StreamLaunchContext) => Promise<void>;
@@ -437,6 +440,27 @@ export function createStreamSessionOrchestrator(
 		if (blocked !== undefined) {
 			return refuseStart(attemptId, "mutation_blocked", blocked.stableKey);
 		}
+
+		// A captured refusal is terminal before we touch the engine or a live session.
+		if (request.audio?.routeUnavailable) {
+			const { failure } = unavailableAudioRoute(attemptId);
+			deps.reportTerminalFailure?.(
+				startRetryDiagnostic(failure, {
+					state: "not_retriable",
+					attempt: 1,
+					maxAttempts: (deps.retryPolicy ?? DEFAULT_START_RETRY_POLICY)
+						.maxAttempts,
+					suppressed: false,
+				}),
+			);
+			return { result: "failed", attemptId, failure };
+		}
+		if (request.origin === "set-profile" && deps.getStreamingStatus?.()) {
+			// Preserve the armed marker and let an operator Stop veto the restart.
+			const stopped = await stop("reconfigure");
+			if (!currentIntent()) return { result: "cancelled", attemptId };
+			if (stopped.result !== "stopped") return { result: "busy", attemptId };
+		}
 		if (
 			ownership.generation === 0 &&
 			ownership.state === "reconciling" &&
@@ -575,10 +599,7 @@ export function createStreamSessionOrchestrator(
 					},
 				};
 				return ownership.trackLaunch(
-					withStreamLaunchOwnership(context, () => {
-						request.audio?.assertAvailable(attemptId);
-						return request.launch(context);
-					}),
+					withStreamLaunchOwnership(context, () => request.launch(context)),
 				);
 			},
 			classifyUnknown: (error) =>
