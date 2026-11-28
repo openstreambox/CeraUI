@@ -6,6 +6,8 @@ const next = vi.hoisted(() => ({
 }));
 vi.mock("$lib/rpc/wifi-status-receipt", () => ({
 	waitForWifiStatus: vi.fn(async () => next.row),
+	// Upstream's intervening-transition observer; these cases see none.
+	observeWifiStatus: vi.fn(() => () => {}),
 }));
 
 import { withWifiEntryRetry } from "./wifi-entry-request";
