@@ -124,6 +124,10 @@ import {
 } from "./modules/network/uplink-shaper/runtime.ts";
 import { initUplinkSteering } from "./modules/network/uplink-steering/runtime.ts";
 import {
+	initWifiRoaming,
+	stopWifiRoaming,
+} from "./modules/network/wifi-roaming/runtime.ts";
+import {
 	getRemoteWebSocket,
 	initRemote,
 	isRemotePowerPeerAuthenticated,
@@ -647,6 +651,10 @@ await guardNonCritical("portal-reconcile", async () => {
 });
 initUplinkHealth();
 await guardNonCritical("uplink-steering", initUplinkSteering);
+await guardNonCritical("wifi-roaming", async () => {
+	const config = getConfig();
+	await initWifiRoaming(config.wifi_roaming, config.two_radio_enabled === true);
+});
 await guardNonCritical("uplink-shaper", initUplinkShaper);
 await tickCarrying();
 await guardNonCritical("sharing-diag", initSharingDiag);
@@ -862,6 +870,7 @@ const termination = terminationHandlers({
 	},
 	stopDmesgWatchers,
 	stopUplinkShaper,
+	stopWifiRoaming,
 	stopGatewayRoutes,
 	exit: process.exit,
 });

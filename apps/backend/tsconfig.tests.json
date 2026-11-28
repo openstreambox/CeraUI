@@ -2,6 +2,9 @@
 	"extends": "./tsconfig.json",
 	"include": [
 		"src/tests/helpers/**/*.ts",
+		"src/modules/network/wifi-roaming/*.test.ts",
+		"src/tests/wifi-roaming-observe-boot.test.ts",
+		"src/tests/wifi-roaming-observe-guards.test.ts",
 		"src/tests/engine-loss-unix.test.ts",
 		"src/tests/engine-recovery-control-consumers.test.ts",
 		"src/tests/engine-recovery-ownership.test.ts",
