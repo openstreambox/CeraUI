@@ -1498,6 +1498,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["Identity unknown or replaced"],
 	["Incomplete NM device identity"],
 	["Incomplete per-link sysctl write"],
+	["Incomplete subprocess output: ", ""],
 	["Indexed IP birth changed"],
 	["Indexed IP birth unconfirmed"],
 	["Indexed link control unavailable"],
