@@ -79,7 +79,7 @@ test('publication rejects an executable with no budget baseline', async () => {
 
 // Each payload exceeds its absolute allowance while staying below the 10% ratio.
 for (const [asset, bytes] of [
-	['toast-host-a_bCdE1-.js', 226_000],
+	['toast-host-a_bCdE1-.js', 242_000],
 	['audio.js', 8_000],
 ]) {
 	test(`publication rejects ${asset} above its gzip budget`, async () => {

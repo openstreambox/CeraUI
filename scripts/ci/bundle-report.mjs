@@ -217,7 +217,17 @@ const SPA_DISPLACED_BASELINES = {
 // uses isolated locale-modules plus full output minification. No catalog bytes
 // are moved into extra chunks to evade a per-file cap.
 const FEDERATION_BASELINE = {
-	// Re-measured 2026-11-21 on 4b042965 with Bun 1.4.4 once the federation
+	// Re-measured 2026-11-28 on the composed f3411dfc build with Bun 1.4.5:
+	// toast-host 229,983 B (386 keys; 799,524 B on the same tree without the
+	// key-scoped catalog) and frontend.css 26,924 B (identical with and without
+	// it). The growth since 2026-11-21 is dialog copy and styles merged since then,
+	// not a catalog regression. Both baselines move to those measurements with
+	// their allowances unchanged (8 KiB and 10%); the displaced 212,698 B and
+	// 24,087 B stay in the report under TD-federation-dialog-footprint. These
+	// budgets bound what a host downloads and parses for the hosted dialogs. They
+	// are not a device storage limit; package and image size are checked elsewhere.
+	//
+	// Measured 2026-11-21 on 4b042965 with Bun 1.4.4 once the federation
 	// build ships only the message keys its bundles name or declare for computed
 	// lookups, plus producer wire keys in the families they read
 	// (`apps/frontend/vite.federation-catalog.ts`): 324 of the 2,696 keys in the
@@ -225,9 +235,9 @@ const FEDERATION_BASELINE = {
 	// same tree measured 719,011 B before, 30,468 B over the 688,543 B ceiling.
 	// The 8 KiB headroom stays, so roughly 20 further keys fit before it fails.
 	// The displaced 680,351 B baseline (85d2b20a, 2026-11-09) is kept below.
-	'toast-host.js': 212_698,
+	'toast-host.js': 229_983,
 	'server.js': 26_645,
-	'frontend.css': 24_087,
+	'frontend.css': 26_924,
 	'encoder.js': 22_713,
 	'audio.js': 7_753,
 	'InfoPopover.js': 6_104,
@@ -257,7 +267,9 @@ const FEDERATION_PREMIGRATION_BASELINE = {
 
 // e3f17c2a's measurements and their 10% ceilings were exceeded before this
 // dependency refresh. Keep both visible after enabling the publication gate.
-// The 2026-11-09 toast-host baseline is displaced by the key-scoped catalog.
+// The 2026-11-09 toast-host baseline is displaced by the key-scoped catalog,
+// and the 2026-11-21 toast-host and frontend.css baselines by the 2026-11-28
+// measurement.
 const FEDERATION_DISPLACED_BASELINES = {
 	'toast-host.js': [
 		{
@@ -269,6 +281,18 @@ const FEDERATION_DISPLACED_BASELINES = {
 			bytes: 680_351,
 			label: '2026-11-09 full-namespace catalog',
 			debt: 'TD-federation-i18n-catalog-size',
+		},
+		{
+			bytes: 212_698,
+			label: '2026-11-21 key-scoped catalog',
+			debt: 'TD-federation-dialog-footprint',
+		},
+	],
+	'frontend.css': [
+		{
+			bytes: 24_087,
+			label: '2026-11-21',
+			debt: 'TD-federation-dialog-footprint',
 		},
 	],
 	'audio.js': [

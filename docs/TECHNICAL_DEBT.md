@@ -433,6 +433,34 @@ stay in the report, and Build Check runs the federation build, the strict
 the SPA's; see the
 [dependency baseline](agents/dep-baseline-as-of-2026-11.md#november-21-2026-key-scoped-federation-catalog).
 
+**2026-11-28 — measured federation rebaseline on the composed build.** On
+`f3411dfc` with the key-scoped catalog, toast-host measures 229,983 B gzip
+(386 keys), 9,093 B over the 220,890 B ceiling, and `frontend.css` measures
+26,924 B, 429 B over its 26,495 B ceiling. The same tree without the key-scoped
+catalog measures 799,524 B for toast-host and the same 26,924 B for
+`frontend.css`. The growth since 2026-11-21 is dialog copy and styles merged
+since then (62 more keys the dialogs render, mostly power and start-feature
+notices), not keys leaking back in: the build still rejects any key the bundles
+do not name or declare. Both baselines move to those measurements with their
+allowances unchanged (8,192 B for toast-host, 10% for `frontend.css`), giving
+ceilings of 238,175 B and 29,616 B. Every other federation and SPA budget is
+unchanged, and the strict `--federation-only` report still runs on every
+code-changing PR and before publication. These budgets bound what a host
+downloads and parses for the hosted dialogs; they are not a device storage
+limit, which package and image builds check separately.
+
+```debt
+id: TD-federation-dialog-footprint
+title: Federation dialog bundles grew past their key-scoped baselines
+track: 1
+status: open
+exit_criteria: `bun run build:federation && bun scripts/ci/bundle-report.mjs --federation-only`
+owner: ceraui-team
+registered_at: 2026-11-28
+resolved_at: null
+unblock: Measured 229,983 B toast-host and 26,924 B frontend.css gzip on f3411dfc against the 2026-11-21 baselines of 212,698 B and 24,087 B, kept in FEDERATION_DISPLACED_BASELINES. Accepted as feature footprint; the copy and styles are what the dialogs render. Revisit when the dialogs' shared styles or notice copy are next reworked, without dropping operator copy or a language, and measure the composed build whenever the federation budgets fail.
+```
+
 ```debt
 id: TD-pip
 title: Picture-in-picture / source compositing
