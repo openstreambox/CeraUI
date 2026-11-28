@@ -515,6 +515,61 @@ describe("crash-point replay — one test per journal state", () => {
 		}
 	});
 
+	test("return reconciliation requires the journaled unit at the original port", async () => {
+		useDevice(undefined);
+		const unitLinkId = mintLinkId("usb-serial:2c7c:fixture-original-5b2");
+		await commitMutationEntry({
+			...seed("device-absent-quarantine"),
+			unitLinkId,
+		});
+		await initMutationRecovery();
+
+		setMutationBlockDeps({
+			presentStableKeys: async () => new Set([KEY]),
+			confirmPresent: async () => true,
+			readUnitLinkId: async () => {
+				throw new Error("USB read unavailable");
+			},
+		});
+		await reconcileReturnedMutationBlocks();
+		expect((await readMutationEntry(KEY))?.state).toBe(
+			"device-absent-quarantine",
+		);
+		expect(isRecoveryPending()).toBe(false);
+
+		useUdevDevice("fixture-replacement-38a");
+		await reconcileReturnedMutationBlocks();
+		expect((await readMutationEntry(KEY))?.state).toBe(
+			"device-absent-quarantine",
+		);
+		expect(getMutationBlocks()).toContainEqual(
+			expect.objectContaining({ unitLinkId }),
+		);
+
+		useUdevDevice("fixture-original-5b2");
+		await reconcileReturnedMutationBlocks();
+		expect((await readMutationEntry(KEY))?.state).toBe("failed");
+		expect(getMutationBlocks()).toContainEqual(
+			expect.objectContaining({ unitLinkId }),
+		);
+	});
+
+	test("the retained poll offers rebaseline for a replacement on a decommissioned port", async () => {
+		useDevice(undefined);
+		const unitLinkId = mintLinkId("usb-serial:2c7c:fixture-original-5b2");
+		await commitMutationEntry({ ...seed("decommissioned"), unitLinkId });
+		await initMutationRecovery();
+		expect((await readMutationEntry(KEY))?.state).toBe("decommissioned");
+
+		useUdevDevice("fixture-replacement-38a");
+		await reconcileReturnedMutationBlocks();
+		expect((await readMutationEntry(KEY))?.state).toBe("recommission-pending");
+		expect(getMutationBlocks()).toContainEqual(
+			expect.objectContaining({ stableKey: KEY, unitLinkId }),
+		);
+		expect(await rebaselineMutation(KEY)).toMatchObject({ success: true });
+	});
+
 	test("one census screens three retained slots, then a targeted read under each positive key rejects a reused path", async () => {
 		const keys = [KEY, "usb:b", "usb:c"];
 		useDevice(undefined);
