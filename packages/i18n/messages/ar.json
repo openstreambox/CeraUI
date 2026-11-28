@@ -1100,6 +1100,7 @@
 	"live.unconfirmedStream.body": "لا يستطيع الجهاز تأكيد ما إذا كان البث لا يزال قيد التشغيل، لذلك تم إيقاف بدء البث وتثبيت التحديثات مؤقتًا. أوقف البث لإنهاء أي شيء قد يكون لا يزال يعمل؛ ويُستأنف الأمران بمجرد أن يؤكد الجهاز توقفه.",
 	"live.unconfirmedStream.stopFailed": "لم يؤكد الجهاز الإيقاف. حاول إيقاف البث مرة أخرى.",
 	"live.unconfirmedStream.stopNotConfirmed": "تم إرسال أمر الإيقاف، لكن الجهاز لم يؤكده بعد. يمكنك المحاولة مرة أخرى.",
+	"live.unconfirmedStream.stopFirst": "أوقف البث أعلاه أولًا",
 	"locale.selectLanguage": "اختيار اللغة",
 	"navigation.advanced": "متقدم",
 	"navigation.back": "رجوع",
