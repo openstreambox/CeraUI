@@ -157,7 +157,10 @@ export function sendStatus(conn: WebSocket, buildWifi = wifiBuildMsg) {
 
 export function sendInitialStatus(
 	conn: WebSocket,
-	audience: "local" | "legacy-remote" = "local",
+	options: {
+		readonly notifications?: boolean;
+		readonly audience?: "local" | "legacy-remote";
+	} = {},
 ) {
 	const config = getConfig();
 	conn.send(buildMsg("config", config));
@@ -167,7 +170,9 @@ export function sendInitialStatus(
 	if (getRelays()) conn.send(buildMsg("relays", buildRelaysMsg()));
 	sendStatus(
 		conn,
-		audience === "legacy-remote" ? wifiBuildLegacyRemoteMsg : wifiBuildMsg,
+		options.audience === "legacy-remote"
+			? wifiBuildLegacyRemoteMsg
+			: wifiBuildMsg,
 	);
 	conn.send(buildMsg("netif", netIfBuildMsg()));
 	conn.send(buildMsg("sensors", getSensors()));
@@ -177,5 +182,5 @@ export function sendInitialStatus(
 	conn.send(buildMsg(BLUETOOTH_EVENT, getBluetoothStatusMessage()));
 	conn.send(buildMsg("revisions", getRevisions()));
 	conn.send(buildMsg("acodecs", AUDIO_CODECS));
-	notificationSendPersistent(conn, true);
+	if (options.notifications ?? true) notificationSendPersistent(conn, true);
 }
