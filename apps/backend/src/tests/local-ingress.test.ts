@@ -2,6 +2,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, type Stats } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { UI_BUILD_PARAM } from "@ceraui/rpc/schemas";
 import { call } from "@orpc/server";
 import type { Server, ServerWebSocket } from "bun";
 import { createContext } from "../rpc/context.ts";
@@ -256,6 +257,26 @@ describe("transports", () => {
 		expect(data.isAuthenticated).toBe(false);
 		expect(data.ingressPath).toBeUndefined();
 		expect(data.ingressPathValid).toBeUndefined();
+	});
+
+	test("a private-path socket records the UI build its page announced, as TCP does", async () => {
+		const captured: Captured = {};
+		const target = unix({ websocket: capturing(captured) });
+		expect(
+			await statusLine(
+				target,
+				upgradeLines(`/ws?${UI_BUILD_PARAM}=fixture-build-7`, [header()]),
+			),
+		).toBe("HTTP/1.1 101 Switching Protocols");
+		await Bun.sleep(20);
+		expect((captured.data as SocketData).uiBuild).toBe("fixture-build-7");
+		// A page that names no build is recorded as naming none.
+		captured.data = undefined;
+		expect(await statusLine(target, upgradeLines("/ws", [header()]))).toBe(
+			"HTTP/1.1 101 Switching Protocols",
+		);
+		await Bun.sleep(20);
+		expect((captured.data as SocketData | undefined)?.uiBuild).toBeNull();
 	});
 
 	test("a private-path socket rechecks its link and stays invalid once it failed", async () => {
