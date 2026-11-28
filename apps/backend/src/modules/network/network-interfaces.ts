@@ -1206,8 +1206,16 @@ async function refreshNetifFromOs(): Promise<void> {
 		if (!sample || generation !== netifRefreshGeneration) return;
 		const { entries, ipOverrides, ifnames, witnesses } = sample;
 		const replaced = new Set<string>();
+		const macChanges = new Set<string>();
 		for (const [name, witness] of witnesses) {
+			const previousMac = netdevWitness(name)?.mac;
 			if (observePollWitness(name, witness)) replaced.add(name);
+			else if (
+				previousMac !== undefined &&
+				witness.mac !== undefined &&
+				previousMac !== witness.mac
+			)
+				macChanges.add(name);
 		}
 		// The retirements above belong to this sample, not a competing observer.
 		generation = netifRefreshGeneration;
@@ -1366,6 +1374,7 @@ async function refreshNetifFromOs(): Promise<void> {
 			buses,
 			undefined,
 			replaced,
+			macChanges,
 		);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -1447,6 +1456,7 @@ export function processIfconfigOutput(
 	buses?: ReadonlyMap<string, NetdevBusEvidence>,
 	ifindices?: ReadonlyMap<string, number>,
 	pollReplacements?: ReadonlySet<string>,
+	pollMacChanges?: ReadonlySet<string>,
 ) {
 	publishIfconfigEntries(
 		parseIfconfigEntries(stdout),
@@ -1455,6 +1465,7 @@ export function processIfconfigOutput(
 		buses,
 		ifindices,
 		pollReplacements,
+		pollMacChanges,
 	);
 }
 
@@ -1465,6 +1476,7 @@ function publishIfconfigEntries(
 	buses?: ReadonlyMap<string, NetdevBusEvidence>,
 	ifindices?: ReadonlyMap<string, number>,
 	pollReplacements?: ReadonlySet<string>,
+	pollMacChanges?: ReadonlySet<string>,
 ) {
 	installScanSettlement();
 	const previousNetif = netif;
@@ -1522,6 +1534,7 @@ function publishIfconfigEntries(
 			);
 
 			const ifindex = ifindices?.get(name);
+			const previousMac = netdevWitness(name)?.mac;
 			const hadRow = netif[name] !== undefined;
 			const replaced =
 				pollReplacements?.has(name) ??
@@ -1541,6 +1554,18 @@ function publishIfconfigEntries(
 			if (replaced) {
 				intsChanged = true;
 				if (wifi) wifiIncarnationChanged = true;
+			} else if (
+				current &&
+				polledNames.has(name) &&
+				(pollMacChanges?.has(name) ??
+					(previousMac !== undefined &&
+						mac !== undefined &&
+						previousMac !== mac))
+			) {
+				// The same kernel netdev under a new MAC: local ingress ownership
+				// tokens are retired with a new presence epoch, USB evidence is kept.
+				bumpPresence(name);
+				intsChanged = true;
 			}
 			const nonUsb =
 				(fresh && evidence?.result.kind === "virtual") ||
