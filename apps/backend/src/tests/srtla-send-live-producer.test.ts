@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import {
@@ -56,6 +56,11 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
 // Every case spawns a real process and waits out real timers; bun's 5 s default
 // is tighter than the readiness budget alone.
 const TEST_TIMEOUT_MS = 30_000;
+// The SIGTERM case waits in sequence for the stats file, the handlers, the exit
+// and the unlink; its cap covers all four so a slow sender fails on the step
+// that was slow, not on the test timeout.
+const SIGTERM_TEST_TIMEOUT_MS =
+	READY_TIMEOUT_MS * 2 + SHUTDOWN_TIMEOUT_MS + 2000 + 5000;
 
 type Spawned = ReturnType<typeof Bun.spawn>;
 
@@ -118,6 +123,50 @@ async function requireCapabilities(
 		);
 	}
 	return doc;
+}
+
+/*
+  The stats file is NOT proof that the sender can take a SIGTERM yet. Released
+  senders (4.1.0 and 4.2.0 at least) publish the first snapshot before they
+  register their signal handlers, so a SIGTERM sent straight off the file can
+  meet the default action: the process dies by signal and the file stays behind.
+  That is a sender startup-order bug, not the shutdown contract this file pins,
+  and it made the SIGTERM case below fail now and then under CPU load. A sender
+  that registers its handlers first passes this wait at once.
+
+  `SigCgt` in /proc/<pid>/status is the kernel's own mask of caught signals, so
+  waiting on it closes the gap without a guessed sleep. A set SIGTERM bit alone
+  is a few instructions early: tokio turns the OS handler on and only then
+  subscribes the stream, and a signal broadcast in between is lost to it. Every
+  sender registers SIGHUP, then SIGTERM, then SIGINT, so the wait also requires
+  the SIGINT bit, which proves the SIGTERM stream is subscribed. The wait is
+  bounded by READY_TIMEOUT_MS; a sender that never catches both fails here,
+  which is itself a contract break. Off Linux there is no /proc to read and the
+  case signals straight off the stats file, as it did before.
+*/
+// Bits (signal - 1) in SigCgt: SIGINT is 2, SIGTERM is 15.
+const SIGINT_BIT = 1n << 1n;
+const SIGTERM_BIT = 1n << 14n;
+
+function caughtMask(pid: number): bigint | null {
+	let status: string;
+	try {
+		status = readFileSync(`/proc/${pid}/status`, "utf8");
+	} catch {
+		return null;
+	}
+	const mask = /^SigCgt:\s*([0-9a-f]+)$/m.exec(status)?.[1];
+	return mask === undefined ? null : BigInt(`0x${mask}`);
+}
+
+async function waitForSigtermHandler(proc: Spawned): Promise<void> {
+	if (process.platform !== "linux") return;
+	const both = SIGTERM_BIT | SIGINT_BIT;
+	await waitFor(
+		async () => ((caughtMask(proc.pid) ?? 0n) & both) === both,
+		READY_TIMEOUT_MS,
+		"the sender to install its SIGTERM and SIGINT handlers",
+	);
 }
 
 async function startSender(bin: string): Promise<Spawned> {
@@ -247,6 +296,7 @@ describe.skipIf(!SENDER_BIN)(
 			async () => {
 				const proc = await startSender(SENDER_BIN as string);
 				expect(await Bun.file(STATS_FILE).exists()).toBe(true);
+				await waitForSigtermHandler(proc);
 
 				proc.kill("SIGTERM");
 				const exited = await Promise.race([
@@ -255,6 +305,10 @@ describe.skipIf(!SENDER_BIN)(
 				]);
 				expect(exited).not.toBe("timeout");
 				child = null;
+				// Clean means the sender's own handler ran: exit 0, not a death by
+				// the signal's default action.
+				expect(proc.signalCode).toBeNull();
+				expect(proc.exitCode).toBe(0);
 
 				await waitFor(
 					async () => !(await Bun.file(STATS_FILE).exists()),
@@ -264,7 +318,7 @@ describe.skipIf(!SENDER_BIN)(
 				expect(await Bun.file(STATS_FILE).exists()).toBe(false);
 				expect(await Bun.file(`${STATS_FILE}.tmp`).exists()).toBe(false);
 			},
-			TEST_TIMEOUT_MS,
+			SIGTERM_TEST_TIMEOUT_MS,
 		);
 	},
 );
