@@ -193,6 +193,10 @@ export type StreamSessionOrchestratorDeps = {
 	 */
 	readonly admitLifecycle?: () => LifecycleAdmission;
 	/** Confirm the shutdown block before any media launch effect. */
+	/** Last admission step, in the same tick as the launch. False when the OTA
+	 * marker would still read carrying-only beside it; the Start is then
+	 * refused like unavailable shutdown protection and gives that owner back. */
+	readonly claimLaunchMarker?: () => boolean;
 	readonly ensureShutdownProtection?: (
 		current: () => boolean,
 		signal?: AbortSignal,
@@ -513,7 +517,9 @@ export function createStreamSessionOrchestrator(
 					: protectionResult;
 			if (attempt.cancelled || active !== attempt || !ownership.owns(owner))
 				return { result: "cancelled", attemptId };
-			if (shutdownProtected === false) {
+			if (shutdownProtected === false || deps.claimLaunchMarker?.() === false) {
+				// A refused marker claim gives back the owner this Start introduced.
+				if (shutdownProtected !== false) attempt.shutdownAdmission.abort();
 				return {
 					result: "failed",
 					attemptId,
