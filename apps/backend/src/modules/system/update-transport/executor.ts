@@ -23,6 +23,7 @@ import {
 	getModemNetMarker,
 	getRouterCellularMarker,
 } from "../../network/router-cellular-scan.ts";
+import { updateChannelUrl } from "../update-channel-url.ts";
 import { parseAuthorityJson } from "../update-orchestrator/strict-authority-json.ts";
 import { UPDATE_INVENTORY_NMCLI_FIELDS } from "./candidate-inventory.ts";
 import {
@@ -251,15 +252,17 @@ async function curl(
 }
 
 async function endpoint(
-	host: "apt.ceralive.tv" | "images.ceralive.tv",
+	base: string,
 	ifname: string,
 	family: Family,
 	profile: UpdateProfile,
 	deps: UpdateTransportDeps,
 	credentials?: AptClientPaths,
 ): Promise<HostProbe> {
+	const host = new URL(base).host;
+	const apt = profile.profile === "apt";
 	const httpProbe = await curl(
-		`http://${host}/generate_204`,
+		`${base.replace(/^https:/, "http:")}/generate_204`,
 		ifname,
 		family,
 		"GET",
@@ -271,7 +274,7 @@ async function endpoint(
 			classifyHttp(httpProbe.code, httpProbe.body) === "captive-http");
 	if (httpProbe.state !== "clear" && !captive)
 		return { host, state: httpProbe.state, latencyMs: httpProbe.latencyMs };
-	if (host === "apt.ceralive.tv" && credentials) {
+	if (apt && credentials) {
 		try {
 			const certificate = await deps.run([
 				"openssl",
@@ -296,26 +299,25 @@ async function endpoint(
 			};
 		}
 	}
-	const secureUrl =
-		host === "apt.ceralive.tv"
-			? `https://${host}/__tls-probe`
-			: `https://${host}/channels/${encodeURIComponent(profile.channel)}/${encodeURIComponent(profile.board)}.json.sig`;
+	const secureUrl = apt
+		? `${base}/__tls-probe`
+		: `${base}/channels/${encodeURIComponent(profile.channel)}/${encodeURIComponent(profile.board)}.json.sig`;
 	const secure = await curl(
 		secureUrl,
 		ifname,
 		family,
-		host === "apt.ceralive.tv" ? "GET" : "HEAD",
+		apt ? "GET" : "HEAD",
 		deps,
-		host === "apt.ceralive.tv" ? credentials : undefined,
+		apt ? credentials : undefined,
 	);
 	// A completed, verified-TLS HEAD to our OS object can prove the link even when the channel has no publication.
 	const absentOsObject =
-		host === "images.ceralive.tv" &&
+		!apt &&
 		secure.state === "captive-http" &&
 		(secure.code === 404 || secure.code === 410);
 	let state: ProbeState = absentOsObject ? "clear" : secure.state;
 	if (secure.state === "tls-error") state = classifyTransfer("tls", captive);
-	else if (secure.state === "clear" && host === "apt.ceralive.tv") {
+	else if (secure.state === "clear" && apt) {
 		try {
 			const body: unknown = parseAuthorityJson(secure.body);
 			state =
@@ -435,6 +437,7 @@ async function probeUpdateTransport(
 	const credentials =
 		profile.profile === "apt" ? await deps.credentials() : undefined;
 	// Live verification against the Todo-12-deployed apt.ceralive.tv is deferred; fixture contracts are the current evidence.
+	const imageBase = profile.profile === "os" ? await updateChannelUrl() : "";
 	const samples: TransportSample[] = await Promise.all(
 		candidates.flatMap((candidate) =>
 			([4, 6] as const).map(async (family) => ({
@@ -444,7 +447,7 @@ async function probeUpdateTransport(
 					profile.profile === "apt"
 						? [
 								await endpoint(
-									"apt.ceralive.tv",
+									"https://apt.ceralive.tv",
 									candidate.ifname,
 									family,
 									profile,
@@ -459,7 +462,7 @@ async function probeUpdateTransport(
 							]
 						: [
 								await endpoint(
-									"images.ceralive.tv",
+									imageBase,
 									candidate.ifname,
 									family,
 									profile,
