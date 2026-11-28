@@ -16,6 +16,11 @@ export interface SocketData {
 	/** Sender ID for remote relay identification */
 	senderId?: string;
 	/**
+	 * Dev only: this socket's upgrade carried the scenario driver secret, so it
+	 * may call `dev.scenario.*` (rpc/scenario-driver-admission.ts).
+	 */
+	scenarioDriver?: boolean;
+	/**
 	 * The build a UI page named on its socket URL (`ui_build`), `null` when it
 	 * named none. Absent on a context that is not a page, such as the
 	 * device-control channel's (see `ui-build.middleware.ts`).
