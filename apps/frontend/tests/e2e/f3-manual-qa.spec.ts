@@ -147,7 +147,7 @@ test.describe('F3 manual QA — modem toggles, hotspot gate, staleness', () => {
 		await expect(selector).toBeVisible();
 		await expect(selector).toHaveAttribute('data-mode', 'station');
 
-		const trigger = selector.getByRole('radio', { name: 'Hotspot', exact: true });
+		const trigger = selector.getByRole('radio', { name: 'Share as hotspot', exact: true });
 		await expect(trigger).toBeVisible();
 		expect(hotspotStartCount(), 'no setAdapterMode before interaction').toBe(0);
 
@@ -169,7 +169,7 @@ test.describe('F3 manual QA — modem toggles, hotspot gate, staleness', () => {
 		expect(hotspotStartCount(), 'Cancel fires no setAdapterMode RPC').toBe(0);
 		await expect(selector).toHaveAttribute('data-mode', 'station');
 		await expect(
-			selector.getByRole('radio', { name: 'Hotspot', exact: true }),
+			selector.getByRole('radio', { name: 'Share as hotspot', exact: true }),
 		).toBeVisible();
 	});
 
