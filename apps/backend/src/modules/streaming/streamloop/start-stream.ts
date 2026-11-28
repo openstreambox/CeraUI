@@ -55,10 +55,15 @@ import {
 } from "../continuity-observer.ts";
 import type { Lifetime } from "../continuity-records.ts";
 
+import { deviceRegistry } from "../devices.ts";
 import {
 	embeddedAudioActive,
 	isEmbeddedAudioPipeline,
 } from "../embedded-audio.ts";
+import {
+	isOnboardHdmiInput,
+	readHdmiVideoSignal,
+} from "../hdmi-audio-signal.ts";
 import { clearStreamProcessExit } from "../health.ts";
 import { createLaunchTransaction } from "../launch-transaction.ts";
 import { startLinkTelemetry, stopLinkTelemetry } from "../link-telemetry.ts";
@@ -112,6 +117,7 @@ export function setStartStreamDepsForTest(
 }
 
 export interface AudioProbeDeps {
+	hdmiVideoSignal?: () => Promise<boolean | undefined>;
 	probe?: (asrc: string) => Promise<string>;
 	networkEmbeddedAudio?: boolean;
 }
@@ -191,6 +197,32 @@ export async function startStream(
 	startAudio: StartAudio,
 ): Promise<StartStreamResult> {
 	assertStreamLaunchOwnership();
+	const saved = getConfig();
+	const config: RuntimeConfig = {
+		...saved,
+		...(configOverride && {
+			...configOverride,
+			composition: configOverride.composition,
+		}),
+		...startAudio.config,
+	};
+	const selectedInput =
+		config.selected_video_input ?? deviceRegistry.getActiveInput();
+	// The fixed receiver node cannot establish signal on a different input.
+	if (
+		pipeline.source === "hdmi" &&
+		(await isOnboardHdmiInput(selectedInput)) &&
+		(await (audioDeps.hdmiVideoSignal ?? readHdmiVideoSignal)()) === false
+	) {
+		throw new StreamStartFailure({
+			attemptId,
+			phase: "params",
+			class: "capture_source_unavailable",
+			captureCause: "no_signal",
+			retriable: false,
+		});
+	}
+
 	// The preview-encoder fence, and the reason it lives HERE. The engine fixes
 	// the preview encoder when it builds the main graph, so the operator's mode
 	// has to be in the engine's config BEFORE the `start` below — not racing it.
@@ -218,20 +250,11 @@ export async function startStream(
 		};
 	}
 
-	const saved = getConfig();
 	if (saved.audio_backend !== startAudio.config.audio_backend) {
 		// The Bluetooth microphones may be listed for the backend saved since.
 		await refreshBluetoothAudioDevices();
 		assertStreamLaunchOwnership();
 	}
-	const config: RuntimeConfig = {
-		...saved,
-		...(configOverride && {
-			...configOverride,
-			composition: configOverride.composition,
-		}),
-		...startAudio.config,
-	};
 	const launchConfig = resolveLaunchConfig(config);
 	const chosen = launchConfig.asrc;
 	const wasAuto = config.asrc === AUDIO_SOURCE_AUTO;
