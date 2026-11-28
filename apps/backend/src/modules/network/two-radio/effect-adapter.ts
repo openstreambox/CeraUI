@@ -1,7 +1,7 @@
 import {
 	admitWifiAdapterByMac,
+	confirmWifiAdapterLifetime,
 	type WifiAdapterAdmission,
-	wifiAdapterAdmissionCurrent,
 } from "../../wifi/wifi-adapter-admission.ts";
 import { withWifiAdapterLock } from "../../wifi/wifi-adapter-lock.ts";
 import { normalizeMacAddress } from "../../wifi/wifi-permanent-mac.ts";
@@ -204,9 +204,11 @@ export class EffectAdapter {
 	}
 	/**
 	 * Run `work` under the lock Wi-Fi itself uses for this radio: the owner its
-	 * verified registry row resolves to, admitted before the lock and re-checked
-	 * under it (same owner, same registry object, same sampled lifetime). A
-	 * Limited, Unverified or missing row, or one replaced or transferred to
+	 * verified, currently published registry row resolves to, admitted before
+	 * the lock. Under it, a fresh netif sample must match the admitted lifetime
+	 * before and after the owner's live identity read, and again after the
+	 * effect (same owner, registry object, publication and lifetime). A Limited,
+	 * Unverified, unpublished or missing row, or one replaced or transferred to
 	 * another owner in between, refuses before any effect.
 	 */
 	private async locked<T>(
@@ -217,14 +219,19 @@ export class EffectAdapter {
 		const admission =
 			admitted ?? admitWifiAdapterByMac(expected.identity.permanentMac);
 		if (!admission) throw new Error("Radio identity uncertain");
+		const confirmed = () =>
+			this.bounded((signal) => confirmWifiAdapterLifetime(admission, signal));
 		const result = await withWifiAdapterLock(admission.owner, async () => {
-			if (!wifiAdapterAdmissionCurrent(admission))
-				throw new Error("Radio replaced or owner changed");
+			if (!(await confirmed()))
+				throw new Error("Radio replaced, unpublished or owner changed");
 			const identity = await this.bounded((signal) =>
 				this.owner.identity(expected.radio, signal),
 			);
 			if (!sameIdentity(identity, expected.identity))
 				throw new Error("Identity unknown or replaced");
+			// The live identity read is awaited: bracket it with a fresh sample.
+			if (!(await confirmed()))
+				throw new Error("Radio replaced during the identity read");
 			let done: T;
 			try {
 				done = await work();
@@ -232,7 +239,7 @@ export class EffectAdapter {
 				await Promise.allSettled([...this.unsettled]);
 			}
 			// The lock keeps Wi-Fi out, not a replug; never ACK across one.
-			if (!wifiAdapterAdmissionCurrent(admission))
+			if (!(await confirmed()))
 				throw new Error("Radio replaced during the effect");
 			return done;
 		});
