@@ -244,6 +244,7 @@ import {
 	toggleBand,
 } from './modem-bands';
 import {
+	carrierConfig,
 	cellMetricRows,
 	cellObservedAtMs,
 	defaultAutoApn,
@@ -1192,6 +1193,7 @@ const cellRows = $derived(
 );
 const observedAt = $derived(cellObservedAtMs(modem.cell_info));
 const firmware = $derived(firmwareRevision(modem.firmware_revision));
+const carrierConfiguration = $derived(carrierConfig(modem.carrier_config));
 const esim = $derived(esimView(modem.esim));
 
 // The four extended measurements, the modem's own measurement recency, and the
@@ -2360,6 +2362,26 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 					<div class="min-w-0">
 						<p class="text-muted-foreground text-xs">{m["network.modem.detail.firmware"]()}</p>
 						<p class="truncate font-mono text-sm" data-testid="modem-firmware">{firmware}</p>
+					</div>
+				{/if}
+
+				<!-- The firmware's own carrier settings package (PDC/MBN), read-only.
+				     Not the APN profile: the hint says so, because "carrier profile"
+				     already names the APN automation elsewhere in this dialog. -->
+				{#if carrierConfiguration}
+					<div class="min-w-0 space-y-0.5" data-testid="modem-carrier-config">
+						<p class="text-muted-foreground text-xs">{m["network.modem.detail.carrierConfig"]()}</p>
+						<p class="truncate font-mono text-sm">
+							<span data-testid="modem-carrier-config-name">{carrierConfiguration.name}</span>
+							{#if carrierConfiguration.revision}
+								<span class="text-muted-foreground" data-testid="modem-carrier-config-revision"
+									>· {m["network.modem.detail.carrierConfigRevision"]({
+										revision: carrierConfiguration.revision,
+									})}</span
+								>
+							{/if}
+						</p>
+						<p class="text-muted-foreground/80 text-xs">{m["network.modem.detail.carrierConfigHint"]()}</p>
 					</div>
 				{/if}
 

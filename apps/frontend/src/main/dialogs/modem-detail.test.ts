@@ -17,6 +17,7 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import {
+	carrierConfig,
 	cellMetricRows,
 	cellObservedAtMs,
 	defaultAutoApn,
@@ -344,6 +345,25 @@ describe("hasModemDetail", () => {
 		expect(hasModemDetail({ own_numbers: [] })).toBe(false);
 		expect(hasModemDetail({ iccid: "8900000000000000003" })).toBe(true);
 		expect(hasModemDetail({ iccid: "   " })).toBe(false);
+		expect(hasModemDetail({ carrier_config: { name: "GCF" } })).toBe(true);
+		expect(hasModemDetail({ carrier_config: { name: " " } })).toBe(false);
+	});
+});
+
+describe("carrierConfig", () => {
+	it("keeps the modem's own name and revision verbatim", () => {
+		expect(carrierConfig({ name: "GCF", revision: "08E0000A" })).toEqual({
+			name: "GCF",
+			revision: "08E0000A",
+		});
+	});
+
+	it("drops a blank revision, and a blank name drops the whole field", () => {
+		expect(carrierConfig({ name: "ROW_Commercial", revision: " " })).toEqual({
+			name: "ROW_Commercial",
+		});
+		expect(carrierConfig({ name: "  ", revision: "08E0000A" })).toBeUndefined();
+		expect(carrierConfig(undefined)).toBeUndefined();
 	});
 });
 

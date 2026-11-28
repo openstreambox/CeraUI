@@ -47,6 +47,7 @@
 
 import type {
 	CapabilityModuleClaims,
+	ModemCarrierConfig,
 	ModemCellInfo,
 	ModemDataUsage,
 	ModemDataUsagePolicy,
@@ -138,6 +139,7 @@ export interface ProjectedModemAdditive {
 	readonly recommended_usb_mode?: UsbCompositionMode;
 	readonly data_usage?: ModemDataUsage;
 	readonly firmware_revision?: string;
+	readonly carrier_config?: ModemCarrierConfig;
 	/**
 	 * The SIM's own number(s). SENSITIVE — displayed behind an explicit reveal in
 	 * the UI, and redacted from every log regardless (`helpers/logger.ts`).
@@ -259,6 +261,7 @@ export type WireModemEntry = {
 	data_usage?: ModemDataUsage;
 	data_usage_policy?: ModemDataUsagePolicy;
 	firmware_revision?: string;
+	carrier_config?: ModemCarrierConfig;
 	own_numbers?: string[];
 	iccid?: string;
 	esim?: ModemEsim;
@@ -585,6 +588,9 @@ function appendAdditive(
 		}
 		if (additive.firmware_revision !== undefined) {
 			entry.firmware_revision = additive.firmware_revision;
+		}
+		if (additive.carrier_config !== undefined) {
+			entry.carrier_config = { ...additive.carrier_config };
 		}
 		// Non-empty by contract: a carrier that published none omits the key, so an
 		// empty array here would be a claim the schema deliberately cannot express.

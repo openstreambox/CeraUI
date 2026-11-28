@@ -601,6 +601,14 @@ export const modemMutationRebaselineInputSchema = z
 	.strict();
 export type ModemMutationRebaselineInput = z.infer<typeof modemMutationRebaselineInputSchema>;
 
+// The modem firmware's active carrier configuration (Qualcomm PDC/MBN), as
+// ModemManager publishes it. Read-only; see `carrier_config` on the modem row.
+export const modemCarrierConfigSchema = z.object({
+	name: z.string().min(1),
+	revision: z.string().min(1).optional(),
+});
+export type ModemCarrierConfig = z.infer<typeof modemCarrierConfigSchema>;
+
 export const modemDataUsageSchema = z.object({
 	session_bytes: z.number().int().nonnegative(),
 	cycle_bytes: z.number().int().nonnegative(),
@@ -1946,6 +1954,11 @@ export const modemSchema = z.object({
 	data_usage: modemDataUsageSchema.optional(),
 	data_usage_policy: modemDataUsagePolicySchema.optional(),
 	firmware_revision: z.string().optional(),
+	// The modem firmware's active carrier configuration as ModemManager reads it
+	// (`Modem.CarrierConfiguration` + `…Revision`; Qualcomm PDC/MBN such as `GCF`,
+	// `ATT`, `VZW`). Read-only, and NOT the APN profile. OMITTED when MM reports
+	// none; `revision` is omitted on its own when MM gives a name without one.
+	carrier_config: modemCarrierConfigSchema.optional(),
 	// The SIM's OWN number(s) — ModemManager's `Modem.OwnNumbers`. SENSITIVE: it
 	// is the subscriber's telephone number, so it is redacted from every log even
 	// though the UI DISPLAYS it behind an explicit reveal.

@@ -108,6 +108,44 @@ describe("the ObservationList tree -> DbusModemView fold", () => {
 		});
 	});
 
+	test("Given MM's carrier configuration, When folded, Then name and revision ride the view", () => {
+		const [view] = foldDbusModemViews(
+			modemObjects({
+				...QUECTEL,
+				carrierConfiguration: "GCF",
+				carrierConfigurationRevision: "08E0000A",
+			}),
+		);
+		expect(view?.carrierConfig).toEqual({ name: "GCF", revision: "08E0000A" });
+	});
+
+	test("Given a carrier configuration name without a revision, When folded, Then only the name is carried", () => {
+		const [view] = foldDbusModemViews(
+			modemObjects({
+				...QUECTEL,
+				carrierConfiguration: "ROW_Commercial",
+				carrierConfigurationRevision: "",
+			}),
+		);
+		expect(view?.carrierConfig).toEqual({ name: "ROW_Commercial" });
+	});
+
+	test("Given an empty or '--' carrier configuration, When folded, Then the field is omitted, revision or not", () => {
+		for (const name of ["", "  ", "--"]) {
+			const [view] = foldDbusModemViews(
+				modemObjects({
+					...QUECTEL,
+					carrierConfiguration: name,
+					carrierConfigurationRevision: "08E0000A",
+				}),
+			);
+			expect(view).toBeDefined();
+			expect(Object.hasOwn(view ?? {}, "carrierConfig")).toBe(false);
+		}
+		const [silent] = foldDbusModemViews(modemObjects(QUECTEL));
+		expect(Object.hasOwn(silent ?? {}, "carrierConfig")).toBe(false);
+	});
+
 	test("Given a modem with no net port, When folded, Then it is SKIPPED rather than half-described", () => {
 		const tree = modemObjects({
 			path: "/org/freedesktop/ModemManager1/Modem/3",
