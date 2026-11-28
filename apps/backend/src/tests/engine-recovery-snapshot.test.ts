@@ -129,6 +129,11 @@ test.each([
 								}
 								break;
 							}
+							// The train asks a silent status socket for the engine's own
+							// session snapshot (#123); an idle engine reports none.
+							case "list-switch-targets":
+								peer.write(result({ switch_targets: [] }));
+								break;
 							default:
 								throw new Error(`Unexpected probe request: ${request.method}`);
 						}
@@ -165,6 +170,10 @@ test.each([
 				[1, "hello"],
 				[1, "get-capabilities"],
 				[1, "subscribe-events"],
+				// Only a silent legacy socket is asked for its session (#123).
+				...(scenario === "legacy capability absent"
+					? [[1, "list-switch-targets"] as const]
+					: []),
 			]);
 			expect(modes).toEqual([optIn]);
 			expect(connections).toBe(1);

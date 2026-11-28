@@ -52,6 +52,11 @@ function listen(streaming: boolean, snapshots: boolean) {
 						case "list-devices":
 							peer.write(reply({ devices: [] }));
 							break;
+						// The train asks a silent status socket for the engine's own
+						// session snapshot (#123); an idle replacement has none.
+						case "list-switch-targets":
+							peer.write(reply({ switch_targets: [] }));
+							break;
 						case "subscribe-events": {
 							const mode = typeof request.params === "object" &&
 								request.params !== null && "snapshot" in request.params
@@ -153,8 +158,10 @@ try {
 			clearTimeout(handle);
 		},
 	});
-	if (await reconcileStreamSession() !== "streaming")
-		throw new Error("Fixture did not adopt the original stream");
+	// The train adopts an engine session only with this process's own sender
+	// and launch evidence (#124); a session found at boot stays protected.
+	if (await reconcileStreamSession() !== "reconciling")
+		throw new Error("Fixture did not protect the original stream");
 	await opened.promise;
 	requireField(await call("login", ["auth", "login"], { password }), "success", true);
 	await call("initial", ["status", "getStatus"]);
