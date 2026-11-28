@@ -4,7 +4,7 @@ import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { rpcClient } from "$lib/rpc/client";
-import { RPC_CALL_TIMEOUT_MS } from "$lib/rpc/rpc-timeouts";
+import { rpcCallTimeoutMs } from "$lib/rpc/rpc-timeouts";
 import { initSubscriptions, resetState } from "$lib/rpc/subscriptions.svelte";
 
 import LegacyLogDownloads from "../../main/system-logs/LegacyLogDownloads.svelte";
@@ -132,7 +132,12 @@ function refuse(id: string): void {
 
 /** The device stays silent past the call's timeout, while the socket stays alive. */
 async function silence(): Promise<void> {
-	for (let elapsed = 0; elapsed <= RPC_CALL_TIMEOUT_MS; elapsed += 5_000) {
+	// Both legacy downloads have an explicit budget in the timeout table.
+	const timeout = Math.max(
+		rpcCallTimeoutMs("system.getLog"),
+		rpcCallTimeoutMs("system.getSyslog"),
+	);
+	for (let elapsed = 0; elapsed <= timeout; elapsed += 5_000) {
 		socket().receive({ ping: elapsed });
 		await vi.advanceTimersByTimeAsync(5_000);
 	}
