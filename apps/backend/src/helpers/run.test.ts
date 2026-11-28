@@ -104,6 +104,24 @@ describe("run() normal behaviour (unchanged)", () => {
 		expect(lines).toEqual(["foo", "foobar"]);
 	});
 
+	test("runWithStdin() stdin can be opened by path, not only read", async () => {
+		// A child that opens /dev/stdin by path (tailscale's `file:/dev/stdin`)
+		// gets ENXIO when stdin is a socket, which `stdin: "pipe"` gives in Bun.
+		// It also must not be a disk file: the fd's target is an in-memory file.
+		const script = [
+			"const fs = require('node:fs');",
+			"const target = fs.readlinkSync('/proc/self/fd/0');",
+			"const text = fs.readFileSync('/dev/stdin', 'utf8');",
+			"process.stdout.write(JSON.stringify({ target, text }));",
+		].join(" ");
+		const out = JSON.parse(
+			await runWithStdin("bun", ["-e", script], "s3cret-in"),
+		);
+		expect(out.text).toBe("s3cret-in");
+		expect(out.target).not.toMatch(/^socket:/);
+		expect(out.target).toMatch(/^\/memfd:|\(deleted\)$|^pipe:/);
+	});
+
 	test("a non-zero exit rejects with the code attached", async () => {
 		let caught: unknown;
 		try {
