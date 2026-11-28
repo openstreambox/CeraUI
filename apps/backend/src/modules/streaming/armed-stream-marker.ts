@@ -154,6 +154,37 @@ export function pinnedLaunchedAudio(): LaunchedAudio | undefined {
 	return launchedAudio;
 }
 
+/** The capture settings a launch dispatches, which a save made meanwhile does not change. */
+export const LAUNCHED_CAPTURE_KEYS = [
+	"pipeline",
+	"source",
+	"source_stable_id",
+	"selected_video_input",
+	"input_mode",
+	"resolution",
+	"framerate",
+	"video_codec",
+	"video_passthrough",
+] as const satisfies readonly (keyof ArmedStreamConfig)[];
+export type LaunchedCapture = Pick<
+	ArmedStreamConfig,
+	(typeof LAUNCHED_CAPTURE_KEYS)[number]
+>;
+let launchedCapture: LaunchedCapture | undefined;
+
+/**
+ * The capture the latest launch dispatched, which its commit records for a
+ * restoration and as the last-streamed source. Undefined when no launch of this
+ * process can be the running stream.
+ */
+export function pinLaunchedCapture(capture: LaunchedCapture | undefined): void {
+	launchedCapture = capture;
+}
+
+export function pinnedLaunchedCapture(): LaunchedCapture | undefined {
+	return launchedCapture;
+}
+
 export {
 	RECOVERY_FAILURE_REASONS,
 	type RecoveryFailureReason,
@@ -317,6 +348,7 @@ export function noteStreamStopped(
 ): void {
 	if (cause !== "operator") return;
 	pinLaunchedAudio(undefined);
+	pinLaunchedCapture(undefined);
 	clearArmedStreamMarker(deps);
 }
 
