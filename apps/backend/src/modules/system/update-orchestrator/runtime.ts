@@ -1,3 +1,5 @@
+import { boardUpdateAdmissionAllowed } from "../board-update-admission.ts";
+import { readBoardUpdates } from "../board-updates.ts";
 /*
 	CeraUI - web UI for the CERALIVE project
 	Copyright (C) 2024-2025 CeraLive project
@@ -297,6 +299,7 @@ export interface OrchestratorRuntimeDeps {
 		readonly failed: boolean;
 		readonly reason: string;
 		readonly suppressNotice?: boolean;
+		readonly boardNotOffered?: boolean;
 		readonly channelUnpublished?: boolean;
 		readonly manifest?: OsChannelManifest;
 	}>;
@@ -419,7 +422,10 @@ export async function checkOsManifestResult(
 		return {
 			available: false,
 			rateLimited: reason === "rate_limited",
-			failed: true,
+			failed: reason !== "board_updates_not_offered",
+			...(reason === "board_updates_not_offered"
+				? { boardNotOffered: true }
+				: {}),
 			reason,
 			...(error instanceof QuarantinedOsReplayError
 				? { suppressNotice: true }
@@ -448,16 +454,19 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	checkOsManifest: async (channel) =>
 		checkOsManifestResult(channel ?? (await loadUpdateSettings()).channel),
 	stageOs: async (manifest, onProgress, control) => {
-		if (isBoardCapabilityDenied("os-updates"))
+		if (isBoardCapabilityDenied("os-updates") || !boardUpdateAdmissionAllowed())
 			throw new Error("updates_disabled");
 		await stageOsBundle(manifest, onProgress, control);
 	},
 	readActivationArmed,
 	isOsStageReady: async () =>
-		!isBoardCapabilityDenied("os-updates") &&
+		!(
+			isBoardCapabilityDenied("os-updates") || !boardUpdateAdmissionAllowed()
+		) &&
 		(!(await hasCapability("os-updates")) || (await isOsStageReady())),
 	isUpdateAdmissionReady: async () => {
-		if (isBoardCapabilityDenied("os-updates")) return false;
+		if (isBoardCapabilityDenied("os-updates") || !boardUpdateAdmissionAllowed())
+			return false;
 		if (!(await hasCapability("os-updates"))) return true;
 		try {
 			const job = await (deps.readOsStageJob ?? readOsStageJob)();
@@ -484,7 +493,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	readBootedVersion: readBootedOsReleaseVersion,
 	inspectOsOperation,
 	startSlotSync: async () => {
-		if (isBoardCapabilityDenied("os-updates"))
+		if (isBoardCapabilityDenied("os-updates") || !boardUpdateAdmissionAllowed())
 			throw new Error("updates_disabled");
 		await startSlotSync();
 	},
@@ -524,7 +533,8 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	persist: saveOrchestratorState,
 	quarantine: new UpdateQuarantine(),
 	restartStale: async (isIdle, transactionRunning) => {
-		if (isBoardCapabilityDenied("os-updates")) return false;
+		if (isBoardCapabilityDenied("os-updates") || !boardUpdateAdmissionAllowed())
+			return false;
 		if (!(await hasCapability("os-updates"))) return true;
 		return reconcileStaleUnits({
 			...defaultStaleServiceDeps,
@@ -546,6 +556,7 @@ const startupReadiness = new UpdateStartupReadiness(
 	() => !pendingPackageSuccess.pending,
 );
 let osCandidate: OsChannelManifest | undefined;
+let osBoardNotOffered = false;
 let osChannelUnpublished = false;
 let packageCheckGeneration = 0;
 let packageCheckDeferral: {
@@ -622,7 +633,8 @@ const kernelRuntime = createKernelRuntime({
 		return slots.length === 1 ? (slots[0]?.bootname ?? "") : "";
 	},
 	activate: async (now, action) => {
-		if (isBoardCapabilityDenied("os-updates")) return false;
+		if (isBoardCapabilityDenied("os-updates") || !boardUpdateAdmissionAllowed())
+			return false;
 		await using control = await acquireRuntimeOsStageControl();
 		const { getDisruptiveActionDecision } = await import(
 			"../disruptive-action-runtime.ts"
@@ -719,6 +731,7 @@ export function resetOrchestratorRuntimeForTest(): void {
 	state = initialOrchestratorState(Date.now());
 	deps = defaultOrchestratorRuntimeDeps;
 	osCandidate = undefined;
+	osBoardNotOffered = false;
 	osChannelUnpublished = false;
 	packageCheckGeneration++;
 	packageCheckDeferral = null;
@@ -796,6 +809,7 @@ export function getOrchestratorWireState(): UpdateOrchestratorWireState {
 }
 
 export type OsUpdateSummary = {
+	readonly boardNotOffered?: boolean;
 	readonly channelUnpublished?: boolean;
 	readonly candidate: {
 		readonly version: string;
@@ -812,6 +826,7 @@ export const getPackageCheckDeferral = () =>
 
 export function getOsUpdateSummary(): OsUpdateSummary {
 	return {
+		...(osBoardNotOffered ? { boardNotOffered: true } : {}),
 		channelUnpublished: osChannelUnpublished,
 		candidate: osCandidate
 			? { version: osCandidate.version, sizeBytes: osCandidate.bundle.size }
@@ -920,7 +935,7 @@ function updateAdmissionReady(): Promise<boolean> {
 }
 
 export async function checkUpdatesNow(): Promise<ManualCheckOutcome> {
-	if (isBoardCapabilityDenied("os-updates"))
+	if (isBoardCapabilityDenied("os-updates") || !boardUpdateAdmissionAllowed())
 		return { started: false, reason: "busy" };
 	startupReadiness.assertReady(
 		!osSettlementPersistence.replayPending &&
@@ -976,6 +991,8 @@ const PACKAGE_PIPELINE_BUSY_PHASES: readonly OrchestratorState["phase"][] = [
 export async function installUpdatesNow(
 	input?: InstallUpdatesNowInput,
 ): Promise<ManualInstallOutcome> {
+	if (!boardUpdateAdmissionAllowed())
+		return { started: false, reason: "not_available" };
 	if (isBoardCapabilityDenied("os-updates"))
 		return { started: false, reason: "busy" };
 	const scoped = input?.scope === "packages";
@@ -1517,6 +1534,10 @@ async function pollPackageInstallProgress(): Promise<void> {
 // ─── slot-sync (sync-eligible -> syncing -> synced) ────────────────────────
 
 async function checkSlotSyncGate() {
+	// Unsupported policy must not turn an idle check into an inactive-slot write.
+	if ((await readBoardUpdates()) === null)
+		return { allowed: false, reason: "capability-absent" } as const;
+
 	const generation = stateGeneration;
 	const capabilities = await deps.loadCapabilities();
 	// On a legacy image the capability refusal is already decisive; do not
@@ -2859,7 +2880,7 @@ function observeCredentialsSafely(
 }
 
 export async function runOrchestratorTick(): Promise<void> {
-	if (isBoardCapabilityDenied("os-updates")) {
+	if (isBoardCapabilityDenied("os-updates") || !boardUpdateAdmissionAllowed()) {
 		scheduleNextTick();
 		return;
 	}
@@ -3069,6 +3090,7 @@ async function runOsCheckAfterCellularGate(
 	const now = deps.now();
 	dispatch({ type: "OS_CHECK_STARTED", now });
 	const result = await deps.checkOsManifest(settings.channel);
+	osBoardNotOffered = result.boardNotOffered === true;
 	osChannelUnpublished = result.channelUnpublished === true;
 	const outcomeNow = deps.now();
 	if (result.failed) {
@@ -3195,7 +3217,7 @@ async function startOrchestratorRuntime(
 ): Promise<void> {
 	startupReadiness.setReady(false);
 	deps = fencePackageSuccessEffects(runtimeDeps);
-	if (isBoardCapabilityDenied("os-updates")) {
+	if (isBoardCapabilityDenied("os-updates") || !boardUpdateAdmissionAllowed()) {
 		started = true;
 		scheduleNextTick();
 		return;
