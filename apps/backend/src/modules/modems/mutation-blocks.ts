@@ -211,7 +211,10 @@ export async function publishBootMutationBlocks(): Promise<void> {
 	});
 }
 
-/** The same publication, naming the damaged slots its view could not include. */
+/**
+ * The same publication, naming every damaged slot either census met. Rows come
+ * from the final census; a fault the retry did not meet is still reported.
+ */
 export async function reconcileMutationBlocks(
 	deps: MutationBlockDeps = activeDeps,
 ): Promise<{
@@ -219,8 +222,10 @@ export async function reconcileMutationBlocks(
 	readonly unreadable: readonly string[];
 }> {
 	let census = await readBlockCensus(deps);
+	const faulted = new Set(census.unreadable);
 	if (!isMutationJournalRevisionCurrent(census.revision)) {
 		census = await readBlockCensus(deps);
+		for (const slot of census.unreadable) faulted.add(slot);
 	}
 	const { entries, unreadable, revision } = census;
 	const blocking = entries.filter((entry) => blocksMutations(entry.state));
@@ -275,7 +280,7 @@ export async function reconcileMutationBlocks(
 		revision,
 	};
 	syncHeldOutModemNotices(blocks);
-	return { blocks, unreadable };
+	return { blocks, unreadable: [...faulted] };
 }
 
 /** A return after replay needs the same terminal disposition as a return at boot.
