@@ -4,7 +4,7 @@
 
 `modules/wifi/wifi-adapter-lock.ts` owns the ONLY per-adapter lock-key
 derivation in the codebase, and both layers import it: the oRPC procedures
-(`runGuarded` in `rpc/procedures/wifi.procedure.ts`) and the hotspot
+(`runGuarded` and `runGuardedDetached` in `rpc/procedures/wifi.procedure.ts`) and the hotspot
 start/stop/reconfigure transactions (`wifi-hotspot-activation.ts`,
 `wifi-hotspot-config.ts`).
 
@@ -34,18 +34,75 @@ compounded it by taking no lock at all — the one mutating procedure that skipp
 - **It is the normalized owner string, no prefix.** It shares the process-wide
   `withDeviceLock` registry, so prefixing would silently stop matching a key an
   existing caller already holds.
-- **An unresolvable adapter runs UNGUARDED, deliberately.** `runGuarded` runs
+- **An unresolvable adapter runs UNGUARDED, deliberately.** Both guards run
   `op` when the device id / connection uuid names no known radio: there is no
   adapter to contend for, and refusing would be dishonest in the other
   direction.
-- **The station procedures hold the lock across their DISPATCH, not across the
-  nmcli work** — `handleWifi` fires connect/disconnect/forget/scan/new with
-  `void`. The hotspot transactions DO hold it for their full NM activation,
-  which is the ordering that matters: the destructive multi-step operation
-  cannot be interleaved with a station mutation. Making the station legs
-  awaitable under the lock is a separate change with its own RPC-latency
-  consequences, and the `wifi.procedure.ts` header says so rather than claiming
-  more than the code delivers.
+- **Connect, connectNew and forget hold the lock while their NetworkManager
+  work runs** (`runGuardedDetached`). `handleWifi` returns a promise that
+  resolves when the radio no longer needs the lock: after the nmcli join or
+  activation, a timed-out activation's settlement, and for a successful join
+  the new profile's MAC binding and the saved-list refresh the recorded choice
+  reads (a slow profile sweep therefore keeps the radio busy a little longer
+  after a successful join; when the refresh does not commit a complete list,
+  the join is still reported but its choice is not recorded against a stale
+  one); or after Forget's deletes, whose target set is read in the same tick
+  the locks were taken. The reply is sent as soon as the lock is
+  taken; awaiting the work first would hold it past the client's 30 s call
+  timeout, since a saved Connect's nmcli runs up to the process deadline. The
+  scan and saved-list refresh, the terminal `wifi` frame and recording the
+  operator's network choice run from `afterWifiAdapterLockRelease`, which
+  starts them the moment the outermost lock is released, outside the owner's
+  context and before any later request can take the radio. The choice is
+  recorded first and synchronously there, so its sequence follows lock order
+  and an older operation whose refresh stalls cannot outrank a newer choice.
+  The diversity writer then takes the radio's lock for its own short profile
+  write, as it always did, so a request arriving in that moment can still see
+  DEVICE_BUSY.
+  Every Connect and join path ends in one terminal frame, sent after release,
+  including an unexpected throw; Forget sends none, its refreshed saved list is
+  the result.
+  Releasing the lock at dispatch, as before, let a hotspot start or a mode
+  restore take the radio while NetworkManager was still activating the
+  station; NetworkManager applies whichever activation came last, so the
+  operator saw "connected" and then an access point, with no refusal.
+- **Which radios are locked.** A saved Connect locks and activates (`ifname`)
+  the one radio `wifiConnectRadio` names: the radio the profile is active on,
+  else the first that lists it. An unbound profile is listed on every radio, so
+  the lock and the activation must not resolve it separately. Forget locks
+  every radio that lists, in `saved` or `savedAll`, or has active, a profile it
+  deletes, same-SSID siblings included (`wifiForgetRadios`,
+  `withWifiAdapterLocks`). Disconnect takes the lock
+  inside `wifiDisconnect`; scan still holds it across dispatch only.
+- **A request nmcli gave up on is settled before the lock is released, best
+  effort.** An nmcli `-w` deadline (exit 3) or the process deadline does not
+  cancel the daemon's activation. While the lock is still held, the radio's
+  current activation of the requested network (the requested uuid, or for an
+  SSID-only join a station-mode profile of that SSID) is read. When still
+  pending, it is taken down by that exact active path with
+  `nmDisconnectActivation(..., { pendingOnly: true })`, whose D-Bus step reads
+  the state again right before `DeactivateConnection` and refuses an
+  activation that has completed by then; a refusal is observed again (same
+  uuid, path and daemon run) and a completed activation reported. Deactivating also blocks that profile's
+  autoconnect until it is activated again. One that completed is reported as
+  joined only when the request named its uuid; an SSID-only match is left as
+  it is and the join still reports its failure. A request that reached
+  NetworkManager ended any activation already pending on the device, so a
+  pending match is this request's; the residual case is a request nmcli never
+  delivered within the process deadline while an older activation of the same
+  network was pending. When the radio cannot be read, the path changed between
+  reads, or the teardown is refused, the activation is left and a warning is
+  logged.
+
+`tests/wifi-station-lock-span.test.ts` holds each station handler's nmcli
+step open and proves the radio stays locked (a hotspot start answers
+DEVICE_BUSY) until it answers and free while the refresh runs, checks that no
+station result frame leaves while its radio is held, covers the radio choice
+for a profile two radios list, Forget's multi-radio lock (also a sibling only
+in `savedAll`), the choice order behind a stalled refresh, the terminal frame
+after an unexpected throw, and the timed-out connect and join settlement
+(completed, pending, completing at teardown, successor path, another network,
+a same-name AP, an SSID-only completed match).
 
 Coverage: `tests/wifi-adapter-lock.test.ts` — the two layers' derivations
 compared for string equality AND both CALL SITES proven to refuse under one
@@ -69,7 +126,9 @@ dispatched outcome.
 
 | Procedure | Lock posture |
 |---|---|
-| station (connect/connectNew/disconnect/forget/scan) | `runGuarded` across dispatch; fresh open `connectNew` holds it through AP verification, activation and binding |
+| connect / connectNew / forget | `runGuardedDetached`: reply once the lock is taken, lock held until the handler's nmcli work and terminal frame are done |
+| disconnect | locks inside `wifiDisconnect` around the path-checked down |
+| scan | `runGuarded` across dispatch |
 | `hotspotStart` / `hotspotStop` | NO `runGuarded`: an `adapterBusy()` admission PROBE (acquire+release), then AWAIT the transaction and return its typed outcome |
 | `hotspotConfigure` | NO `runGuarded`: same probe, then AWAIT the shared configuration transaction before returning its existing acknowledgement shape; terminal-frame handling remains attached |
 
