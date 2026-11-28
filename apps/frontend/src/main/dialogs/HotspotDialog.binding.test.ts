@@ -1152,7 +1152,7 @@ describe("live editor binding and safe Stop", () => {
 			});
 			const turnOff = () => screen.getByRole("button", { name: "Turn Off" });
 			const save = () => screen.getByRole("button", { name: "Save" });
-			const station = () => screen.getByRole("radio", { name: "Station" });
+			const station = () => screen.getByRole("radio", { name: "Join Wi-Fi" });
 			const lock = () => screen.queryByTestId("wifi-mode-locked-0");
 			for (const control of [turnOff, save, station]) {
 				expect(control().hasAttribute("disabled")).toBe(true);
@@ -1174,7 +1174,7 @@ describe("live editor binding and safe Stop", () => {
 
 			const inactive = { ...row(), leaving: prior };
 			await view.rerender({ open: true, deviceId: "0", iface: inactive });
-			const enable = screen.getByRole("button", { name: "Enable Hotspot" });
+			const enable = screen.getByRole("button", { name: "Turn on hotspot" });
 			expect(enable.hasAttribute("disabled")).toBe(true);
 			await fireEvent.click(enable);
 			expect(screen.queryByTestId("hotspot-activation-confirm")).toBeNull();
@@ -1227,7 +1227,7 @@ describe("live editor binding and safe Stop", () => {
 			});
 			if (entry === "Start") await gate();
 			else {
-				await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+				await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 				await ready();
 			}
 			await editAndAcknowledge();
@@ -2088,7 +2088,7 @@ it("keeps the connected Hotspot Setup mode gate unsupported without a new radio 
 	mode.mockReturnValueOnce(reply.promise);
 	wire.message("status", { wifi: { "0": row() } });
 	render(HotspotDialog, { open: true, deviceId: "0", iface: row() });
-	await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+	await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 	await ready();
 	await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 	await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
@@ -2296,7 +2296,7 @@ describe("deferred Configure admission feedback", () => {
 		},
 	);
 
-	it("previews a replacement radio's own credentials, not the previous radio's, while it settles", async () => {
+	it("closes on a replacement radio while it settles and never writes it", async () => {
 		const ack =
 			deferred<Awaited<ReturnType<typeof rpc.wifi.hotspotConfigure>>>();
 		configure.mockReturnValueOnce(ack.promise);
@@ -2321,14 +2321,11 @@ describe("deferred Configure admission feedback", () => {
 				"failed",
 			),
 		);
+		// The editor is bound to the radio it opened on (radio-A): a replacement
+		// closes it with the radio-lost notice instead of following radio-B.
 		await push({ ...row("radio-B", true), transition: "activating" });
-		expect(input("hotspot-name").value).toBe("radio-B-stored");
-		expect(
-			(screen.getByRole("button", { name: /^Save$/ }) as HTMLButtonElement)
-				.disabled,
-		).toBe(true);
+		await closedWithNotice();
 		await push(row("radio-B", true));
-		expect(input("hotspot-name").value).toBe("radio-B-stored");
 		expect(configure).toHaveBeenCalledTimes(1);
 	});
 
