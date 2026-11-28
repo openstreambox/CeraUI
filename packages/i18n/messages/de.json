@@ -3959,5 +3959,17 @@
 	"timeline.capture_standby_entered.detail": "Der Stream blieb verbunden und sendete ein schwarzes Bild, während er auf die Rückkehr einer Kamera wartete.",
 	"timeline.capture_standby_exited.title": "Schwarzbild-Standby beendet",
 	"timeline.capture_standby_exited.detail": "Standby-Dauer: {duration}",
-	"timeline.update_failed.detail.os-staging": "Die Vorbereitung des Systemabbilds ist fehlgeschlagen."
+	"timeline.update_failed.detail.os-staging": "Die Vorbereitung des Systemabbilds ist fehlgeschlagen.",
+	"network.changeSafety.askBefore.own": "Diese Änderung trennt dich über {via} von der Box.",
+	"network.changeSafety.askBefore.unknown": "Diese Änderung trennt dich vielleicht von der Box.",
+	"network.changeSafety.askBefore.undo": "Änderung vornehmen (rückgängig, wenn ich nicht in {seconds} s bestätige)",
+	"network.changeSafety.askBefore.keep": "Ich weiß, was ich tue: Trenn mich und mach es nicht rückgängig. Um wieder reinzukommen, muss ich vielleicht die Verbindung wechseln oder die Box zurücksetzen.",
+	"network.changeSafety.confirm.prompt": "Noch verbunden? Bestätige in {seconds} s, sonst macht die Box die Änderung rückgängig.",
+	"network.changeSafety.confirm.action": "Bestätigen",
+	"network.changeSafety.notice.disconnected": "Niemand hat die Änderung rechtzeitig bestätigt, deshalb hat die Box sie rückgängig gemacht. Trotzdem ändern?",
+	"network.changeSafety.notice.restart": "Das Netzwerk startete vor deiner Bestätigung neu, deshalb wurde rückgängig gemacht. Trotzdem?",
+	"network.changeSafety.notice.make": "Änderung vornehmen",
+	"network.changeSafety.notice.leave": "Rückgängig lassen",
+	"network.changeSafety.kept.undo": "Letzte Netzwerkänderung rückgängig machen",
+	"network.changeSafety.summary.ethernetRole": "Änderung der Port-Rolle an {ifname}"
 }
