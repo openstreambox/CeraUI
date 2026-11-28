@@ -370,8 +370,11 @@ export function createStreamSessionOrchestrator(
 	// When that loss was retired. The Stop it authorizes is bounded by the
 	// one-shot restoration window: later evidence of a streaming session no
 	// longer shows the same session, so it stays protected.
-	let lossRetiredAt = 0;
-	const now = deps.now ?? Date.now;
+	// Set once the local retirement has settled: the Stop it guards can only run
+	// after it, so a slow sender exit must not use up the window. Monotonic, so a
+	// clock step at boot neither extends nor ends it.
+	let lossRetiredAt: number | undefined;
+	const now = deps.now ?? (() => performance.now());
 	const lossStopWindowMs =
 		deps.lossStopWindowMs ?? RESTORATION_UNKNOWN_DEADLINE_MS;
 	const stopDeadlineMs = deps.stopDeadlineMs ?? STOP_DEADLINE_MS;
@@ -951,13 +954,14 @@ export function createStreamSessionOrchestrator(
 			active?.launchAdmitted === true && active.generation === owner.generation
 				? owner.generation
 				: undefined;
-		lossRetiredAt = now();
+		lossRetiredAt = undefined;
 		const retirement = deps.retireRuntime?.(owner.generation);
 		lossRetirement = retirement;
 		try {
 			await retirement;
 		} finally {
 			lossRetirement = undefined;
+			lossRetiredAt = now();
 			// A parked explicit Stop still belongs to the operator, not to recovery.
 			clearEngineTransition();
 			releaseQueuedStop();
@@ -1179,7 +1183,10 @@ export function createStreamSessionOrchestrator(
 			// an armed marker survives) lets restoration relaunch it, as before
 			// the retirement existed. A restarted process has no such record and
 			// still keeps the session protected below.
-			if (now() - lossRetiredAt > lossStopWindowMs)
+			if (
+				lossRetiredAt !== undefined &&
+				now() - lossRetiredAt > lossStopWindowMs
+			)
 				lossRetiredGeneration = undefined;
 			if (
 				lossRetiredGeneration !== undefined &&
