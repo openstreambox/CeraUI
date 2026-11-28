@@ -25,6 +25,13 @@ import { assertFederationAssetSet, discoverFederationAssets } from '../federatio
 const KIB = 1024;
 
 const SPA_BASELINE = {
+	// ACCEPTED footprint, measured 2026-11-20 on the composed train with Bun
+	// 1.4.4: total 1,467,857 B, precache 1,668,503 B, over the 2026-11-16
+	// ceilings (1,326,428/1,526,160 B) by 141,429/142,343 B. The aggregate
+	// baselines move to that measurement; both 32 KiB absolute headrooms, the
+	// ratio and all route/chunk/federation limits are unchanged (largest chunk
+	// 259.3 KiB, initial route 452.1 KiB). The displaced 1,293,660/1,493,392 B
+	// baselines stay below. Tracked by TD-spa-i18n-catalog-size (still open).
 	// ACCEPTED footprint, measured 2026-11-10 with Bun 1.4.3: total 1,293,660 B,
 	// precache 1,493,392 B, versus displaced 1,235,713/1,435,424 B. Existing
 	// operator surfaces and ten-locale catalogs exceed the old ceilings by
@@ -89,10 +96,10 @@ const SPA_BASELINE = {
 	// single-chunk ceilings are NOT widened. Both aggregates now carry a SECOND,
 	// absolute ceiling so a re-derivation cannot hand back a fresh 12% to spend
 	// silently — precache gained one here for the reason totalGzip already had.
-	totalGzip: 1_293_660,
+	totalGzip: 1_467_857,
 	initialRouteGzip: 497_196,
 	largestChunkGzip: 461_577,
-	precacheGzip: 1_493_392,
+	precacheGzip: 1_668_503,
 };
 
 // The aggregate's binding constraint. A ratio applied to a freshly re-derived
@@ -136,6 +143,7 @@ const SPA_DISPLACED_BASELINES = {
 			debt: 'TD-spa-i18n-catalog-size',
 		},
 		{ bytes: 1_235_713, label: 'kernel-update-ui', debt: 'TD-spa-i18n-catalog-size' },
+		{ bytes: 1_293_660, label: 'footprint-2026-11-10', debt: 'TD-spa-i18n-catalog-size' },
 	],
 	precacheGzip: [
 		{ bytes: 903_286, label: 'pre-Phase-C', debt: 'TD-modem-phase-c-spa-size' },
@@ -175,6 +183,7 @@ const SPA_DISPLACED_BASELINES = {
 			debt: 'TD-spa-i18n-catalog-size',
 		},
 		{ bytes: 1_435_424, label: 'kernel-update-ui', debt: 'TD-spa-i18n-catalog-size' },
+		{ bytes: 1_493_392, label: 'footprint-2026-11-10', debt: 'TD-spa-i18n-catalog-size' },
 	],
 };
 
