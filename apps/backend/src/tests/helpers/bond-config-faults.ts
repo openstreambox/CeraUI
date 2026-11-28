@@ -14,8 +14,30 @@ export const bondStorageFaults = [
 ] as const;
 export type BondStorageFault = (typeof bondStorageFaults)[number];
 
-export const configStage = (file: string) =>
-	join(dirname(file), `.${basename(file)}.${process.pid}.tmp`);
+// The atomic config writer names its stage with a random part before the pid.
+export const isConfigStage = (file: string, path: unknown) =>
+	typeof path === "string" &&
+	dirname(path) === dirname(file) &&
+	basename(path).startsWith(`.${basename(file)}.`) &&
+	basename(path).endsWith(`.${process.pid}.tmp`);
+
+/** Every stage file left next to the config, or null when there is none. */
+export function configStageSnapshot(file: string) {
+	const stages = fs
+		.readdirSync(dirname(file))
+		.map((name) => join(dirname(file), name))
+		.filter((path) => isConfigStage(file, path))
+		.sort();
+	return stages.length === 0 ? null : stages.map(configFileSnapshot);
+}
+
+/** Replace each stage path in a frame with a fixed token. */
+export function maskConfigStage(file: string, text: string): string {
+	return text
+		.split(/([^\s"']+)/)
+		.map((part) => (isConfigStage(file, part) ? "<stage>" : part))
+		.join("");
+}
 
 class InjectedConfigFault extends Error {
 	constructor(code: string, operation: string) {
@@ -26,7 +48,7 @@ class InjectedConfigFault extends Error {
 // Leave the production writer intact. Scope faults and recorded calls to its
 // actual temp file and fd; never affect unrelated filesystem traffic.
 export function watchConfigWrite(file: string, fault: BondStorageFault) {
-	const temp = configStage(file);
+	const isTemp = (path: unknown) => isConfigStage(file, path);
 	if (fault === "unwritable-dir") fs.chmodSync(dirname(file), 0o500);
 	if (fault === "read-only-file") fs.chmodSync(file, 0o444);
 	if (fault === "EISDIR") {
@@ -45,7 +67,7 @@ export function watchConfigWrite(file: string, fault: BondStorageFault) {
 		unlinkSync,
 	} = fs;
 	const open = spyOn(fs, "openSync").mockImplementation((path, flags, mode) => {
-		if (path !== temp) return openSync(path, flags, mode);
+		if (!isTemp(path)) return openSync(path, flags, mode);
 		steps.push("open");
 		fd = openSync(path, flags, mode);
 		return fd;
@@ -86,7 +108,7 @@ export function watchConfigWrite(file: string, fault: BondStorageFault) {
 		closeSync(active);
 	});
 	const rename = spyOn(fs, "renameSync").mockImplementation((from, to) => {
-		if (from === temp && to === file) {
+		if (isTemp(from) && to === file) {
 			steps.push("rename");
 			if (fault === "final-rename")
 				throw new InjectedConfigFault("EIO", "final rename");
@@ -94,7 +116,7 @@ export function watchConfigWrite(file: string, fault: BondStorageFault) {
 		renameSync(from, to);
 	});
 	const unlink = spyOn(fs, "unlinkSync").mockImplementation((path) => {
-		if (path === temp) steps.push("unlink");
+		if (isTemp(path)) steps.push("unlink");
 		unlinkSync(path);
 	});
 	const cap = fault === "ENOSPC" ? fs.statSync(file).size : Infinity;
