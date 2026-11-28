@@ -10,9 +10,10 @@
     a row carries no `hotspot` block while the AP is off.
   • Channel and security stay live-only. Prepare carries neither, the store has
     no security field, and the channel list comes from the live AP's own report.
-  • Bound to one radio lifetime (device, incarnation, link, dialog session). A
-    change reloads the details and asks for the edit again; only the
-    `current-unobserved` entry retry may refresh the token of the same device.
+  • Bound to one radio lifetime (device + incarnation). A new link or dialog
+    session reloads the details; a changed or missing incarnation closes the
+    editor. The `current-unobserved` retry resends only when the next status
+    frame carries the SAME token; any other token refuses.
 -->
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
@@ -87,10 +88,12 @@ async function prepare(captured: WifiRadioBinding, seq: number, chosen?: { name:
 			awaitingStatus = false;
 		}
 		if (!alive || seq !== attempt || captured.device !== device || captured.link !== getLinkEpoch()) return;
-		if (!next?.incarnation) return { result, captured };
-		accepted = { ...captured, incarnation: next.incarnation, session };
+		// Only the same radio lifetime is retried: a new token is another target,
+		// and the first refusal stands.
+		if (next?.incarnation !== captured.incarnation) return { result, captured };
+		accepted = { ...captured, session };
 		binding = accepted;
-		result = await invoke(next.incarnation);
+		result = await invoke(captured.incarnation);
 	}
 	return { result, captured: accepted };
 }
@@ -142,17 +145,25 @@ function open() {
 function close() {
 	attempt += 1;
 	observation?.abort();
+	observation = undefined;
+	awaitingStatus = false;
 	phase = 'closed';
 	reloaded = false;
 }
 
-// A changed radio lifetime reloads an open editor; a closed one stays closed.
+// A new link or dialog session on the same radio lifetime reloads an open
+// editor. A changed device or incarnation is another target: the draft is
+// dropped and the editor closes rather than loading the replacement.
 $effect.pre(() => {
 	const next = now();
 	degradedReason;
 	untrack(() => {
 		if (phase === 'closed' || !binding || sameWifiRadio(binding, next)) return;
-		if (awaitingStatus && binding.device === next.device && binding.link === next.link) return;
+		if (binding.device !== next.device || binding.incarnation !== next.incarnation) {
+			close();
+			return;
+		}
+		if (awaitingStatus) return;
 		reloaded = true;
 		void load();
 	});

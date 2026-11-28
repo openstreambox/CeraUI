@@ -123,12 +123,14 @@ async function prepare(captured: WifiRadioBinding, seq: number, chosen?: { name:
 			acknowledged = false;
 			return;
 		}
+		// Only the same radio lifetime is retried; a new token is another target.
 		if (next.incarnation !== token || !current(seq, captured)) {
 			invalidated = true;
 			acknowledged = false;
 			// A fresh load has no draft and does not inherit this recovery.
 			if (incarnation && incarnation !== token) void load(false);
 			else {
+				if (next.incarnation !== token) refused = true;
 				focusBeforeReload();
 				phase = 'load-failed';
 			}
