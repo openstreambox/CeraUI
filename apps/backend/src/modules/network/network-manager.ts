@@ -37,7 +37,7 @@ import {
 	type HotspotProfileOperationResult,
 	runHotspotProfileOperation,
 } from "../wifi/wifi-hotspot-profile-operation.ts";
-import { parseNmcliFields } from "./network-manager-output.ts";
+import { nmcliParseSep, parseNmcliFields } from "./network-manager-output.ts";
 import type { NmProfileReadTrace } from "./network-manager-profile-diagnostics.ts";
 import {
 	type NmProfileInstance,
