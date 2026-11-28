@@ -29,7 +29,14 @@
  * a stream keeps it empty, carrying alone keeps the line, nobody removes it.
  * Every holder change goes through `sync()` in the same tick, and a launch is
  * submitted only after the file was seen without the line in that tick, so
- * the file cannot say carrying-only beside a stream.
+ * the file cannot say carrying-only beside a stream this backend launched.
+ *
+ * A line left by an earlier process is only that process's belief at its
+ * last write. A stream that began afterwards (another control client, while
+ * the file could not be rewritten) leaves it standing, so the line alone never
+ * proves idle to a restarted backend. It is held as protection until the
+ * engine agrees: a silent engine witnesses it (`releaseEncoder`), a running
+ * one is adopted (`adoptStream`).
  */
 
 import fs from "node:fs";
@@ -81,14 +88,19 @@ export function createOtaMarkerOwner(io: {
 			return isEnoent(error) ? "idle" : "unknown";
 		}
 	};
+	/** The content, null for no file, undefined when it cannot be read. */
+	const contentNow = (): string | null | undefined => {
+		try {
+			return io.fs.readFileSync(io.path(), "utf8");
+		} catch (error) {
+			return isEnoent(error) ? null : undefined;
+		}
+	};
 	/** True for the exact line, false for anything else readable or no file,
 	 * undefined when the file cannot be read. */
 	const saysCarryingOnly = (): boolean | undefined => {
-		try {
-			return io.fs.readFileSync(io.path(), "utf8") === CARRYING_ONLY;
-		} catch (error) {
-			return isEnoent(error) ? false : undefined;
-		}
+		const content = contentNow();
+		return content === undefined ? undefined : content === CARRYING_ONLY;
 	};
 	const attempt = (
 		action: () => void,
@@ -102,10 +114,9 @@ export function createOtaMarkerOwner(io: {
 			return false;
 		}
 	};
-	/** A file that cannot be rewritten in place is replaced, never removed
-	 * first: a failure must leave the marker standing. */
-	const put = (content: string): boolean =>
-		attempt(() => io.fs.writeFileSync(io.path(), content), setFailed) ||
+	const rewrite = (content: string) =>
+		attempt(() => io.fs.writeFileSync(io.path(), content), setFailed);
+	const replace = (content: string) =>
 		attempt(() => {
 			try {
 				io.fs.writeFileSync(`${io.path()}.new`, content);
@@ -115,24 +126,54 @@ export function createOtaMarkerOwner(io: {
 				throw error;
 			}
 		}, setFailed);
+	/**
+	 * A failure must leave the marker standing, so it is never removed first.
+	 * Content already on disk is not written again: a rewrite that fails after
+	 * truncating would turn a good line into an empty, unexplained file. The
+	 * line goes through a renamed sibling, so a torn write never reaches the
+	 * marker; rewriting in place stays the fallback that still leaves a file
+	 * for the image. The empty stream marker is a truncation, which cannot
+	 * tear and needs no new file.
+	 */
+	const put = (content: string): boolean => {
+		if (contentNow() === content) return true;
+		return content === ""
+			? rewrite(content) || replace(content)
+			: replace(content) || rewrite(content);
+	};
+
+	// A process that died between writing the sibling and renaming it left
+	// the sibling behind. Nothing reads it; it is only tidied away.
+	attempt(
+		() => io.fs.rmSync(`${io.path()}.new`, { force: true }),
+		() => undefined,
+	);
 
 	let carrying = false;
 	// True while the file, if any, is ours and no stream stands behind it:
-	// created from absence, handed back by a confirmed encoder idle, or left
-	// by an earlier backend process with the carrying line. `/run` outlives a
-	// backend restart, and every start takes the carrying hold again, so the
-	// earlier process's hold is not a stream. Anything else (empty, unreadable,
-	// unexplained) stays evidence of a possible stream.
-	let explained = saysCarryingOnly() === true;
-	let encoder = !explained && presence() !== "idle";
-	io.setShutdownProtection("encoder", encoder);
+	// created from absence or handed back by a confirmed encoder idle.
+	let explained = false;
+	// The carrying line an earlier backend process left. `/run` outlives a
+	// backend restart, and every start takes the carrying hold again, so it is
+	// usually that process's hold and nothing more. It still only says what
+	// that process knew, so it stays protection, unchanged on disk, until this
+	// process's engine evidence confirms idle or finds a stream.
+	let inherited = saysCarryingOnly() === true;
+	// Anything else on disk (empty, unreadable, unexplained) is evidence of a
+	// possible stream.
+	let encoder = !inherited && presence() !== "idle";
+	io.setShutdownProtection("encoder", encoder || inherited);
 
 	const claimFromAbsence = () => {
-		if (!encoder && presence() === "idle") explained = true;
+		if (!encoder && !inherited && presence() === "idle") explained = true;
 	};
 	/** The one place the file changes. */
 	const sync = (): boolean => {
 		if (encoder) return put("");
+		// Neither carrying nor its end may change a line that waits for a witness.
+		// A line that is gone no longer says anything.
+		if (inherited && presence() === "unknown") return true;
+		inherited = false;
 		if (carrying)
 			return explained
 				? put(CARRYING_ONLY)
@@ -159,7 +200,13 @@ export function createOtaMarkerOwner(io: {
 		 * backend found from its predecessor's hold.
 		 */
 		liveness: (): "idle" | "unknown" =>
-			explained && !encoder ? "idle" : presence(),
+			explained && !encoder && !inherited ? "idle" : presence(),
+		/**
+		 * True while an earlier process's carrying line waits for this process's
+		 * engine evidence. Engine silence alone is not idle; silence together
+		 * with that line is, because a running session reports its status.
+		 */
+		awaitsIdleWitness: (): boolean => inherited && !encoder,
 		setCarrying: (protectedNow: boolean): boolean => {
 			carrying = protectedNow;
 			if (protectedNow) {
@@ -168,15 +215,35 @@ export function createOtaMarkerOwner(io: {
 				const written = sync();
 				return shutdownProtected && written;
 			}
-			const cleared = encoder || sync();
+			const cleared = encoder || inherited || sync();
 			io.setShutdownProtection("carrying", !cleared);
 			return cleared;
 		},
-		/** A failed write keeps protection unconfirmed and must be retried by the owner. */
+		/**
+		 * Protection for a possible stream. A failed write keeps protection
+		 * unconfirmed and must be retried by the owner. An inherited line is
+		 * left as it is: unknown is not a stream, and the line is what lets the
+		 * next process, too, reach idle once the engine is heard.
+		 */
 		takeEncoder: (): boolean => {
+			const shutdownProtected = io.setShutdownProtection("encoder", true);
+			if (inherited && !encoder) return shutdownProtected;
 			encoder = true;
 			explained = false;
+			const written = sync();
+			return shutdownProtected && written;
+		},
+		/**
+		 * The engine reports a running session: the file becomes the stream's,
+		 * whoever started it and whatever it said before. Called on every commit
+		 * to streaming, because protection may already be held from an earlier
+		 * unknown answer.
+		 */
+		adoptStream: (): boolean => {
 			const shutdownProtected = io.setShutdownProtection("encoder", true);
+			inherited = false;
+			encoder = true;
+			explained = false;
 			const written = sync();
 			return shutdownProtected && written;
 		},
@@ -185,6 +252,9 @@ export function createOtaMarkerOwner(io: {
 		 * media stops retain this OTA guard. */
 		releaseEncoder: (): boolean => {
 			encoder = false;
+			// Confirmed idle also witnesses an inherited line: nothing stands
+			// behind it, so it is this process's hold or nobody's.
+			inherited = false;
 			// Confirmed idle: a marker kept for client traffic is carrying's alone.
 			// Its line is for a later process; a failed write only costs that proof.
 			if (carrying) explained = true;
@@ -202,12 +272,13 @@ export function createOtaMarkerOwner(io: {
 		 * leaves nothing to put back.
 		 */
 		claimForLaunch: (): boolean => {
-			const held = { encoder, explained };
+			const held = { encoder, explained, inherited };
 			encoder = true;
 			explained = false;
+			inherited = false;
 			sync();
 			if (saysCarryingOnly() === false) return true;
-			({ encoder, explained } = held);
+			({ encoder, explained, inherited } = held);
 			sync();
 			return false;
 		},
@@ -224,3 +295,5 @@ export const setCarryingOtaProtection = owner.setCarrying;
 export const setOtaStreamingMarker = owner.takeEncoder;
 export const clearOtaStreamingMarker = owner.releaseEncoder;
 export const claimOtaMarkerForLaunch = owner.claimForLaunch;
+export const adoptOtaStreamingMarker = owner.adoptStream;
+export const otaMarkerAwaitsIdleWitness = owner.awaitsIdleWitness;

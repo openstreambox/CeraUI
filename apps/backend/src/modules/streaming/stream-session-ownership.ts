@@ -72,6 +72,13 @@ export function createSessionOwnership(deps: StreamSessionOrchestratorDeps) {
 				break;
 			case "streaming":
 				protect();
+				// Protection may predate this answer; the sentinel follows it now.
+				try {
+					if (deps.confirmStreamingForOta?.() === false)
+						protectedForOta = false;
+				} catch {
+					protectedForOta = false;
+				}
 				deps.setStreamingStatus(true);
 				break;
 			case "idle":
