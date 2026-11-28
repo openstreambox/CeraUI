@@ -273,9 +273,11 @@ describe("a stale label over a radio that is really a client", () => {
 		expect(mode).not.toHaveBeenCalled();
 		await ready();
 		// One question at a time: the dialog's own Enable waits for this one.
+		// The dialog's own start button, by its role and accessible name.
 		expect(
-			screen.getByRole<HTMLButtonElement>("button", { name: "Enable Hotspot" })
-				.disabled,
+			screen.getByRole<HTMLButtonElement>("button", {
+				name: m["hotspotConfirm.activate"](),
+			}).disabled,
 		).toBe(true);
 
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-cancel"));
