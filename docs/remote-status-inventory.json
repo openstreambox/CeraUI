@@ -14904,8 +14904,46 @@
       "message": "\"revisions\"",
       "fields": [
         {
-          "path": ".*",
+          "path": "ceralive",
           "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srtla",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "bun",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "kernel",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "cerastream",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "CERALIVE image",
+          "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -25081,9 +25119,9 @@
             "\"network\"",
             "\"device\"",
             "\"engine\"",
+            "\"kernel\"",
             "\"bonding\"",
-            "\"updates\"",
-            "\"kernel\""
+            "\"updates\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -25833,7 +25871,7 @@
     "apps/backend/src/modules/modems/modems-state.ts": "c10839333989d89e998cae6a507f78aacad29117127b22a1a42bed90ef2350e1",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
     "apps/backend/src/modules/network/network-ingest.ts": "fcb33cbff26195a53375f9ae12c5f85bbb76cc2bbb7d63d76a90cf2562eb8e77",
-    "apps/backend/src/modules/network/network-interfaces.ts": "ec1f4ae399bb1026f5fde9a3699fdc329485d6797da94189c18f1bf26fb5e232",
+    "apps/backend/src/modules/network/network-interfaces.ts": "10158d0cc7a33820cb302c5ee5be11f25adec36fa16c1b4b16a114e991a72014",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "2221782a8312e2ffddc545a6f4434e62cf53d0f82948d49987a5a9263fe60d26",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "59e35c76047fe4bfa5484cbbeaae996507cc0f1f778641eb83dc6248f72b6395",
@@ -25874,10 +25912,10 @@
     "apps/backend/src/modules/system/logs.ts": "8005a72398610c33562bd5b1d681c5656a14479b0c0e71ad3fe8f74433048109",
     "apps/backend/src/modules/system/readiness.ts": "6c2725aae677f8a4a22d0dcce028b4e0d42a83916d3b4f7ba6b94e67cfe03e22",
     "apps/backend/src/modules/system/sensors.ts": "a8b7c1792525f429bd06018831c18832fa56f588fdf8f8345b265768375f4e4c",
-    "apps/backend/src/modules/system/software-updates.ts": "f03de94da07813adb2bb0f63a50b28098a7691ebcd0af2e7a0543a60b35ec88d",
+    "apps/backend/src/modules/system/software-updates.ts": "068215be54d9733a78986743138341c0b983715ba44e7d80c3d2968ff7811398",
     "apps/backend/src/modules/system/ssh.ts": "9c5d2b773e5cfc4e6c015814bd5d78d64830691e2a6567e1e8cf67e16a598330",
     "apps/backend/src/modules/system/tailscale.ts": "b2731b7eed6258db2efef8de0187b03dbf66cdeed37cee035f4c5788dc7f2fdf",
-    "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "20df5ec7d7d25f057c79f094c25dfced7f35be4ca224605345030dc21a0ec934",
+    "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "a543c8dfb1eca13ce318b46d089c5a9ae8794ade62fd8aba7f7ae5aaaae8c573",
     "apps/backend/src/modules/ui/notifications.ts": "3d236e5edeea33cf1ccd8b1b935ff8680afbe4785a42ace8262f14204f0835f1",
     "apps/backend/src/modules/ui/status.ts": "f01abfa0b80c990ba846502bfa6096e9bebb5c486b36954d8f6fa9ea6bce6935",
     "apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "e2c3ce9b12f5eba0d9a91779327bb0990eb240656dcf5aa8d6b160e974700cac",
