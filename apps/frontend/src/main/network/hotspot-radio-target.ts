@@ -1,4 +1,5 @@
 import type { WifiInterface } from "@ceraui/rpc/schemas";
+import { wifiTokenWithheld } from "./wifi-radio-binding";
 
 /**
  * The operator's hotspot radio choice: the row id plus the runtime incarnation
@@ -56,8 +57,10 @@ export function pickHotspotRadio(
 }
 
 /**
- * Drop a selection whose radio is gone, changed incarnation or degraded. The
- * same object comes back while nothing expired, so callers can compare by
+ * Drop a selection whose radio is gone, changed incarnation or degraded. A
+ * token withheld for a moment while a peer restarts the AP names no lifetime,
+ * so it keeps the selection; the token that comes back decides. The same
+ * object comes back while nothing expired, so callers can compare by
  * identity before writing state.
  */
 export function expireHotspotChoice(
@@ -66,6 +69,11 @@ export function expireHotspotChoice(
 ): HotspotRadioChoice {
 	if (!choice.selected || findHotspotRadio(radios, choice.selected))
 		return choice;
+	const [id] = choice.selected;
+	const row = hotspotCapableRadios(radios).find(
+		([candidate]) => candidate === id,
+	)?.[1];
+	if (wifiTokenWithheld(row)) return choice;
 	return { lost: true };
 }
 

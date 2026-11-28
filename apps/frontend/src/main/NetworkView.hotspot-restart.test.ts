@@ -16,7 +16,15 @@ import {
 } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { toast } from "svelte-sonner";
-import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import {
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
 import {
 	destroyAsyncOperations,
 	getOperationPhase,
@@ -229,3 +237,66 @@ it.each([
 		expect(configure).toHaveBeenCalledTimes(1);
 	},
 );
+
+describe("the hotspot card's radio pick", () => {
+	const other: WifiInterface = { ...liveRow("radio-Z"), ifname: "wlan1" };
+
+	async function frame(row: WifiInterface) {
+		wire.message("status", { wifi: { "0": row, "1": other } });
+		await tick();
+		await tick();
+	}
+
+	async function pick() {
+		await frame(liveRow("radio-A"));
+		const { default: NetworkView } = await import("./NetworkView.svelte");
+		render(NetworkView);
+		await tick();
+		await fireEvent.change(picker(), { target: { value: "0" } });
+		expect(setup().disabled).toBe(false);
+	}
+
+	function picker(): HTMLSelectElement {
+		const select = document.querySelector<HTMLSelectElement>("#hotspot-radio");
+		if (!select) throw new Error("missing radio picker");
+		return select;
+	}
+
+	function setup(): HTMLButtonElement {
+		return screen.getByTestId("open-hotspot-dialog") as HTMLButtonElement;
+	}
+
+	it.each([
+		["deactivating", { transition: "deactivating" }],
+		["activating", { transition: "activating" }],
+		["leaving", { leaving: "hotspot" }],
+	] as const)(
+		"keeps its pick through a restart that withholds the token (%s)",
+		async (_case, marker) => {
+			await pick();
+			await frame(withheld(marker));
+			expect(screen.queryByTestId("hotspot-radio-lost")).toBeNull();
+			await frame(liveRow("radio-A"));
+			expect(picker().value).toBe("0");
+			expect(setup().disabled).toBe(false);
+			expect(screen.queryByTestId("hotspot-radio-lost")).toBeNull();
+		},
+	);
+
+	it("expires its pick when another token follows the withheld one", async () => {
+		await pick();
+		await frame(withheld({ transition: "activating" }));
+		await frame(liveRow("radio-B"));
+		expect(picker().value).toBe("");
+		expect(setup().disabled).toBe(true);
+		expect(screen.getByTestId("hotspot-radio-lost")).toBeTruthy();
+	});
+
+	it("expires its pick when the token is gone outside a transition", async () => {
+		await pick();
+		await frame(liveRow());
+		await frame(liveRow("radio-A"));
+		expect(picker().value).toBe("");
+		expect(screen.getByTestId("hotspot-radio-lost")).toBeTruthy();
+	});
+});
