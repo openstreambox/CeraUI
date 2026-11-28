@@ -748,7 +748,7 @@ export async function runDeadBearerRecovery(
 				try {
 					memories.set(key, again.memory);
 					deps.noteDial(key);
-					logger.warn("modem bearer carries no traffic; reconnecting", {
+					logger.warn("modem data session carries no traffic; reconnecting", {
 						id,
 						stableKey: key,
 						iface: fresh.iface,
@@ -791,7 +791,7 @@ export async function runDeadBearerRecovery(
 					return;
 				}
 				const result = await deps.connect(fresh.uuid, 45);
-				logger.info("modem bearer reconnect finished", {
+				logger.info("modem data session reconnect finished", {
 					id,
 					stableKey: key,
 					result,
@@ -809,7 +809,7 @@ export async function runDeadBearerRecovery(
 			});
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
-			logger.warn("dead-bearer check did not complete", {
+			logger.warn("data session check did not complete", {
 				id,
 				error: error.message,
 			});
