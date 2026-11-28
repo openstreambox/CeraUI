@@ -14,6 +14,7 @@ import { toLogEntry } from "../modules/device-logs/parse.ts";
 import { queryLogs } from "../modules/device-logs/query.ts";
 import * as admission from "../modules/device-logs/query-admission.ts";
 import * as pages from "../modules/device-logs/scan-page.ts";
+import { bundleStateFixture } from "./helpers/bundle-state.ts";
 import {
 	bootId,
 	journal,
@@ -57,6 +58,7 @@ beforeEach(() => {
 		},
 		events: [],
 		bootRecords: [],
+		state: bundleStateFixture(),
 		secrets: [],
 	};
 	collect = spyOn(data, "collectBundleData").mockImplementation(
