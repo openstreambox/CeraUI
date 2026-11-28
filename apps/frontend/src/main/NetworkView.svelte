@@ -22,7 +22,6 @@ import {
 	getUplinks,
 	getWifi,
 } from '$lib/rpc/subscriptions.svelte';
-import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
 import { getHudState } from '$lib/stores/hud.svelte';
 import { getLinkNames } from '$lib/stores/link-names.svelte';
 import type { LinkSignal } from '$lib/types/hud';
@@ -84,7 +83,7 @@ const isLoading = $derived(
 // (never one-or-the-other). Only a LIVE AP counts here: a radio that is off still
 // carries its saved `hotspot` setup, which is not a hotspot that is on.
 const wifiEntries = $derived(Object.entries(wifi ?? {}) as [string, WifiInterface][]);
-const hotspotInterfaces = $derived(wifiEntries.filter(([id, iface]) => hotspotIsActive(iface, getWifiAdapterModeEntry(id))));
+const hotspotInterfaces = $derived(wifiEntries.filter(([id, iface]) => hotspotIsActive(iface)));
 
 // Preserve an explicit radio selection across roster changes; otherwise prefer
 // an active hotspot, then an idle AP-capable radio.

@@ -38,7 +38,6 @@ import type {
 } from "@ceraui/rpc/schemas";
 
 import { logger } from "../../helpers/logger.ts";
-import { isStreamSessionUnconfirmed } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import {
 	awaitWifiStopHandoff,
@@ -146,14 +145,11 @@ function chainModeTerminal(
 	deps: AdapterModeTransitionDeps,
 ): HotspotOutcomePublisher {
 	let settled = false;
-	const cancelTimeout = deps.armTerminalTimeout?.(
-		() => {
-			if (settled) return;
-			settled = true;
-			deps.publishOutcome(device, { success: false, error: "not-confirmed" });
-		},
-		(HOTSPOT_UP_TO + 25) * 1000,
-	);
+	const cancelTimeout = deps.armTerminalTimeout?.(() => {
+		if (settled) return;
+		settled = true;
+		deps.publishOutcome(device, { success: false, error: "not-confirmed" });
+	}, HOTSPOT_UP_TO * 1000);
 	return (kind, hotspotDevice, outcome) => {
 		deps.publishHotspotOutcome(kind, hotspotDevice, outcome);
 		if (settled) return;
