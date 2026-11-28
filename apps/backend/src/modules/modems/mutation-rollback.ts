@@ -254,7 +254,12 @@ export function observedUnitLinkId(
 	return reliableUnitLinkId(device, devices, activeDeps);
 }
 
-/** Record an opaque unit identity if the enumerated modem has a reliable serial. */
+/**
+ * Record an opaque unit identity if the enumerated modem has a reliable serial.
+ * A census that does not list the modem proves nothing about its unit, so the
+ * journal holds it as unproven; only a modem it lists without a serial keeps
+ * descriptor-only verification.
+ */
 export async function captureModemJournalIdentity(stableKey: string): Promise<{
 	deviceVidPid?: string;
 	unitLinkId?: string;
@@ -265,7 +270,7 @@ export async function captureModemJournalIdentity(stableKey: string): Promise<{
 	const device = devices.find(
 		(candidate) => deriveModemStableKey(candidate.physicalUid) === stableKey,
 	);
-	if (device === undefined) return {};
+	if (device === undefined) return { unitUnproven: true };
 	const vidPid = `${device.vendorId}:${device.productId}`.toLowerCase();
 	const unit = await unitEvidence(device, devices, deps);
 	return {
