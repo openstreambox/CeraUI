@@ -66,7 +66,8 @@ let { lifecycle, isStreaming, optimismState }: Props = $props();
 const phase = $derived(getOperationPhase(UNCONFIRMED_STOP_OPERATION));
 const pending = $derived(phase === 'pending');
 const unresolved = $derived(operatorStopUnresolved());
-// LiveView's busy-refusal toast reads the same answer (`unconfirmedBandShown`).
+// LiveView's busy-refusal toast reads the same answer; the Start bar follows the same
+// evidence through assessStart's `unconfirmed` decision (StartPreflight).
 const visible = $derived(
 	unconfirmedStreamBandShown({ lifecycle, isStreaming, optimismState }),
 );

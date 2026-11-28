@@ -9,6 +9,7 @@ function harness(opts: {
 	readonly launched: boolean;
 }) {
 	let runtime: "idle" | "streaming" = "streaming";
+	let ownedEvidence = false;
 	const stops: number[] = [];
 	const stopCauses: string[] = [];
 	const session = createStreamSessionOrchestrator({
@@ -16,7 +17,7 @@ function harness(opts: {
 		setStreamingStatus: () => {},
 		initialLiveness: () => (opts.launched ? "idle" : "unknown"),
 		queryRuntime: async () => runtime,
-		canReconcileStreaming: () => false,
+		canReconcileStreaming: () => ownedEvidence,
 		canReconcileIdle: () => opts.unownedSenderPresent !== true,
 		stopRuntime: async (generation) => {
 			stops.push(generation);
@@ -34,6 +35,9 @@ function harness(opts: {
 		runtime: () => runtime,
 		setRuntime: (next: "idle" | "streaming") => {
 			runtime = next;
+		},
+		setOwnedEvidence: (next: boolean) => {
+			ownedEvidence = next;
 		},
 	};
 }
@@ -82,4 +86,40 @@ test("an operator Stop ends the loss record before a new Start", async () => {
 	// #124 decides alone again: no owned evidence keeps it protected, no Stop.
 	expect(await h.session.reconcile()).toBe("reconciling");
 	expect(h.stops).toHaveLength(1);
+});
+
+test("a Start refused as busy during loss reconciliation keeps the recovery record", async () => {
+	const h = harness({ launched: true });
+	await h.session.start({ origin: "ui", launch });
+	await h.session.retireLostSession();
+	expect((await h.session.start({ origin: "ui", launch })).result).toBe("busy");
+
+	expect(await h.session.reconcile()).toBe("idle");
+	expect(h.stops).toHaveLength(1);
+});
+
+test("a lost observation-only connection gives no Stop authority", async () => {
+	const h = harness({ launched: false });
+	// Adopted on owned evidence, never launched by this process.
+	h.setOwnedEvidence(true);
+	expect(await h.session.reconcile()).toBe("streaming");
+	h.setOwnedEvidence(false);
+	await h.session.retireLostSession();
+
+	expect(await h.session.reconcile()).toBe("reconciling");
+	expect(h.stops).toEqual([]);
+});
+
+test("a confirmed idle engine expires the recovery record", async () => {
+	const h = harness({ launched: true });
+	await h.session.start({ origin: "ui", launch });
+	await h.session.retireLostSession();
+	h.setRuntime("idle");
+	expect(await h.session.reconcile()).toBe("idle");
+	expect(h.stops).toEqual([]);
+
+	// A later session the engine runs is not the lost one.
+	h.setRuntime("streaming");
+	expect(await h.session.reconcile()).toBe("reconciling");
+	expect(h.stops).toEqual([]);
 });
