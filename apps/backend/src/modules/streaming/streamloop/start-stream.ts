@@ -69,6 +69,10 @@ import { createLaunchTransaction } from "../launch-transaction.ts";
 import { startLinkTelemetry, stopLinkTelemetry } from "../link-telemetry.ts";
 import type { Pipeline } from "../pipelines.ts";
 import { replayPreviewEncodeMode } from "../preview-encode-replay.ts";
+import {
+	recentRelaySession,
+	relaySessionKey,
+} from "../recent-relay-session.ts";
 import { getLastPublishedBond } from "../srtla.ts";
 import { resolvePinnedLaunchAudio, type StartAudio } from "../start-audio.ts";
 import {
@@ -436,8 +440,32 @@ export async function startStream(
 		);
 	} catch (error) {
 		await transaction.rollback();
+		if (
+			error instanceof StreamStartFailure &&
+			error.liveness === "idle" &&
+			recentRelaySession.possiblyBusy(
+				relaySessionKey(srtlaAddr, srtlaPort, streamid),
+				error.failure.message,
+			)
+		) {
+			// The relay may still hold the session that just ended. The original
+			// engine code stays in the log; the wire code drives the busy retry.
+			logger.info("relay session possibly busy after a quick restart", {
+				attemptId,
+				originalCode: error.failure.code,
+			});
+			throw new StreamStartFailure(
+				{
+					...error.failure,
+					code: "relay_session_busy",
+					retriable: true,
+				},
+				"idle",
+			);
+		}
 		throw error;
 	}
 
+	recentRelaySession.valid(relaySessionKey(srtlaAddr, srtlaPort, streamid));
 	return { success: true };
 }
