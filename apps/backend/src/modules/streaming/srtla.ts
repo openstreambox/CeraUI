@@ -169,7 +169,44 @@ function collectBondEntries(
 			continue;
 		entries.push(entry);
 	}
-	return entries;
+	return oneEntryPerTranslatedModem(entries);
+}
+
+/*
+  ONE BOND ENTRY PER MODEM WHILE ITS IPV6-ONLY BEARER IS TRANSLATED.
+
+  An IPv6-only modem with a live CLAT translation shows up twice: the parent
+  with its native IPv6 address and the `clat<N>` TUN with the translator's
+  IPv4. Both resolve to the same physical modem and so to the same `linkId`.
+  Offering both gives the sender two rows with one id, which it rejects
+  (falling back to unique source addresses), and an uplink whose family can
+  never reach the receiver. Exactly one of them can carry the stream:
+
+  - an IPv6-only receiver: the parent's native IPv6;
+  - an IPv4 receiver: the parent's native IPv4 if it has one (it wins on the
+    modem's UI row too), otherwise the translator.
+
+  A TUN entry carries `parentIface` only while its translation is usable, so a
+  withdrawn or expired translation leaves the parent as it was.
+*/
+function oneEntryPerTranslatedModem(entries: BondEntry[]): BondEntry[] {
+	const parents = new Set(
+		entries.flatMap((entry) =>
+			entry.parentIface === undefined ? [] : [entry.parentIface],
+		),
+	);
+	if (parents.size === 0) return entries;
+	const nativeIpv4 = new Set(
+		entries
+			.filter((entry) => parents.has(entry.iface) && isIP(entry.ip) === 4)
+			.map((entry) => entry.iface),
+	);
+	return entries.filter((entry) => {
+		if (entry.parentIface !== undefined)
+			return !receiverIpv6Only && !nativeIpv4.has(entry.parentIface);
+		if (!parents.has(entry.iface)) return true;
+		return receiverIpv6Only || nativeIpv4.has(entry.iface);
+	});
 }
 
 export function genSrtlaBondEntries(): BondEntry[] {
