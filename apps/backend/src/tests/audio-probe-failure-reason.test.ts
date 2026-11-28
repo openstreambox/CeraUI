@@ -136,12 +136,21 @@ describe("maybeProbeAudioSource — pseudo-sentinels never probe (C7)", () => {
 describe("HDMI signal admission", () => {
 	test("no DV signal refuses with an actionable typed capture cause", async () => {
 		await expect(
-			startStream(audioPipeline, "192.0.2.10", 5000, "sid", {
-				hdmiVideoSignal: async () => false,
-				probe: async () => {
-					throw new Error("audio probe must not run");
+			startStream(
+				audioPipeline,
+				"192.0.2.10",
+				5000,
+				"sid",
+				{
+					hdmiVideoSignal: async () => false,
+					probe: async () => {
+						throw new Error("audio probe must not run");
+					},
 				},
-			}),
+				undefined,
+				undefined,
+				acceptStartAudio(),
+			),
 		).rejects.toMatchObject({
 			failure: {
 				class: "capture_source_unavailable",
@@ -197,6 +206,7 @@ describe("HDMI signal admission", () => {
 					},
 					"test",
 					{ selected_video_input: selected },
+					acceptStartAudio(),
 				);
 				expect(result.reason).toBe(AUDIO_SOURCE_PROBE_FAILED);
 				expect(signalCalls).toBe(expectedCalls);
