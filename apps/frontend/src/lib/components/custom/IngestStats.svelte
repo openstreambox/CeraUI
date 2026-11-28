@@ -32,6 +32,7 @@ import {
 	SPARK_H,
 	SPARK_W,
 } from '$lib/components/custom/ingest-link-view';
+import LinkCarryingNote from '$lib/components/custom/LinkCarryingNote.svelte';
 import { Button } from '$lib/components/ui/button';
 import { createSessionLinkNames } from '$lib/helpers/session-link-names';
 import {
@@ -580,6 +581,11 @@ function exportCsv(): void {
 							</span>
 						</span>
 					</div>
+					<LinkCarryingNote
+						class="mt-1 ps-4"
+						show={link.carrying === false && !link.stale}
+						iface={link.iface}
+					/>
 
 					<!-- recent-trend strip: labelled RTT sparkline + per-link health pill -->
 					<div class="mt-2 flex items-center gap-2">
@@ -625,28 +631,33 @@ function exportCsv(): void {
 								/>
 							{/if}
 						</svg>
-						<span
-							data-testid="ingest-health"
-							data-iface={link.iface}
-							data-status={view.degraded ? 'degraded' : 'healthy'}
-							data-score={view.score}
-							class={cn(
-								'inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5',
-								'font-mono text-xs uppercase tracking-wide tabular-nums',
-								view.degraded
-									? 'bg-status-warning/10 text-status-warning'
-									: 'bg-secondary/60 text-muted-foreground',
-							)}
-						>
+						<!-- The trend pill judges round trips; with nothing going out on
+						     the link, "Stable" would be the wrong word, so the line above
+						     speaks for it. -->
+						{#if link.carrying !== false || link.stale}
 							<span
-								aria-hidden="true"
+								data-testid="ingest-health"
+								data-iface={link.iface}
+								data-status={view.degraded ? 'degraded' : 'healthy'}
+								data-score={view.score}
 								class={cn(
-									'size-1.5 rounded-full',
-									view.degraded ? 'bg-status-warning' : 'bg-primary',
+									'inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5',
+									'font-mono text-xs uppercase tracking-wide tabular-nums',
+									view.degraded
+										? 'bg-status-warning/10 text-status-warning'
+										: 'bg-secondary/60 text-muted-foreground',
 								)}
-							></span>
-							{view.degraded ? m["live.ingest.degraded"]() : m["live.ingest.healthy"]()}
-						</span>
+							>
+								<span
+									aria-hidden="true"
+									class={cn(
+										'size-1.5 rounded-full',
+										view.degraded ? 'bg-status-warning' : 'bg-primary',
+									)}
+								></span>
+								{view.degraded ? m["live.ingest.degraded"]() : m["live.ingest.healthy"]()}
+							</span>
+						{/if}
 					</div>
 				</li>
 			{/each}
