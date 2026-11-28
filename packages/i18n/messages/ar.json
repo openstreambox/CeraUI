@@ -3269,6 +3269,7 @@
 	"network.sharing.policy.healthTitle": "صحة الوصلة الصاعدة",
 	"network.sharing.policy.healthBody": "تعتبر الوصلات الصاعدة {usable} الخاصة بـ {total} صحية بما يكفي للنظر فيها. قد تستبعدهم سياسة توجيه جهاز العميل.",
 	"notifications.clientCarrying": "الجهاز ينقل حركة العملاء. ستنتظر التحديثات وإعادة التشغيل وإيقاف التشغيل وتغييرات الروابط عند الخمول.",
+	"notifications.bootFatFault": "بدأ الجهاز بشكل طبيعي. تحتاج ملفات بدء التشغيل إلى فحص في الصيانة القادمة. لا حاجة لأي إجراء الآن.",
 	"notifications.powerWaitingForUpdate": "سيتم إيقاف التشغيل بعد انتهاء التحديث الجاري.",
 	"notifications.powerStuckOnUpdate": "لم يكتمل التحديث بعد مرور 15 دقيقة. سيتم إيقاف تشغيل الجهاز عند اكتماله.",
 	"notifications.powerShuttingDown": "جارٍ إيقاف التشغيل.",

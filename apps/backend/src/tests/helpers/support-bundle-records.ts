@@ -35,6 +35,24 @@ const settingsRow = z.strictObject({
 	autostart: z.boolean().nullable(),
 	hardwareKind: z.string(),
 	data: z.strictObject({ used: z.number(), total: z.number() }).nullable(),
+	bootFat: z
+		.discriminatedUnion("state", [
+			z.strictObject({ state: z.literal("absent") }),
+			z.strictObject({
+				state: z.literal("present"),
+				reason: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),
+				exit: z.number().int().nullable(),
+				errno: z
+					.string()
+					.regex(/^E[A-Z0-9]{1,15}$|^unknown$/)
+					.nullable(),
+			}),
+			z.strictObject({
+				state: z.literal("unreadable"),
+				errno: z.string().regex(/^E[A-Z0-9]{1,15}$|^unknown$/),
+			}),
+		])
+		.optional(),
 });
 const eventRow = z.strictObject({
 	section: z.literal("events"),
