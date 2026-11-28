@@ -19,13 +19,17 @@
 /* Read the revision numbers */
 import { release } from "node:os";
 
-import { ENGINE_UNREACHABLE_REVISION } from "@ceraui/rpc/schemas";
+import {
+	ENGINE_UNREACHABLE_REVISION,
+	type Revisions,
+} from "@ceraui/rpc/schemas";
 
 import { execFileP } from "../../helpers/exec.ts";
 import { logger } from "../../helpers/logger.ts";
-import { DEFAULT_SPAWN_TIMEOUT_MS } from "../../helpers/spawn-policy.ts";
+import { spawnWithTimeout } from "../../helpers/spawn-policy.ts";
+import { broadcast } from "../../rpc/events.ts";
 
-import { srtlaSendExec } from "../streaming/streamloop.ts";
+import { srtlaSendExec } from "../streaming/streamloop/exec-paths.ts";
 import { hasCapability } from "./board-capabilities.ts";
 
 /**
@@ -43,7 +47,15 @@ import { hasCapability } from "./board-capabilities.ts";
  */
 export { ENGINE_UNREACHABLE_REVISION };
 
-const revisions: Record<string, string> = {};
+const UNKNOWN_REVISION = "unknown revision";
+const REVISION_MAX_BUFFER = 4096;
+
+const revisions: Revisions = {
+	ceralive: UNKNOWN_REVISION,
+	srtla: UNKNOWN_REVISION,
+	bun: Bun.version,
+	kernel: release(),
+};
 
 type EngineVersionProbe = () => Promise<string | undefined>;
 
@@ -87,11 +99,16 @@ export async function refreshEngineRevision(): Promise<string> {
 	return revisions.cerastream;
 }
 
-const UNKNOWN_REVISION = "unknown revision";
-
+/**
+ * The sender version, capped like the boot probes: a truncated or oversized
+ * answer is never published.
+ */
 export async function refreshSenderRevision(): Promise<string> {
 	try {
-		const result = await execFileP(srtlaSendExec, ["-v"]);
+		const result = await execFileP(srtlaSendExec, ["-v"], {
+			maxBuffer: REVISION_MAX_BUFFER,
+			requireCompleteOutput: true,
+		});
 		revisions.srtla = result.stdout.trim() || UNKNOWN_REVISION;
 	} catch (_err) {
 		revisions.srtla = UNKNOWN_REVISION;
@@ -99,22 +116,14 @@ export async function refreshSenderRevision(): Promise<string> {
 	return revisions.srtla;
 }
 
-/**
- * Argv-only sibling of `refreshSenderRevision` for probes that may legitimately
- * be ABSENT. The sender reader answers the literal `"unknown revision"`, a
- * fine value to render in a version slot but useless to a resolution ladder —
- * the ladder has to tell "this rung had no answer" from "this rung answered".
- */
-function probe(argv: string[]): string | undefined {
+/** A failed probe leaves the caller free to try the next revision source. */
+async function probe(argv: string[]): Promise<string | undefined> {
 	try {
-		const result = Bun.spawnSync(argv, {
-			stdout: "pipe",
-			stderr: "pipe",
-			timeout: DEFAULT_SPAWN_TIMEOUT_MS,
+		const result = await spawnWithTimeout(argv, {
+			maxBuffer: REVISION_MAX_BUFFER,
+			requireCompleteOutput: true,
 		});
-		if (result.exitCode !== 0) return undefined;
-		const out = result.stdout.toString().trim();
-		return out.length > 0 ? out : undefined;
+		return result.exitCode === 0 ? result.stdout.trim() : undefined;
 	} catch (_err) {
 		return undefined;
 	}
@@ -168,7 +177,7 @@ export interface CeraUiRevisionSources {
 	/** The version `dpkg` records for the installed package, on a real device only. */
 	readInstalledPackageVersion: () => Promise<string | undefined>;
 	/** The working tree's own commit — the dev/git-checkout last resort. */
-	readWorkingTreeCommit: () => string | undefined;
+	readWorkingTreeCommit: () => Promise<string | undefined>;
 }
 
 export const defaultCeraUiRevisionSources: CeraUiRevisionSources = {
@@ -181,9 +190,13 @@ export const defaultCeraUiRevisionSources: CeraUiRevisionSources = {
 		if (!(await hasCapability("system-control"))) return undefined;
 		// biome-ignore lint/suspicious/noTemplateCurlyInString: dpkg-query's own field syntax, not a JS placeholder
 		const versionField = "-f=${Version}";
-		return probe(["dpkg-query", "-W", versionField, CERAUI_PACKAGE_NAME]);
+		return (
+			(await probe(["dpkg-query", "-W", versionField, CERAUI_PACKAGE_NAME])) ||
+			undefined
+		);
 	},
-	readWorkingTreeCommit: () => probe(["git", "rev-parse", "--short", "HEAD"]),
+	readWorkingTreeCommit: async () =>
+		(await probe(["git", "rev-parse", "--short", "HEAD"])) || undefined,
 };
 
 /**
@@ -226,7 +239,7 @@ export async function resolveCeraUiRevision(
 		(await sources.readVersionStamp()) ??
 		(await sources.readInstalledPackageVersion());
 	const build =
-		(await sources.readBuildStamp()) ?? sources.readWorkingTreeCommit();
+		(await sources.readBuildStamp()) ?? (await sources.readWorkingTreeCommit());
 	return composeCeraUiRevision(version, build);
 }
 
@@ -248,6 +261,7 @@ export async function initRevisions(
 	} catch (_err) {
 		// Silently ignore if CERALIVE image version file doesn't exist
 	}
+	broadcast("revisions", revisions);
 	logger.debug("Revisions", revisions);
 }
 

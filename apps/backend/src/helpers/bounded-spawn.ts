@@ -34,6 +34,8 @@ export interface BoundedSpawnOptions {
 	readonly signal?: AbortSignal;
 	readonly env?: Readonly<Record<string, string | undefined>>;
 	readonly maxBuffer?: number;
+	/** Require EOF on both streams before returning collected output. */
+	readonly requireCompleteOutput?: boolean;
 	readonly onExit?: (exitCode: number) => void;
 	readonly onSpawn?: (child: Subprocess<"ignore", "pipe", "pipe">) => void;
 	/** Observes real child exit even when setup or bounded collection fails. */
@@ -74,6 +76,10 @@ export async function collectBoundedChild(
 	const readers: PipeReader[] = [];
 	let collecting = true;
 	let discarding = false;
+	// Pipes that have not reached EOF. A reader stopped early (overflow, a
+	// deadline or closeReaders) never decrements it, so a positive count means
+	// the collected output may be incomplete.
+	let openStreams = 2;
 	const overflow = Promise.withResolvers<Error>();
 	const drain = async (reader: PipeReader, key: "stdout" | "stderr") => {
 		const decoder = new TextDecoder();
@@ -83,6 +89,7 @@ export async function collectBoundedChild(
 			if (!collecting) break;
 			if (chunk.done) {
 				if (!discarding) acc[key] += decoder.decode();
+				openStreams--;
 				break;
 			}
 			if (discarding) continue;
@@ -191,6 +198,9 @@ export async function collectBoundedChild(
 		}
 		if (successfulBeforeTermination)
 			await bounded(drained, BOUNDED_SPAWN_DRAIN_MS);
+		if (opts.requireCompleteOutput && openStreams !== 0) {
+			throw new Error(`Incomplete subprocess output: ${command}`);
+		}
 		return {
 			exitCode: outcome.kind === "exit" ? outcome.code : 0,
 			stdout: acc.stdout,

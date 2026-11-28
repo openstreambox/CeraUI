@@ -17,8 +17,8 @@ import { readBootedOsReleaseVersion } from "./update-orchestrator/os-manifest.ts
 export type VersionContextDeps = {
 	readonly bootId: () => string | undefined;
 	readonly revisions: () =>
-		| Readonly<Record<string, string>>
-		| Promise<Readonly<Record<string, string>>>;
+		| Readonly<Record<string, string | undefined>>
+		| Promise<Readonly<Record<string, string | undefined>>>;
 	readonly mocks: () => boolean;
 	readonly readOsImage: () => Promise<string | undefined>;
 	readonly readLegacyOsImage: () => Promise<string>;

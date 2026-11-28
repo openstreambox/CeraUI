@@ -1178,10 +1178,11 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 			"spawnWithTimeout/collectBoundedChild rejects termination-induced zero; enable maps typed timeout to addon_validation_failed auto-disable",
 	},
 	{
-		id: "revisions.readRevision",
+		id: "revisions.probe",
 		file: "modules/system/revisions.ts",
-		symbol: "readRevision",
-		command: "cmd.split(' ') (spawnSync, version probes)",
+		symbol: "probe",
+		command:
+			"git rev-parse --short HEAD (dpkg-query via revisions.installedPackageVersion)",
 		class: "bounded-probe",
 		contract: {
 			timed: true,
@@ -1192,7 +1193,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		},
 		status: "enforced",
 		mechanism:
-			"git rev-parse / `<exec> -v` quick probes; Bun.spawnSync timeout caps a hung probe → 'unknown revision'",
+			"spawnWithTimeout bounds TERM/KILL cleanup; a timed-out git probe provides no build commit. The SRTLA version read goes through execFileP in refreshSenderRevision",
 	},
 	{
 		id: "revisions.installedPackageVersion",
@@ -1209,7 +1210,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		},
 		status: "enforced",
 		mechanism:
-			"one-shot at boot gated by the system-control capability; Bun.spawnSync timeout caps a hung dpkg lock, and a non-zero exit or empty stdout resolves `undefined` so the ladder falls through to the git rung rather than throwing",
+			"one-shot at boot gated by the system-control capability; spawnWithTimeout bounds a hung child, and a timeout, non-zero exit or empty stdout resolves `undefined` so the ladder falls through to the git rung rather than throwing",
 	},
 	{
 		id: "srtlaSend.capabilityProbe",
