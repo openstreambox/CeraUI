@@ -365,7 +365,7 @@ describe("WifiCode — New Wi-Fi password", () => {
 				"Every device on the box's Wi-Fi drops and has to join again with the new code.",
 			),
 		).toBeTruthy();
-		expect(screen.queryByText(/that stream drops/)).toBeNull();
+		expect(screen.queryByText(/Traffic through the box/)).toBeNull();
 		await fireEvent.click(
 			screen.getByRole("button", { name: "Keep this one" }),
 		);
@@ -380,7 +380,7 @@ describe("WifiCode — New Wi-Fi password", () => {
 		expect(onrenew).toHaveBeenCalledTimes(1);
 	});
 
-	it("names the stream that may go through the box", async () => {
+	it("names the traffic through the box that stops", async () => {
 		render(WifiCode, {
 			name: "Box",
 			password: "correcthorse",
@@ -391,7 +391,7 @@ describe("WifiCode — New Wi-Fi password", () => {
 		);
 		expect(
 			screen.getByText(
-				"If a device is streaming through the box, that stream drops",
+				"Traffic through the box from those devices stops until they join again.",
 			),
 		).toBeTruthy();
 		// Never as if the stream were already off.
