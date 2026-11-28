@@ -6,6 +6,7 @@ import {
 } from "./shutdown-inhibitor.ts";
 
 let protection: ReturnType<typeof createShutdownInhibitor> | undefined;
+let exitHookInstalled = false;
 let encoder = false;
 let carrying = false;
 export function setShutdownProtection(
@@ -50,12 +51,37 @@ export function initShutdownProtection(
 ): void {
 	if (protection) return;
 	protection = createShutdownInhibitor(acquire);
-	process.once("exit", () => protection?.dispose());
+	if (!exitHookInstalled) {
+		exitHookInstalled = true;
+		process.once("exit", () => protection?.dispose());
+	}
 	// Seed both owners even when logind is not ready. Later publication retries.
-	const encoderReady = protection.set("encoder", encoder);
-	const carryingReady = protection.set("carrying", carrying);
-	if (!encoderReady || !carryingReady)
+	const installed = protection;
+	const encoderReady = installed.set("encoder", encoder);
+	const carryingReady = installed.set("carrying", carrying);
+	if (encoderReady && carryingReady) return;
+	const warnUnavailable = () =>
 		logger.warn(
 			"Shutdown protection unavailable at startup; retaining owners for retry",
 		);
+	// An active owner starts an asynchronous logind request, so set() reports
+	// false until it answers. Only a request that fails is worth a warning.
+	const pending = installed.pending();
+	if (!pending) {
+		warnUnavailable();
+		return;
+	}
+	const reportSettled = () => {
+		if (protection !== installed || installed.confirmed()) return;
+		if (encoder || carrying) warnUnavailable();
+	};
+	void pending.then(reportSettled, reportSettled);
+}
+
+/** Test seam: drop the installed inhibitor and both owners. */
+export function resetShutdownProtectionForTest(): void {
+	protection?.dispose();
+	protection = undefined;
+	encoder = false;
+	carrying = false;
 }
