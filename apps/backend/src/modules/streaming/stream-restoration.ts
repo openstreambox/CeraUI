@@ -70,6 +70,7 @@ import {
 	RESTORATION_UNKNOWN_DEADLINE_MS,
 	type RecoveryFailureReason,
 	readArmedStreamMarker,
+	restorationLaunchOverride,
 	writeArmedStreamMarker,
 } from "./armed-stream-marker.ts";
 import { captureOperatorStopIntent } from "./operator-stop-intent.ts";
@@ -128,11 +129,17 @@ export function captureArmedStreamConfig(): ArmedStreamConfig {
 	copy("input_mode");
 	// The capture the Start dispatched, not a save made while it launched.
 	const capture = pinnedLaunchedCapture();
-	if (capture !== undefined)
+	if (capture !== undefined) {
+		const unset: string[] = [];
 		for (const key of LAUNCHED_CAPTURE_KEYS) {
-			if (capture[key] === undefined) delete snapshot[key];
-			else snapshot[key] = capture[key];
+			if (capture[key] !== undefined) snapshot[key] = capture[key];
+			else {
+				delete snapshot[key];
+				unset.push(key);
+			}
 		}
+		if (unset.length > 0) snapshot.capture_unset = unset;
+	}
 	return snapshot as ArmedStreamConfig;
 }
 
@@ -263,7 +270,10 @@ async function defaultLaunch(
 
 	if (!current()) return { ok: false, reason: "start_cancelled" };
 	const startAudio = restoredStartAudio(config);
-	const launchConfig = { ...config, ...startAudio.config };
+	const launchConfig = {
+		...restorationLaunchOverride(config),
+		...startAudio.config,
+	};
 	let resolved: Awaited<ReturnType<typeof validateConfig>>;
 	try {
 		resolved = await validateConfig(launchConfig, startAudio);
