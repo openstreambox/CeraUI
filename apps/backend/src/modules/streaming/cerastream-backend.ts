@@ -1159,18 +1159,8 @@ export class CerastreamBackend implements StreamingBackend {
 								this.deps.logger,
 							);
 							startParams = authorized.params;
-							if (startParams.audio?.inputs === undefined) {
+							if (startParams.audio?.inputs === undefined)
 								startMixInputs = undefined;
-								// A restoration brings back what this engine took, not the mix
-								// it was refused.
-								const pinned = pinnedLaunchedAudio();
-								if (
-									opts.audioAtDispatch !== undefined &&
-									params.audio?.inputs !== undefined &&
-									pinned?.audio_inputs !== undefined
-								)
-									pinLaunchedAudio({ ...pinned, audio_inputs: undefined });
-							}
 							const omittedAtAssembly = droppedFeatures.length > 0;
 							droppedFeatures = [
 								...new Set([...droppedFeatures, ...authorized.dropped]),
@@ -1178,6 +1168,16 @@ export class CerastreamBackend implements StreamingBackend {
 							capabilitiesAnswered =
 								startCaps !== undefined && !omittedAtAssembly;
 						}
+						// A restoration brings back the audio this Start sends, not a saved
+						// mix that assembly or this engine's answer left out.
+						const pinned = pinnedLaunchedAudio();
+						if (
+							opts.audioAtDispatch !== undefined &&
+							!audioOff &&
+							startParams.audio?.inputs === undefined &&
+							pinned?.audio_inputs !== undefined
+						)
+							pinLaunchedAudio({ ...pinned, audio_inputs: undefined });
 						if (attempt !== undefined) {
 							dispatched = true;
 							return client.start({
