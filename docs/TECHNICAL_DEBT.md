@@ -385,11 +385,11 @@ can be reduced without deleting operator copy or a language.
 id: TD-federation-i18n-catalog-size
 title: Federation toast-host shared chunk carries an oversized static Paraglide catalog
 track: 1
-status: open
+status: resolved
 exit_criteria: `bun run build:federation && bun scripts/ci/bundle-report.mjs --federation-only`
 owner: ceraui-team
 registered_at: 2026-08-15
-resolved_at: null
+resolved_at: 2026-11-21
 unblock: The federation toast-host.js shared chunk measured 613,463 B gzip on 2026-08-15, versus the prior 245,936 B budget, because a hosted federation bundle is one signed manifest-pinned module graph and must carry the Paraglide catalog statically rather than lazy-loading the SPA's locale chunks. Locale-modules compilation and full minification are already in use. Revisit this debt in a dedicated architecture effort by evaluating dynamic federation chunks with manifest/signing/CSP support or a smaller federation-specific catalog surface; keep this entry open until the static catalog footprint and live budget can be reduced.
 ```
 
@@ -415,6 +415,51 @@ references a key outside them. Toast-host now measures 628,355 B gzip
 (2,646,629 B raw, down from 2,940,628 B). The baseline, allowance and ceiling are
 unchanged. The debt stays open, because the scoped catalog is still static and is
 still most of the chunk.
+
+**2026-11-21 — resolved: the federation catalog carries only the keys it can
+render.** On `4b042965` toast-host measured 719,011 B gzip, 30,468 B over the
+688,543 B ceiling, and still carried every key of the 14 namespaces (2,696).
+`apps/frontend/vite.federation-catalog.ts` now narrows each namespace barrel to
+`apps/frontend/src/lib/federation/catalog-keys.json`: the keys the rendered
+federation code names, the families declared for its computed lookups, and
+producer wire keys in the families that code reads (324 keys). The build fails on
+a missing or stale entry and on an undeclared computed lookup, and the built
+harness renders every listed key through the shipped resolver in all ten
+locales. Toast-host now measures 212,698 B gzip (759,875 B raw, from
+3,037,755 B). Its baseline moves to
+that measurement with the unchanged 8,192 B allowance, the displaced baselines
+stay in the report, and Build Check runs the federation build, the strict
+`--federation-only` report and the built-registry tests on every code-changing PR. The catalog is still static, but it is now the dialogs' own copy, not
+the SPA's; see the
+[dependency baseline](agents/dep-baseline-as-of-2026-11.md#november-21-2026-key-scoped-federation-catalog).
+
+**2026-11-28 — measured federation rebaseline on the composed build.** On
+`f3411dfc` with the key-scoped catalog, toast-host measures 229,983 B gzip
+(386 keys), 9,093 B over the 220,890 B ceiling, and `frontend.css` measures
+26,924 B, 429 B over its 26,495 B ceiling. The same tree without the key-scoped
+catalog measures 799,524 B for toast-host and the same 26,924 B for
+`frontend.css`. The growth since 2026-11-21 is dialog copy and styles merged
+since then (62 more keys the dialogs render, mostly power and start-feature
+notices), not keys leaking back in: the build still rejects any key the bundles
+do not name or declare. Both baselines move to those measurements with their
+allowances unchanged (8,192 B for toast-host, 10% for `frontend.css`), giving
+ceilings of 238,175 B and 29,616 B. Every other federation and SPA budget is
+unchanged, and the strict `--federation-only` report still runs on every
+code-changing PR and before publication. These budgets bound what a host
+downloads and parses for the hosted dialogs; they are not a device storage
+limit, which package and image builds check separately.
+
+```debt
+id: TD-federation-dialog-footprint
+title: Federation dialog bundles grew past their key-scoped baselines
+track: 1
+status: open
+exit_criteria: `bun run build:federation && bun scripts/ci/bundle-report.mjs --federation-only`
+owner: ceraui-team
+registered_at: 2026-11-28
+resolved_at: null
+unblock: Measured 229,983 B toast-host and 26,924 B frontend.css gzip on f3411dfc against the 2026-11-21 baselines of 212,698 B and 24,087 B, kept in FEDERATION_DISPLACED_BASELINES. Accepted as feature footprint; the copy and styles are what the dialogs render. Revisit when the dialogs' shared styles or notice copy are next reworked, without dropping operator copy or a language, and measure the composed build whenever the federation budgets fail.
+```
 
 ```debt
 id: TD-pip
