@@ -48,6 +48,7 @@ vi.mock("$lib/rpc/client", () => ({
 			return () => {};
 		},
 		getConnectionState: () => "connected",
+		isAwaitingSignIn: () => false,
 		connect: () => {},
 		getSocket: () => null,
 		sendLegacy: () => {},
