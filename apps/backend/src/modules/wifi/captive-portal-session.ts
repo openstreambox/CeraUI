@@ -16,6 +16,16 @@ const radioSchema = z
 		ifname,
 		profileUuid: z.uuid(),
 		mode: z.literal("infrastructure"),
+		/** Published incarnation of this exact registry row; rotates with its lifetime. */
+		incarnation: z.string().min(1).max(128),
+		/** Sampled kernel lifetime the incarnation was published for. */
+		lifetime: z
+			.object({
+				ifindex: z.number().int().positive(),
+				wiphy: z.number().int().nonnegative(),
+				phyPath: z.string().min(1).max(1024),
+			})
+			.readonly(),
 	})
 	.readonly();
 // D-Bus GetId + the unique NM bus owner, NOT a cached profile UUID or local counter.
@@ -67,12 +77,22 @@ const bindingSchema = z
 			radio.ifname === activation.ifname &&
 			radio.ifname === link.ifname &&
 			radio.permanentMac === link.permanentMac &&
+			radio.lifetime.ifindex === link.ifindex &&
 			radio.profileUuid === activation.profileUuid &&
 			activation.stationMac === link.stationMac,
 	)
 	.readonly();
 
 export type PortalBinding = z.infer<typeof bindingSchema>;
+export type PortalRadio = z.infer<typeof radioSchema>;
+/** Returned by a radio reader when the published incarnation is not the expected one. */
+export const PORTAL_RADIO_CHANGED: unique symbol = Symbol(
+	"portal-radio-changed",
+);
+export type PortalRadioRead =
+	| PortalRadio
+	| typeof PORTAL_RADIO_CHANGED
+	| undefined;
 export type PortalCapture =
 	| { readonly ok: true; readonly binding: PortalBinding }
 	| {
@@ -88,21 +108,33 @@ export interface PortalBindingReaders {
 const same = (a: unknown, b: unknown) =>
 	JSON.stringify(a) === JSON.stringify(b);
 
-/** Read-only capture. Readers must bracket their own underlying authority; no native defaults. */
+/**
+ * Read-only capture. Readers must bracket their own underlying authority; no
+ * native defaults. The radio is re-read around every authoritative read: a
+ * different incarnation or record is a change, an absent one is unavailable.
+ */
 export async function capturePortalBinding(
-	readRadio: () => unknown,
+	readRadio: () => PortalRadioRead | Promise<PortalRadioRead>,
 	readers: PortalBindingReaders,
 ): Promise<PortalCapture> {
 	const changed = Symbol();
 	try {
-		const radio = radioSchema.parse(readRadio());
-		const check = () => {
-			if (!same(radio, radioSchema.parse(readRadio()))) throw changed;
+		const first = await readRadio();
+		if (first === PORTAL_RADIO_CHANGED)
+			return { ok: false, reason: "binding_changed" };
+		const radio = radioSchema.parse(first);
+		const check = async () => {
+			const current = await readRadio();
+			if (
+				current === PORTAL_RADIO_CHANGED ||
+				!same(radio, radioSchema.parse(current))
+			)
+				throw changed;
 		};
 		const read = async (fn: () => Promise<unknown>) => {
-			check();
+			await check();
 			const value = await fn();
-			check();
+			await check();
 			return value;
 		};
 		const epoch = epochSchema.parse(await read(() => readers.readEpoch()));
