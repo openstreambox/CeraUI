@@ -51,7 +51,9 @@ Legacy `sendInitialStatus` emits config, pipelines, sources, optional relays,
 status, netif, sensors, encoder-load, fan, cpu, bluetooth, revisions, acodecs and
 persistent notifications. Its remote socket send wrapper now covers that entire
 sequence and every subsequent send, including direct replies. Numeric sequence
-metadata survives; arbitrary request IDs and unknown envelopes do not. Encoder
+metadata survives on frames that still carry a projected type; a frame whose every
+type is withheld is not sent, so no bare sequence number goes out. Arbitrary
+request IDs and unknown envelopes do not survive. Encoder
 authentication remains a separate transport exchange; its credential is necessarily
 presented to the selected authentication service and is not a status field.
 
@@ -81,7 +83,8 @@ No external hosted remote UI or browser E2E was exercised.
 A box without its own encoder (setup engine `none`) shows a phone Home remotely
 instead of encoder controls. On that box both transports, the legacy socket
 wrapper and the cloud relay, send `status` frames only. Config, netif, modems,
-Wi-Fi, relays, sensors, notifications and every other type stay local. Each
+Wi-Fi, relays, sensors, notifications and every other type stay local, and a
+withheld frame sends nothing, not even its sequence number. Each
 status frame is built by `projectPhoneStatus` from typed leaves:
 
 | Field | Wire type |
