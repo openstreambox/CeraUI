@@ -89,6 +89,25 @@ export function phaseLabelKey(phase: UpdateOrchestratorPhase): string {
 
 export const UPDATE_PHASE_LABEL_KEYS = PHASE_LABEL_KEYS;
 
+const INSTALL_WAIT_KEYS: Readonly<
+	Record<NonNullable<UpdateOrchestratorWireState["install_wait"]>, string>
+> = {
+	unit_pinned: "settings.updates.installWait.unitPinned",
+	unit_unreadable: "settings.updates.installWait.unitUnreadable",
+};
+
+/**
+ * Why a queued package install cannot launch yet, beyond waiting for idle:
+ * only a queued install carries it, and only while the device reports it.
+ */
+export function installWaitKey(
+	wire: UpdateOrchestratorWireState | undefined | null,
+): string | undefined {
+	if (wire?.phase !== "awaiting-idle" || wire.install_wait === undefined)
+		return undefined;
+	return INSTALL_WAIT_KEYS[wire.install_wait];
+}
+
 /** A staged system image that takes effect on the next restart. */
 export function appliesAfterRestart(
 	phase: UpdateOrchestratorPhase | undefined,
@@ -243,6 +262,7 @@ const ACTION_REFUSAL_KEYS: ReadonlyMap<string, string> = new Map([
 	["not_available", "settings.updates.refusal.notAvailable"],
 	["stream_active", "settings.updates.refusal.streamActive"],
 	["booted_version_unknown", "settings.updates.refusal.bootedVersionUnknown"],
+	["install_unit_waiting", "settings.updates.refusal.installUnitWaiting"],
 	["not_connected", "settings.updates.refusal.notConnected"],
 ]);
 

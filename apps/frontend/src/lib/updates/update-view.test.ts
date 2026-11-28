@@ -12,6 +12,7 @@ import {
 	etaMinutes,
 	familyLabel,
 	formatUpdateTime,
+	installWaitKey,
 	isUpdateBusy,
 	isUpdateRefusingStart,
 	phaseLabelKey,
@@ -394,5 +395,48 @@ describe("labels", () => {
 		expect(formatUpdateTime(null, "en")).toBeUndefined();
 		expect(formatUpdateTime("not a date", "en")).toBeUndefined();
 		expect(formatUpdateTime(Date.UTC(2026, 8, 24, 12), "en")).toMatch(/2026/);
+	});
+});
+
+describe("installWaitKey: why a queued install cannot launch yet", () => {
+	const queued = (
+		install_wait?: UpdateOrchestratorWireState["install_wait"],
+		phase: UpdateOrchestratorWireState["phase"] = "awaiting-idle",
+	): UpdateOrchestratorWireState => ({
+		schema: 1,
+		phase,
+		progress: null,
+		failure_reason: null,
+		cellular_override_id: null,
+		...(install_wait ? { install_wait } : {}),
+	});
+
+	it("names a held install unit", () => {
+		expect(installWaitKey(queued("unit_pinned"))).toBe(
+			"settings.updates.installWait.unitPinned",
+		);
+	});
+
+	it("names an unreadable install unit", () => {
+		expect(installWaitKey(queued("unit_unreadable"))).toBe(
+			"settings.updates.installWait.unitUnreadable",
+		);
+	});
+
+	it("says nothing more while the install only waits for idle", () => {
+		expect(installWaitKey(queued())).toBeUndefined();
+	});
+
+	it("says nothing outside the queued phase", () => {
+		expect(
+			installWaitKey(queued("unit_pinned", "downloading")),
+		).toBeUndefined();
+		expect(installWaitKey(undefined)).toBeUndefined();
+	});
+
+	it("maps the install refusal to its own sentence", () => {
+		expect(actionRefusalKey("install_unit_waiting")).toBe(
+			"settings.updates.refusal.installUnitWaiting",
+		);
 	});
 });

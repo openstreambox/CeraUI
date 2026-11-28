@@ -2325,6 +2325,20 @@ export function isInstallUnitPinned(): boolean {
 	return installUnitPinned;
 }
 
+/** Why a queued install cannot launch now, as far as the install unit goes. */
+export type InstallUnitWait = "unit_pinned" | "unit_unreadable";
+
+/**
+ * The install unit's own reason a queued install waits: its name is held by a
+ * stopped unit systemd keeps loaded, or it could not be read. Cleared by a
+ * proof that finds the name free.
+ */
+export function installUnitWait(): InstallUnitWait | null {
+	if (installUnitPinned) return "unit_pinned";
+	if (installUnitProofFailing) return "unit_unreadable";
+	return null;
+}
+
 let installUnitProof: Promise<boolean> | undefined;
 
 /**
