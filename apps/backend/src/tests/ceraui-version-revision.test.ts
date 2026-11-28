@@ -35,7 +35,7 @@ const NO_SOURCES = {
 	readVersionStamp: async () => undefined,
 	readBuildStamp: async () => undefined,
 	readInstalledPackageVersion: async () => undefined,
-	readWorkingTreeCommit: () => undefined,
+	readWorkingTreeCommit: async () => undefined,
 };
 
 describe("the CeraUI row — version rung 1: the build-baked stamp", () => {
@@ -89,7 +89,7 @@ describe("the CeraUI row — version rung 1: the build-baked stamp", () => {
 			expect(
 				await resolveCeraUiRevision({
 					readInstalledPackageVersion: async () => "2026.8.4",
-					readWorkingTreeCommit: () => undefined,
+					readWorkingTreeCommit: async () => undefined,
 				}),
 			).toBe("2026.8.4");
 		} finally {
@@ -116,7 +116,7 @@ describe("the CeraUI row — version rung 2: the installed package", () => {
 				...NO_SOURCES,
 				readInstalledPackageVersion: async () =>
 					"2026.8.5-20260829T181141.8738fd63",
-				readWorkingTreeCommit: () => "8738fd63",
+				readWorkingTreeCommit: async () => "8738fd63",
 			}),
 		).toBe("2026.8.5-20260829T181141.8738fd63");
 	});
@@ -133,7 +133,7 @@ describe("the CeraUI row — version rung 3: the dev checkout is unchanged", () 
 		expect(
 			await resolveCeraUiRevision({
 				...NO_SOURCES,
-				readWorkingTreeCommit: () => "8738fd63",
+				readWorkingTreeCommit: async () => "8738fd63",
 			}),
 		).toBe("8738fd63");
 	});
@@ -155,7 +155,11 @@ describe("the CeraUI row — version rung 3: the dev checkout is unchanged", () 
 		expect(
 			await defaultCeraUiRevisionSources.readVersionStamp(),
 		).toBeUndefined();
-		expect(defaultCeraUiRevisionSources.readWorkingTreeCommit()).toBeTruthy();
+		const git = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"]);
+		expect(git.exitCode).toBe(0);
+		expect(await defaultCeraUiRevisionSources.readWorkingTreeCommit()).toBe(
+			git.stdout.toString().trim(),
+		);
 	});
 });
 

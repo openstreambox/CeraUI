@@ -85,7 +85,10 @@ export async function versionSourceHarness() {
 		return liveEngine;
 	});
 	const snapshot = { ...getRevisions() };
-	for (const key of Object.keys(getRevisions())) delete getRevisions()[key];
+	// The harness empties the module record in place; the typed snapshot has
+	// required fields, so index it as a plain record here.
+	const live = getRevisions() as Record<string, string | undefined>;
+	for (const key of Object.keys(live)) delete live[key];
 	await initRevisions();
 	const initialized = { ...getRevisions() };
 	return {
@@ -106,7 +109,7 @@ export async function versionSourceHarness() {
 			files.mockRestore();
 			state.mockRestore();
 			setEngineVersionProbe(null);
-			for (const key of Object.keys(getRevisions())) delete getRevisions()[key];
+			for (const key of Object.keys(live)) delete live[key];
 			Object.assign(getRevisions(), snapshot);
 			for (const key of ["NODE_ENV", "MOCK_MODE"] as const) {
 				if (savedEnv[key] === undefined) delete process.env[key];
