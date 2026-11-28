@@ -73,7 +73,6 @@ import {
 } from "../wifi/wifi-device-list.ts";
 import { isApMode } from "../wifi/wifi-hotspot-types.ts";
 import { scheduleWifiUpdate } from "../wifi/wifi-interfaces.ts";
-import { isWirelessInterface } from "../wifi/wifi-radio-identity.ts";
 import {
 	bondPhysicalId,
 	isBondOptedOut,
@@ -403,7 +402,7 @@ export function isHeldOutByModemBlock(
 		const descriptor = getUsbPhysicalDescriptor(name);
 		if (
 			descriptor?.deviceClass === "wired-ethernet" ||
-			isWirelessInterface(name)
+			isSupportedWifiIfname(name)
 		)
 			return false;
 		if (descriptor) {
@@ -1251,7 +1250,6 @@ async function refreshNetifFromOs(): Promise<void> {
 			entries.filter((entry) => !withdrawn.has(entry.name)),
 			ipOverrides,
 			undefined,
-			undefined,
 			buses,
 			undefined,
 			replaced,
@@ -1330,7 +1328,6 @@ export function processIfconfigOutput(
 	stdout: string,
 	ipOverrides?: Map<string, IpAddrSelection>,
 	now: number = getms(),
-	wirelessInterface: (name: string) => boolean = isWirelessInterface,
 	buses?: ReadonlyMap<string, NetdevBusEvidence>,
 	ifindices?: ReadonlyMap<string, number>,
 	pollReplacements?: ReadonlySet<string>,
@@ -1339,7 +1336,6 @@ export function processIfconfigOutput(
 		parseIfconfigEntries(stdout),
 		ipOverrides,
 		now,
-		wirelessInterface,
 		buses,
 		ifindices,
 		pollReplacements,
@@ -1350,7 +1346,6 @@ function publishIfconfigEntries(
 	entries: readonly IfconfigEntry[],
 	ipOverrides?: Map<string, IpAddrSelection>,
 	now: number = getms(),
-	wirelessInterface: (name: string) => boolean = isWirelessInterface,
 	buses?: ReadonlyMap<string, NetdevBusEvidence>,
 	ifindices?: ReadonlyMap<string, number>,
 	pollReplacements?: ReadonlySet<string>,
@@ -1389,7 +1384,7 @@ function publishIfconfigEntries(
 			const mac = int.match(/ether ([0-9a-f:]+)/)?.[1];
 
 			// update the list of WiFi devices
-			if (wirelessInterface(name)) {
+			if (isSupportedWifiIfname(name)) {
 				if (mac) {
 					wifiDeviceListAdd(name, mac, isRunning ? inetAddr : null);
 				}
@@ -1422,7 +1417,7 @@ function publishIfconfigEntries(
 			}
 			if (replaced) {
 				intsChanged = true;
-				if (wirelessInterface(name) || isSupportedWifiIfname(name)) wifiIncarnationChanged = true;
+				if (isSupportedWifiIfname(name)) wifiIncarnationChanged = true;
 			}
 			polledNames.add(name);
 			let tp = 0;
@@ -1920,7 +1915,9 @@ export function netIfBuildMsg() {
 		const parent = m[translation.parent];
 		if (!parent || parent.ip) continue; // Native IPv4 still wins.
 		parent.ip = translation.ipv4;
-		parent.addresses = [parent.ip, parent.ipv6].filter((ip): ip is string => ip !== undefined);
+		parent.addresses = [parent.ip, parent.ipv6].filter(
+			(ip): ip is string => ip !== undefined,
+		);
 		parent.enabled = isBondCandidate(name, int);
 		parent.tp = int.tp;
 		if (int.tx_bps !== undefined) parent.tx_bps = int.tx_bps;
