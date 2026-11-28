@@ -314,11 +314,69 @@ const ethernetRoleOperationIdSchema = z
 	.max(64)
 	.regex(/^[A-Za-z0-9_-]+$/);
 
+// Safe network changes (behind the device's network-change flag). The two
+// ask-before answers are the only ones the device accepts: the protected change
+// (undone unless confirmed) and the deliberate "keep it" that skips the undo.
+export const changeSafetyAnswerSchema = z.enum(['undo-automatically', 'keep-change']);
+export type ChangeSafetyAnswer = z.infer<typeof changeSafetyAnswerSchema>;
+
+export const changeSafetyResultSchema = z.discriminatedUnion('kind', [
+	z.object({
+		kind: z.literal('ask-before'),
+		messageKey: z.string(),
+		via: z.string().optional(),
+		seconds: z.number().int().positive(),
+		primary: z.object({ answer: z.literal('undo-automatically'), labelKey: z.string() }),
+		deliberate: z.object({ answer: z.literal('keep-change'), labelKey: z.string() }),
+	}),
+	z.object({ kind: z.literal('pending'), id: z.string(), expiresAt: z.number() }),
+	z.object({ kind: z.literal('kept'), id: z.string() }),
+]);
+export type ChangeSafetyResult = z.infer<typeof changeSafetyResultSchema>;
+
+export const changeSafetyStatusSchema = z.object({
+	enabled: z.boolean(),
+	pending: z.object({ id: z.string(), expiresAt: z.number(), path: z.string() }).nullable(),
+	kept: z.object({ id: z.string(), undoKey: z.string() }).nullable(),
+	undoIncomplete: z.boolean(),
+	commitIncomplete: z.boolean(),
+	notice: z
+		.object({
+			id: z.string(),
+			reason: z.enum(['disconnected', 'restart']),
+			messageKey: z.string(),
+			summary: z.object({
+				key: z.string(),
+				params: z.record(z.string(), z.string()).optional(),
+			}),
+		})
+		.nullable(),
+});
+export type ChangeSafetyStatus = z.infer<typeof changeSafetyStatusSchema>;
+
+export const changeSafetyIdInputSchema = z.object({ id: z.string().min(1).max(64) }).strict();
+
+export const changeSafetyNoticeInputSchema = z
+	.object({
+		id: z.string().min(1).max(64),
+		answer: z.enum(['make-change', 'leave-undone']),
+		changeAnswer: changeSafetyAnswerSchema.optional(),
+	})
+	.strict();
+
+export const changeSafetyActionOutputSchema = z.object({
+	success: z.boolean(),
+	error: z.string().optional(),
+	changeSafety: changeSafetyResultSchema.optional(),
+});
+export type ChangeSafetyActionOutput = z.infer<typeof changeSafetyActionOutputSchema>;
+
 export const setEthernetRoleInputSchema = z
 	.object({
 		name: z.string().min(1),
 		role: ethernetRoleSchema,
 		op: ethernetRoleOperationIdSchema.optional(),
+		changeAnswer: changeSafetyAnswerSchema.optional(),
 	})
 	.strict();
 export type SetEthernetRoleInput = z.infer<typeof setEthernetRoleInputSchema>;
@@ -340,6 +398,7 @@ export const setEthernetRoleOutputSchema = z.object({
 	success: z.boolean(),
 	applied: ethernetRoleSchema.optional(),
 	error: ethernetRoleErrorSchema.optional(),
+	changeSafety: changeSafetyResultSchema.optional(),
 });
 export type SetEthernetRoleOutput = z.infer<typeof setEthernetRoleOutputSchema>;
 

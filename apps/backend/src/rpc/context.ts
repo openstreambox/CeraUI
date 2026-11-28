@@ -1,6 +1,8 @@
 /**
  * RPC Context - Creates context for each WebSocket message
  */
+import { randomUUID } from "node:crypto";
+
 import { UI_BUILD_PARAM } from "@ceraui/rpc/schemas";
 
 import type { AppWebSocket, RPCContext } from "./types.ts";
@@ -92,9 +94,12 @@ export function createContext(ws: AppWebSocket): RPCContext {
  * URL, so the socket records the build its page named.
  */
 export function initSocketData(url?: URL): import("./types.ts").SocketData {
+	const now = Date.now();
 	return {
 		isAuthenticated: false,
-		lastActive: Date.now(),
+		lastActive: now,
+		sessionId: randomUUID(),
+		openedAt: now,
 		...(url === undefined
 			? {}
 			: { uiBuild: url.searchParams.get(UI_BUILD_PARAM) }),

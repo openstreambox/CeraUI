@@ -13,6 +13,10 @@ export interface SocketData {
 	authToken?: string;
 	/** Last activity timestamp for keepalive */
 	lastActive: number;
+	/** Per-socket id; a reconnect is a new socket and so a new session. */
+	sessionId?: string;
+	/** When this socket opened (ms since the epoch). */
+	openedAt?: number;
 	/** Sender ID for remote relay identification */
 	senderId?: string;
 	/**
