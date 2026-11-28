@@ -112,9 +112,15 @@ interface Props {
 	deviceId: string;
 	/** The target WiFi interface — carries the live hotspot config when active. */
 	iface?: WifiInterface;
+	/**
+	 * The token of the row the operator opened this editor from, captured at the
+	 * click. The editor binds to it rather than to the row it first renders,
+	 * which may already be withholding its token for a restart.
+	 */
+	openedIncarnation?: string;
 }
 
-let { open = $bindable(false), deviceId, iface }: Props = $props();
+let { open = $bindable(false), deviceId, iface, openedIncarnation }: Props = $props();
 
 const bounds = networkConstraints.hotspot;
 
@@ -144,12 +150,26 @@ let detachedStart: AbortController | undefined;
 let detachedExpiry: ReturnType<typeof setTimeout> | undefined;
 const START_RECEIPT_TTL_MS = 60_000;
 
+// A Save already sent when the dialog closed for a changed radio keeps its
+// receipt too. It is keyed to the old radio's token, so reopening the editor on
+// another radio leaves it to settle; only its bound, a new detached Save or the
+// view going away ends it.
+let detachedSave: AbortController | undefined;
+let detachedSaveExpiry: ReturnType<typeof setTimeout> | undefined;
+
 /** At most one detached receipt, bounded on its own and gone with the view. */
 function retireDetachedStart() {
 	clearTimeout(detachedExpiry);
 	detachedExpiry = undefined;
 	detachedStart?.abort();
 	detachedStart = undefined;
+}
+
+function retireDetachedSave() {
+	clearTimeout(detachedSaveExpiry);
+	detachedSaveExpiry = undefined;
+	detachedSave?.abort();
+	detachedSave = undefined;
 }
 
 /** The dialog's own refusal wording for a Start it no longer shows. */
@@ -171,7 +191,7 @@ function current(binding: WifiRadioBinding): boolean {
 	return open && sameWifiRadio(binding, capture());
 }
 
-onDestroy(() => { ownerSession += 1; admission?.abort(); retireDetachedStart(); });
+onDestroy(() => { ownerSession += 1; admission?.abort(); retireDetachedStart(); retireDetachedSave(); });
 
 function beginAdmission(binding: WifiRadioBinding): AbortController {
 	admission?.abort();
@@ -307,21 +327,25 @@ $effect.pre(() => {
 	// A restart withholds the token for a moment; only another radio, or a token
 	// gone outside a transition, ends this dialog's radio lifetime.
 	const withheld = wifiTokenWithheld(iface);
+	const clicked = openedIncarnation;
 	untrack(() => {
 		if (opened && !prevOpen) {
 			retireDetachedStart();
-			openedTarget = { device: next.device, incarnation: next.incarnation };
+			openedTarget = { device: next.device, incarnation: clicked ?? next.incarnation };
 		}
 		// The dialog is bound to the radio lifetime it opened on. A changed or
-		// vanished pair closes it with a notice; it never follows a new
-		// incarnation of the same id, which needs a fresh pick.
-		if (opened && prevOpen && openedTarget && (openedTarget.device !== next.device ||
+		// vanished pair closes it with a notice, also on the first render after
+		// the click; it never follows a new incarnation of the same id, which
+		// needs a fresh pick.
+		if (opened && openedTarget && (openedTarget.device !== next.device ||
 			(openedTarget.incarnation !== next.incarnation && !withheld))) {
 			// A pending Start or Save keeps its receipt, bounded like the Start, so
 			// its terminal still settles the op after the dialog has closed.
-			if (admission && ((startAdmission && startAdmission.controller === admission &&
-				getOperationPhase(startAdmission.key) === 'pending') ||
-				(configAdmissionKey !== undefined && getOperationPhase(configAdmissionKey) === 'pending'))) {
+			const startPending = startAdmission !== undefined && startAdmission.controller === admission &&
+				getOperationPhase(startAdmission.key) === 'pending';
+			const savePending = !startPending && configAdmissionKey !== undefined &&
+				getOperationPhase(configAdmissionKey) === 'pending';
+			if (admission && startPending) {
 				retireDetachedStart();
 				const detached = admission;
 				detachedStart = detached;
@@ -329,6 +353,14 @@ $effect.pre(() => {
 				// Bounded like the Start operation itself.
 				detachedExpiry = setTimeout(() => {
 					if (detachedStart === detached) retireDetachedStart();
+				}, START_RECEIPT_TTL_MS);
+			} else if (admission && savePending) {
+				retireDetachedSave();
+				const detached = admission;
+				detachedSave = detached;
+				admission = undefined;
+				detachedSaveExpiry = setTimeout(() => {
+					if (detachedSave === detached) retireDetachedSave();
 				}, START_RECEIPT_TTL_MS);
 			} else admission?.abort();
 			confirmingStart = false;
@@ -578,7 +610,7 @@ async function writeConfig(
 		},
 	});
 	controller.abort();
-	if (detachedStart === controller) retireDetachedStart();
+	if (detachedSave === controller) retireDetachedSave();
 	return result;
 }
 
