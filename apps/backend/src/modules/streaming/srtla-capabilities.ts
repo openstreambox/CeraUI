@@ -58,6 +58,7 @@ export type CapabilityProbeResult =
 	| {
 			readonly bindMap: true;
 			readonly bindMapSchemaVersion: number;
+			readonly allowEmptyBond?: true;
 			readonly bindMapRequired?: true;
 			readonly bindMapRequiredEmptyReload?: true;
 			readonly bindMapContract?: number;
@@ -70,6 +71,7 @@ export const WRITER_BIND_MAP_SCHEMA_VERSION = 1;
 interface CapabilityDocument {
 	readonly capabilities?: {
 		readonly bind_map?: unknown;
+		readonly allow_empty_bond?: unknown;
 		readonly bind_map_schema_version?: unknown;
 		readonly bind_map_required?: unknown;
 		readonly bind_map_required_empty_reload?: unknown;
@@ -117,12 +119,16 @@ export function classifyCapabilityDocument(
 	// The strict flags mean what contract 2 says they mean, and nothing under any
 	// other (or missing, or mistyped) contract version: a consumer that trusted
 	// them there could require a guarantee the sender never promised.
-	if (capabilities.bind_map_contract !== 2) {
-		return { bindMap: true, bindMapSchemaVersion: version };
-	}
-	return {
-		bindMap: true,
+	const supported = {
+		bindMap: true as const,
 		bindMapSchemaVersion: version,
+		...(capabilities.allow_empty_bond === true
+			? { allowEmptyBond: true as const }
+			: {}),
+	};
+	if (capabilities.bind_map_contract !== 2) return supported;
+	return {
+		...supported,
 		bindMapContract: 2,
 		...(capabilities.bind_map_required === true
 			? { bindMapRequired: true as const }

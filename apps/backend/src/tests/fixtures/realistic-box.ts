@@ -46,6 +46,9 @@ export interface BoxLink {
 	readonly ip: string;
 	/** udev ID_PATH of the netdev; absent for a device udev gives none. */
 	readonly idPath?: string;
+	readonly serial?: string;
+	readonly vid?: string;
+	readonly pid?: string;
 	readonly kind?: "modem" | "ethernet" | "wifi" | "unknown";
 }
 
@@ -117,7 +120,12 @@ export interface RealisticBox {
 	/** Re-run the interface scan with the given links present. */
 	scan(
 		links?: readonly BoxLink[],
-		options?: { failIdPaths?: boolean; skipPhysical?: boolean },
+		options?: {
+			failIdPaths?: boolean;
+			skipPhysical?: boolean;
+			ifindices?: ReadonlyMap<string, number>;
+			now?: number;
+		},
 	): Promise<void>;
 	/** Replace the journal and re-derive the block set through production code. */
 	journal(entries: readonly ModemMutationEntry[]): Promise<void>;
@@ -160,7 +168,7 @@ export async function realisticBox(): Promise<RealisticBox> {
 				processIfconfigOutput(
 					output,
 					undefined,
-					undefined,
+					options.now,
 					new Map(
 						links.map((link) => [
 							link.ifname,
@@ -173,6 +181,7 @@ export async function realisticBox(): Promise<RealisticBox> {
 							},
 						]),
 					),
+					options.ifindices,
 				);
 			}
 			if (!options.skipPhysical)
@@ -225,8 +234,11 @@ function boxScanDeps(links: readonly BoxLink[]): RouterCellularScanDeps {
 		const kind = link.kind ?? "modem";
 		paths.set(`/sys/class/net/${link.ifname}/device`, iface);
 		dirs.set(parent, [`1-${index + 1}:1.0`]);
-		attrs.set(`${parent}/idVendor`, kind === "modem" ? "2c7c" : "0bda");
-		attrs.set(`${parent}/idProduct`, "1234");
+		attrs.set(
+			`${parent}/idVendor`,
+			link.vid ?? (kind === "modem" ? "2c7c" : "0bda"),
+		);
+		attrs.set(`${parent}/idProduct`, link.pid ?? "1234");
 		attrs.set(`${parent}/bDeviceClass`, "00");
 		attrs.set(`${parent}/busnum`, "1");
 		attrs.set(`${parent}/devnum`, String(index + 2));
@@ -246,6 +258,7 @@ function boxScanDeps(links: readonly BoxLink[]): RouterCellularScanDeps {
 					? "cdc_ether"
 					: "rtl8xxxu",
 		);
+		if (link.serial) attrs.set(`${parent}/serial`, link.serial);
 		if (link.idPath)
 			attrs.set(`/run/udev/data/c189:${index + 1}`, `E:ID_PATH=${link.idPath}`);
 	});

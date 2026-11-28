@@ -49,6 +49,16 @@ beforeEach(() => {
 	resetState();
 });
 
+test("ip address headers retain kernel indices even without an IPv4 address", () => {
+	const indices = new Map<string, number>();
+	const output = "31: wwan1: <UP> mtu 1500\n32: clat0@wwan1: <UP> mtu 1500";
+	expect(parseIpAddrShow(output, indices).size).toBe(0);
+	expect([...indices]).toEqual([
+		["wwan1", 31],
+		["clat0", 32],
+	]);
+});
+
 describe("parseIpAddrShow scope preference", () => {
 	test("prefers the global-scope DHCP lease over the link-local on the real board", () => {
 		const selected = parseIpAddrShow(IP_ADDR_SHOW_REAL_BOARD);

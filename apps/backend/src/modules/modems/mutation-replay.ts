@@ -137,7 +137,12 @@ async function replayEntry(
 	if (action === "recheck-presence") {
 		let present: boolean | undefined;
 		try {
-			present = (await captureModemState(entry.stableKey)) !== undefined;
+			present =
+				(await captureModemState(
+					entry.stableKey,
+					undefined,
+					entry.state === "decommissioned" ? undefined : entry.unitLinkId,
+				)) !== undefined;
 		} catch (err) {
 			// A settled row owes no rollback. Keep its existing refusal when
 			// presence is unknown, without making the global replay incomplete.
@@ -167,6 +172,7 @@ async function replayEntry(
 		entry.kind,
 		entry.stableKey,
 		entry.preState,
+		entry.unitLinkId,
 	);
 	assertMutationJournalRevision(revision);
 	if (outcome === "restored") {

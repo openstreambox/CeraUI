@@ -76,13 +76,26 @@ test("a modem with no current row (unplugged or renamed) still gets a notice", (
 	);
 });
 
-test("the notice describes which modem the box leaves out of sending", () => {
-	expect(heldOutMsg(undefined)).toBe(
-		"The box is keeping a modem out of its stream because a setting change on that modem could not be undone.",
+test("the notice names held links and tells the owner how to recover", () => {
+	const msg = heldOutMsg("RM520N-GL", "wwan0, wwan2");
+	expect(msg).toContain("RM520N-GL");
+	expect(msg).toContain("Links held from bond selection: wwan0, wwan2.");
+	expect(msg).toContain(
+		"Reconnect the original modem to its original USB port",
 	);
-	expect(heldOutMsg("RM520N-GL")).toBe(
-		"The box is keeping RM520N-GL out of its stream because a setting change on that modem could not be undone.",
-	);
+	expect(msg).toContain("Contact support");
+	const { events, deps } = fake(new Map());
+	const variants = ["wwan0"];
+	syncHeldOutModemNotices([block("failed")], {
+		...deps,
+		linksFor: () => variants,
+	});
+	variants.push("wwan2");
+	syncHeldOutModemNotices([block("failed")], {
+		...deps,
+		linksFor: () => variants,
+	});
+	expect(events).toHaveLength(2);
 });
 
 test("changes in flight and decommissioned modems raise nothing", () => {

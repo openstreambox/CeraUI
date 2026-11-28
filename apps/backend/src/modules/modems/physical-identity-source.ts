@@ -77,6 +77,9 @@ function observeModemIdentity(
 					...(descriptor.legacyLinkId !== undefined
 						? { legacyLinkId: descriptor.legacyLinkId }
 						: {}),
+					...(descriptor.serialLinkId !== undefined
+						? { serialLinkId: descriptor.serialLinkId }
+						: {}),
 					...(descriptor.serial !== undefined
 						? { serial: descriptor.serial }
 						: {}),
