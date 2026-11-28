@@ -108,6 +108,7 @@ vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getNotifications: () => undefined,
 	getConfig: () => ({ autostart: false }),
 	getKiosk: () => undefined,
+	getTailscale: () => undefined,
 }));
 
 vi.mock("$lib/stores/auth-status.svelte", () => ({

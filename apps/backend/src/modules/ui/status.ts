@@ -81,6 +81,10 @@ import {
 	getUpdateState,
 } from "../system/software-updates.ts";
 import { getCachedSshStatus, getSshStatus } from "../system/ssh.ts";
+import {
+	getCachedTailscaleStatus,
+	getTailscaleStatus,
+} from "../system/tailscale.ts";
 import { getOrchestratorWireState } from "../system/update-orchestrator/runtime.ts";
 import { wifiBuildLegacyRemoteMsg, wifiBuildMsg } from "../wifi/wifi.ts";
 import { notificationSendPersistent } from "./notifications.ts";
@@ -100,6 +104,7 @@ export type StatusResponseMessage = {
 	update_state?: ReturnType<typeof getUpdateState>;
 	update_orchestrator?: ReturnType<typeof getOrchestratorWireState>;
 	ssh?: ReturnType<typeof getCachedSshStatus>;
+	tailscale?: ReturnType<typeof getCachedTailscaleStatus>;
 	wifi?: ReturnType<typeof wifiBuildMsg>;
 	modems?: ReturnType<typeof buildModemsWireMessage>;
 	asrcs?: Array<keyof ReturnType<typeof getAudioDevices>>;
@@ -130,6 +135,7 @@ export type StatusResponseMessage = {
 export function sendStatus(conn: WebSocket, buildWifi = wifiBuildMsg) {
 	// Re-probe SSH in the background; broadcasts only if the status changed.
 	void getSshStatus();
+	void getTailscaleStatus();
 	conn.send(
 		buildMsg("status", {
 			is_streaming: getIsStreaming(),
@@ -142,6 +148,7 @@ export function sendStatus(conn: WebSocket, buildWifi = wifiBuildMsg) {
 			update_state: getUpdateState(),
 			update_orchestrator: getOrchestratorWireState(),
 			ssh: getCachedSshStatus(),
+			tailscale: getCachedTailscaleStatus(),
 			wifi: buildWifi(),
 			modems: buildModemsWireMessage(),
 			asrcs: Object.keys(getAudioDevices()),
