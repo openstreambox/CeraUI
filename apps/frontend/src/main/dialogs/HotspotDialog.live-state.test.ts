@@ -268,7 +268,12 @@ describe("HotspotDialog — follows transitions it did not start", () => {
 		await tick();
 		expect(statusWord()).toBe("Active");
 
-		await view.rerender({ open: true, deviceId: "2", iface: SAVED_OFF });
+		// The device observes the stopped radio as a station.
+		await view.rerender({
+			open: true,
+			deviceId: "2",
+			iface: { ...SAVED_OFF, observed_mode: "station" },
+		});
 		await tick();
 		expect(statusWord()).toBe("Inactive");
 		expect(modeBadge()).toBe("station");

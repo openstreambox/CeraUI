@@ -294,10 +294,11 @@ describe("a stale pulled answer never outlives the wire", () => {
 		expect(v.displayMode).toBe("hybrid");
 	});
 
-	it("an external Stop: wire says station, the pull still says hotspot → station", () => {
+	it("an external Stop: wire observes station, the pull still says hotspot → station", () => {
 		const v = view({
 			iface: iface({
 				mode: "station",
+				observed_mode: "station",
 				supports_hotspot: true,
 				hotspot: { name: "AP", password: "pw", available_channels: {} },
 			} as Partial<WifiInterface>),
