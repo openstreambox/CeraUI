@@ -24,9 +24,9 @@ records per interval and 128 modem events. Unreadable journal or unresolved USB
 port is unavailable, rather than zero events.
 
 Only the listed RM520N-GL firmware family ending A08M4G gets fixed QMI NAS reads
-through the existing modem facade and QMI proxy. The fixed QENG serving read
-goes through the read-only AT lease on the RM520's second AT port, when a
-modem support package releases it from ModemManager ([FREE-AT-PORT.md](FREE-AT-PORT.md)):
+through the existing modem facade and QMI proxy. The QENG serving read is
+independent of the firmware revision. It uses a read-only lease on the RM520's
+second AT port, when a modem support package releases it from ModemManager ([FREE-AT-PORT.md](FREE-AT-PORT.md)):
 stock ModemManager refuses `mmcli --command` outside debug mode. The lease opens
 that port only when it is released in udev, ModemManager does not own it and no
 other process holds it, and writes only `AT+QENG="servingcell"`. Otherwise the record carries a `servingCell`
@@ -36,9 +36,8 @@ minutes, preserving the original refusal timestamp; a failed query says `no read
 enables debug mode, inhibits ModemManager or opens a port ModemManager owns.
 The DW5821e and FM350 use only the observations ModemManager already exposes.
 This build does not enable extended signal reporting. No modem receives a setup,
-scan, mode change, reset or write from this readout. Unlisted firmware receives
-vendor-neutral observations only. Availability and control-port cost still need
-qualification on the target hardware before deployment.
+scan, mode change, reset or write from this readout. Availability and
+control-port cost still need qualification on the target hardware before deployment.
 
 Findings are informational, never admission or recovery commands:
 

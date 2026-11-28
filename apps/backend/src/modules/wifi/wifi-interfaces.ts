@@ -1019,9 +1019,9 @@ async function discoverWifiDevices() {
 	}
 
 	const transferRoster = async () => {
-		if (!swapLocks.size)
-			for (const id of Object.keys(wifiIdToMacAddress))
-				delete wifiIdToMacAddress[Number(id)];
+		// Keep the published IDs usable while this pass awaits NM for other radios.
+		// Retire unrefreshed IDs only after a complete pass.
+		const refreshedIds = new Set<WifiInterfaceId>();
 		for (const networkDevice of networkDevices) {
 			try {
 				const [ifname, type, state] = nmcliParseSep(networkDevice) as [
@@ -1262,6 +1262,7 @@ async function discoverWifiDevices() {
 							presentKeys.add(macAddress);
 							invalidateWifiRadioRow(updatedInterface, observation);
 							wifiIdToMacAddress[updatedInterface.id] = macAddress;
+							refreshedIds.add(updatedInterface.id);
 							if (observation !== undefined)
 								wifiRadioIdentity.associateRows(
 									[updatedInterface],
@@ -1313,7 +1314,11 @@ async function discoverWifiDevices() {
 		}
 		for (const id of Object.keys(wifiIdToMacAddress).map(Number)) {
 			const key = wifiIdToMacAddress[id];
-			if (key && !presentKeys.has(key)) delete wifiIdToMacAddress[id];
+			if (
+				!refreshedIds.has(id) &&
+				(!swapLocks.size || (key && !presentKeys.has(key)))
+			)
+				delete wifiIdToMacAddress[id];
 		}
 		return true;
 	};
