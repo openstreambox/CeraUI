@@ -25,7 +25,7 @@
  * and it is why a module is added to `IMPLEMENTED_CAPABILITY_MODULES` in the same
  * change as its probe and never before.
  *
- * Implemented so far: `five-g-pref`, `band-lock`, `gps`, `ussd`.
+ * Implemented so far: `five-g-pref`, `band-lock`, `gps`, `ussd`, `esim`.
  */
 
 import type { CapabilityEvidence, CapabilityModule } from "@ceraui/rpc/schemas";
@@ -37,6 +37,7 @@ import {
 	setCapabilityEvidenceChangeNotifier,
 	setModemCapabilityEvidenceReader,
 } from "./capability-gates.ts";
+import { esimEvidence } from "./esim.ts";
 import { fccUnlockEvidence } from "./fcc-unlock.ts";
 import { fiveGPreferenceEvidence } from "./five-g-preference.ts";
 import { gpsEvidence } from "./gps.ts";
@@ -50,7 +51,7 @@ import { ussdEvidence } from "./ussd.ts";
  * what stops a config gate from surfacing a control with nothing behind it.
  */
 export const IMPLEMENTED_MODEM_CAPABILITY_MODULES: readonly CapabilityModule[] =
-	["five-g-pref", "band-lock", "gps", "ussd"];
+	["five-g-pref", "band-lock", "gps", "ussd", "esim"];
 
 /**
  * The modem behind a `stable_key`, or `undefined`.
@@ -97,6 +98,7 @@ export function readModemCapabilityEvidence(
 		// asks first — and a modem nothing has read yet answers `unknown`, never
 		// `absent`: not having looked is not evidence of a missing receiver.
 		gps: gpsEvidence(stableKey),
+		esim: esimEvidence(stableKey),
 		// Same cached-read shape again. A modem nothing has read yet answers
 		// `unknown`; only a positive mmcli "no USSD support" writes `absent`, so a
 		// failed read can never hide a modem that does carry the interface.

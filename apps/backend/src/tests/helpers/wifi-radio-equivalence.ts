@@ -278,6 +278,12 @@ export async function radioEquivalenceTranscript(
 				store.set(mac, { ...credentials });
 			},
 		},
+		configureProfile: async (mac, fields, _fallback, remember) => {
+			calls.push(["configureProfile", mac, fields]);
+			const uuid = `fixture-uuid-${mac.replaceAll(":", "")}`;
+			remember?.(uuid);
+			return uuid;
+		},
 		findHotspotConn: async (mac, stored) => {
 			calls.push(["findHotspotConn", mac, stored]);
 			return undefined;
@@ -352,6 +358,17 @@ export async function radioEquivalenceTranscript(
 				const prepare = await wifiHotspotPrepare({ device: iface.id }, deps);
 				phase = "prepare:published";
 				const prepared = snapshot();
+				phase = "configure:pending";
+				const configure = prepare.success
+					? await wifiHotspotPrepare(
+							{
+								device: iface.id,
+								name: prepare.name,
+								password: prepare.password,
+							},
+							deps,
+						)
+					: prepare;
 				phase = "start:pending";
 				confirmedUuid = undefined;
 				const start = await wifiHotspotStart({ device: iface.id }, deps);
@@ -371,6 +388,7 @@ export async function radioEquivalenceTranscript(
 				activations.push({
 					device: iface.id,
 					prepare,
+					configure,
 					start,
 					prepared,
 					starting,
