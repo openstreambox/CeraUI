@@ -68,6 +68,28 @@ test("bad sidecar signature cannot become kernel authority", async () => {
 		})),
 	).rejects.toThrow("os_kernel_identity_unknown");
 });
+test("sidecar signer identity follows the shared manifest signer pairs", async () => {
+	const ours = async () => ({
+		cn: "OpenStreamBox OTA Manifest Signer",
+		eku: ["codeSigning"],
+		issuer: "CN=OpenStreamBox Release Intermediate CA,O=OpenStreamBox",
+	});
+	expect(
+		await verifyKernelSidecar(bytes, new Uint8Array([1]), candidate, ours),
+	).toEqual(identity);
+	await expect(
+		verifyKernelSidecar(bytes, new Uint8Array([1]), candidate, async () => ({
+			...(await ours()),
+			issuer: "CN=CeraLive RAUC Intermediate CA,O=CeraLive",
+		})),
+	).rejects.toThrow("os_kernel_identity_unknown");
+	await expect(
+		verifyKernelSidecar(bytes, new Uint8Array([1]), candidate, async () => ({
+			...(await ours()),
+			eku: ["codeSigning", "emailProtection"],
+		})),
+	).rejects.toThrow("os_kernel_identity_unknown");
+});
 test("OS admission refuses an older kernel and missing identity only when an overlay exists", async () => {
 	await expect(
 		admitOsKernelIdentity(
