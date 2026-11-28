@@ -15,7 +15,10 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { refreshWifiApClientZones } from "../network/network-interfaces.ts";
+import {
+	getNetworkInterfaceIncarnation,
+	refreshWifiApClientZones,
+} from "../network/network-interfaces.ts";
 import { hotspotSteeringPending } from "../network/uplink-steering/readiness.ts";
 
 /* NetworkManager / nmcli based Wifi Manager */
@@ -111,6 +114,7 @@ import { captureWifiFrameIncarnation } from "./wifi-frame-binding.ts";
 import { wifiHotspotConfig, wifiHotspotStop } from "./wifi-hotspot-config.ts";
 import { handleHotspotConn } from "./wifi-hotspot-discovery.ts";
 import { publishHotspotOutcome } from "./wifi-hotspot-outcome.ts";
+import { hotspotAwaitingSteering } from "./wifi-hotspot-readiness.ts";
 import {
 	getHotspotSecurityMap,
 	type HotspotBandMaxWidth,
@@ -494,16 +498,22 @@ function buildWifiSnapshot(
 
 		entry.mode = isApMode(wifiInterface) ? "hotspot" : "station";
 		entry.observed_mode = displayObservedWifiAdapterMode(wifiInterface);
+		// The same evidence as the Start terminal: a Start still awaiting its
+		// verified client zone, or (at boot, or after a `pending` Start) no zone
+		// verified for this AP's current lifetime.
 		let steering: "activating" | undefined;
-		if (
-			(isApMode(wifiInterface) || isConcurrentHotspot(wifiInterface)) &&
-			hotspotSteeringPending(
-				wifiInterface.concurrentHotspot?.activeConn
-					? wifiInterface.concurrentHotspot.ifname
-					: wifiInterface.ifname,
+		if (isApMode(wifiInterface) || isConcurrentHotspot(wifiInterface)) {
+			const apIfname = wifiInterface.concurrentHotspot?.activeConn
+				? wifiInterface.concurrentHotspot.ifname
+				: wifiInterface.ifname;
+			if (
+				hotspotAwaitingSteering(wifiInterface) ||
+				hotspotSteeringPending(
+					apIfname,
+					getNetworkInterfaceIncarnation(apIfname),
+				)
 			)
-		) {
-			steering = "activating";
+				steering = "activating";
 		}
 		if (steering !== undefined) entry.transition = steering;
 		let needsLocalOverride = false;

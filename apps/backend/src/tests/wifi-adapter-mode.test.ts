@@ -50,6 +50,7 @@ import {
 } from "../modules/wifi/wifi-adapter-mode-transition.ts";
 import { startHotspotForInterface } from "../modules/wifi/wifi-hotspot-activation.ts";
 import type { HotspotOutcomePublisher } from "../modules/wifi/wifi-hotspot-outcome.ts";
+import { advanceHotspotOperation } from "../modules/wifi/wifi-hotspot-readiness.ts";
 import type {
 	HotspotActivationDeps,
 	WifiInterfaceWithHotspot,
@@ -455,6 +456,80 @@ describe("the six transitions", () => {
 		expect(terminalFrames(recorder)).toEqual([
 			{ device: 0, outcome: { success: false, error: "not-confirmed" } },
 		]);
+	});
+
+	for (const superseded of [false, true]) {
+		test(`the chained backstop of a ${superseded ? "superseded" : "current"} Start ${superseded ? "publishes nothing" : "reaches not-confirmed"}`, async () => {
+			const iface = makeIface() as WifiInterfaceWithHotspot;
+			let expire: (() => void) | undefined;
+			let cancelled = false;
+			const { deps, recorder } = makeDeps(
+				{ [MAC]: iface },
+				{
+					// The Start takes its ticket and is accepted; its terminal is late.
+					startHotspot: async (_device, publish) => {
+						publish.startTicket?.(advanceHotspotOperation(iface));
+						return { success: true };
+					},
+					armTerminalTimeout: (callback) => {
+						expire = callback;
+						return () => {
+							cancelled = true;
+						};
+					},
+				},
+			);
+
+			await setWifiAdapterMode(0, "hotspot", deps);
+			// A newer Start (or Stop, or reconfigure) owns the row now.
+			if (superseded) advanceHotspotOperation(iface);
+			expire?.();
+
+			expect(cancelled).toBe(false);
+			expect(terminalFrames(recorder)).toEqual(
+				superseded
+					? []
+					: [
+							{
+								device: 0,
+								outcome: { success: false, error: "not-confirmed" },
+							},
+						],
+			);
+		});
+	}
+
+	test("asking for an AP mode the radio is already in settles through Start", async () => {
+		for (const mode of ["hotspot", "hybrid"] as const) {
+			const iface = makeIface({
+				conn: mode === "hotspot" ? "ap" : "home",
+				hotspotConn: "ap",
+				concurrentActive: mode === "hybrid",
+				supportsApStaConcurrency: mode === "hybrid",
+			});
+			const { deps, recorder } = makeDeps(
+				{ [MAC]: iface },
+				{
+					// The Start's own steering-aware terminal, here still pending.
+					startHotspot: async (device, publish) => {
+						recorder.calls.push(`start:${device}`);
+						publish("start", device, {
+							success: true,
+							pending: true,
+							reason: "steering-readiness-timeout",
+						});
+						return { success: true };
+					},
+				},
+			);
+			expect(observedWifiAdapterMode(iface)).toBe(mode);
+			const result = await setWifiAdapterMode(0, mode, deps);
+			expect(result).toEqual({ success: true, accepted: true, applied: mode });
+			expect(recorder.calls).toEqual(["start:0"]);
+			// The mode is not confirmed ahead of the AP's verified client zone.
+			expect(terminalFrames(recorder)).toEqual([]);
+			expect(recorder.frames.at(-1)?.outcome).toEqual({ pending: true, mode });
+		}
 	});
 
 	test("a busy adapter is refused without persisting or dispatching", async () => {
