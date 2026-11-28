@@ -365,6 +365,25 @@ export function getBindMapPublicationHealth(): BindMapPublicationHealth {
 }
 
 /**
+ * True when nothing is in flight or waiting and the files on disk are the last
+ * publication (no stale state, no retry scheduled, no abandoned file operation
+ * outstanding, disk state not in doubt). The live bond's carrier rule
+ * judges survivors only then: during a retry, settlement order can still change
+ * which rows the sender holds.
+ */
+export function isBindMapWriterSettled(): boolean {
+	return (
+		!running &&
+		pending.length === 0 &&
+		stale === undefined &&
+		retryTimer === undefined &&
+		// An abandoned attempt can still land a late rename over the newest list.
+		abandonedUnsettled === 0 &&
+		!diskUncertain
+	);
+}
+
+/**
  * Resolves once no publication is in flight or waiting. A retry waiting on its
  * backoff timer, or an abandoned attempt's file operations, do not count.
  */

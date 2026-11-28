@@ -101,6 +101,7 @@ import {
 	createMonitorManager,
 	NmcliMonitorManager,
 } from "./modules/network/monitor/monitor-manager.ts";
+import { netdevPresence } from "./modules/network/netdev-lifetime.ts";
 import { startNetworkChangeSafety } from "./modules/network/network-change-runtime.ts";
 import {
 	buildGatewayProbe,
@@ -112,6 +113,7 @@ import {
 	bondDisableSimulationSelected,
 	handleNetifMonitorEvent,
 	initNetworkInterfaceMonitoring,
+	isWifiApInterface,
 	setBondDisableGuardContext,
 	updateNetif,
 } from "./modules/network/network-interfaces.ts";
@@ -123,6 +125,15 @@ import {
 	tickUplinkShaper,
 } from "./modules/network/uplink-shaper/runtime.ts";
 import { initUplinkSteering } from "./modules/network/uplink-steering/runtime.ts";
+import {
+	setWifiCarrierDown,
+	setWifiCarrierLost,
+} from "./modules/network/wifi-carrier-lost.ts";
+import {
+	startWifiCarrierWatch,
+	stopWifiCarrierWatch,
+	sysfsOperational,
+} from "./modules/network/wifi-carrier-watch.ts";
 import {
 	initWifiRoaming,
 	stopWifiRoaming,
@@ -242,6 +253,10 @@ import {
 	stopHotspotStationEvents,
 	syncHotspotStationEvents,
 } from "./modules/wifi/wifi-hotspot-station-events.ts";
+import {
+	isSupportedWifiIfname,
+	wifiInterfaceReaders,
+} from "./modules/wifi/wifi-interface-creation.ts";
 import { terminateWifiDiscovery } from "./modules/wifi/wifi-interfaces.ts";
 import {
 	startWifiNetworkDiversity,
@@ -676,6 +691,24 @@ wifiStateInit(networkMonitor, undefined, {
 // Keep bonded radios on distinct networks after a NetworkManager fallback.
 if (!shouldUseMocks()) startWifiNetworkDiversity();
 
+// A radio that loses its access point stops carrying on the kernel's carrier
+// edge instead of at the next netif poll; the bond publication decides.
+if (!shouldUseMocks())
+	startWifiCarrierWatch({
+		isWifiStation: (ifname) =>
+			isSupportedWifiIfname(ifname) &&
+			!isWifiApInterface(ifname) &&
+			(wifiInterfaceReaders.pathExists(`/sys/class/net/${ifname}/phy80211`) ||
+				wifiInterfaceReaders.pathExists(`/sys/class/net/${ifname}/wireless`)),
+		isOperational: sysfsOperational,
+		setLost: setWifiCarrierLost,
+		setDown: setWifiCarrierDown,
+		netdevNow: (ifname) =>
+			netdevPresence.inSysfs(ifname) === false
+				? false
+				: netdevPresence.ifindex(ifname),
+	});
+
 // Hotspot NM-confirmation: flips station↔hotspot once NM reports the switch
 networkMonitor.on("monitor-event", handleHotspotMonitorEvent);
 
@@ -859,6 +892,7 @@ const termination = terminationHandlers({
 		stopWifiAdapterModeRestore();
 		stopProvisioningMarkerWatch();
 		stopHotspotStationEvents();
+		stopWifiCarrierWatch();
 		stopWifiNetworkDiversity();
 		wifiRadioObservation.terminate();
 	},

@@ -409,6 +409,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["WebSocket client disconnected: ", " ", ""],
 	["Wi-Fi AP confirmation observation failed"],
 	["Wi-Fi AP steering wait failed"],
+	["Wi-Fi carrier mark cleared by the sysfs check"],
 	["Wi-Fi diversity check failed: ", ""],
 	[
 		"Wi-Fi diversity: ",
@@ -452,12 +453,16 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Wi-Fi identity sample lost (", ") for ", "; retry ", "/3"],
 	["Wi-Fi interface creation receipt unavailable for ", "; refusing ownership"],
 	["Wi-Fi join cleanup withheld: profile ownership is unconfirmed"],
+	["Wi-Fi links without carrier kept: no other bond link"],
 	[
 		"Wi-Fi profile ",
 		" is the AP the device image's setup runs on wlan0; CeraUI leaves it alone",
 	],
 	["Wi-Fi profile ", " is the device image's setup AP; CeraUI leaves it alone"],
 	["Wi-Fi profile authority retired"],
+	["Wi-Fi station carrier is back; returning it to the bond"],
+	["Wi-Fi station carrier returned within the hold"],
+	["Wi-Fi station lost its carrier; leaving it out of the bond"],
 	["Wifi connection does not have an SSID!"],
 	["Wifi interfaces refreshed"],
 	["[config-migration] pipeline '", "' not in offered set"],
@@ -1370,6 +1375,8 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	],
 	["wifi capabilities: nmcli properties unavailable: ", ""],
 	["wifi capabilities: refresh failed: ", ""],
+	["wifi carrier watch: spawn failed: ", ""],
+	["wifi carrier watch: stream ended: ", ""],
 	[
 		"wifi hotspot start: activation-failed on ",
 		"; hybrid capability is not proven",
