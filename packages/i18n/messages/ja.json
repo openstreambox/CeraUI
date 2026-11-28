@@ -2911,6 +2911,7 @@
 	"live.source.degradedCause.source-changed": "使用中に映像入力の信号が変わりました。機器が自動的に取り込み直します。繰り返す場合は、カメラの出力設定を確認してください。",
 	"settings.updates.packages.title": "パッケージ",
 	"settings.updates.packages.notChecked": "デバイスはまだ完了したチェックを報告していません。",
+	"settings.updates.packages.systemFirst": "先にシステムアップデートをインストールしてください。必要なパッケージが含まれており、それより新しいものはその後に提供されます。",
 	"settings.updates.nextCheck": "次回の自動確認: {time}",
 	"settings.updates.nextCheckSoon": "次回の自動確認: できるだけ早く",
 	"settings.updates.checkDeferredMetered": "モバイル回線でのパッケージ更新がオフのため、モバイル以外の接続を待っています。",

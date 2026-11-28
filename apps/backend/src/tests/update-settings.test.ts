@@ -331,6 +331,41 @@ describe("update settings persistence", () => {
 		);
 	});
 
+	test("names the file and the failing keys once per distinct problem", async () => {
+		// Given an image channel file in a shape this CeraUI rejects (an unknown key).
+		writeFileSync(file, JSON.stringify({}));
+		const channel = { schema: 1, channel: "beta" };
+		writeFileSync(sidecar, JSON.stringify({ ...channel, mirror: "x" }));
+		const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+		const rejected = () =>
+			warn.mock.calls.filter(
+				([message]) =>
+					message ===
+					"Persisted update settings rejected; update checks stop until the file is fixed",
+			);
+		try {
+			// When every tick reloads it.
+			for (let tick = 0; tick < 3; tick++)
+				await expect(loadUpdateSettings(file)).rejects.toBeInstanceOf(
+					UpdateSettingsValidationError,
+				);
+			// Then it is reported once, with the path and the key, not the values.
+			expect(rejected().map(([, meta]) => meta)).toEqual([
+				{ path: sidecar, problems: ["(root): unrecognized mirror"] },
+			]);
+			// And a repaired file loads, so the same problem later is news again.
+			writeFileSync(sidecar, JSON.stringify(channel));
+			expect((await loadUpdateSettings(file)).channel).toBe("beta");
+			writeFileSync(sidecar, JSON.stringify({ ...channel, mirror: "x" }));
+			await expect(loadUpdateSettings(file)).rejects.toThrow(
+				"Invalid persisted update settings",
+			);
+			expect(rejected()).toHaveLength(2);
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
 	test("rejects invalid persisted fields rather than salvaging siblings", async () => {
 		// Given a present invalid schedule, when loaded, then it is not defaulted.
 		writeFileSync(
