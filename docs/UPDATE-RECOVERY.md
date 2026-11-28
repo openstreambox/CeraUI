@@ -1861,6 +1861,96 @@ Still open:
   later reboot. One that fails after `mark-good` never falls back (see
   [DEVICE-UPDATES.md](./DEVICE-UPDATES.md)).
 
+## A launch refused before its unit was submitted [EXISTS — fixture-proven]
+
+A package launch asks systemd for the fixed unit name
+(`systemctl show ceralive-software-update.service`) and prepares the output
+files right before it submits the unit with `systemd-run`. When that last
+preparation fails (the probe times out or is unreadable, it finds a unit by
+that name, or the output files cannot be prepared) the launcher throws
+`DetachedAptLaunchRefusedError`, with the original error as `cause`. The
+install transaction never ran for that start. Discovery, the space preflight's
+`apt-get --print-uris`, the pinned-plan simulation (`apt-get -s`) and, on a
+pinned route, the download-only prefetch (`apt-get -d`) can run before it;
+none of them runs dpkg. The monitor still cleans the archive cache when the
+refusal settles, so a retry downloads again. This used to settle like apt's own failure: `failed`
+on the wire, `DOWNLOAD_FAILED`, and a persisted `failed` phase that waited for
+an operator reset, across reboots.
+
+For an install the orchestrator started, the refusal now belongs to that
+launch. The orchestrator hands each start a ticket (`startSoftwareUpdate`'s
+second argument); the process monitor records a refusal against it as soon as
+the launcher rejects (before its archive cleanup), then publishes
+`failed` with `retryable: true` and the cause as the reason (or nothing, when
+the orchestrator took the refusal during the cleanup and the offer is already
+back), clears the overlay without a
+finished install's result (so no tab announces a failure), and logs a warning
+instead of the "update failed" notification. The orchestrator takes the
+refusal for its own launch (`takePackageLaunchRefusal`) on its next poll, or
+when a stream starts, and dispatches `INSTALL_LAUNCH_REFUSED`: the
+phase goes back to `awaiting-idle` with no failure reason and without the
+launch's provenance, where a start refused up front already stays. It never
+reads the refusal off the wire, so a Packages card start of its own, or a check
+that clears the wire first, cannot move another launch. Settling is single-flight: a stream start that
+meets the tick settling waits for it. A stream start takes a refusal before it
+reads the wire, so another start's commit there is not latched to this launch,
+and it still refuses the stream while a unit under the name commits (the wire
+or the commit-stage probe). A refusal seen only after the probe's wait, or a
+phase the tick moved meanwhile, is decided on what is there then, and a launch
+that replaced the probed one is admitted afresh. The last refusal check and
+the stop run in one turn, with no wait between them, so nothing is stopped for
+a refusal already recorded at that check: whatever holds the name is not this
+install's. A refusal the monitor records only after that check (its own
+continuation had not run yet) still meets the stop of the fixed name, as on the
+base. A second start
+while one waits for discovery joins that same install when it carries no
+ticket, as it always did, and always on an image with its own apt source, where
+the launch fence makes it the same attempt. An orchestrator start (it carries a
+ticket) on any other image is refused there (`already_updating`) and stays
+queued for its next try: the joined launch would keep the first caller's hooks
+and ticket, so a refusal of it could never settle the orchestrator's, and a
+recheck clearing that plain failure would leave the orchestrator in
+`downloading`. Settling
+clears `pending-packages.json`, as a start refused up front does (if that
+fails, a retry in the same process clears it before it launches, or does not
+launch; the mark does not survive a restart, so after one a retry from a wire
+other than the offer can still keep that record, the limitation under "Still
+open"); taking the
+refusal withdraws it from the wire if the wire shows it, so the offer is back
+and the retry saves the record from it, as a first launch does. If the wire
+shows something else then (a later failure of a Packages card start), the
+retry saves nothing and a commit failure quarantines nothing rather than the
+refused plan. That record is the offer's vector; a capable launch rediscovers its own
+before it runs, so the existing limitation under "Still open" above (a commit
+failure can quarantine the earlier plan's versions) applies to the retry as it
+does to any launch. The next tick in the idle window, or Install now,
+launches again: the next idle tick, about 60 s after the refusal settles, plus
+the launch's own preparation, while the refusal persists; a retry while
+the name is still taken is refused the same way and never submits a unit over
+it.
+
+A start without a ticket (the Packages card's own `system.startUpdate`) keeps
+the plain failure and its notification. On an image with its own apt source, a launch
+refused before submission keeps that image's own end (the attempt's terminal
+`failed`, `PACKAGE_INSTALL_REFUSED`, left by the next check): its installs start
+only on request, so nothing would queue it again; the refusal is not recorded
+for the ticket there. An install the launch fence already ended raises its own
+"owner ended" error, which passes through unwrapped. There, a manual request that the install
+unit's name turns down before launch (the up-front proof) is used up: the name
+can stay held until a restart, so no later tick installs on its behalf,
+whatever the offer has become; the owner asks again. A request that only could
+not start yet (the updater busy, the clock gate shut) still stands, as before. Everything from the `systemd-run` call
+on is unchanged: a refused or timed-out submission may still have created the
+unit, so it stays a failed download, and a failure seen once the phase is
+`committing` goes through the commit-failure path as before. Command validation
+(`buildDetachedApt*Command`) is also outside the refusal: an argument the
+builder rejects would be rejected on every retry. Coverage:
+`software-update-launch-refused.test.ts` (each of the three pre-submission
+causes on both launchers; the orchestrator replay of a `systemctl show` timeout
+and of a name taken by another start; a stream start, a check and a Packages
+card start racing a refusal; the submission and committing cases that keep
+their failure).
+
 ## OS staging recovery [PARTIAL — fixture-proven, board re-drill owed]
 
 A failed OS stage is no longer a sticky `failed` by default. The persisted
@@ -1958,8 +2048,9 @@ tick instead of a recorded `DOWNLOAD_FAILED`, whose `failed` phase would outlive
 the reboot that clears the pin. A proof that finds the unit gone clears the pin
 (a temporary reference, such as a D-Bus client's, can hold a stopped unit for a
 moment). A start that still finds the unit pinned throws
-`DetachedAptServicePinnedError` instead of running a `systemd-run` that systemd
-would refuse ("already loaded or has a fragment file"). The unit also orders
+`DetachedAptServicePinnedError` (as the `cause` of the launch refusal described
+below, so the orchestrator queues it again) instead of running a `systemd-run`
+that systemd would refuse ("already loaded or has a fragment file"). The unit also orders
 itself `Before=ceralive-write-drain.service`, so an image can drop the name from
 the drain and keep the shutdown waiting for a running transaction. That
 property is sent first: systemd writes the transient file one property at a

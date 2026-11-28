@@ -360,6 +360,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Software update capability regime unknown"],
 	["Software update check continuation failed"],
 	["Software update check failed: apt-get dist-upgrade exited ", ""],
+	[
+		"Software update did not start; nothing was installed and the install is retried",
+	],
 	["Software update observer retrying after a local read failure"],
 	["Software update preflight refused"],
 	["Software update reboot submission failed"],
@@ -1304,6 +1307,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	[
 		"update-orchestrator: clearing a refused install's pending list failed; the package check waits",
 	],
+	["update-orchestrator: clearing a refused launch's pending list failed"],
 	[
 		"update-orchestrator: commit-stage probe failed; refusing the stream start rather than stopping the install",
 	],
@@ -1789,6 +1793,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["Tailscale enrolment requires a private inbox"],
 	["Target must be a regular file"],
 	["The previous change is still being saved"],
+	["The software update did not start: ", ""],
 	["Transport operation not admitted"],
 	["Transport reset did not retire its generation"],
 	["Trying to register existing modem id ", ""],
