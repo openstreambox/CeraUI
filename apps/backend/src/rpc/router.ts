@@ -1,3 +1,5 @@
+import { moblinkOwner } from "../modules/moblink/runtime";
+import { createMoblinkProcedures } from "./procedures/moblink.procedure";
 import { runtimeAllowsDevelopment } from "./runtime-mode.ts";
 /**
  * RPC Router - Main router combining all procedures
@@ -199,6 +201,7 @@ import type { RPCContext } from "./types.ts";
 const base = os.$context<RPCContext>();
 
 const stableRoutes = {
+	moblink: base.router(createMoblinkProcedures(moblinkOwner)),
 	ui: base.router({ heartbeat: heartbeatProcedure }),
 	logs: base.router({
 		query: queryLogsProcedure,

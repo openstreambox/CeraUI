@@ -2,11 +2,11 @@
  * Root ORPC Contract - combines all domain contracts
  */
 import { oc } from '@orpc/contract';
-
 import { authContract } from './auth.contract';
 import { bluetoothContract } from './bluetooth.contract';
 import { eventsContract } from './events.contract';
 import { logsContract } from './logs.contract';
+import { moblinkContract } from './moblink.contract';
 import { modemsContract } from './modems.contract';
 import { networkContract } from './network.contract';
 import { notificationsContract } from './notifications.contract';
@@ -32,6 +32,7 @@ import { wifiContract } from './wifi.contract';
  */
 export const appContract = oc.router({
 	auth: authContract,
+	moblink: moblinkContract,
 	streaming: streamingContract,
 	modems: modemsContract,
 	wifi: wifiContract,
