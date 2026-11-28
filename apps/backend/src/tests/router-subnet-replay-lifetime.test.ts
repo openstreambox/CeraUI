@@ -281,7 +281,7 @@ async function scenario(
 			duplicate_model: false,
 		});
 		spyOn(identity, "modemStableKeyForIfname").mockReturnValue(KEY);
-		spyOn(defaultSubnetRewriteDeps, "isRealDevice").mockResolvedValue(true);
+		spyOn(defaultSubnetRewriteDeps, "canManageModems").mockResolvedValue(true);
 		spyOn(defaultSubnetRewriteDeps, "runIpRouteShowDefault").mockResolvedValue(
 			`default via ${CURRENT.address} dev ${name}`,
 		);
@@ -367,7 +367,9 @@ for (const path of ["control", "mode"] as const) {
 			noteNetdevWitness(IFNAME, readNetdevWitness(IFNAME));
 			return admit(key, work);
 		});
-		spyOn(defaultRouterAdminProbeDeps, "isRealDevice").mockResolvedValue(true);
+		spyOn(defaultRouterAdminProbeDeps, "canManageModems").mockResolvedValue(
+			true,
+		);
 		spyOn(
 			defaultRouterAdminProbeDeps,
 			"runIpRouteShowDefault",
@@ -457,7 +459,7 @@ const settings = [
 
 async function settingWrite(onSession: () => void = () => {}) {
 	const unit = await scenario({ live: true });
-	spyOn(defaultRouterAdminProbeDeps, "isRealDevice").mockResolvedValue(true);
+	spyOn(defaultRouterAdminProbeDeps, "canManageModems").mockResolvedValue(true);
 	spyOn(defaultRouterAdminProbeDeps, "runIpRouteShowDefault").mockResolvedValue(
 		`default via ${CURRENT.address} dev ${IFNAME}`,
 	);
