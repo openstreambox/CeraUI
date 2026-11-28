@@ -222,7 +222,7 @@ export async function runAutomaticBearerFamilies(): Promise<void> {
 					config.autoconfig,
 			);
 		} catch (error) {
-			logger.warn("automatic bearer family reconciliation deferred", {
+			logger.warn("automatic data session IP family reconciliation deferred", {
 				module: "modems",
 				error,
 			});
