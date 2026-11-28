@@ -277,6 +277,34 @@ describe("reconnect re-authentication", () => {
 		},
 	);
 
+	it("still signs out on a refusal when the browser storage throws", async () => {
+		await signInFromForm(true);
+		await reconnect();
+		const action = startAction();
+		const failure = action.catch((error: unknown) => error);
+		await flush();
+
+		const blocked = vi.spyOn(localStorage, "getItem").mockImplementation(() => {
+			throw new DOMException("blocked", "SecurityError");
+		});
+		try {
+			answer("auth.login", { success: false });
+			await flush();
+			expect(blocked).toHaveBeenCalled();
+		} finally {
+			blocked.mockRestore();
+		}
+
+		expect(authStatusStore.value).toBe(false);
+		expect(getSessionExpired()).toBe(true);
+		const error = await failure;
+		expect(error).toBeInstanceOf(NotSentError);
+		expect((error as NotSentError).reason).toBe("signed-out");
+		expect(sentCount("modems.getSms")).toBe(0);
+		await reconnect();
+		expect(loginsOnThisSocket()).toEqual([]);
+	});
+
 	it("does not gate the socket before the first sign-in", async () => {
 		const action = startAction();
 		await flush();

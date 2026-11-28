@@ -1614,10 +1614,8 @@ function deviceStillStreams(): boolean {
 
 function routeToLogin(): void {
 	dropStopIntent();
-	if (authStatusStore.value) {
-		markSessionExpired();
-		authStatusStore.set(false);
-	}
+	// markSessionExpired signs the page out itself (one auth transition).
+	if (authStatusStore.value) markSessionExpired();
 }
 
 function loginWithToken(token: string) {
