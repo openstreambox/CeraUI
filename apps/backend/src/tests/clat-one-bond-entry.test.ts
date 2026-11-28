@@ -235,9 +235,13 @@ beforeEach(async () => {
 
 afterEach(() => {
 	setModemIdPathReader(null);
-	resetUsbNetMarkers();
 	resetClatTranslationStateForTest();
+	// The empty snapshot retires the case's interfaces; reset the USB scan and
+	// netdev lifetime state after it so neither a retirement hold nor a retired
+	// lifetime reaches the next file in this process.
 	processIfconfigOutput("");
+	resetUsbNetMarkers();
+	resetNetifSnapshotForTest();
 	if (dir) rmSync(dir, { recursive: true, force: true });
 	dir = undefined;
 });
