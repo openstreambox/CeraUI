@@ -62,6 +62,7 @@ import {
 } from "./procedures/logs.procedure.ts";
 import {
 	acknowledgeMutationProcedure,
+	clearUnreadableRecordProcedure,
 	configureModemProcedure,
 	decommissionMutationProcedure,
 	getAllModemsProcedure,
@@ -294,6 +295,7 @@ const stableRoutes = {
 		ussdCancel: ussdCancelProcedure,
 		listMutationBlocks: listMutationBlocksProcedure,
 		acknowledgeMutation: acknowledgeMutationProcedure,
+		clearUnreadableRecord: clearUnreadableRecordProcedure,
 		decommissionMutation: decommissionMutationProcedure,
 		rebaselineMutation: rebaselineMutationProcedure,
 	}),

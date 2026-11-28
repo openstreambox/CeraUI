@@ -569,6 +569,43 @@ describe("runDeadBearerRecovery", () => {
 		expect(calls).toEqual([]);
 	});
 
+	for (const change of [
+		"carrying",
+		"unknown",
+		"new slot at the same name",
+		"healthy path",
+	] as const) {
+		test(`a final owner read cannot send down after the path becomes ${change}`, async () => {
+			health = dead();
+			streaming = true;
+			carrying = { wwan0: "not_carrying" };
+			let key = KEY;
+			let reads = 0;
+			setDeadBearerDepsForTest({
+				...deps(),
+				stableKey: () => key,
+				mmState: async () => {
+					// The second read in the due poll holds the real background key.
+					if (now === DEAD_BEARER_ALONE_HOLD_MS && ++reads === 2) {
+						if (change === "new slot at the same name") key = `${KEY}.2`;
+						else if (change === "healthy path")
+							health = record({ state: "up" }, wall);
+						else carrying = { wwan0: change };
+					}
+					return "connected";
+				},
+			});
+			await runDeadBearerRecovery();
+			now = DEAD_BEARER_ALONE_HOLD_MS;
+			wall += now;
+			health = dead();
+			await runDeadBearerRecovery();
+			expect(reads).toBe(2);
+			expect(calls).toEqual([]);
+			expect(dials.size).toBe(0);
+		});
+	}
+
 	test("overlapping polls reconnect once", async () => {
 		others = [eth()];
 		health = dead();

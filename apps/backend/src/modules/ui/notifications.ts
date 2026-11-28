@@ -332,6 +332,7 @@ export function notificationDismiss(
 		if (requester && seen.revision !== undefined) resend(requester, pn);
 		return undefined;
 	}
+	if (pn?.action?.kind === "confirm-modem-record") return { remove: [] };
 	pn?.onDismiss?.();
 	if (pn?.beforeDismiss) {
 		pn.beforeDismiss();

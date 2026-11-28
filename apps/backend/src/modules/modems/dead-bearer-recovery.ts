@@ -84,7 +84,10 @@ import {
 } from "./modem-registration.ts";
 import { getModem, getModemIds, setModem } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
-import { withBackgroundModemLease } from "./mutation-lease.ts";
+import {
+	backgroundModemRefusal,
+	withBackgroundModemLease,
+} from "./mutation-lease.ts";
 
 export const DEAD_BEARER_HOLD_MS = 60_000;
 export const DEAD_BEARER_ALONE_HOLD_MS = 300_000;
@@ -308,12 +311,30 @@ function streamState(iface: string): DeadBearerInput["stream"] {
 	return deps.streaming() ? deps.carrying(iface) : "idle";
 }
 
+function pathObservation(iface: string, key: string) {
+	const now = deps.now();
+	const wallNow = deps.wallNow();
+	const tun = deps.clatTun(iface);
+	const native = deps.health(iface);
+	const record = tun === undefined ? native : deps.health(tun);
+	return {
+		now,
+		record,
+		otherUplinkUp: independentUplinkUp(iface, wallNow),
+		nativeAnswers: tun !== undefined && native?.state === "up",
+		stream: streamState(iface),
+		lastDial: deps.lastDial(key),
+	};
+}
+
 /** Inputs read fresh; undefined when the modem is not a candidate at all. */
 async function readInput(
 	id: ModemId,
 	key: string,
 	memory: DeadBearerMemory,
-): Promise<{ input: DeadBearerInput; uuid: string } | undefined> {
+): Promise<
+	{ input: DeadBearerInput; uuid: string; iface: string } | undefined
+> {
 	const modem = getModem(id);
 	const uuid = modem?.config?.conn;
 	if (
@@ -325,24 +346,14 @@ async function readInput(
 		deps.stableKey(id) !== key
 	)
 		return undefined;
-	const now = deps.now();
-	const wallNow = deps.wallNow();
-	const tun = deps.clatTun(modem.ifname);
-	const native = deps.health(modem.ifname);
-	const record = tun === undefined ? native : deps.health(tun);
-	const base = {
-		now,
-		record,
-		otherUplinkUp: independentUplinkUp(modem.ifname, wallNow),
-		nativeAnswers: tun !== undefined && native?.state === "up",
-		stream: streamState(modem.ifname),
-		lastDial: deps.lastDial(key),
-		memory,
-	};
+	const iface = modem.ifname;
+	const base = { ...pathObservation(iface, key), memory };
+	const { record } = base;
 	// Only a path that health calls dead needs the owner reads.
 	if (!outageRecord(record))
 		return {
 			uuid,
+			iface,
 			input: { ...base, owned: true, nmState: undefined, mmState: undefined },
 		};
 	const owned =
@@ -350,7 +361,7 @@ async function readInput(
 		(await deps.automaticReady(uuid));
 	const nmState = owned ? await deps.nmState(uuid) : undefined;
 	const mmState = owned ? await deps.mmState(id) : undefined;
-	return { uuid, input: { ...base, owned, nmState, mmState } };
+	return { uuid, iface, input: { ...base, owned, nmState, mmState } };
 }
 
 /**
@@ -377,16 +388,31 @@ export async function runDeadBearerRecovery(
 			await deps.mutate(key, async () => {
 				// Memory changes only here, so a refused lease leaves it as it was.
 				const fresh = await readInput(id, key, memories.get(key) ?? before);
-				if (!fresh || fresh.uuid !== first.uuid) return;
-				const again = decideDeadBearer(fresh.input);
-				if (again.action !== "reconnect") return;
+				if (!fresh || fresh.uuid !== first.uuid || fresh.iface !== first.iface)
+					return;
+				// The owner reads awaited NM and MM. Re-sample the sender, link and
+				// identity synchronously at the decision that sends NM down.
+				const row = getModem(id);
+				if (
+					row?.ifname !== fresh.iface ||
+					row.config?.conn !== fresh.uuid ||
+					row.inhibit ||
+					row.is_scanning ||
+					deps.stableKey(id) !== key ||
+					backgroundModemRefusal(key)
+				)
+					return;
+				const again = decideDeadBearer({
+					...fresh.input,
+					...pathObservation(fresh.iface, key),
+				});
 				memories.set(key, again.memory);
+				if (again.action !== "reconnect") return;
 				deps.noteDial(key);
-				const iface = getModem(id)?.ifname;
 				logger.warn("modem bearer carries no traffic; reconnecting", {
 					id,
 					stableKey: key,
-					iface,
+					iface: fresh.iface,
 					reason: again.reason,
 					attempt: again.memory.reconnects,
 					nextSpacingS: deadBearerSpacing(again.memory.reconnects - 1) / 1000,

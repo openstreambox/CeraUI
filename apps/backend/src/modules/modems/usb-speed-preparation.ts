@@ -10,9 +10,10 @@
     touched: no inhibition and no AT command.
   - A faster link means the setting is not in effect. Only then, and only while
     no stream runs, the modem is inhibited, the stored value is read and kept as
-    `original`, the attempt is recorded BEFORE any setter, "20" is written if it
-    differs and read back, and the module is reset (`AT+CFUN=1,1`). That costs
-    the link about 50 s; the stream check runs again after the inhibition.
+    `original` before any setter, and "20" is written if it differs. After
+    readback the box reserves the reset and sends `AT+CFUN=1,1`. A setter
+    has a durable attempt before dispatch. A confirmed deferral returns that
+    attempt when Start wins before reset admission.
   - The next USB generation verifies it: back at 480 Mbit/s or slower.
   - At most one modem is switched at a time, 15 minutes between attempts, two
     attempts per unit; then the unit is blocked until its record is removed.
@@ -23,9 +24,21 @@
 */
 
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { logger } from "../../helpers/logger.ts";
+import { listPrivateJsonKeys } from "../../helpers/private-json-state.ts";
+import {
+	currentLifecycleHolder,
+	type ModemJournalLease,
+	tryAcquireModemJournalKey,
+} from "../streaming/lifecycle-admission.ts";
+import { isRecoveryPending } from "../streaming/recovery-barrier.ts";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
-import { accessCellularAuthority } from "./cellular-authority-store.ts";
+import { readCellularSlot } from "./cellular-authority-revision.ts";
+import {
+	accessCellularAuthority,
+	cellularAuthorityMigration,
+} from "./cellular-authority-store.ts";
 import {
 	type PreparationRecord,
 	parsePreparationRecord,
@@ -40,6 +53,7 @@ import {
 } from "./modems.ts";
 import { getModemIds } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
+import { backgroundModemRefusal } from "./mutation-lease.ts";
 import { resolveTransportQuirk } from "./transport-policy.ts";
 
 export const USB2_MBITS = 480;
@@ -77,6 +91,16 @@ export interface UsbSpeedDecision {
 	readonly update?: UsbSpeedRecord;
 }
 
+function withinWindow(
+	now: number,
+	started: number | undefined,
+	duration: number,
+): boolean {
+	if (started === undefined) return false;
+	const age = now - started;
+	return age >= 0 && age < duration;
+}
+
 /** Pure: the next step for one unit. */
 export function decideUsbSpeed(input: UsbSpeedInput): UsbSpeedDecision {
 	const { desired, speed, generation, now } = input;
@@ -86,7 +110,7 @@ export function decideUsbSpeed(input: UsbSpeedInput): UsbSpeedDecision {
 	if (record?.phase === "awaiting-usb") {
 		if (generation === record.epoch) {
 			// The reset has not taken the old enumeration away yet.
-			if (now - record.started < USB_SPEED_RETURN_WINDOW_MS)
+			if (withinWindow(now, record.started, USB_SPEED_RETURN_WINDOW_MS))
 				return { action: "wait", reason: "module reset pending" };
 			record = {
 				...record,
@@ -102,7 +126,7 @@ export function decideUsbSpeed(input: UsbSpeedInput): UsbSpeedDecision {
 			};
 		} else if (
 			speed === undefined &&
-			now - record.started < USB_SPEED_RETURN_WINDOW_MS
+			withinWindow(now, record.started, USB_SPEED_RETURN_WINDOW_MS)
 		) {
 			return { action: "wait", reason: "link speed unreadable" };
 		} else {
@@ -135,11 +159,10 @@ export function decideUsbSpeed(input: UsbSpeedInput): UsbSpeedDecision {
 	}
 	if (input.switchedOff)
 		return withUpdate({ action: "hold", reason: "switched off (no-usbspeed)" });
-	const last = Math.max(
-		record?.started ?? -Infinity,
-		input.abortedAt ?? -Infinity,
-	);
-	if (now - last < USB_SPEED_PAUSE_MS)
+	if (
+		withinWindow(now, record?.started, USB_SPEED_PAUSE_MS) ||
+		withinWindow(now, input.abortedAt, USB_SPEED_PAUSE_MS)
+	)
 		return withUpdate({
 			action: "hold",
 			reason: "pause after the last attempt",
@@ -182,7 +205,38 @@ async function writeRecord(record: PreparationRecord) {
 	);
 }
 
+function preparationDirectory(): string {
+	return (
+		process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR ??
+		cellularAuthorityMigration("cellular-preparation", parsePreparationRecord)
+			.destination.dir
+	);
+}
+
+/** After boot migration the destination holds every unit, including one still off
+ * the bus. Only a prospective switch needs to inspect the missing units. */
+async function missingUnitReturning(
+	visible: ReadonlySet<string>,
+	now: number,
+): Promise<boolean> {
+	const store = { dir: preparationDirectory() };
+	for (const key of await listPrivateJsonKeys(store)) {
+		if (visible.has(key)) continue;
+		const raw = await readCellularSlot(store, key);
+		if (raw === undefined) continue;
+		const record = parsePreparationRecord(raw, key);
+		if (
+			record.kind === "usbspeed" &&
+			record.phase === "awaiting-usb" &&
+			withinWindow(now, record.started, USB_SPEED_RETURN_WINDOW_MS)
+		)
+			return true;
+	}
+	return false;
+}
+
 export interface UsbSpeedDeps {
+	readonly missingUnitReturning: typeof missingUnitReturning;
 	readonly ids: () => readonly number[];
 	readonly stableKey: (id: number) => string | undefined;
 	readonly target: typeof readCellularControlTarget;
@@ -197,6 +251,7 @@ export interface UsbSpeedDeps {
 	readonly log: (message: string) => void;
 }
 export const defaultUsbSpeedDeps: UsbSpeedDeps = {
+	missingUnitReturning,
 	ids: getModemIds,
 	stableKey: modemStableKeyForId,
 	target: readCellularControlTarget,
@@ -231,11 +286,13 @@ async function applyUsbSpeed(
 	desired: "20",
 	record: UsbSpeedRecord | undefined,
 	key: string,
+	owner: ModemJournalLease,
 	deps: UsbSpeedDeps,
 ): Promise<UsbSpeedRecord | undefined> {
 	const control = await deps.acquire(target);
 	try {
 		if (deps.streaming()) throw new Error("a stream started");
+		if (backgroundModemRefusal(target.key)) return undefined;
 		const fresh = await deps.read(key);
 		if (fresh && fresh.kind !== "usbspeed")
 			throw new Error("Unexpected preparation authority");
@@ -256,6 +313,10 @@ async function applyUsbSpeed(
 			throw new Error("modem changed before the switch");
 		const current = await control.readUsbSpeed();
 		if (current === undefined) throw new Error("usbspeed readback missing");
+		if (deps.streaming() || backgroundModemRefusal(target.key))
+			return undefined;
+		const previousAttempts = record?.attempts ?? 0;
+		const needsSetter = current !== desired;
 		let next: UsbSpeedRecord = {
 			version: 1,
 			kind: "usbspeed",
@@ -264,22 +325,55 @@ async function applyUsbSpeed(
 			original: record?.original ?? current,
 			desired,
 			// Set before the setter: a lost reply must still count as our write.
-			wrote: (record?.wrote ?? false) || current !== desired,
-			attempts: (record?.attempts ?? 0) + 1,
+			wrote: (record?.wrote ?? false) || needsSetter,
+			// An interrupted setting request must keep its place in the budget.
+			attempts: needsSetter ? previousAttempts + 1 : previousAttempts,
 			phase: "attempted",
 			epoch: target.generation,
 			started: deps.now(),
 		};
 		await deps.write(next);
-		if (current !== desired) {
-			if ((await control.setUsbSpeed(desired)) !== desired) {
-				next = { ...next, phase: "failed", reason: "setter readback differs" };
-				await deps.write(next);
-				return next;
+		const defer = async () => {
+			const reason =
+				deps.streaming() || currentLifecycleHolder() === "streaming"
+					? "stream started"
+					: "modem control busy";
+			deps.log(`${target.ifname} usbspeed deferred: ${reason}`);
+			// Only a known deferral gives back the reserved attempt. Keep the
+			// original setting and cooldown even if the setter already succeeded.
+			await deps.write({ ...next, attempts: previousAttempts, reason });
+		};
+		if (needsSetter) {
+			if (deps.streaming() || backgroundModemRefusal(target.key)) {
+				await defer();
+				return undefined;
 			}
+			let readback: string | undefined;
+			try {
+				readback = await control.setUsbSpeed(desired);
+			} finally {
+				// A failed setting request still spends an attempt, including a lost reply.
+				if (readback !== desired) {
+					next = {
+						...next,
+						phase: "failed",
+						reason:
+							readback === undefined
+								? "setter readback missing"
+								: "setter readback differs",
+					};
+					await deps.write(next);
+				}
+			}
+			if (readback !== desired) return next;
 		}
-		if (deps.streaming()) throw new Error("a stream started");
-		next = { ...next, phase: "awaiting-usb" };
+		if (deps.streaming() || !owner.tryUpgrade()) {
+			await defer();
+			return undefined;
+		}
+		// The setter and reset belong to the same attempt. A reset-only
+		// attempt takes its place in the budget here, before dispatch.
+		next = { ...next, attempts: previousAttempts + 1, phase: "awaiting-usb" };
 		await deps.write(next);
 		if (deps.streaming()) throw new Error("a stream started");
 		try {
@@ -297,6 +391,7 @@ async function applyUsbSpeed(
 async function runUsbSpeedPreparationOnce(
 	deps: UsbSpeedDeps = defaultUsbSpeedDeps,
 ): Promise<readonly number[]> {
+	if (isRecoveryPending()) return [];
 	const units: {
 		id: number;
 		target: CellularControlTarget;
@@ -323,6 +418,8 @@ async function runUsbSpeedPreparationOnce(
 			logger.warn("usbspeed check deferred", { module: "modems" });
 		}
 	}
+	const visible = new Set(units.map((unit) => unit.key));
+	let missingReturn: boolean | undefined;
 	const switched: number[] = [];
 	for (const unit of units) {
 		const others = units.some(
@@ -345,33 +442,57 @@ async function runUsbSpeedPreparationOnce(
 			await deps.write(decision.update);
 			unit.record = decision.update;
 		}
-		const line = `${unit.target.ifname} usbspeed: ${decision.action} (${decision.reason})`;
+		let line = `${unit.target.ifname} usbspeed: ${decision.action} (${decision.reason})`;
+		if (decision.action === "blocked") {
+			const record = join(preparationDirectory(), `${unit.key}.json`);
+			line += ` modem=${unit.id} record=${record}`;
+		}
 		if (reported.get(unit.key) !== line) {
 			reported.set(unit.key, line);
 			deps.log(line);
 		}
 		if (decision.action !== "write" || switched.length > 0) continue;
+		// Checking a missing peer is read-only. Keep Start available throughout
+		// this census. Overlapping USB polls share the same in-flight attempt.
+		try {
+			missingReturn ??= await deps.missingUnitReturning(visible, deps.now());
+		} catch {
+			deps.log("usbspeed deferred: return records unavailable");
+			break;
+		}
+		if (missingReturn) continue;
+		if (deps.streaming() || backgroundModemRefusal(unit.target.key)) continue;
+		const owner = tryAcquireModemJournalKey(unit.target.key);
+		if (!owner) continue;
 		try {
 			if (!(await deps.present(unit.target)))
 				throw new Error("modem changed before the switch");
+			if (deps.streaming() || isRecoveryPending()) continue;
 			unit.record = await applyUsbSpeed(
 				unit.target,
 				unit.desired,
 				unit.record,
 				unit.key,
+				owner,
 				deps,
 			);
 			if (!unit.record) continue;
 			aborted.delete(unit.key);
+			const outcome =
+				unit.record.phase === "awaiting-usb"
+					? "module reset requested"
+					: (unit.record.reason ?? unit.record.phase);
 			deps.log(
-				`${unit.target.ifname} usbspeed: ${unit.record.phase} (stored ${unit.record.original}, wanted ${unit.desired}); module reset, link back in about 50 s`,
+				`${unit.target.ifname} usbspeed: ${outcome} (stored ${unit.record.original}, wanted ${unit.desired})`,
 			);
 		} catch (error) {
-			// Not a counted attempt, but the same pause.
+			// A takeover error also pauses. The durable record owns the count.
 			aborted.set(unit.key, deps.now());
 			deps.log(
 				`${unit.target.ifname} usbspeed: attempt stopped (${error instanceof Error ? error.message : "error"}); next try after the pause`,
 			);
+		} finally {
+			owner.release();
 		}
 		switched.push(unit.id);
 	}
