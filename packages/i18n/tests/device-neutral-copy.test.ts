@@ -281,3 +281,12 @@ describe("English Home and sign-in copy makes no promise about the stream", () =
 		expect(REASSURANCE.test(body)).toBe(false);
 	});
 });
+
+describe("Internet Sharing outage copy names the IPv4 scope", () => {
+	for (const locale of ALL_LOCALES) {
+		it(`${locale} mentions IPv4 in the no-healthy-uplink line`, () => {
+			const catalog = readCatalog(locale);
+			expect(catalog["network.sharing.band.noHealthyUplinkBody"]).toContain("IPv4");
+		});
+	}
+});
