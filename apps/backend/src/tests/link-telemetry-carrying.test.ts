@@ -23,6 +23,7 @@ import {
 	registerSrtlaBond,
 	setCarryingClockForTest,
 	setIfaceResolverForTest,
+	setTelemetryClockForTest,
 	startLinkTelemetry,
 	stopLinkTelemetry,
 } from "../modules/streaming/link-telemetry.ts";
@@ -105,6 +106,8 @@ function row(iface: string) {
 beforeEach(() => {
 	clock = 0;
 	setCarryingClockForTest(() => clock);
+	// Snapshots are fresh: the staleness clock reads the sender's own epoch.
+	setTelemetryClockForTest(() => SENDER_EPOCH + clock);
 	setLinkIdentityDetailResolverForTest(() => ({}));
 	setIfaceResolverForTest(() => undefined);
 });
@@ -114,6 +117,7 @@ afterEach(() => {
 	clearBindMapReport();
 	resetBindMapReportListeners();
 	setCarryingClockForTest(null);
+	setTelemetryClockForTest(null);
 	setLinkIdentityDetailResolverForTest(null);
 	setIfaceResolverForTest(null);
 });
