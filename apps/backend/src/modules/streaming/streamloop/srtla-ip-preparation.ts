@@ -42,11 +42,13 @@ import type { LinkTelemetryMessage } from "../link-telemetry-rows.ts";
 import {
 	genSrtlaBondEntries,
 	genSrtlaBondEntriesForLocalIpAddress,
+	interfacesOnSubnet,
 	publishSrtlaBond,
 } from "../srtla.ts";
 
 export type SrtlaIpPreparationDeps = {
 	readonly isLocal: (address: string) => boolean;
+	/** Bonded links on the receiver's subnet: a subset of `bondedList`. */
 	readonly localList: (address: string) => BondEntry[];
 	readonly bondedList: () => BondEntry[];
 	readonly writeList: (
@@ -63,6 +65,13 @@ export type SrtlaIpPreparationDeps = {
 	readonly now?: () => number;
 	/** The writer has nothing in flight, waiting or stale (`isBindMapWriterSettled`). */
 	readonly writerSettled?: () => boolean;
+	/** Every interface on the receiver's subnet, bonded or not. */
+	readonly onSubnet?: (address: string) => string[];
+	/** Told when a private receiver gets the whole bond (launch only). */
+	readonly warnWholeBond?: (
+		receiver: string,
+		outsideBond: readonly string[],
+	) => void;
 };
 
 const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
@@ -74,6 +83,12 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
 			entries,
 			undefined,
 			localReceiver === undefined ? undefined : { localReceiver },
+		),
+	onSubnet: interfacesOnSubnet,
+	warnWholeBond: (receiver, outsideBond) =>
+		logger.warn(
+			`Receiver ${receiver} is a private address and no bonded link is on its subnet; offering every bonded link in case it is routed (on its subnet but out of the bond: ${outsideBond.length > 0 ? outsideBond.join(", ") : "none"})`,
+			{ receiver, outsideBond },
 		),
 };
 
@@ -207,6 +222,47 @@ function withoutDeafWifi(
 	);
 }
 
+/*
+  WHICH LINKS A RECEIVER GETS.
+
+  The bond is the user's: the per-link bond toggles (and every other exclusion
+  `isBondCandidate` applies) decide the candidate set for every receiver.
+
+  A private or link-local IPv4 receiver narrows that set to the bonded links on
+  its subnet, because a modem cannot reach a LAN address. When no bonded link
+  shares its subnet the receiver may still be routed (a venue VLAN behind the
+  Wi-Fi's gateway, a host route), so it gets the whole bond, as a hostname
+  resolving to the same address already does; the log says so and names any
+  link on its subnet that is out of the bond. Only an empty bond refuses a
+  launch.
+*/
+/** Mask the MAC an `enx`/`wlx` name carries, keeping the vendor half. */
+export function maskMacDerivedIfname(name: string): string {
+	return name.replace(
+		/^(enx|wlx)([0-9a-f]{6})[0-9a-f]{6}$/i,
+		(_match, prefix: string, vendor: string) => `${prefix}${vendor}******`,
+	);
+}
+
+function selectReceiverLinks(
+	srtlaAddr: string,
+	deps: SrtlaIpPreparationDeps,
+	purpose: "launch" | "refresh",
+): { entries: BondEntry[]; localReceiver?: string } {
+	const bonded = deps.bondedList();
+	if (!deps.isLocal(srtlaAddr)) return { entries: bonded };
+	const onSubnet = deps.localList(srtlaAddr);
+	if (onSubnet.length > 0)
+		return { entries: onSubnet, localReceiver: srtlaAddr };
+	if (purpose === "launch" && bonded.length > 0) {
+		const outside = (deps.onSubnet?.(srtlaAddr) ?? [])
+			.filter((name) => !bonded.some((entry) => entry.iface === name))
+			.map(maskMacDerivedIfname);
+		deps.warnWholeBond?.(srtlaAddr, outside);
+	}
+	return { entries: bonded };
+}
+
 /**
  * Publish the launch or live bond. A launch requires at least one link.
  *
@@ -221,8 +277,11 @@ export async function prepareSrtlaIpAddresses(
 	options: { readonly carrierRule?: boolean } = {},
 ): Promise<BindMapPublication> {
 	const at = (deps.now ?? bondRowClock)();
-	const local = deps.isLocal(srtlaAddr);
-	const collected = local ? deps.localList(srtlaAddr) : deps.bondedList();
+	const { entries: collected, localReceiver } = selectReceiverLinks(
+		srtlaAddr,
+		deps,
+		purpose,
+	);
 	const entries =
 		purpose === "refresh" && options.carrierRule === true
 			? withoutDeafWifi(
@@ -238,5 +297,5 @@ export async function prepareSrtlaIpAddresses(
 	if (purpose === "launch" && entries.length === 0) {
 		throw new Error("no_available_network_connections");
 	}
-	return deps.writeList(entries, local ? srtlaAddr : undefined);
+	return deps.writeList(entries, localReceiver);
 }
