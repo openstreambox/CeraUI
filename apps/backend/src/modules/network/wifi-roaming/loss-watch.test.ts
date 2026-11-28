@@ -1,0 +1,501 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setup } from "../../setup.ts";
+import {
+	defaultLossWatchDeps,
+	ipListAddresses,
+	LOSS_TICK_MS,
+	LOSS_TIMEOUT_MS,
+	LossWatch,
+	type LossWatchDeps,
+	type WatchedRadio,
+} from "./loss-watch.ts";
+
+const A: WatchedRadio = {
+	id: "02:00:00:00:b0:01/51:5:p5",
+	permanentMac: "02:00:00:00:b0:01",
+	ifname: "wlan1",
+	bssid: "aa:00:00:00:00:01",
+	addresses: ["192.0.2.11"],
+};
+const B: WatchedRadio = {
+	id: "02:00:00:00:b0:02/61:6:p6",
+	permanentMac: "02:00:00:00:b0:02",
+	ifname: "wlan2",
+	bssid: "aa:00:00:00:00:02",
+	addresses: ["192.0.2.12"],
+};
+
+const OWNER_OF: Record<string, string> = {
+	"192.0.2.11": "wlan1",
+	"192.0.2.12": "wlan2",
+};
+
+/** Carrier and bond membership per interface, on a hand-driven clock. */
+function world() {
+	const w = {
+		now: 0,
+		carrier: new Map<string, boolean | undefined>(),
+		bond: new Set<string>() as Set<string> | undefined,
+		/** Interfaces whose address another interface also has. */
+		shared: new Set<string>(),
+	};
+	const deps: LossWatchDeps = {
+		now: () => w.now,
+		carrier: async (ifname) => w.carrier.get(ifname),
+		// The IP list on disk, by the interface each address belongs to.
+		inBond: async (addresses) =>
+			w.bond
+				? addresses.some((a) => w.bond?.has(OWNER_OF[a] ?? ""))
+				: undefined,
+		shared: (ifname) => w.shared.has(ifname),
+	};
+	return { w, watch: new LossWatch(deps) };
+}
+
+/** Advance in ticks until `ms` has passed. */
+async function run(
+	watch: LossWatch,
+	w: { now: number },
+	ms: number,
+	each: (t: number) => void = () => {},
+) {
+	for (let t = 0; t < ms; t += LOSS_TICK_MS) {
+		w.now += LOSS_TICK_MS;
+		each(w.now);
+		await watch.tick();
+	}
+}
+
+describe("the dead-link window", () => {
+	test("from the carrier going down to the published bond losing the interface", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 500);
+		w.carrier.set("wlan1", false);
+		const lostAt = w.now + LOSS_TICK_MS;
+		// CeraUI republishes the bond 2.4 s later.
+		await run(watch, w, 3_000, (t) => {
+			if (t >= lostAt + 2_400) w.bond?.delete("wlan1");
+		});
+		const [event, ...rest] = watch.drain();
+		expect(rest).toEqual([]);
+		expect(event).toMatchObject({
+			event: "ap-lost",
+			radio: A.permanentMac,
+			id: A.id,
+			ifname: "wlan1",
+			lostAt,
+			outcome: "left-bond",
+		});
+		expect(event?.durationMs).toBeGreaterThanOrEqual(2_400);
+		expect(event?.durationMs).toBeLessThanOrEqual(2_400 + LOSS_TICK_MS);
+		expect(watch.status(A.id)).toMatchObject({ losses: 1, lostSince: null });
+	});
+
+	test("a carrier that comes back while still in the bond is a recovery", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 700);
+		expect(watch.status(A.id)?.lostSince).not.toBeNull();
+		w.carrier.set("wlan1", true);
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "recovered", durationMs: 700 },
+		]);
+	});
+
+	test("a loss on a radio that was not in the bond is recorded as such", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "not-in-bond", durationMs: 0 },
+		]);
+	});
+
+	test("a loss that never resolves ends after 30 s", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, LOSS_TIMEOUT_MS + 200);
+		const events = watch.drain();
+		expect(events).toHaveLength(1);
+		expect(events[0]).toMatchObject({ outcome: "timeout" });
+	});
+
+	test("an unreadable carrier starts nothing; a carrier first seen down is no loss", async () => {
+		const { w, watch } = world();
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 300);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 300);
+		expect(watch.drain()).toEqual([]);
+	});
+
+	test("a radio losing its access point stays watched although the round no longer lists it", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.carrier.set("wlan2", true);
+		w.bond?.add("wlan1");
+		watch.watch([A, B]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 300);
+		// The next round lists only B; A's loss goes on being measured.
+		watch.watch([B]);
+		w.bond?.delete("wlan1");
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ ifname: "wlan1", outcome: "left-bond" },
+		]);
+		// Once ended, an unlisted radio is no longer watched.
+		expect(watch.status(A.id)).toBeNull();
+		expect(watch.status(B.id)).toMatchObject({ losses: 0 });
+	});
+
+	test("radios are kept by physical id: a replacement under the name starts fresh", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		const replacement = { ...A, id: "02:00:00:00:b0:01/52:5:p5" };
+		watch.watch([replacement]);
+		// The next tick drops the old radio: no loss was in progress.
+		await run(watch, w, 100);
+		expect(watch.status(A.id)).toBeNull();
+		expect(watch.status(replacement.id)).toMatchObject({ losses: 0 });
+	});
+
+	test("no IP list yet counts as not in the bond", async () => {
+		const { w, watch } = world();
+		// An empty list (no stream: the production read answers false).
+		w.bond = new Set();
+		w.carrier.set("wlan1", true);
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([{ outcome: "not-in-bond" }]);
+	});
+});
+
+describe("losses the order or the radio of which is uncertain", () => {
+	test("carrier and bond dropping within one tick are unordered, not out of the bond", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		w.bond?.delete("wlan1");
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "unordered", durationMs: 0, bssid: A.bssid },
+		]);
+	});
+
+	test("another radio taking the name ends the loss as replaced, never as its recovery", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 300);
+		// A replacement under the same name, carrier up.
+		const replacement = { ...A, id: "02:00:00:00:b0:09/52:5:p5" };
+		watch.watch([replacement]);
+		w.carrier.set("wlan1", true);
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ id: A.id, outcome: "radio-replaced" },
+		]);
+		expect(watch.status(replacement.id)).toMatchObject({ losses: 0 });
+	});
+
+	test("a radio unlisted while its tick reads the carrier keeps the loss that tick finds", async () => {
+		const gate = Promise.withResolvers<void>();
+		const w = {
+			now: 0,
+			carrier: true as boolean,
+			hold: false,
+		};
+		const watch = new LossWatch({
+			now: () => w.now,
+			carrier: async () => {
+				if (w.hold) await gate.promise;
+				return w.carrier;
+			},
+			inBond: async () => true,
+			shared: () => false,
+		});
+		watch.watch([A]);
+		w.now = 100;
+		await watch.tick();
+		w.carrier = false;
+		w.hold = true;
+		w.now = 200;
+		const ticking = watch.tick();
+		// The round no longer lists A while the tick is reading its carrier.
+		watch.watch([]);
+		gate.resolve();
+		await ticking;
+		expect(watch.status(A.id)?.lostSince).toBe(200);
+	});
+
+	test("the loss record names the access point the radio was last seen on", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		// The round after the loss sees no association; the last BSSID stays.
+		watch.watch([{ ...A, bssid: null }]);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		w.bond?.delete("wlan1");
+		await run(watch, w, 100);
+		expect(watch.drain()[0]?.bssid).toBe(A.bssid);
+	});
+
+	test("at most 256 ended losses wait; older ones are dropped and counted", async () => {
+		const { w, watch } = world();
+		w.bond = new Set();
+		watch.watch([A]);
+		for (let i = 0; i < 300; i++) {
+			w.carrier.set("wlan1", true);
+			await run(watch, w, 100);
+			w.carrier.set("wlan1", false);
+			await run(watch, w, 100);
+		}
+		expect(watch.drain()).toHaveLength(256);
+		expect(watch.dropped()).toBe(44);
+	});
+});
+
+describe("what the window is measured against", () => {
+	test("a replacement listed while the old radio's carrier is read never recovers the old loss", async () => {
+		const gate = Promise.withResolvers<void>();
+		const w = { now: 0, carrier: true as boolean, hold: false };
+		const watch = new LossWatch({
+			now: () => w.now,
+			carrier: async () => {
+				if (w.hold) await gate.promise;
+				return w.carrier;
+			},
+			inBond: async () => true,
+			shared: () => false,
+		});
+		watch.watch([A]);
+		w.now = 100;
+		await watch.tick();
+		w.carrier = false;
+		w.now = 200;
+		await watch.tick();
+		expect(watch.status(A.id)?.lostSince).toBe(200);
+		// The next read is held; meanwhile a replacement takes the name, carrier up.
+		w.hold = true;
+		w.carrier = true;
+		w.now = 300;
+		const ticking = watch.tick();
+		const replacement = { ...A, id: "02:00:00:00:b0:09/53:5:p5" };
+		watch.watch([replacement]);
+		gate.resolve();
+		await ticking;
+		expect(watch.drain()).toMatchObject([
+			{ id: A.id, outcome: "radio-replaced" },
+		]);
+	});
+
+	test("during a loss the record keeps the access point that went and the addresses the sender had", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		// A round mid-loss: reassociated elsewhere, no address yet.
+		watch.watch([{ ...A, bssid: "aa:00:00:00:00:77", addresses: [] }]);
+		await run(watch, w, 100);
+		w.bond?.delete("wlan1");
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "left-bond", bssid: A.bssid },
+		]);
+	});
+
+	test("an IP list that cannot be read mid-loss ends nothing", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		w.bond = undefined;
+		await run(watch, w, 500);
+		expect(watch.drain()).toEqual([]);
+		expect(watch.status(A.id)?.lostSince).not.toBeNull();
+	});
+});
+
+describe("the IP list file", () => {
+	test("one address per line, blank lines ignored", () => {
+		expect([...ipListAddresses("192.0.2.1\n\n2001:db8::1\n")]).toEqual([
+			"192.0.2.1",
+			"2001:db8::1",
+		]);
+	});
+
+	test("the production read judges by what is on disk", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "wifi-roaming-ips-"));
+		const saved = setup.ips_file;
+		try {
+			setup.ips_file = join(dir, "ips");
+			const deps = defaultLossWatchDeps(() => 0);
+			// No file yet: no stream, nothing is in the bond.
+			expect(await deps.inBond(["192.0.2.11"])).toBe(false);
+			await writeFile(setup.ips_file, "192.0.2.11\n192.0.2.30\n");
+			expect(await deps.inBond(["192.0.2.11"])).toBe(true);
+			expect(await deps.inBond(["192.0.2.99"])).toBe(false);
+			expect(await deps.inBond([])).toBeUndefined();
+			// A list that exists but cannot be read is unknown.
+			setup.ips_file = dir;
+			expect(await deps.inBond(["192.0.2.11"])).toBeUndefined();
+		} finally {
+			setup.ips_file = saved;
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("what the IP list cannot tell", () => {
+	test("an address another interface also has: the loss is noted, not measured", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		w.shared.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "shared-address", durationMs: 0 },
+		]);
+	});
+
+	test("an address that becomes shared during a loss ends it as shared, never as a recovery", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 300);
+		// The radio lost its registry address; a twin now has the kept one, and
+		// the twin's entry keeps the address in the list.
+		watch.watch([{ ...A, addresses: [] }]);
+		w.shared.add("wlan1");
+		w.carrier.set("wlan1", true);
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([{ outcome: "shared-address" }]);
+	});
+
+	test("a list unreadable at the first look after the carrier dropped is followed as uncertain", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		const list = w.bond;
+		w.bond = undefined;
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 300);
+		expect(watch.drain()).toEqual([]);
+		expect(watch.status(A.id)?.lostSince).not.toBeNull();
+		w.bond = list;
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([{ outcome: "uncertain" }]);
+	});
+
+	test("a withdrawal seen at the deadline is a window, not a timeout", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		const lostAt = w.now;
+		await run(watch, w, LOSS_TIMEOUT_MS - LOSS_TICK_MS);
+		expect(watch.drain()).toEqual([]);
+		// The next look is exactly at the deadline, and shows the withdrawal.
+		w.bond?.delete("wlan1");
+		await run(watch, w, LOSS_TICK_MS);
+		expect(w.now - lostAt).toBe(LOSS_TIMEOUT_MS);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "left-bond", durationMs: LOSS_TIMEOUT_MS },
+		]);
+	});
+
+	test("a list unreadable during the loss makes it uncertain, never a recovery", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		const list = w.bond;
+		w.bond = undefined;
+		w.carrier.set("wlan1", true);
+		await run(watch, w, 300);
+		expect(watch.drain()).toEqual([]);
+		w.bond = list;
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([{ outcome: "uncertain" }]);
+	});
+
+	test("the next loss names the access point the radio was on after the last one", async () => {
+		const { w, watch } = world();
+		w.carrier.set("wlan1", true);
+		w.bond?.add("wlan1");
+		watch.watch([A]);
+		await run(watch, w, 200);
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		// It reassociates to another access point during the loss, then recovers.
+		watch.watch([{ ...A, bssid: "aa:00:00:00:00:77" }]);
+		w.carrier.set("wlan1", true);
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "recovered", bssid: A.bssid },
+		]);
+		// No round in between: the second loss still names the new one.
+		w.carrier.set("wlan1", false);
+		await run(watch, w, 100);
+		w.bond?.delete("wlan1");
+		await run(watch, w, 100);
+		expect(watch.drain()).toMatchObject([
+			{ outcome: "left-bond", bssid: "aa:00:00:00:00:77" },
+		]);
+	});
+});

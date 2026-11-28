@@ -369,6 +369,23 @@ export const runtimeConfigSchema = z.object({
 	// Experimental coordinator admission. Absence preserves serialized config bytes.
 	two_radio_enabled: z.boolean().optional(),
 
+	// Coordinated Wi-Fi roaming. `observe` reads the radios and the sender and
+	// records what a coordinator would do; it changes nothing on the box. `off`
+	// (or absence, which preserves serialized config bytes) does no IO.
+	// `exclude`: permanent MACs of radios the observer leaves out.
+	wifi_roaming: z
+		.object({
+			level: z.enum(["off", "observe"]),
+			exclude: z
+				.array(
+					z
+						.string()
+						.regex(/^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/, "a permanent MAC"),
+				)
+				.optional(),
+		})
+		.optional(),
+
 	// Operator enable/disable of the LAN RTMP/SRT network-ingest gateways (T6). A
 	// missing key (old config) defaults both protocols enabled via the inner
 	// defaults; kept `.optional()` so `let config: RuntimeConfig = {}` still parses.

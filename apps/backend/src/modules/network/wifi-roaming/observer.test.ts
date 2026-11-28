@@ -1,0 +1,547 @@
+import { describe, expect, test } from "bun:test";
+import {
+	COOLDOWN_BASE_MS,
+	deliveringStayers,
+	type JournalEvent,
+	ROAM_DWELL_MS,
+	RoamingObserver,
+	type RoundInput,
+} from "./observer.ts";
+import type { RadioView } from "./radio-port.ts";
+import type { LinkSample, Snapshot } from "./sender-links.ts";
+import type { SenderView } from "./sender-port.ts";
+
+const MAC = "02:00:00:00:e0:01";
+const ID = `${MAC}/51:5:/devices/pci/phy5`;
+const AP1 = "aa:00:00:00:00:01";
+const AP2 = "aa:00:00:00:00:02";
+
+const base: LinkSample = {
+	epoch: 1,
+	connected: true,
+	timedOut: false,
+	queued: 0,
+	entries: 0,
+	ageMs: 100,
+	rttMs: 30,
+	bitrateBps: 0,
+	stallGated: false,
+	soleCarrierExcluded: false,
+	weak: false,
+	weakReason: null,
+	inFlightCapActive: false,
+	ccLossDegraded: false,
+	ccTargetBps: null,
+	ccState: null,
+	ccLossPermille: null,
+};
+
+const READY: SenderView = {
+	reachable: true,
+	arrivalReports: true,
+	standby: true,
+	mapping: { unmapped: 0, ambiguous: 0, uncounted: 0, key: "k1" },
+};
+
+const radio = (over: Partial<RadioView> = {}): RadioView => ({
+	id: ID,
+	permanentMac: MAC,
+	ifname: "wlan1",
+	station: true,
+	reserved: false,
+	link: { bssid: AP1, ssid: "venue", signalDbm: -60 },
+	seenBssids: 2,
+	scanRule: "normal",
+	addresses: ["192.0.2.11"],
+	...over,
+});
+
+/**
+ * A sender snapshot at second `t`: wlan1 and a stayer (wwan0) each queue
+ * 30 packets a second; the stayer's receiver acknowledges `deliver` of them.
+ */
+function snap(
+	t: number,
+	opts: {
+		deliver?: number;
+		/** Second at which the stayer's acknowledgements pause for one step, then catch up. */
+		gapAt?: number;
+		radioMapped?: boolean;
+		unmapped?: boolean;
+		stayer?: boolean;
+	} = {},
+): Snapshot {
+	const radios = new Map<string, LinkSample>();
+	if (opts.radioMapped !== false)
+		radios.set("wlan1", { ...base, queued: 30 * t, entries: 30 * t });
+	if (opts.stayer !== false)
+		radios.set("wwan0", {
+			...base,
+			queued: 30 * t,
+			entries:
+				opts.gapAt !== undefined && t === opts.gapAt
+					? Math.floor(30 * (t - 1) * (opts.deliver ?? 1))
+					: Math.floor(30 * t * (opts.deliver ?? 1)),
+		});
+	const others = new Map<string, LinkSample>();
+	if (opts.unmapped) others.set("conn:9", base);
+	return {
+		at: t * 1_000,
+		radios,
+		others,
+		negotiatedLatencyMs: null,
+		claimed: new Set(radios.keys()),
+	};
+}
+
+type Step = Partial<Omit<RoundInput, "at">> & {
+	radio?: Partial<RadioView> | null;
+	snapOpts?: Parameters<typeof snap>[1];
+};
+
+/** Run one round per second from `from` to `to` with the same inputs. */
+function rounds(
+	o: RoamingObserver,
+	from: number,
+	to: number,
+	step: Step | ((t: number) => Step) = {},
+): JournalEvent[] {
+	const events: JournalEvent[] = [];
+	for (let t = from; t <= to; t++) {
+		const s = typeof step === "function" ? step(t) : step;
+		events.push(
+			...o.round({
+				at: t * 1_000,
+				radios: s.radio === null ? [] : [radio(s.radio)],
+				skipped: s.skipped ?? [],
+				snapshot: "snapshot" in s ? s.snapshot : snap(t, s.snapOpts),
+				sender: s.sender ?? READY,
+			}),
+		);
+	}
+	return events;
+}
+
+const fading = { link: { bssid: AP1, ssid: "venue", signalDbm: -75 } };
+const status = (o: RoamingObserver) => o.status()?.radios[0];
+
+describe("a healthy radio", () => {
+	test("is watched: no decision, no blocker", () => {
+		const o = new RoamingObserver();
+		const events = rounds(o, 1, 12);
+		expect(status(o)).toMatchObject({
+			condition: "headroom",
+			decision: "none",
+			blockers: [],
+			wouldNudges: 0,
+		});
+		expect(events.map((e) => e.event)).toEqual(["radio-added", "seen-bssids"]);
+	});
+});
+
+describe("a fading radio", () => {
+	test("with every condition met: would nudge, once per cooldown", () => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 5);
+		const events = rounds(o, 6, 12, { radio: fading });
+		expect(status(o)).toMatchObject({
+			condition: "fade",
+			stayers: ["wwan0"],
+			wouldNudges: 1,
+		});
+		const nudges = events.filter((e) => e.event === "would-nudge");
+		expect(nudges).toHaveLength(1);
+		expect(nudges[0]).toMatchObject({
+			radio: MAC,
+			ifname: "wlan1",
+			bssid: AP1,
+			stayers: ["wwan0"],
+		});
+		expect(events.map((e) => e.event)).toContain("fade-start");
+	});
+
+	test("a steep slope above the level floor is a fade too", () => {
+		const o = new RoamingObserver();
+		const events = rounds(o, 1, 20, (t) => ({
+			radio: { link: { bssid: AP1, ssid: "venue", signalDbm: -50 - 1.5 * t } },
+		}));
+		const first = events.find((e) => e.event === "fade-start");
+		expect(first).toBeDefined();
+		// It fired on the slope while the level was still above -70 dBm.
+		expect((first as { signalDbm: number }).signalDbm).toBeGreaterThan(-70);
+	});
+
+	test("the cooldown doubles while the radio stays on its access point", () => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 5);
+		const first = rounds(o, 6, 6 + COOLDOWN_BASE_MS / 1_000, { radio: fading });
+		expect(first.filter((e) => e.event === "would-nudge")).toHaveLength(2);
+		const second = rounds(o, 22, 22 + COOLDOWN_BASE_MS / 1_000, {
+			radio: fading,
+		});
+		// The second gap is 30 s: nothing within the next 15 s.
+		expect(second.filter((e) => e.event === "would-nudge")).toHaveLength(0);
+		expect(status(o)?.blockers).toEqual(["cooldown"]);
+	});
+
+	test("a radio that moved by itself is recorded and left alone for the dwell", () => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 5);
+		const events = rounds(o, 6, 8, (t) => ({
+			radio:
+				t < 8
+					? fading
+					: { link: { bssid: AP2, ssid: "venue", signalDbm: -75 } },
+		}));
+		expect(events.find((e) => e.event === "roamed")).toMatchObject({
+			from: AP1,
+			to: AP2,
+		});
+		expect(status(o)).toMatchObject({ roams: 1, blockers: ["cooldown"] });
+		const later = rounds(o, 9, 7 + ROAM_DWELL_MS / 1_000, {
+			radio: { link: { bssid: AP2, ssid: "venue", signalDbm: -75 } },
+		});
+		expect(later.filter((e) => e.event === "would-nudge")).toHaveLength(0);
+		const after = rounds(
+			o,
+			8 + ROAM_DWELL_MS / 1_000,
+			9 + ROAM_DWELL_MS / 1_000,
+			{
+				radio: { link: { bssid: AP2, ssid: "venue", signalDbm: -75 } },
+			},
+		);
+		expect(after.filter((e) => e.event === "would-nudge")).toHaveLength(1);
+	});
+});
+
+describe("what keeps a fading radio from a nudge", () => {
+	const blockersFor = (step: Step) => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 5);
+		rounds(o, 6, 12, {
+			...step,
+			radio: { ...fading, ...(step.radio ?? {}) },
+		});
+		return status(o)?.blockers;
+	};
+
+	test("a hotspot on the radio or its phy", () => {
+		expect(blockersFor({ radio: { reserved: true } })).toEqual(["hotspot"]);
+		expect(blockersFor({ radio: { reserved: null } })).toEqual([
+			"hotspot-unknown",
+		]);
+	});
+
+	test("not activated as a station", () => {
+		expect(blockersFor({ radio: { station: false } })).toEqual([
+			"not-a-station",
+		]);
+	});
+
+	test("no sender evidence", () => {
+		expect(blockersFor({ snapshot: undefined })).toContain(
+			"no-sender-evidence",
+		);
+	});
+
+	test("a sender link that maps to no interface", () => {
+		expect(blockersFor({ snapOpts: { unmapped: true } })).toEqual([
+			"unmapped-sender-link",
+		]);
+	});
+
+	test("the radio's own link not mapped", () => {
+		expect(blockersFor({ snapOpts: { radioMapped: false } })).toEqual([
+			"radio-link-not-mapped",
+		]);
+	});
+
+	test("no other link that delivers", () => {
+		expect(blockersFor({ snapOpts: { stayer: false } })).toEqual([
+			"no-delivering-stayer",
+		]);
+		expect(blockersFor({ snapOpts: { deliver: 0.5 } })).toEqual([
+			"no-delivering-stayer",
+		]);
+	});
+
+	test("a sender without the standby, or not known to have it", () => {
+		expect(blockersFor({ sender: { ...READY, standby: false } })).toEqual([
+			"sender-without-standby",
+		]);
+		expect(blockersFor({ sender: { ...READY, standby: null } })).toEqual([
+			"sender-without-standby",
+		]);
+	});
+
+	test("the blocked reasons are journalled when they change, not every round", () => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 5);
+		const events = rounds(o, 6, 20, {
+			radio: { ...fading, reserved: true },
+		});
+		expect(events.filter((e) => e.event === "blocked")).toHaveLength(1);
+	});
+});
+
+describe("radios by physical identity", () => {
+	test("a radio replugged under the same name inherits no cooldown", () => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 5);
+		rounds(o, 6, 12, { radio: fading });
+		expect(status(o)?.wouldNudges).toBe(1);
+		const events = rounds(o, 13, 13, {
+			radio: { ...fading, id: `${MAC}/52:5:/devices/pci/phy5` },
+		});
+		expect(events.map((e) => e.event)).toEqual(
+			expect.arrayContaining(["radio-added", "radio-gone"]),
+		);
+		// The old radio would still be cooling down (15 s from second 6); the
+		// new one inherits nothing and qualifies at once.
+		expect(status(o)).toMatchObject({
+			wouldNudges: 1,
+			lastWouldNudgeAt: 13_000,
+			roams: 0,
+		});
+	});
+
+	test("skipped radios are reported as given", () => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 1, {
+			radio: null,
+			skipped: [{ ifname: "wlan9", reason: "not-admitted" }],
+		});
+		expect(o.status()?.skipped).toEqual([
+			{ ifname: "wlan9", reason: "not-admitted" },
+		]);
+		expect(o.status()?.radios).toEqual([]);
+	});
+});
+
+describe("stayers", () => {
+	test("a missing sender read breaks the span: no stayer until it is complete again", () => {
+		const snaps = [1, 2, 3, 4, 5, 6].map((t) => snap(t));
+		expect(deliveringStayers(snaps, "wlan1")).toEqual(["wwan0"]);
+		expect(deliveringStayers(snaps.slice(-2), "wlan1")).toEqual([]);
+		const o = new RoamingObserver();
+		rounds(o, 1, 5);
+		rounds(o, 6, 6, { snapshot: undefined, radio: fading });
+		rounds(o, 7, 8, { radio: fading });
+		expect(status(o)?.blockers).toContain("no-delivering-stayer");
+	});
+
+	test("the radio itself is never its own stayer", () => {
+		const snaps = [1, 2, 3, 4, 5, 6].map((t) => snap(t, { stayer: false }));
+		expect(deliveringStayers(snaps, "wlan1")).toEqual([]);
+		expect(deliveringStayers(snaps, "wlan2")).toEqual(["wlan1"]);
+	});
+});
+
+describe("what the sender evidence has to be", () => {
+	const fadeWith = (step: (t: number) => Step) => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 5);
+		rounds(o, 6, 12, (t) => ({ radio: fading, ...step(t) }));
+		return status(o);
+	};
+
+	test("a sender whose state stopped moving is stale: no stayer, no nudge", () => {
+		const frozen = snap(5);
+		const st = fadeWith(() => ({ snapshot: frozen }));
+		expect(st?.blockers).toContain("sender-evidence-stale");
+		expect(st?.stayers).toEqual([]);
+		expect(st?.decision).toBe("would-wait");
+	});
+
+	test("a link without counters, or one that maps ambiguously, blocks even when the snapshot looks clean", () => {
+		expect(
+			fadeWith(() => ({
+				sender: {
+					...READY,
+					mapping: { unmapped: 0, ambiguous: 0, uncounted: 1, key: "k1" },
+				},
+			}))?.blockers,
+		).toEqual(["uncounted-sender-link"]);
+		expect(
+			fadeWith(() => ({
+				sender: {
+					...READY,
+					mapping: { unmapped: 0, ambiguous: 1, uncounted: 0, key: "k1" },
+				},
+			}))?.blockers,
+		).toEqual(["ambiguous-sender-link"]);
+		expect(
+			fadeWith(() => ({ sender: { ...READY, mapping: null } }))?.blockers,
+		).toContain("no-sender-evidence");
+	});
+
+	test("a stayer whose acknowledgements broke off inside the span does not count, even when they caught up", () => {
+		// Over the span it delivered all it was offered: only the break counts.
+		const snaps = [6, 7, 8, 9, 10, 11, 12].map((t) => snap(t, { gapAt: 11 }));
+		expect(deliveringStayers(snaps, "wlan1")).toEqual([]);
+		const st = fadeWith((t) => ({ snapshot: snap(t, { gapAt: 11 }) }));
+		expect(st?.blockers).toContain("no-delivering-stayer");
+		// Without the gap the same stayer counts.
+		expect(
+			deliveringStayers(
+				[6, 7, 8, 9, 10, 11, 12].map((t) => snap(t)),
+				"wlan1",
+			),
+		).toEqual(["wwan0"]);
+	});
+});
+
+describe("a radio without a link", () => {
+	test("says why: not associated, or the link could not be read", () => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 2, { radio: { link: null } });
+		expect(status(o)).toMatchObject({
+			condition: null,
+			decision: "none",
+			blockers: ["not-associated"],
+		});
+		rounds(o, 3, 3, { radio: { link: undefined } });
+		expect(status(o)?.blockers).toEqual(["link-unreadable"]);
+	});
+});
+
+describe("the physical id is recorded", () => {
+	test("in the status and on every journal line", () => {
+		const o = new RoamingObserver();
+		const events = rounds(o, 1, 12, (t) => (t > 5 ? { radio: fading } : {}));
+		expect(status(o)?.id).toBe(ID);
+		expect(events.length).toBeGreaterThan(1);
+		for (const e of events) expect(e.id).toBe(ID);
+	});
+});
+
+describe("a span under one mapping", () => {
+	test("says nothing once the sender's links map differently, even with the same counters", () => {
+		const o = new RoamingObserver();
+		rounds(o, 1, 8, (t) => (t > 5 ? { radio: fading } : {}));
+		expect(status(o)?.stayers).toEqual(["wwan0"]);
+		// The same reply again (same counters, same time), but one link now
+		// maps to another interface: the history no longer describes the links.
+		const remapped = {
+			...READY,
+			mapping: {
+				...(READY.mapping as NonNullable<SenderView["mapping"]>),
+				key: "k2",
+			},
+		};
+		rounds(o, 9, 9, { radio: fading, snapshot: snap(8), sender: remapped });
+		expect(status(o)?.stayers).toEqual([]);
+		expect(status(o)?.blockers).toContain("no-delivering-stayer");
+	});
+
+	test("a repeated reply replaces the kept one, so its mapping is the current one", () => {
+		const snaps = [1, 2, 3, 4, 5, 6].map((t) => snap(t));
+		expect(deliveringStayers(snaps, "wlan1")).toEqual(["wwan0"]);
+		const o = new RoamingObserver();
+		rounds(o, 1, 8, (t) => (t > 5 ? { radio: fading } : {}));
+		// The sender answers with the same state again; the observer keeps the
+		// newest copy of that sample, not the first.
+		const again = snap(8, { stayer: false });
+		rounds(o, 9, 9, { radio: fading, snapshot: again });
+		expect(status(o)?.stayers).toEqual([]);
+	});
+});
+
+describe("which access point each radio is on", () => {
+	const two = (
+		bssid2: string,
+		seen2: number | null = 2,
+		rule2: RadioView["scanRule"] = seen2 === null
+			? null
+			: seen2 < 2
+				? "rare"
+				: "normal",
+	): RoundInput => ({
+		at: 1_000,
+		radios: [
+			radio(),
+			radio({
+				id: "02:00:00:00:e0:02/61:6:p6",
+				permanentMac: "02:00:00:00:e0:02",
+				ifname: "wlan2",
+				link: { bssid: bssid2, ssid: "venue", signalDbm: -58 },
+				seenBssids: seen2,
+				scanRule: rule2,
+			}),
+		],
+		skipped: [],
+		snapshot: snap(1),
+		sender: READY,
+	});
+
+	test("two radios on one access point are reported as sharing it, once each way", () => {
+		const o = new RoamingObserver();
+		const first = o.round(two(AP1));
+		expect(o.status()?.sharedAccessPoints).toEqual([
+			{ bssid: AP1, radios: ["wlan1", "wlan2"] },
+		]);
+		expect(o.status()?.radios.map((r) => r.sharesAccessPointWith)).toEqual([
+			["wlan2"],
+			["wlan1"],
+		]);
+		expect(first.filter((e) => e.event === "ap-shared")).toHaveLength(2);
+		// The same again: nothing new in the journal.
+		expect(
+			o
+				.round({ ...two(AP1), at: 2_000 })
+				.filter((e) => e.event === "ap-shared"),
+		).toEqual([]);
+		// One radio moves to another access point: both record the split.
+		const split = o.round({ ...two(AP2), at: 3_000 });
+		expect(
+			split
+				.filter((e) => e.event === "ap-split")
+				.map((e) => e.ifname)
+				.sort(),
+		).toEqual(["wlan1", "wlan2"]);
+		expect(o.status()?.sharedAccessPoints).toEqual([]);
+	});
+
+	test("an unreadable link is no split: sharing stays as last known", () => {
+		const o = new RoamingObserver();
+		o.round(two(AP1));
+		const unread = two(AP1);
+		const radios = [
+			unread.radios[0] as RadioView,
+			{ ...(unread.radios[1] as RadioView), link: undefined },
+		];
+		const events = o.round({ ...unread, radios, at: 2_000 });
+		expect(events.filter((e) => e.event === "ap-split")).toEqual([]);
+		// Once read again on the same access point, no new shared event either.
+		expect(
+			o
+				.round({ ...two(AP1), at: 3_000 })
+				.filter((e) => e.event === "ap-shared"),
+		).toEqual([]);
+	});
+
+	test("the seen-bssids count and what it means for scanning, journalled when it changes", () => {
+		const o = new RoamingObserver();
+		const first = o.round(two(AP2, 1));
+		const st = o.status()?.radios;
+		expect(st?.map((r) => [r.seenBssids, r.scanRule])).toEqual([
+			[2, "normal"],
+			[1, "rare"],
+		]);
+		expect(first.filter((e) => e.event === "seen-bssids")).toHaveLength(2);
+		expect(
+			o
+				.round({ ...two(AP2, 1), at: 2_000 })
+				.filter((e) => e.event === "seen-bssids"),
+		).toEqual([]);
+		const grew = o.round({ ...two(AP2, 2), at: 3_000 });
+		expect(grew.filter((e) => e.event === "seen-bssids")).toMatchObject([
+			{ ifname: "wlan2", count: 2 },
+		]);
+		const unknown = o.round({ ...two(AP2, null), at: 4_000 });
+		expect(o.status()?.radios[1]?.scanRule).toBeNull();
+		expect(unknown.filter((e) => e.event === "seen-bssids")).toMatchObject([
+			{ ifname: "wlan2", count: null },
+		]);
+	});
+});
