@@ -243,6 +243,32 @@ describe.each(["en", "de", "es", "fr", "ar", "hi", "pt-BR"] as const)(
 	},
 );
 
+it.each([
+	[
+		"1 of 1",
+		uplinks({ iface: "wwan0" }),
+		"1 of 1 uplinks are healthy enough to consider. Client policy may exclude them.",
+	],
+	[
+		"1 of 2",
+		uplinks({ iface: "wwan0" }, { iface: "wwan1", state: "down", weight: 0 }),
+		"1 of 2 uplinks are healthy enough to consider. Client policy may exclude them.",
+	],
+	[
+		"2 of 2",
+		uplinks({ iface: "wwan0" }, { iface: "wwan1" }),
+		"2 of 2 uplinks are healthy enough to consider. Client policy may exclude them.",
+	],
+] as const)(
+	"words the %s health count in English",
+	(_ratio, roster, expected) => {
+		const { getByTestId } = mount({ uplinks: roster });
+		expect(getByTestId("sharing-band-sharing-active").textContent).toContain(
+			expected,
+		);
+	},
+);
+
 describe("SharingSection diagnostics chip", () => {
 	const clean = { state: "ok" } as const;
 	const prePin = {
