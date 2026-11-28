@@ -1635,6 +1635,21 @@ test.each([
 	},
 );
 
+test("an engine restart restores the single input a Start's engine took instead of the saved mix", async () => {
+	// The engine receiving the Start does not advertise the mix; the one the
+	// restoration reaches does.
+	spyOn(
+		CerastreamBackend.prototype as unknown as {
+			readStartCapabilities: () => Promise<GetCapabilitiesResult | undefined>;
+		},
+		"readStartCapabilities",
+	).mockResolvedValueOnce({ ...CAPS, audio_mix: undefined });
+	await running("Primary", "mix");
+	expect(launchedAudio()).toEqual([device("Primary")]);
+	expect(captureArmedStreamConfig().audio_inputs).toBeNull();
+	expect(await restart()).toEqual(device("Primary"));
+});
+
 test("an engine restart restores the level the engine applied, not the one asked for", async () => {
 	liveEngine(undefined, (update) => ({ ...update, gain_db: -11 }));
 	await running("Primary", "mix");
