@@ -6,13 +6,13 @@ for (const width of [390,1280,1024]) {
   await page.setViewportSize({width,height:width===1024?600:900});
   await page.goto('/');await ensureAuthenticated(page);
   await pageRpc.call(['dev','emit'],{type:'status',payload:{phone_box:true,carrying:{state:'unknown'},box_health:[]}});
-  await expect(page.getByRole('heading',{name:'Checking whether your phone uses the box'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Checking whether a device is sending through the box'})).toBeVisible();
   await expect(page.getByTestId('phone-hud')).toHaveText('CHECKING');
   const home=page.getByTestId('phone-home');
   expect(await home.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
   await page.screenshot({path:evidencePath(`phone-home-checking-${width}.png`),fullPage:true});
   await expect(home).not.toContainText(/engine offline|not live|idle/i);
-  for (const [state,heading,badge] of [['streaming',"Carrying your phone's stream",'PHONE STREAM'],['idle','Ready for your phone','READY']] as const) {
+  for (const [state,heading,badge] of [['streaming',"Upload seen through the box",'CARRYING'],['idle','Box ready','READY']] as const) {
    await pageRpc.call(['dev','emit'],{type:'status',payload:{phone_box:true,carrying:{state},box_health:[]}});
    await expect(page.getByRole('heading',{name:heading})).toBeVisible();
    await expect(page.getByTestId('phone-hud')).toHaveText(badge);
@@ -23,15 +23,15 @@ for (const width of [390,1280,1024]) {
    await health.screenshot({path:evidencePath(`phone-health-${state}-${width}.png`)});
    await home.getByRole('heading',{name:heading}).evaluate(el=>el.scrollIntoView({block:'start'}));
   }
-  await expect(home.getByRole('button',{name:'Connect your phone'})).toBeVisible();
-  await home.getByRole('button',{name:'Connect your phone'}).click();
+  await expect(home.getByRole('button',{name:'Connect a device'})).toBeVisible();
+  await home.getByRole('button',{name:'Connect a device'}).click();
   await home.getByRole('button',{name:'IRL Pro',exact:true}).click();
   await expect(home.getByRole('button',{name:'Change app'})).toBeVisible();
   await expect(home).toContainText('choose SRT, not SRTLA');
   if(width!==1280) await expect(home.locator('img')).toHaveCount(0);
   expect(await home.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
   await page.screenshot({path:evidencePath(`phone-connect-srt-${width}.png`),fullPage:true});
-  await expect(home).toContainText("Nothing after 30 seconds? Check that your phone is on the box's Wi-Fi and that the address and passphrase match.");
+  await expect(home).toContainText("Nothing after 30 seconds? Check that the sending device is on the box's Wi-Fi and that the address and passphrase match.");
   await home.getByRole('button',{name:'Change app',exact:true}).click();
   await home.getByRole('button',{name:'Moblin',exact:true}).click();
   await expect(home.getByLabel("Moblin's password (from Moblin, not the Wi-Fi password)")).toBeVisible();
@@ -52,7 +52,7 @@ for(const width of [390,1280,1024]) {
    fixture.mountPhoneHomeFixture(window.innerWidth===1024);
   });
   const home=page.getByTestId('phone-home-fixture');
-  await home.getByRole('button',{name:'Connect your phone',exact:true}).click();
+  await home.getByRole('button',{name:'Connect a device',exact:true}).click();
   await expect(home.getByText('srt://192.0.2.1:4000',{exact:true})).toBeVisible();
   // The Wi-Fi code is hidden until Show code (D16); only the address QR is up.
   await expect(home.locator('img')).toHaveCount(width===1280?1:0);
@@ -87,7 +87,7 @@ for (const width of [390, 1280, 1024]) {
    window.PhoneHomeFixture.mountPhoneHomeFixture(window.innerWidth === 1024, true);
   });
   const home = page.getByTestId('phone-home-fixture');
-  await home.getByRole('button', { name: 'Connect your phone', exact: true }).click();
+  await home.getByRole('button', { name: 'Connect a device', exact: true }).click();
   const input = home.getByLabel("Moblin's password (from Moblin, not the Wi-Fi password)");
   await expect(input).toBeEnabled();
   await expect(input).toHaveAttribute('autocomplete', 'off');

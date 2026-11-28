@@ -38,13 +38,13 @@ describe("phone Home consumes carrying broadcasts", () => {
 		render(Harness);
 		expect(
 			screen.getByRole("heading", {
-				name: "Checking whether your phone uses the box",
+				name: "Checking whether a device is sending through the box",
 			}),
 		).toBeTruthy();
 		for (const [state, heading] of [
-			["streaming", "Carrying your phone's stream"],
-			["unknown", "Checking whether your phone uses the box"],
-			["idle", "Ready for your phone"],
+			["streaming", "Upload seen through the box"],
+			["unknown", "Checking whether a device is sending through the box"],
+			["idle", "Box ready"],
 		] as const) {
 			messageHandler?.(
 				"status",
