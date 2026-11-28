@@ -39,6 +39,7 @@ export function createCaptivePortalProcedure(deps: PortalDeps) {
 			const peer =
 				path?.peer ?? context.ws.remoteAddress.replace(/^::ffff:/, "");
 			const via = path?.interface;
+			const viaLifetime = path ? context.ws.data.ingressLifetime : undefined;
 
 			if (input.action === "start" || input.action === "configure") {
 				const settings = await deps.settings();
@@ -70,6 +71,7 @@ export function createCaptivePortalProcedure(deps: PortalDeps) {
 					String(input.radio),
 					input.incarnation,
 					via,
+					viaLifetime,
 				);
 			}
 			if (input.action === "finish") return signInWindow.finish(peer, via);
