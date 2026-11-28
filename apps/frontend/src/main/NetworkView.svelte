@@ -480,6 +480,7 @@ function openModemConfig(id: string) {
 		bind:open={hotspotDialogOpen}
 		deviceId={hotspotDialogTarget[0]}
 		iface={hotspotDialogIface}
+		openedIncarnation={hotspotDialogTarget[1]}
 	/>
 {/if}
 
