@@ -24,6 +24,7 @@ import {
 } from "../modules/wifi/wifi-operation-binding.ts";
 import { radioIdentityReaders } from "../modules/wifi/wifi-radio-identity.ts";
 import { addClient, removeClient } from "../rpc/events.ts";
+import { buildInitialStatus } from "../rpc/procedures/status.procedure.ts";
 import { StubRemoteSocket, statusClient } from "./helpers/status-client.ts";
 import { firstAp, MAC } from "./helpers/wifi-first-ap-fixture.ts";
 import {
@@ -96,6 +97,16 @@ test.each([false, true])(
 				expect(rescan).toHaveBeenCalledTimes(guarded ? 0 : 1);
 			}
 			authenticate();
+			// A browser that signs in or reconnects now builds its own snapshot:
+			// the settled station row, before any follow-up broadcast.
+			const browser = buildInitialStatus().status.wifi as Record<
+				string,
+				{ mode?: string; transition?: string } | undefined
+			>;
+			expect([browser["0"]?.mode, browser["0"]?.transition]).toEqual([
+				"station",
+				undefined,
+			]);
 			broadcastWifiState();
 			// The remote projection names the radio "Wi-Fi 1" and never carries a
 			// transition, mode witness or radio token, so no transport has an
