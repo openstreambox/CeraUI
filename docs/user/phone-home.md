@@ -36,7 +36,7 @@ choice for the next carrying session; it does not reroute an active stream.
 
 Box health names the links whose internet probes are current. Details describe
 failed parts. Restart is unavailable while carrying or checking; confirmation
-names the interruption cost. During the 120-second startup check, power-off is allowed after a confirmation that any stream through the box drops. Restart remains held. An encoder image keeps its existing Live screen.
+names the interruption cost. During the 120-second startup check, power-off is allowed after a confirmation that all traffic through the box stops until it is switched on again. Restart remains held. An encoder image keeps its existing Live screen.
 Per-link sending figures are deliberately withheld without client-session
 telemetry; current internet probes remain visible instead.
 
@@ -56,7 +56,8 @@ count: only a finished join does.
 **New Wi-Fi password** makes a new random password for the running hotspot. The
 hotspot has one password, so every device on it drops and has to join again with
 the new code. The box asks first and says so; if a device may be streaming
-through the box, it also says that stream drops.
+through the box, it also says that traffic through the box from those devices
+stops until they join again.
 
 ## Inicio para una caja sin codificador
 
@@ -92,7 +93,7 @@ políticas siguen aplicándose.
 
 Solo se recuerda la opción elegida; no se guarda la identidad del dispositivo.
 El reinicio permanece desactivado mientras la caja transporta tráfico o lo
-comprueba. Durante la comprobación inicial de 120 segundos, se permite apagar tras confirmar que se corta cualquier emisión que pase por la caja; reiniciar sigue bloqueado. Las cajas con codificador conservan su vista Live.
+comprueba. Durante la comprobación inicial de 120 segundos, se permite apagar tras confirmar que todo el tráfico a través de la caja se detiene hasta que se vuelva a encender; reiniciar sigue bloqueado. Las cajas con codificador conservan su vista Live.
 
 ### El código Wi-Fi de la caja
 
@@ -112,7 +113,8 @@ está escribiendo la contraseña no cuenta: solo una conexión terminada.
 de acceso activo. Tiene una sola contraseña, así que todos los dispositivos se
 desconectan y tienen que volver a unirse con el código nuevo. La caja lo
 pregunta antes y lo dice; si un dispositivo puede estar emitiendo a través de la
-caja, también avisa de que esa emisión se corta.
+caja, también avisa de que el tráfico de esos dispositivos a través de la caja se
+detiene hasta que vuelvan a unirse.
 
 ## Integration contract
 

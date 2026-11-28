@@ -23,7 +23,8 @@
     so dropping one device means a new password for all of them.
   • **New Wi-Fi password** asks first and names the cost: every joined device
     drops and joins again; with a stream that may be going through the box, the
-    D13a line says that stream drops too. Never a dead end, never silent.
+    card adds that traffic through the box from those devices stops until
+    they join again. Never a dead end, never silent.
 -->
 <script module lang="ts">
 /** How long a shown code stays on screen. */
@@ -261,7 +262,7 @@ function confirmRenew() {
 				<legend class="px-1 text-sm font-medium">{m['network.hotspot.newPasswordQuestion']()}</legend>
 				<p class="text-muted-foreground text-xs">{m['network.hotspot.newPasswordCost']()}</p>
 				{#if renew.streaming}
-					<p class="text-muted-foreground text-xs">{m['live.phone.powerOffCost']()}</p>
+					<p class="text-muted-foreground text-xs">{m['network.hotspot.newPasswordStreaming']()}</p>
 				{/if}
 				<div class="flex flex-wrap gap-2">
 					<Button class="min-h-11" onclick={confirmRenew} type="button">

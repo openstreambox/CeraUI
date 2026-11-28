@@ -143,7 +143,7 @@ it("allows confirmed poweroff during phone startup while holding restart", async
 		expect(power).toHaveProperty("disabled", false);
 		await fireEvent.click(power);
 		expect(document.body.textContent).toContain(
-			"If a device is streaming through the box, that stream drops",
+			"Powering off stops all traffic through the box until it is switched on again.",
 		);
 	} finally {
 		state.phone = false;
