@@ -527,6 +527,7 @@ export async function nmDisconnect(
 	runId?: string,
 	ifname?: string,
 	current?: () => boolean,
+	options?: { readonly pendingOnly?: boolean },
 ) {
 	try {
 		// In mock mode, simulate successful disconnection
@@ -546,6 +547,7 @@ export async function nmDisconnect(
 				uuid,
 				ifname,
 				current,
+				options,
 			);
 		}
 		if (current && !current()) return false;

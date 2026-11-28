@@ -34,11 +34,21 @@ export async function nmDisconnectActivation(
 	deps: { readonly nmDisconnect: typeof nmDisconnect } = { nmDisconnect },
 	permit?: () => Promise<boolean>,
 	current?: () => boolean,
+	options?: { readonly pendingOnly?: boolean },
 ): Promise<boolean> {
 	if (!activation) return false;
 	if (permit && !(await permit())) return false;
 	const currentRunId = await nmRunId();
 	if (currentRunId === activation.runId) {
+		if (options)
+			return deps.nmDisconnect(
+				uuid,
+				activation.path,
+				activation.runId,
+				activation.ifname,
+				current,
+				options,
+			);
 		if (current)
 			return deps.nmDisconnect(
 				uuid,
@@ -54,6 +64,8 @@ export async function nmDisconnectActivation(
 			activation.ifname,
 		);
 	}
+	// A pending activation cannot survive a daemon restart.
+	if (options?.pendingOnly) return false;
 	const activity = await readHotspotProfileActivity(uuid);
 	return activity === "inactive" || activity === "absent";
 }

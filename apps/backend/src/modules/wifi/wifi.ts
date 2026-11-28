@@ -64,8 +64,10 @@ import {
 	nmcliParseSep,
 	parseNmConnActivated,
 	parseNmConnAddUuid,
+	readNmDeviceActivation,
 } from "../network/network-manager.ts";
 import type { ProfileWriteAdmission } from "../network/profile-write-permit.ts";
+import { describePrivateCliError } from "../system/cli-parse.ts";
 import type { MessageSocket } from "../ui/message-socket.ts";
 import {
 	broadcastMsg,
@@ -74,6 +76,7 @@ import {
 	getSocketSenderId,
 } from "../ui/websocket-server.ts";
 import {
+	afterWifiAdapterLockRelease,
 	wifiAdapterLockKey,
 	withWifiAdapterLock,
 } from "./wifi-adapter-lock.ts";
@@ -750,28 +753,53 @@ export async function wifiUpdateSavedConns(
 	onCommitted?.();
 }
 
-/* Searches saved connections in wifiIfs by UUID */
-function wifiSearchConnection(uuid: string) {
-	let connFound: string | undefined;
-
-	const wifiIdToMacAddress = getWifiIdToMacAddress();
+/*
+  The one radio a saved Connect of `uuid` activates on: the radio it is already
+  active on, else the first radio (by published id) that lists it. A profile
+  with no bound MAC is listed on every radio, so the procedure's lock and the
+  handler's activation must both use this one answer.
+*/
+export function wifiConnectRadio(
+	uuid: string,
+): { deviceId: string; macAddress: MacAddress; ifname: string } | undefined {
 	const wifiInterfacesByMacAddress = getWifiInterfacesByMacAddress();
-	for (const id in wifiIdToMacAddress) {
+	let first:
+		| { deviceId: string; macAddress: MacAddress; ifname: string }
+		| undefined;
+	for (const id in getWifiIdToMacAddress()) {
 		const macAddress = getMacAddressForWifiInterface(Number.parseInt(id, 10));
 		if (!macAddress) continue;
-
 		const wifiInterface = wifiInterfacesByMacAddress[macAddress];
 		if (!wifiInterface) continue;
-
-		for (const s in wifiInterface.saved) {
-			if (wifiInterface.saved[s] === uuid) {
-				connFound = id;
-				break;
-			}
-		}
+		const radio = { deviceId: id, macAddress, ifname: wifiInterface.ifname };
+		if (
+			wifiInterface.conn === uuid &&
+			Object.values(wifiInterface.saved).includes(uuid)
+		)
+			return radio;
+		if (!first && Object.values(wifiInterface.saved).includes(uuid))
+			first = radio;
 	}
+	return first;
+}
 
-	return connFound;
+/**
+ * Every radio Forget of `uuid` can touch: any that lists one of the profiles it
+ * deletes (the same-SSID siblings too, also those behind another profile in
+ * `savedAll`) or has one of them active.
+ */
+export function wifiForgetRadios(uuid: ConnectionUUID): MacAddress[] {
+	const targets = new Set(wifiSiblingConnections(uuid));
+	return Object.entries(getWifiInterfacesByMacAddress())
+		.filter(
+			([, row]) =>
+				(row.conn !== null && targets.has(row.conn)) ||
+				Object.values(row.savedAll ?? {}).some((uuids) =>
+					uuids.some((saved) => targets.has(saved)),
+				) ||
+				Object.values(row.saved).some((saved) => targets.has(saved)),
+		)
+		.map(([macAddress]) => macAddress);
 }
 
 export async function wifiDisconnect(uuid: ConnectionUUID) {
@@ -822,23 +850,39 @@ export function wifiSiblingConnections(uuid: ConnectionUUID): ConnectionUUID[] {
 	return [...uuids];
 }
 
+/*
+  Resolves when the profiles are deleted, which is the part the caller holds
+  every listing radio's adapter lock for (`wifiForgetRadios`). Forget sends no
+  terminal frame; the refreshed saved list that follows outside the lock is
+  its result.
+*/
 async function wifiForget(uuid: ConnectionUUID) {
+	// Read in the same tick the caller took its locks, so a profile published
+	// by a refresh while the mode is read cannot be deleted without its radio's
+	// lock.
+	const listed = wifiConnectRadio(uuid) !== undefined;
+	const targets = wifiSiblingConnections(uuid);
 	// AP profiles are managed only through the owned hotspot lifecycle, never the station sibling sweep.
 	const mode = await nmConnGetFields(uuid, ["802-11-wireless.mode"] as const);
 	if (mode?.[0] === "ap") return;
 
-	if (wifiSearchConnection(uuid) === undefined) return;
+	if (!listed) return;
 
 	let deleted = false;
-	for (const target of wifiSiblingConnections(uuid)) {
+	for (const target of targets) {
 		if (await nmConnDelete(target)) deleted = true;
 	}
 
-	if (deleted) {
-		await wifiUpdateSavedConns();
-		await wifiUpdateScanResult();
-		wifiScheduleScanRefresh();
-	}
+	if (deleted)
+		afterWifiAdapterLockRelease(() => {
+			void (async () => {
+				await wifiUpdateSavedConns();
+				await wifiUpdateScanResult();
+				wifiScheduleScanRefresh();
+			})().catch((err) =>
+				logger.warn(`Wi-Fi refresh after Forget failed: ${errorText(err)}`),
+			);
+		});
 }
 
 /*
@@ -866,7 +910,17 @@ export type NmcliRun = {
 	readonly stdout: string;
 	readonly stderr: string;
 	readonly exitCode: number;
+	/** The process deadline killed nmcli before it answered. */
+	readonly timedOut?: boolean;
 };
+
+/*
+  nmcli exits 3 when its own `-w` deadline expires. Neither that nor the
+  process deadline cancels the request: NetworkManager keeps activating.
+*/
+const NMCLI_TIMEOUT_EXIT = 3;
+const nmcliGaveUp = (run: NmcliRun) =>
+	run.timedOut === true || run.exitCode === NMCLI_TIMEOUT_EXIT;
 
 export type WifiJoinNmcliRunner = (args: string[]) => Promise<NmcliRun>;
 
@@ -879,7 +933,9 @@ async function spawnJoinNmcli(args: string[]): Promise<NmcliRun> {
 		// bounded-command (spawn-policy): cap a hung nmcli connect at the
 		// wall-clock budget so a stuck join never leaves the request pending
 		// forever.
+		let timedOut = false;
 		const killTimer = setTimeout(() => {
+			timedOut = true;
 			try {
 				proc.kill();
 			} catch {
@@ -892,7 +948,9 @@ async function spawnJoinNmcli(args: string[]): Promise<NmcliRun> {
 		]);
 		const exitCode = await proc.exited;
 		clearTimeout(killTimer);
-		return { stdout, stderr, exitCode };
+		return timedOut
+			? { stdout, stderr, exitCode, timedOut }
+			: { stdout, stderr, exitCode };
 	} catch (err) {
 		// A missing/unspawnable nmcli must reach the operator as a failed join
 		// rather than an unhandled rejection on this `void`-dispatched path.
@@ -917,17 +975,23 @@ type WifiJoinOutcome = {
 	readonly ok: boolean;
 	readonly uuid?: string;
 	readonly authFailed: boolean;
+	/** nmcli gave up on the activation; NetworkManager may still complete it. */
+	readonly abandoned?: boolean;
+	/** The saved list was refreshed after the join, so the choice can be recorded. */
+	readonly listed?: boolean;
 };
 
 const wantedSecrets = (output: string) =>
 	output.includes("Secrets were required, but not provided");
 
 async function joinViaNmAuto(args: string[]): Promise<WifiJoinOutcome> {
-	const { stdout, stderr, exitCode } = await joinNmcliRunner(args);
+	const result = await joinNmcliRunner(args);
+	const { stdout, stderr, exitCode } = result;
 	if (exitCode !== 0 || /^Error:/.test(stdout)) {
 		return {
 			ok: false,
 			authFailed: wantedSecrets(`${stdout}\n${stderr}`),
+			...(nmcliGaveUp(result) ? { abandoned: true } : {}),
 		};
 	}
 	const success = stdout.match(/successfully activated with '(.+)'/);
@@ -965,7 +1029,7 @@ async function retrySavedJoin(
 		uuid,
 		...(ifname ? ["ifname", ifname] : []),
 	]);
-	return activated.ok ? { ...activated, uuid } : activated;
+	return { ...activated, uuid };
 }
 
 /**
@@ -1004,6 +1068,7 @@ async function joinViaNewProfile(
 			ok: false,
 			uuid,
 			authFailed: wantedSecrets(`${activated.stdout}${activated.stderr}`),
+			...(nmcliGaveUp(activated) ? { abandoned: true } : {}),
 		};
 	}
 	return {
@@ -1013,6 +1078,103 @@ async function joinViaNewProfile(
 	};
 }
 
+/*
+  A join or connect whose nmcli gave up has not been cancelled: NetworkManager
+  can still complete it after the operator was told it failed, and after the
+  adapter lock was released, so it would undo whatever took the radio next.
+  Called while the request still holds the adapter lock. Only the radio's
+  current activation of the requested network is touched; a request that
+  reached NetworkManager ended any activation already pending on the device,
+  so a pending one is this request's (the residual case is a request nmcli
+  never got to NetworkManager within the process deadline). Still pending, it
+  is taken down by the exact active path observed, and the teardown refuses an
+  activation that has completed by then; one that completed is returned when
+  `reportCompleted` says the request named that profile, and otherwise left as
+  it is. Deactivating it blocks that profile's
+  autoconnect until it is activated again, which is what keeps the refused
+  join from coming back. This is best effort: when the radio cannot be read,
+  the activation changed between reads, or the teardown is refused, the
+  activation is left as it is and a warning is logged.
+*/
+const SETTLE_READ_ATTEMPTS = 3;
+const SETTLE_READ_RETRY_MS = 250;
+
+async function readStationActivation(ifname: string) {
+	for (let attempt = 1; ; attempt++) {
+		const active = await readNmDeviceActivation(ifname);
+		if (active || attempt >= SETTLE_READ_ATTEMPTS) return active;
+		await new Promise((resolve) => setTimeout(resolve, SETTLE_READ_RETRY_MS));
+	}
+}
+
+async function settleAbandonedStationActivation(
+	ifname: string,
+	requested: (uuid: ConnectionUUID) => Promise<boolean> | boolean,
+	reportCompleted: boolean,
+): Promise<ConnectionUUID | undefined> {
+	try {
+		const active = await readStationActivation(ifname);
+		if (!active) {
+			logger.warn(
+				`Wi-Fi: the abandoned activation on ${ifname} could not be read; leaving it`,
+			);
+			return undefined;
+		}
+		const { uuid, path } = active;
+		if (!uuid || !path || !(await requested(uuid))) return undefined;
+		const receipt = await observeHotspotActivation(uuid, ifname);
+		if (!receipt || receipt.path !== path) return undefined;
+		if (receipt.connected) return reportCompleted ? uuid : undefined;
+		if (
+			await nmDisconnectActivation(
+				uuid,
+				receipt,
+				undefined,
+				undefined,
+				undefined,
+				{
+					pendingOnly: true,
+				},
+			)
+		)
+			return undefined;
+		// Refused: it may have completed since it was observed, by the same
+		// daemon (a restarted one can reuse the path for another profile).
+		const now = await observeHotspotActivation(uuid, ifname);
+		if (now?.path === path && now.runId === receipt.runId && now.connected)
+			return reportCompleted ? uuid : undefined;
+		logger.warn(
+			`Wi-Fi: the abandoned activation on ${ifname} could not be cancelled`,
+		);
+	} catch (err) {
+		logger.warn(
+			`Wi-Fi: settling the abandoned activation on ${ifname} failed: ${describePrivateCliError(err)}`,
+		);
+	}
+	return undefined;
+}
+
+/** The station profile `uuid` names the requested network on this radio. */
+const requestedStationSsid =
+	(ssid: string) =>
+	async (uuid: ConnectionUUID): Promise<boolean> => {
+		const fields = await nmConnGetFields(
+			uuid,
+			["802-11-wireless.mode", "802-11-wireless.ssid"] as const,
+			undefined,
+			false,
+		);
+		return fields?.[0] === "infrastructure" && fields[1] === ssid;
+	};
+
+/*
+  The join holds the adapter lock while its returned promise is pending: the
+  open AP's verification scan, the nmcli join, a timed-out activation's
+  settlement, the new profile's MAC binding and the saved-list refresh the
+  operator's choice depends on. Recording that choice, refreshing the scan
+  results and the terminal frame follow after the lock is released. Every path
+  ends in one terminal frame.
+*/
 function wifiNew(conn: MessageSocket, msg: WifiNewMessage["new"]) {
 	// NOT `!msg.device`: `wifiIfId` starts at 0, so the first adapter on every
 	// single-radio board is id 0 and a truthiness guard drops it — no nmcli ran,
@@ -1049,15 +1211,20 @@ function wifiNew(conn: MessageSocket, msg: WifiNewMessage["new"]) {
 		// The diversity check leaves this radio alone from the open AP's
 		// verification scan until the join has settled.
 		const choice = beginWifiOperatorChoice(macAddress);
-		return planOpenWifiJoin(msg.ssid, ifname, msg.bssid)
-			.then((open) => {
+		return (async () => {
+			let handedOff = false;
+			try {
+				const open = await planOpenWifiJoin(msg.ssid, ifname, msg.bssid);
 				if (
 					!open ||
 					getWifiInterfaceByMacAddress(macAddress) !== wifiInterface ||
 					wifiInterface.ifname !== ifname
 				)
-					return refuse("open-target-unverified");
-				return runWifiNew(
+					return afterWifiAdapterLockRelease(() =>
+						refuse("open-target-unverified"),
+					);
+				handedOff = true;
+				await runWifiNew(
 					conn,
 					msg,
 					macAddress,
@@ -1066,14 +1233,21 @@ function wifiNew(conn: MessageSocket, msg: WifiNewMessage["new"]) {
 					choice,
 					wifiInterface.saved[msg.ssid],
 				);
-			})
-			.finally(choice.release);
+			} catch (err) {
+				logger.error(
+					`wifiNew: open join verification failed: ${describePrivateCliError(err)}`,
+				);
+				afterWifiAdapterLockRelease(() => refuse());
+			} finally {
+				if (!handedOff) choice.release();
+			}
+		})();
 	}
 
 	// The diversity check leaves this radio alone until the join has settled
 	// and the operator's choice is recorded.
 	const choice = beginWifiOperatorChoice(macAddress);
-	void runWifiNew(
+	return runWifiNew(
 		conn,
 		msg,
 		macAddress,
@@ -1081,7 +1255,7 @@ function wifiNew(conn: MessageSocket, msg: WifiNewMessage["new"]) {
 		senderId,
 		choice,
 		wifiInterface.saved[msg.ssid],
-	).finally(choice.release);
+	);
 }
 
 // Reconcile retained profiles for explicit Forget without delaying a join's
@@ -1092,6 +1266,7 @@ function refreshRetainedJoinProfiles(): void {
 	);
 }
 
+/** Resolves when the radio no longer needs the adapter lock; owns `choice`. */
 async function runWifiNew(
 	conn: MessageSocket,
 	msg: WifiNewMessage["new"],
@@ -1100,7 +1275,90 @@ async function runWifiNew(
 	senderId: ReturnType<typeof getSocketSenderId>,
 	choice: WifiOperatorChoice,
 	savedUuid?: ConnectionUUID,
-) {
+): Promise<void> {
+	let outcome: WifiJoinOutcome | undefined;
+	try {
+		outcome = await joinStationUnderLock(msg, macAddress, plan, savedUuid);
+	} catch (err) {
+		logger.error(`wifiNew: join failed: ${describePrivateCliError(err)}`);
+	}
+	const joined = outcome;
+	afterWifiAdapterLockRelease(() => {
+		// Recorded at release, before any later request can take this radio, so
+		// an older join that is slow to refresh cannot outrank a newer choice.
+		const recorded =
+			joined?.ok && joined.uuid !== undefined && joined.listed
+				? choice.record(joined.uuid)
+				: undefined;
+		void (async () => {
+			if (!joined?.ok) {
+				conn.send(
+					buildMsg(
+						"wifi",
+						{
+							new: {
+								error: joined?.authFailed ? "auth" : "generic",
+								device: msg.device,
+							},
+						},
+						senderId,
+					),
+				);
+				refreshRetainedJoinProfiles();
+				return;
+			}
+			if (joined.uuid === undefined) {
+				logger.warn(
+					"wifiNew: NetworkManager returned no confirmed connection UUID",
+				);
+				/*
+			  nmcli reported no error and named no connection, so nothing here can say
+			  whether the network was joined — but a bare `return` is the one answer
+			  that is certainly wrong: it leaves the dialog's keyed op to expire on its
+			  TTL with no explanation. `ambiguous` says exactly that much, and nothing
+			  is cleaned up. Failed activation replies also leave effects uncertain;
+			  automatic cleanup retains profiles without exclusive ownership proof.
+			*/
+				conn.send(
+					buildMsg(
+						"wifi",
+						{ new: { error: "ambiguous", device: msg.device } },
+						senderId,
+					),
+				);
+				refreshRetainedJoinProfiles();
+				return;
+			}
+			try {
+				await wifiUpdateScanResult();
+			} catch (err) {
+				logger.warn(
+					`wifiNew: refresh after the join failed: ${errorText(err)}`,
+				);
+			}
+			conn.send(
+				buildMsg(
+					"wifi",
+					{ new: { success: true, device: msg.device } },
+					senderId,
+				),
+			);
+			await recorded;
+		})()
+			.catch((err) =>
+				logger.warn(`wifiNew: completing the join failed: ${errorText(err)}`),
+			)
+			.finally(choice.release);
+	});
+}
+
+async function joinStationUnderLock(
+	msg: WifiNewMessage["new"],
+	macAddress: string,
+	plan: AdmittedWifiStationJoinPlan,
+	savedUuid?: ConnectionUUID,
+): Promise<WifiJoinOutcome> {
+	const ifname = getWifiInterfaceByMacAddress(macAddress)?.ifname;
 	// Both the requested network and the stored profile must support PSK
 	// before a same-SSID UUID grants authority to replace its secret.
 	let outcome: WifiJoinOutcome;
@@ -1126,45 +1384,21 @@ async function runWifiNew(
 				: await joinViaNmAuto(plan.connectArgs);
 	}
 
-	if (!outcome.ok) {
-		conn.send(
-			buildMsg(
-				"wifi",
-				{
-					new: {
-						error: outcome.authFailed ? "auth" : "generic",
-						device: msg.device,
-					},
-				},
-				senderId,
-			),
+	if (!outcome.ok && outcome.abandoned && ifname) {
+		// A uuid names this request's profile; an SSID alone could also match a
+		// station profile that was already there, which is never reported as
+		// this join.
+		const requestedUuid = outcome.uuid;
+		const joined = await settleAbandonedStationActivation(
+			ifname,
+			requestedUuid !== undefined
+				? (active) => active === requestedUuid
+				: requestedStationSsid(msg.ssid),
+			requestedUuid !== undefined,
 		);
-		refreshRetainedJoinProfiles();
-		return;
+		if (joined) outcome = { ok: true, uuid: joined, authFailed: false };
 	}
-
-	if (outcome.uuid === undefined) {
-		logger.warn(
-			"wifiNew: NetworkManager returned no confirmed connection UUID",
-		);
-		/*
-		  nmcli reported no error and named no connection, so nothing here can say
-		  whether the network was joined — but a bare `return` is the one answer
-		  that is certainly wrong: it leaves the dialog's keyed op to expire on its
-		  TTL with no explanation. `ambiguous` says exactly that much, and nothing
-		  is cleaned up. Failed activation replies also leave effects uncertain;
-		  automatic cleanup retains profiles without exclusive ownership proof.
-		*/
-		conn.send(
-			buildMsg(
-				"wifi",
-				{ new: { error: "ambiguous", device: msg.device } },
-				senderId,
-			),
-		);
-		refreshRetainedJoinProfiles();
-		return;
-	}
+	if (!outcome.ok || outcome.uuid === undefined) return outcome;
 
 	const currentRow = getWifiInterfaceByMacAddress(macAddress);
 	const hardwareMac =
@@ -1182,37 +1416,84 @@ async function runWifiNew(
 			"Failed to set the MAC address for the newly created connection",
 		);
 	}
-
-	await wifiUpdateSavedConns();
-	await wifiUpdateScanResult();
-
-	conn.send(
-		buildMsg("wifi", { new: { success: true, device: msg.device } }, senderId),
-	);
-	await choice.record(outcome.uuid);
+	// The choice recorded at release reads this radio's saved profiles, which
+	// the join just changed: they are refreshed first, under the lock (as the
+	// open join always did). A refresh that does not commit a complete list
+	// does not undo the join, but the choice is then not recorded against a
+	// stale one.
+	try {
+		let listed = false;
+		await wifiUpdateSavedConns(undefined, () => {
+			listed = true;
+		});
+		return listed ? { ...outcome, listed } : outcome;
+	} catch (err) {
+		logger.warn(
+			`wifiNew: saved-list refresh after the join failed: ${errorText(err)}`,
+		);
+	}
+	return outcome;
 }
 
+/*
+  Resolves when the radio no longer needs the adapter lock: after nmcli has
+  answered and a timed-out activation is settled. The scan refresh, the
+  terminal frame and recording the operator's choice follow outside the lock.
+  The activation is pinned to the radio the caller locked
+  (`wifiConnectRadio`), so NetworkManager cannot pick another adapter for a
+  profile that several radios list.
+*/
 async function wifiConnect(conn: MessageSocket, uuid: ConnectionUUID) {
-	const deviceId = wifiSearchConnection(uuid);
-	if (deviceId === undefined) return;
+	const radio = wifiConnectRadio(uuid);
+	if (radio === undefined) return;
+	const { deviceId, macAddress, ifname } = radio;
 
 	const senderId = getSocketSenderId(conn);
-	const macAddress = getMacAddressForWifiInterface(
-		Number.parseInt(deviceId, 10),
-	);
 	// The diversity check leaves this radio alone until the connect has settled
 	// and the operator's choice is recorded.
-	const choice = macAddress ? beginWifiOperatorChoice(macAddress) : undefined;
+	const choice = beginWifiOperatorChoice(macAddress);
+	let success = false;
 	try {
-		const success = await nmConnect(uuid);
-		await wifiUpdateScanResult();
-		conn.send(
-			buildMsg("wifi", { connect: success, device: deviceId }, senderId),
+		let abandoned = false;
+		success = await nmConnect(
+			uuid,
+			undefined,
+			undefined,
+			() => {
+				abandoned = true;
+			},
+			ifname,
 		);
-		if (success) await choice?.record(uuid);
-	} finally {
-		choice?.release();
+		if (!success && abandoned)
+			success =
+				(await settleAbandonedStationActivation(
+					ifname,
+					(active) => active === uuid,
+					true,
+				)) === uuid;
+	} catch (err) {
+		logger.error(`wifiConnect failed: ${describePrivateCliError(err)}`);
 	}
+	const connected = success;
+	afterWifiAdapterLockRelease(() => {
+		// Recorded at release, before any later request can take this radio.
+		const recorded = connected ? choice.record(uuid) : undefined;
+		void (async () => {
+			try {
+				await wifiUpdateScanResult();
+			} catch (err) {
+				logger.warn(`wifiConnect: scan refresh failed: ${errorText(err)}`);
+			}
+			conn.send(
+				buildMsg("wifi", { connect: connected, device: deviceId }, senderId),
+			);
+			await recorded;
+		})()
+			.catch((err) =>
+				logger.warn(`wifiConnect: completing failed: ${errorText(err)}`),
+			)
+			.finally(choice.release);
+	});
 }
 
 // `conn` is a MessageSocket, never the `ws` package's WebSocket: the only caller
@@ -1223,11 +1504,13 @@ export function handleWifi(
 	conn: MessageSocket,
 	msg: WifiMessage["wifi"],
 ): Promise<void> | undefined {
+	// The station work a caller holds the adapter lock for, and hotspot
+	// configuration's completion (see the `hotspot` arm).
 	let configuration: Promise<void> | undefined;
 	for (const type in msg) {
 		switch (type) {
 			case "connect":
-				void wifiConnect(
+				configuration = wifiConnect(
 					conn,
 					extractMessage<WifiConnectMessage, typeof type>(msg, type),
 				);
@@ -1261,7 +1544,7 @@ export function handleWifi(
 				break;
 
 			case "forget":
-				void wifiForget(
+				configuration = wifiForget(
 					extractMessage<WifiForgetMessage, typeof type>(msg, type),
 				);
 				break;
