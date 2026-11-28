@@ -25,6 +25,15 @@ import { assertFederationAssetSet, discoverFederationAssets } from '../federatio
 const KIB = 1024;
 
 const SPA_BASELINE = {
+	// ACCEPTED footprint, measured 2026-11-25 on the composed train build with
+	// Bun 1.4.5: total 1,550,753 B, precache 1,751,441 B, over the 2026-11-21
+	// ceilings (1,543,610/1,744,238 B) by 7,143/7,203 B. Growth over the
+	// 2026-11-21 baselines is 41,959/42,019 B, mostly the Devices view (USB port
+	// tree, about 30.5 KiB). The aggregate baselines move to that measurement;
+	// both 32 KiB absolute headrooms, the ratio and all route/chunk/federation
+	// limits are unchanged (largest chunk 273.5 KiB, initial route 477.3 KiB).
+	// The displaced 1,508,794/1,709,422 B baselines stay below. Tracked by
+	// TD-spa-i18n-catalog-size (still open).
 	// ACCEPTED footprint, measured 2026-11-21 on the composed train 2 build with
 	// Bun 1.4.4: total 1,508,794 B, precache 1,709,422 B, over the 2026-11-20
 	// ceilings (1,500,625/1,701,271 B) by 8,169/8,151 B. Growth over the
@@ -105,10 +114,10 @@ const SPA_BASELINE = {
 	// single-chunk ceilings are NOT widened. Both aggregates now carry a SECOND,
 	// absolute ceiling so a re-derivation cannot hand back a fresh 12% to spend
 	// silently — precache gained one here for the reason totalGzip already had.
-	totalGzip: 1_508_794,
+	totalGzip: 1_550_753,
 	initialRouteGzip: 497_196,
 	largestChunkGzip: 461_577,
-	precacheGzip: 1_709_422,
+	precacheGzip: 1_751_441,
 };
 
 // The aggregate's binding constraint. A ratio applied to a freshly re-derived
@@ -154,6 +163,7 @@ const SPA_DISPLACED_BASELINES = {
 		{ bytes: 1_235_713, label: 'kernel-update-ui', debt: 'TD-spa-i18n-catalog-size' },
 		{ bytes: 1_293_660, label: 'footprint-2026-11-10', debt: 'TD-spa-i18n-catalog-size' },
 		{ bytes: 1_467_857, label: 'footprint-2026-11-20', debt: 'TD-spa-i18n-catalog-size' },
+		{ bytes: 1_508_794, label: 'footprint-2026-11-21', debt: 'TD-spa-i18n-catalog-size' },
 	],
 	precacheGzip: [
 		{ bytes: 903_286, label: 'pre-Phase-C', debt: 'TD-modem-phase-c-spa-size' },
@@ -195,6 +205,7 @@ const SPA_DISPLACED_BASELINES = {
 		{ bytes: 1_435_424, label: 'kernel-update-ui', debt: 'TD-spa-i18n-catalog-size' },
 		{ bytes: 1_493_392, label: 'footprint-2026-11-10', debt: 'TD-spa-i18n-catalog-size' },
 		{ bytes: 1_668_503, label: 'footprint-2026-11-20', debt: 'TD-spa-i18n-catalog-size' },
+		{ bytes: 1_709_422, label: 'footprint-2026-11-21', debt: 'TD-spa-i18n-catalog-size' },
 	],
 };
 
