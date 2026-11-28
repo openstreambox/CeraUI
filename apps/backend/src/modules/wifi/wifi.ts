@@ -857,14 +857,19 @@ export function wifiSiblingConnections(uuid: ConnectionUUID): ConnectionUUID[] {
   its result.
 */
 async function wifiForget(uuid: ConnectionUUID) {
+	// Read in the same tick the caller took its locks, so a profile published
+	// by a refresh while the mode is read cannot be deleted without its radio's
+	// lock.
+	const listed = wifiConnectRadio(uuid) !== undefined;
+	const targets = wifiSiblingConnections(uuid);
 	// AP profiles are managed only through the owned hotspot lifecycle, never the station sibling sweep.
 	const mode = await nmConnGetFields(uuid, ["802-11-wireless.mode"] as const);
 	if (mode?.[0] === "ap") return;
 
-	if (wifiConnectRadio(uuid) === undefined) return;
+	if (!listed) return;
 
 	let deleted = false;
-	for (const target of wifiSiblingConnections(uuid)) {
+	for (const target of targets) {
 		if (await nmConnDelete(target)) deleted = true;
 	}
 
@@ -1131,9 +1136,10 @@ async function settleAbandonedStationActivation(
 			)
 		)
 			return undefined;
-		// Refused: it may have completed since it was observed.
-		const now = await readNmDeviceActivation(ifname);
-		if (now?.path === path && now.connected)
+		// Refused: it may have completed since it was observed, by the same
+		// daemon (a restarted one can reuse the path for another profile).
+		const now = await observeHotspotActivation(uuid, ifname);
+		if (now?.path === path && now.runId === receipt.runId && now.connected)
 			return reportCompleted ? uuid : undefined;
 		logger.warn(
 			`Wi-Fi: the abandoned activation on ${ifname} could not be cancelled`,
@@ -1162,9 +1168,10 @@ const requestedStationSsid =
 /*
   The join holds the adapter lock while its returned promise is pending: the
   open AP's verification scan, the nmcli join, a timed-out activation's
-  settlement and the new profile's MAC binding. Refreshing the saved list and
-  scan results, the terminal frame and recording the operator's choice follow
-  after the lock is released. Every path ends in one terminal frame.
+  settlement, the new profile's MAC binding and the saved-list refresh the
+  operator's choice depends on. Recording that choice, refreshing the scan
+  results and the terminal frame follow after the lock is released. Every path
+  ends in one terminal frame.
 */
 function wifiNew(conn: MessageSocket, msg: WifiNewMessage["new"]) {
 	// NOT `!msg.device`: `wifiIfId` starts at 0, so the first adapter on every
@@ -1321,7 +1328,6 @@ async function runWifiNew(
 				return;
 			}
 			try {
-				await wifiUpdateSavedConns();
 				await wifiUpdateScanResult();
 			} catch (err) {
 				logger.warn(
@@ -1406,6 +1412,16 @@ async function joinStationUnderLock(
 	) {
 		logger.warn(
 			"Failed to set the MAC address for the newly created connection",
+		);
+	}
+	// The choice recorded at release reads this radio's saved profiles, which
+	// the join just changed: they are refreshed first, under the lock (as the
+	// open join always did). A failed refresh does not undo the join.
+	try {
+		await wifiUpdateSavedConns();
+	} catch (err) {
+		logger.warn(
+			`wifiNew: saved-list refresh after the join failed: ${errorText(err)}`,
 		);
 	}
 	return outcome;

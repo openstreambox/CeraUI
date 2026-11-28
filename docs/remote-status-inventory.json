@@ -20091,7 +20091,7 @@
 		"apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts": "8e599c2a0b7b2fc1772892d89ef51346eb88b77371bf458074b8f1da6f96aea7",
 		"apps/backend/src/modules/wifi/wifi-hotspot-types.ts": "b7d3db6ad7d240419f4981f41419c26b271d4cd8fba51c80afa8ec09028846fb",
 		"apps/backend/src/modules/wifi/wifi-interfaces.ts": "d179b2269a86b9c365020f59c66bcabff6fd963186ae7899f7b0e874bb87c158",
-		"apps/backend/src/modules/wifi/wifi.ts": "ba5c962dff5d3db20b62530d479084e8edacf29b040368803b92f3f4c58aeb77",
+		"apps/backend/src/modules/wifi/wifi.ts": "e105b071a187583bda7f77e8296a731293d7a10c278a0c5c3d145d3a51b7c4db",
 		"apps/backend/src/rpc/compat.ts": "72b36615b97ab0a66ff668280a088fcef088de4dbf9c4546bd8694bf0373969c",
 		"apps/backend/src/rpc/config-broadcast.ts": "57ee4d91c4ebc82e7351c448b3b4f7ecb2e9951f610c4b1005a7b9903a0ba974",
 		"apps/backend/src/rpc/procedures/network.procedure.ts": "a44dfdcbe37ac32f9c65392671072332b072e50b841344e13dc467954d207640",

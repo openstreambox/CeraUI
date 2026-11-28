@@ -141,6 +141,13 @@ export async function deactivateNmActivation(
 		if (state !== 3) {
 			try {
 				if (current && !current()) return false;
+				// The device lookup above awaited the bus: read the state again
+				// right before the request so a completion meanwhile is kept.
+				if (
+					options?.pendingOnly &&
+					(await property(path, ACTIVE, "State")) !== 1
+				)
+					return false;
 				await bus.callMethod({
 					destination: owner,
 					path: ROOT,

@@ -41,8 +41,10 @@ compounded it by taking no lock at all — the one mutating procedure that skipp
 - **Connect, connectNew and forget hold the lock while their NetworkManager
   work runs** (`runGuardedDetached`). `handleWifi` returns a promise that
   resolves when the radio no longer needs the lock: after the nmcli join or
-  activation, a timed-out activation's settlement and the new profile's MAC
-  binding, or after Forget's deletes. The reply is sent as soon as the lock is
+  activation, a timed-out activation's settlement, and for a successful join
+  the new profile's MAC binding and the saved-list refresh the recorded choice
+  reads; or after Forget's deletes, whose target set is read in the same tick
+  the locks were taken. The reply is sent as soon as the lock is
   taken; awaiting the work first would hold it past the client's 30 s call
   timeout, since a saved Connect's nmcli runs up to the process deadline. The
   scan and saved-list refresh, the terminal `wifi` frame and recording the
@@ -51,6 +53,9 @@ compounded it by taking no lock at all — the one mutating procedure that skipp
   context and before any later request can take the radio. The choice is
   recorded first and synchronously there, so its sequence follows lock order
   and an older operation whose refresh stalls cannot outrank a newer choice.
+  The diversity writer then takes the radio's lock for its own short profile
+  write, as it always did, so a request arriving in that moment can still see
+  DEVICE_BUSY.
   Every Connect and join path ends in one terminal frame, sent after release,
   including an unexpected throw; Forget sends none, its refreshed saved list is
   the result.
@@ -72,9 +77,10 @@ compounded it by taking no lock at all — the one mutating procedure that skipp
   current activation of the requested network (the requested uuid, or for an
   SSID-only join a station-mode profile of that SSID) is read. When still
   pending, it is taken down by that exact active path with
-  `nmDisconnectActivation(..., { pendingOnly: true })`, whose D-Bus check
-  refuses an activation that has completed by then; a refusal is re-read and a
-  completed activation reported. Deactivating also blocks that profile's
+  `nmDisconnectActivation(..., { pendingOnly: true })`, whose D-Bus step reads
+  the state again right before `DeactivateConnection` and refuses an
+  activation that has completed by then; a refusal is observed again (same
+  uuid, path and daemon run) and a completed activation reported. Deactivating also blocks that profile's
   autoconnect until it is activated again. One that completed is reported as
   joined only when the request named its uuid; an SSID-only match is left as
   it is and the join still reports its failure. A request that reached

@@ -1442,6 +1442,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["wifiNew: join failed: ", ""],
 	["wifiNew: open join verification failed: ", ""],
 	["wifiNew: refresh after the join failed: ", ""],
+	["wifiNew: saved-list refresh after the join failed: ", ""],
 	["wifiRescan failed: ", ""],
 	["wifiUpdateSavedConns: list failed after retries: ", ""],
 	["wifiUpdateScanResult: scan failed after retries: ", ""],

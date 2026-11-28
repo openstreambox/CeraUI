@@ -100,8 +100,14 @@ function makeContext(): RPCContext {
 			// A station result (not another request's busy refusal): was the
 			// radio still held when it was sent? The busy check is synchronous.
 			if (!("connect" in message.wifi || "new" in message.wifi)) return;
+			const wire = message.wifi as {
+				device?: string | number;
+				new?: { device?: string | number };
+			};
+			const radio =
+				getWifiIdToMacAddress()[Number(wire.device ?? wire.new?.device)] ?? MAC;
 			sentLocked.push(
-				withDeviceLock(MAC, async () => true).then((r) => !r.success),
+				withDeviceLock(radio, async () => true).then((r) => !r.success),
 			);
 		},
 		data: { isAuthenticated: true, lastActive: Date.now() },
@@ -230,13 +236,23 @@ function teardowns(refuse = false) {
 	return downs;
 }
 
-function observed(path: string, connected: boolean) {
-	return spy(hotspotActivity, "observeHotspotActivation", async () => ({
-		path,
-		runId: RUN_ID,
-		ifname: IFNAME,
-		connected,
-	}));
+/** What observing the activation returns, call by call (the last one repeats). */
+function observed(
+	path: string,
+	connected: boolean,
+	...later: { connected: boolean; runId?: string }[]
+) {
+	let calls = 0;
+	return spy(hotspotActivity, "observeHotspotActivation", async () => {
+		const step =
+			calls++ === 0 ? undefined : later[Math.min(calls - 2, later.length - 1)];
+		return {
+			path,
+			runId: step?.runId ?? RUN_ID,
+			ifname: IFNAME,
+			connected: step?.connected ?? connected,
+		};
+	});
 }
 
 beforeEach(() => {
@@ -471,6 +487,39 @@ describe("the adapter lock covers the station's nmcli work", () => {
 		deleted.resolve(false);
 	});
 
+	test("a first-time join records its choice only after the saved list is refreshed, under the lock", async () => {
+		const NEW = "6e7f8091-a2b3-4c4d-8e5f-60718293a4b5";
+		setWifiJoinNmcliRunner(async () => ({
+			stdout: `Device 'wlan0' successfully activated with '${NEW}'.`,
+			stderr: "",
+			exitCode: 0,
+		}));
+		spy(networkManager, "nmConnGetFields", async () => undefined);
+		spy(networkManager, "nmConnSetWifiMacAddress", async () => true);
+		const listed = gate([] as string[]);
+		spy(networkManager, "nmConnsGet", () => listed.promise);
+		const recorded: string[] = [];
+		spy(diversity, "beginWifiOperatorChoice", () => ({
+			release: () => {},
+			record: async (uuid: string) => {
+				recorded.push(uuid);
+			},
+		}));
+
+		await call(
+			wifiConnectNewProcedure,
+			{ device: DEVICE_ID, ssid: "OtherNet", password: "supersecret" },
+			{ context: makeContext() },
+		);
+		await until(async () => await locked());
+		expect(recorded).toEqual([]);
+
+		listed.resolve([]);
+		await until(() => recorded.length === 1);
+		expect(recorded).toEqual([NEW]);
+		await until(hasFrame({ new: { success: true, device: 0 } }));
+	});
+
 	test("a slow refresh cannot let an older choice outrank a newer one on the radio", async () => {
 		const SECOND = "5d6e7f80-91a2-4b3c-8d4e-5f60718293a4";
 		const a = makeInterface(0, IFNAME, { [SSID]: UUID, Other: SECOND });
@@ -545,12 +594,8 @@ describe("a request nmcli gave up on cannot come back later", () => {
 
 	test("an activation that completes right before the teardown is reported, not undone", async () => {
 		connectTimesOut();
-		let reads = 0;
-		spy(networkManager, "readNmDeviceActivation", async () => {
-			reads++;
-			return { uuid: UUID, path: ACTIVE_PATH, connected: reads > 1 };
-		});
-		observed(ACTIVE_PATH, false);
+		activation({ uuid: UUID, path: ACTIVE_PATH, connected: false });
+		observed(ACTIVE_PATH, false, { connected: true });
 		const downs = teardowns(true);
 
 		await call(
@@ -575,6 +620,21 @@ describe("a request nmcli gave up on cannot come back later", () => {
 		);
 		await until(hasFrame({ connect: false, device: DEVICE_ID }));
 		expect(downs).toEqual([]);
+	});
+
+	test("a refused teardown after a daemon restart is not reported as connected", async () => {
+		connectTimesOut();
+		activation({ uuid: UUID, path: ACTIVE_PATH, connected: false });
+		// The new daemon reuses the path, for an activation that is up.
+		observed(ACTIVE_PATH, false, { connected: true, runId: "bus-id-2/:1.9" });
+		teardowns(true);
+
+		await call(
+			wifiConnectProcedure,
+			{ uuid: UUID },
+			{ context: makeContext() },
+		);
+		await until(hasFrame({ connect: false, device: DEVICE_ID }));
 	});
 
 	for (const [label, result] of [
