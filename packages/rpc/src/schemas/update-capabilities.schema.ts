@@ -25,6 +25,12 @@ export const updateCapabilitiesSchema = z
 	.object({
 		mode: z.enum(['legacy', 'capable']),
 		features: z.array(updateCapabilityFeatureSchema),
+		/**
+		 * The device never installs package updates on its own, whatever
+		 * `packagesAuto` says: they are installed only when asked. Absent on
+		 * devices that predate the field, which means false.
+		 */
+		packageInstallsManual: z.boolean().optional(),
 	})
 	.strict();
 

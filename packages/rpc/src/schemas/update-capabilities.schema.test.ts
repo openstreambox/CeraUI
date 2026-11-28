@@ -40,3 +40,34 @@ test.each<{ features: UpdateCapabilities['features'] }>([
 	const input = { ...declaration, features };
 	expect(updateCapabilityFileSchema.parse(input)).toEqual(input);
 });
+
+test.each([true, false, undefined])(
+	'parses the manual-only package install flag %p in the RPC reply',
+	(packageInstallsManual) => {
+		// Given a reply with the flag set, cleared or absent (an older backend).
+		const reply = {
+			mode: 'capable' as const,
+			features: ['apt-all-packages' as const],
+			...(packageInstallsManual === undefined ? {} : { packageInstallsManual }),
+		};
+		// Then it parses unchanged.
+		expect(updateCapabilitiesSchema.parse(reply)).toEqual(reply);
+	},
+);
+
+test('rejects a non-boolean manual-only package install flag', () => {
+	expect(
+		updateCapabilitiesSchema.safeParse({
+			mode: 'legacy',
+			features: [],
+			packageInstallsManual: 'yes',
+		}).success,
+	).toBe(false);
+});
+
+test('the image declaration cannot carry the manual-only package install flag', () => {
+	// The flag is derived by the backend, never declared by the capability file.
+	expect(
+		updateCapabilityFileSchema.safeParse({ ...declaration, packageInstallsManual: true }).success,
+	).toBe(false);
+});
