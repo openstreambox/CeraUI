@@ -122,7 +122,7 @@ export async function firstAp(
 			active && instances.activePath()
 				? {
 						uuid: active,
-						ifname: hybrid ? "clap-wlan0" : "wlan0",
+						ifname: hybrid ? `clap-${radioIfname}` : radioIfname,
 						path: instances.activePath(),
 					}
 				: undefined,
