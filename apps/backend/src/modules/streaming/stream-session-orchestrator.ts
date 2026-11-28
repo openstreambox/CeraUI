@@ -82,6 +82,12 @@ export type StreamLaunchContext = {
 export type StreamStartRequest = {
 	readonly origin: StreamLaunchOrigin;
 	readonly launch: (context: StreamLaunchContext) => Promise<void>;
+	/**
+	 * The caller says what a failed start means (the connection restart and
+	 * the reconnect window): the terminal failure is logged and recorded, but
+	 * raises no start-failure notice.
+	 */
+	readonly quietTerminalFailure?: boolean;
 };
 
 export type StreamSessionSnapshot = {
@@ -187,7 +193,10 @@ export type StreamSessionOrchestratorDeps = {
 	readonly lossStopWindowMs?: number;
 	readonly suppressionContext?: () => SuppressionContext;
 	readonly reportRetry?: (diagnostic: StartRetryDiagnostic) => void;
-	readonly reportTerminalFailure?: (diagnostic: StartRetryDiagnostic) => void;
+	readonly reportTerminalFailure?: (
+		diagnostic: StartRetryDiagnostic,
+		options?: { readonly notify?: boolean },
+	) => void;
 	/** A launch could not reach the engine (see `runStartWithRetry`). */
 	readonly onEngineUnavailable?: () => void;
 	/**
@@ -757,7 +766,13 @@ export function createStreamSessionOrchestrator(
 				? { reportRetry: deps.reportRetry }
 				: {}),
 			...(deps.reportTerminalFailure !== undefined
-				? { reportTerminalFailure: deps.reportTerminalFailure }
+				? {
+						reportTerminalFailure:
+							request.quietTerminalFailure === true
+								? (diagnostic: StartRetryDiagnostic) =>
+										deps.reportTerminalFailure?.(diagnostic, { notify: false })
+								: deps.reportTerminalFailure,
+					}
 				: {}),
 			...(deps.onEngineUnavailable !== undefined
 				? { onEngineUnavailable: deps.onEngineUnavailable }

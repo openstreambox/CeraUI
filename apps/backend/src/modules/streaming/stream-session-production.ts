@@ -163,11 +163,19 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 			.catch((error) =>
 				logger.warn("stream commit bookkeeping failed", { error }),
 			);
-		// A session runs again, so a "restart didn't finish" notice is out of date.
+		// A session runs again, so a "restart didn't finish" notice is out of date,
+		// and a reconnect window has done its job.
 		void import("./connection-restart.ts")
 			.then(({ clearRestartFailureNotice }) => clearRestartFailureNotice())
 			.catch((error) =>
 				logger.warn("restart failure notice cleanup failed", { error }),
+			);
+		void import("./stream-reconnect-wiring.ts")
+			.then(({ noteStreamCommittedForReconnect }) => {
+				if (current()) noteStreamCommittedForReconnect();
+			})
+			.catch((error) =>
+				logger.warn("reconnect window cleanup failed", { error }),
 			);
 		// A bond published between the spawn and this commit skipped its reload,
 		// because nothing was marked streaming yet; deliver it now.

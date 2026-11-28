@@ -209,6 +209,7 @@ export function reportStartRetry(diagnostic: StartRetryDiagnostic): void {
 
 export function reportStartTerminalFailure(
 	diagnostic: StartRetryDiagnostic,
+	options: { readonly notify?: boolean } = {},
 ): void {
 	logger.error("stream start failed", diagnostic);
 	try {
@@ -225,6 +226,10 @@ export function reportStartTerminalFailure(
 		// Event history must not alter stream control.
 	}
 	notificationRemove("stream_start_retry");
+	// The caller explains this failure itself (a connection restart, or the
+	// reconnect window that keeps trying): a second, scarier notice would
+	// contradict it.
+	if (options.notify === false) return;
 	// Deliberately NOT persistent: a capture failure already has its own standing
 	// mechanism (`hdmi_error`, raised and retracted by the signal watcher), and a
 	// second permanent band for the same physical condition is one an operator

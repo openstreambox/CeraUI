@@ -54,6 +54,7 @@ import { getPipelinesMessage } from "../../modules/streaming/pipelines.ts";
 import { getPreviewEncoderRealizedStatus } from "../../modules/streaming/preview-encoder-status.ts";
 import { getSourcesMessage } from "../../modules/streaming/sources.ts";
 import { getStreamLifecycleState } from "../../modules/streaming/stream-lifecycle-status.ts";
+import { getStreamReconnectStatus } from "../../modules/streaming/stream-reconnect-wiring.ts";
 import { getIsStreaming } from "../../modules/streaming/streaming.ts";
 import { getCarryingStatus } from "../../modules/system/carrying";
 import { getCpuInfo } from "../../modules/system/cpu.ts";
@@ -130,6 +131,7 @@ export const getStatusProcedure = authedProcedure
 			preview_encoder_realized: getPreviewEncoderRealizedStatus(),
 			cellular_initializing: !getCellularStack().ready,
 			connection_restarting: isConnectionRestarting(),
+			stream_reconnect: getStreamReconnectStatus(),
 			unclaimed_adapters: getUnclaimedAdapters(),
 		};
 	});
@@ -193,6 +195,7 @@ export function buildInitialStatus() {
 			preview_encoder_realized: getPreviewEncoderRealizedStatus(),
 			cellular_initializing: !getCellularStack().ready,
 			connection_restarting: isConnectionRestarting(),
+			stream_reconnect: getStreamReconnectStatus(),
 			unclaimed_adapters: getUnclaimedAdapters(),
 		},
 		netif: netIfBuildMsg(),
