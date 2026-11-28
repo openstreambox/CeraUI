@@ -1,11 +1,13 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	readPrivateJson,
 	writePrivateJson,
 } from "../../helpers/private-json-state.ts";
+import { recordFsyncsPerTest } from "../../tests/helpers/recorded-fsync.ts";
 import {
 	type CellularHandoffIO,
 	CellularHostHandoff,
@@ -22,6 +24,29 @@ import {
 	withdrawInternalCall,
 } from "./internal-call-withdrawal.ts";
 import { internalContextAuthorityKey } from "./internal-context-authority.ts";
+
+// Real files, recorded fsyncs: no test waits on another process's writeback.
+let observeSync: ((path: string) => void) | undefined;
+recordFsyncsPerTest((path) => observeSync?.(path));
+afterEach(() => {
+	observeSync = undefined;
+});
+/** Adds each sync of the owner directory to the fixture's events, named by the
+ * record it makes durable, beside the host and modem effects. */
+function recordOwnerSyncs(f: Awaited<ReturnType<typeof state>>) {
+	const dir = realpathSync(f.dir),
+		committed = join(dir, `${f.key}.json`);
+	observeSync = (path) => {
+		if (path === dir)
+			f.events.push(
+				existsSync(committed)
+					? `directory, context ${JSON.parse(readFileSync(committed, "utf8")).contextReleased ? "released" : "held"}`
+					: `directory, record removed while ${f.state().held ? "held" : "released"}`,
+			);
+		else if (dirname(path) === dir && path.endsWith(".tmp"))
+			f.events.push("record temporary");
+	};
+}
 
 async function fixture(
 	run: (value: Awaited<ReturnType<typeof state>>) => Promise<void>,
@@ -222,6 +247,7 @@ async function state(dir: string) {
 
 test("a durable context-release cursor precedes host restoration and survives uncertain uninhibition", async () =>
 	fixture(async (f) => {
+		recordOwnerSyncs(f);
 		f.set({ ctxAllowed: false });
 		expect(await withdrawInternalCall(f.deps)).toBe(false);
 		expect(f.state()).toMatchObject({
@@ -260,6 +286,19 @@ test("a durable context-release cursor precedes host restoration and survives un
 			closeCalls: 2,
 		});
 		expect(await f.read()).toBeUndefined();
+		// The released cursor's record and then its directory were synced right
+		// after the context release and before any host effect; the record's
+		// removal was synced while the physical lease was still held.
+		const released = f.events.indexOf("context-released");
+		expect(f.events.slice(released, released + 3)).toEqual([
+			"context-released",
+			"record temporary",
+			"directory, context released",
+		]);
+		expect(
+			f.events.findIndex((event) => /^(up|nm|ra)-/.test(event)),
+		).toBeGreaterThan(released + 2);
+		expect(f.events.at(-1)).toBe("directory, record removed while held");
 	}));
 
 test("an unacknowledged file removal retries only its retirement tail and keeps the physical lease", async () =>
