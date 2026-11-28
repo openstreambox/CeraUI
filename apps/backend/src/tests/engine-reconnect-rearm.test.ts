@@ -110,6 +110,8 @@ function harness() {
 		onRecovered: () => {
 			recovered += 1;
 		},
+		awaitsIdleWitness: () => false,
+		reconcileSession: async () => undefined,
 		logger,
 		random: () => 0.5,
 		now: () => clock,
@@ -754,5 +756,36 @@ describe("production binding of a start that cannot reach the engine", () => {
 		if (typeof report === "function") report();
 		expect(h.pending).toBe(1);
 		expect(h.warnings.some((w) => w.includes("(start)"))).toBe(true);
+	});
+});
+
+describe("a carrying line waiting on the engine", () => {
+	test("a failed recheck reconciles it at boot, never after a re-arm", async () => {
+		const h = harness();
+		let reconciles = 0;
+		const deps = {
+			...h.deps,
+			awaitsIdleWitness: () => true,
+			reconcileSession: async () => {
+				reconciles += 1;
+			},
+		};
+		// Boot loop: engine down, a waiting line is judged on each failed recheck.
+		h.setEngineUp(false);
+		await initEngineConnection(deps);
+		await h.fire();
+		expect(reconciles).toBe(1);
+		h.setEngineUp(true);
+		await h.fire();
+		expect(h.pending).toBe(0);
+
+		// Re-armed loop: publish-only, even while the line still waits.
+		h.advance(5 * ENGINE_RECONNECT_FLAP_WINDOW_MS);
+		h.setEngineUp(false);
+		h.lose();
+		await h.fire();
+		await h.fire();
+		expect(h.pending).toBe(1);
+		expect(reconciles).toBe(1);
 	});
 });
