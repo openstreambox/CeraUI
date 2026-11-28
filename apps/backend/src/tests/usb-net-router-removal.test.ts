@@ -626,7 +626,7 @@ test("retired admin observations and late SIM, signal, URL and open evidence do 
 	const release = Promise.withResolvers<void>();
 	let parked = false;
 	const deps: RouterAdminProbeDeps = {
-		isRealDevice: async () => true,
+		canManageModems: async () => true,
 		runIpRouteShowDefault: async () => `default via 192.168.8.1 dev ${ROUTER}`,
 		postViaInterface: async () => "",
 		fetchViaInterface: async (_name, urls) => {
@@ -786,7 +786,7 @@ test("a late credential open check cannot reauthorize the replacement name", asy
 			dialect: "hilink",
 		}),
 		now: () => 0,
-		isRealDevice: async () => true,
+		canManageModems: async () => true,
 		readCredential: () => undefined,
 		transport: {
 			fetchViaInterface: async () => [],
@@ -837,7 +837,7 @@ for (const phase of ["request", "receipt"] as const) {
 					dialect: "hilink",
 				}),
 				now: () => 0,
-				isRealDevice: async () => true,
+				canManageModems: async () => true,
 				readCredential: () => undefined,
 				transport: {
 					fetchViaInterface: async () => [],
@@ -1004,7 +1004,7 @@ for (const row of credentialLifetimes) {
 					dialect: "hilink",
 				}),
 				now: () => 0,
-				isRealDevice: async () => true,
+				canManageModems: async () => true,
 				readCredential: () => undefined,
 				transport: {
 					fetchViaInterface: async () => [],
