@@ -18,8 +18,8 @@
 /**
  * Startup replay of the durable modem-mutation journal.
  *
- * It runs the state-by-state table from `mutation-journal-state.ts` and nothing
- * else — the table is the contract and this module is its executor, so a change to
+ * It prepares persistent cellular authority, then runs the state-by-state table
+ * from `mutation-journal-state.ts` — the table is the rollback contract, so a change to
  * recovery behaviour is a change to a data table with a unit test rather than to
  * branchy startup code.
  *
@@ -39,6 +39,7 @@ import {
 	consumeRecoveryBarrierRaise,
 	setRecoveryRetryOwner,
 } from "../streaming/recovery-barrier.ts";
+import { inventoryCellularAuthority } from "./cellular-authority-inventory.ts";
 
 import {
 	reconciledMutationJournalRevision,
@@ -211,6 +212,14 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 	let unreadable = 0;
 	const damaged = new Set<string>();
 	try {
+		await inventoryCellularAuthority("migrate");
+	} catch {
+		unreadable++;
+		logger.error("cellular authority migration incomplete; records preserved", {
+			module: "modems",
+		});
+	}
+	try {
 		await settlePendingMutationRemovals();
 		for (const name of await listUnreadableSlots()) {
 			damaged.add(name);
@@ -263,6 +272,7 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 
 /** Settle submitted bookkeeping and read current blocks, without hardware rollback. */
 async function journalReadsCompletely(): Promise<boolean> {
+	await inventoryCellularAuthority("verify");
 	await settlePendingMutationRemovals();
 	const unreadable = await listUnreadableSlots();
 	const published = await reconcileMutationBlocks();

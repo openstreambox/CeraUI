@@ -61,6 +61,8 @@ import type {
 	StateDiff,
 } from "../network/state-types.ts";
 import { applyJitter } from "../streaming/constants.ts";
+import { runAutomaticCarrierProfiles } from "./automatic-carrier-profile.ts";
+import { runCellularPreparation } from "./cellular-preparation.ts";
 import { resetGsmConnections } from "./gsm-connections.ts";
 import type { ModemId } from "./mmcli.ts";
 import { forgetModemIdentity } from "./mode-choice-identity.ts";
@@ -90,6 +92,7 @@ import {
 	triggerGsmConnectionsReset,
 } from "./state/modems-state-cache.ts";
 import { refreshUsagePolicies } from "./usage-policy.ts";
+import { runUsbSpeedPreparation } from "./usb-speed-preparation.ts";
 
 // Retained status poll cadence. Reduced from the old 10s self-recursive loop:
 // signal/status only, no presence detection, no gsm reset.
@@ -344,7 +347,14 @@ export async function discoverModems(): Promise<void> {
 export async function runModemStatusPoll(): Promise<void> {
 	recordModeEvaluations();
 	await withModemUpdateLock(() => reconcileModemPresenceLocked(false));
-	const configured = await runModemReadyActivations();
+	// The USB 2 switch is a transport fix for any SIM, so it comes before the
+	// carrier-dependent steps and does not wait for registration.
+	const reset = await runUsbSpeedPreparation();
+	const automatic = await runAutomaticCarrierProfiles(reset);
+	await runCellularPreparation(undefined, reset);
+	const configured = [
+		...new Set([...automatic, ...(await runModemReadyActivations(reset))]),
+	];
 	if (configured.length > 0) {
 		for (const id of configured) triggerGsmConnectionsReset(id);
 		broadcastModems(Object.fromEntries(configured.map((id) => [id, true])));
