@@ -344,6 +344,8 @@ export async function start(
 				c.srtlaAddr,
 				undefined,
 				"refresh",
+				// The Wi-Fi carrier rule: this sender is reloaded right after the write.
+				{ carrierRule: true },
 			);
 			if (sessionResources?.generation !== generation || !ownsLaunch()) return;
 			if (publication.changed && getIsStreaming()) void restartSrtla();
