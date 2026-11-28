@@ -272,6 +272,36 @@ describe("the replay fence — every start waits for the mode", () => {
 		});
 	}
 
+	test("a bitrate changed live during the replay is the one Start writes and dispatches", async () => {
+		getConfig().previewEncode = "hardware";
+		getConfig().max_br = 5000;
+		const written: Array<number | undefined> = [];
+		setStartStreamDepsForTest({
+			getStreamingBackend: () => ({
+				setBitrate: (config) => {
+					written.push(config.max_br);
+				},
+				start: async (config) => {
+					launchedConfigs.push(config);
+					dispatches.push({ kind: "start" });
+				},
+			}),
+			spawnStreamingLoop: () => fakeSender,
+			startLinkTelemetry: () => {},
+			stopLinkTelemetry: () => {},
+			stopProcessAndWait: async () => {},
+		});
+		setPreviewEncodeReplayTransport(async (mode) => {
+			// The operator's live bitrate change is acknowledged meanwhile.
+			getConfig().max_br = 4000;
+			dispatches.push({ kind: "reload-config", mode });
+		});
+
+		expect(await runStart()).toEqual({ success: true });
+		expect(written).toEqual([4000]);
+		expect(launchedConfigs.map((config) => config.max_br)).toEqual([4000]);
+	});
+
 	test("an idle engine restart does not latch the replay off — the next start asserts it again", async () => {
 		getConfig().previewEncode = "hardware";
 

@@ -201,17 +201,16 @@ export async function startStream(
 	startAudio: StartAudio,
 ): Promise<StartStreamResult> {
 	assertStreamLaunchOwnership();
-	const saved = getConfig();
-	const config: RuntimeConfig = {
-		...saved,
+	const configNow = (): RuntimeConfig => ({
+		...getConfig(),
 		...(configOverride && {
 			...configOverride,
 			composition: configOverride.composition,
 		}),
 		...startAudio.config,
-	};
+	});
 	const selectedInput =
-		config.selected_video_input ?? deviceRegistry.getActiveInput();
+		configNow().selected_video_input ?? deviceRegistry.getActiveInput();
 	// The fixed receiver node cannot establish signal on a different input.
 	if (
 		pipeline.source === "hdmi" &&
@@ -254,11 +253,15 @@ export async function startStream(
 		};
 	}
 
+	const saved = getConfig();
 	if (saved.audio_backend !== startAudio.config.audio_backend) {
 		// The Bluetooth microphones may be listed for the backend saved since.
 		await refreshBluetoothAudioDevices();
 		assertStreamLaunchOwnership();
 	}
+	// Read after the awaits above: a bitrate changed live meanwhile is the one
+	// written below, not a copy taken before them.
+	const config = configNow();
 	const launchConfig = resolveLaunchConfig(config);
 	const chosen = launchConfig.asrc;
 	const wasAuto = config.asrc === AUDIO_SOURCE_AUTO;
