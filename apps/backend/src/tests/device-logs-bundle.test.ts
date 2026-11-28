@@ -1080,3 +1080,27 @@ test("uncompressed output is bounded at 32 MiB and compressed output at 8 MiB", 
 		}
 	}
 }, 30_000);
+
+test("the /boot FAT fault classification reaches the downloaded settings record", async () => {
+	const bootFat = {
+		state: "present",
+		reason: "os_error",
+		exit: null,
+		errno: "EBUSY",
+	} as const;
+	const base = snapshot();
+	collect.mockImplementation(async () => ({
+		...base,
+		settings: { ...base.settings, bootFat },
+	}));
+	const manifest = await previewBundle();
+	expect(manifest.sections[1]).toEqual({
+		id: "settings",
+		entries: 1,
+		redactions: 0,
+	});
+	const { lines } = await unpack(await download());
+	expect(lines.find((line) => line.section === "settings")).toMatchObject({
+		bootFat,
+	});
+});
