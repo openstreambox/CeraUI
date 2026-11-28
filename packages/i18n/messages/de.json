@@ -2254,6 +2254,8 @@
 	"notifications.streamHealthRecovered": "Stream-Zustand wiederhergestellt",
 	"notifications.streamRecovered": "Der Stream wurde nach dem Neustart der Streaming-Engine automatisch wiederhergestellt.",
 	"notifications.streamRecoveryFailed": "Der Stream konnte nach dem Neustart der Streaming-Engine nicht wiederhergestellt werden. Öffnen Sie Einstellungen → Systemprotokolle für Details.",
+	"notifications.streamRecoveredAfterRestart": "Der Stream wurde nach einem Dienstneustart automatisch wiederhergestellt.",
+	"notifications.streamRecoveryFailedAfterRestart": "Der Stream konnte nach einem Dienstneustart nicht wiederhergestellt werden. Öffnen Sie Einstellungen → Systemprotokolle für Details.",
 	"notifications.staleLinkAddress": "{link} trägt nichts bei, weil es noch eine alte Adresse nutzt. Verbindung neu starten? Zuschauer sehen für ein paar Sekunden deinen BRB-Bildschirm.",
 	"notifications.staleLinkAddressUnnamed": "Ein Link trägt nichts bei, weil er noch eine alte Adresse nutzt. Verbindung neu starten? Zuschauer sehen für ein paar Sekunden deinen BRB-Bildschirm.",
 	"notifications.staleLinkAddressSeveral": "Einige Links tragen nichts bei, weil sie noch alte Adressen nutzen. Verbindung neu starten? Zuschauer sehen für ein paar Sekunden deinen BRB-Bildschirm.",
