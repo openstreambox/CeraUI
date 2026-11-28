@@ -175,6 +175,7 @@ async function replayEntry(
 		entry.stableKey,
 		entry.preState,
 		entry.unitLinkId,
+		entry.unitUnproven === true,
 	);
 	assertMutationJournalRevision(revision);
 	if (outcome === "restored") {
@@ -202,7 +203,9 @@ async function replayEntry(
 			"failed",
 			outcome === "unavailable"
 				? "no rollback is available for this mutation kind"
-				: "rollback did not restore the journaled pre-state",
+				: outcome === "unproven"
+					? "the modem's unit was not proven when the change began, so replay cannot verify it"
+					: "rollback did not restore the journaled pre-state",
 		),
 	);
 	tally.blocked += 1;

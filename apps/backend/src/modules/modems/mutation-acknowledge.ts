@@ -177,6 +177,8 @@ async function acknowledgeHeld(
 			device.unitLinkId !== entry.unitLinkId
 		)
 			return quarantine(entry);
+		// Its unit was never proven, so matching descriptors could be a replacement.
+		if (entry.unitUnproven === true) return fail("state_mismatch");
 		// Descriptor equality cannot verify an irreversible eUICC profile operation.
 		if (entry.kind === "esim") return fail("state_mismatch");
 		if (entry.kind === "router-subnet") {
