@@ -532,6 +532,10 @@ gaps for overlap with the independent legacy launcher. Transition table from
 | `checking` | `CHECK_FAILED` | `idle` (clock backs off) |
 | `available` | `AWAIT_IDLE_FOR_INSTALL` | `awaiting-idle` |
 | `available` | `PACKAGE_CHECK_STARTED` | `checking` |
+| `available` | `OS_CHECK_STARTED` | `available` (image check runs in place; the offer stays) |
+| `available` | `CHECK_SUCCEEDED_OS` | `os-available` (the image replaces the package offer) |
+| `available` | `CHECK_SUCCEEDED_NONE` / `CHECK_FAILED` (`os`) | `available` (OS clock only) |
+| `awaiting-idle` | the same four image-check events | as for `available`; a found image drops the queued install |
 | `awaiting-idle` | `INSTALL_UNIT_STARTED` | `downloading` |
 | `downloading` | `DOWNLOAD_PROGRESS` | `downloading` |
 | `downloading` | `COMMIT_PHASE_ENTERED` | `committing` |
@@ -1355,6 +1359,32 @@ Package checks held by the cellular policy record an in-memory deferral.
 `checks.*.consecutiveFailures`; OS deferral is always null. A due deferred
 package check falls through to the due OS check in the same idle tick; a
 package check that actually ran retains priority for that tick.
+
+A package offer does not hide a system image. While the phase is `available`
+or `awaiting-idle` (an install queued but not launched), each tick runs the OS
+check when it is due, in place; Check now also runs it from `available`
+(`awaiting-idle` answers Check now with `busy`, as before). A found
+image moves the phase to `os-available`: the A/B image carries its own packages,
+so the Packages section shows "Install the system update first" instead of an
+Update button while any system-image phase holds. No image, or a failed image
+check, leaves the package offer as it was and only moves the OS clock. A package
+install that starts while that check is in flight wins: the late result is
+dropped, and the image is checked again after the install settles. Automatic
+packages are queued only on the switch as it reads after the image check. RAUC staging
+and the apt unit also share `/run/lock/ceralive-update.lock`.
+
+On a capable image, package discovery never offers a package the image ships
+as its own reviewed build. The names come from the image's
+`/etc/apt/preferences.d/ceralive-local-override` (one `Package`/`Pin`/`Pin-Priority`
+stanza per local override, `Pin: release a=now` or `Pin: version <v>` (a version
+`dpkg --validate-version --` accepts) with a
+priority above the origin pin's 990 and within APT's 32767). An image without that file, or with one that does not
+parse, falls back to `ceralive-device`, `libmm-glib0` and `modemmanager`.
+Withheld rows still count for the CeraLive update notice: its verdict stays
+unknown unless every first-party row of the plan is either checked or withheld.
+Other packages are offered as before. The unit's download stage still fetches
+every upgradable archive, so a withheld package's archive can be downloaded
+without being installed.
 The dialog states the waiting reason, shows overdue checks as "as soon as
 possible", and hides the next-check line when automation is off. An open row
 wakes at its future deadline to replace the timestamp without waiting
