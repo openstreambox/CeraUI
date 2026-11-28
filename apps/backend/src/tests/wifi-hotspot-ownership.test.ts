@@ -366,7 +366,9 @@ beforeEach(async () => {
 				return devices;
 			}
 			if (
-				args.includes("IN-USE,BSSID,SSID,MODE,CHAN,RATE,SIGNAL,BARS,SECURITY")
+				args.includes(
+					"IN-USE,BSSID,SSID,MODE,CHAN,RATE,SIGNAL,BARS,SECURITY,DEVICE",
+				)
 			)
 				return "";
 		}
