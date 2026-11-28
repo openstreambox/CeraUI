@@ -130,6 +130,7 @@ import CapabilityTierBanner from '$main/live/CapabilityTierBanner.svelte';
 import IdleCockpit from '$main/live/IdleCockpit.svelte';
 import LiveCockpit from '$main/live/LiveCockpit.svelte';
 import LiveHeader from '$main/live/LiveHeader.svelte';
+import PowerStatus from '$main/live/PowerStatus.svelte';
 import type { ConfigRow } from '$main/live/StreamSettingsCard.svelte';
 import UnconfirmedStreamBand from '$main/live/UnconfirmedStreamBand.svelte';
 import UpdateRefusalBand from '$main/live/UpdateRefusalBand.svelte';
@@ -1260,6 +1261,7 @@ const configRows = $derived<ConfigRow[]>([
 
 <div bind:this={liveRoot} class="mx-auto w-full max-w-3xl space-y-6 p-4 sm:p-6 lg:max-w-6xl" class:short-live={isStreaming}>
 	<LiveHeader {isStreaming} unconfirmed={streamOutcomeUnknown} restarting={connectionRestarting} />
+	<PowerStatus {sensors} connected={getConnectionState() === "connected"} />
 
 	<!-- Capability-tier state: calm banner when the engine is offline/starting or
 	     reports a schema mismatch. Renders nothing in the normal tier. -->
