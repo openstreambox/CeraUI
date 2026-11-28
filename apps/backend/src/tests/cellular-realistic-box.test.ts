@@ -441,6 +441,9 @@ test("the local CLAT sender checks the held parent even when its link identity w
 		});
 		expect(genSrtlaBondEntriesForLocalIpAddress("10.254.0.4")).toEqual([]);
 		expect(box.bonded()).not.toContain(tun.ifname);
+		await box.scan([ETHERNET, tun], { skipPhysical: true });
+		expect(genSrtlaBondEntriesForLocalIpAddress("10.254.0.4")).toEqual([]);
+		expect(box.bonded()).not.toContain(tun.ifname);
 	} finally {
 		setClatTranslationsForTest(new Map());
 	}
