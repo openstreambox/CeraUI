@@ -304,6 +304,9 @@ $effect.pre(() => {
 	const reason = radioReason;
 	const locked = stationLock.locked;
 	const refreshOnSettlement = refreshFormOnSettlement;
+	// A restart withholds the token for a moment; only another radio, or a token
+	// gone outside a transition, ends this dialog's radio lifetime.
+	const withheld = next.incarnation === undefined && iface?.transition !== undefined;
 	untrack(() => {
 		if (opened && !prevOpen) {
 			retireDetachedStart();
@@ -313,11 +316,14 @@ $effect.pre(() => {
 		// vanished pair closes it with a notice; it never follows a new
 		// incarnation of the same id, which needs a fresh pick.
 		if (opened && prevOpen && openedTarget && (openedTarget.device !== next.device ||
-			openedTarget.incarnation !== next.incarnation)) {
-			if (startAdmission && startAdmission.controller === admission &&
-				getOperationPhase(startAdmission.key) === 'pending') {
+			(openedTarget.incarnation !== next.incarnation && !withheld))) {
+			// A pending Start or Save keeps its receipt, bounded like the Start, so
+			// its terminal still settles the op after the dialog has closed.
+			if (admission && ((startAdmission && startAdmission.controller === admission &&
+				getOperationPhase(startAdmission.key) === 'pending') ||
+				(configAdmissionKey !== undefined && getOperationPhase(configAdmissionKey) === 'pending'))) {
 				retireDetachedStart();
-				const detached = startAdmission.controller;
+				const detached = admission;
 				detachedStart = detached;
 				admission = undefined;
 				// Bounded like the Start operation itself.
