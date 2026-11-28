@@ -1,7 +1,10 @@
 import {
-	wifiAdapterLockKey,
-	withWifiAdapterLock,
-} from "../../wifi/wifi-adapter-lock.ts";
+	admitWifiAdapterByMac,
+	type WifiAdapterAdmission,
+	wifiAdapterAdmissionCurrent,
+} from "../../wifi/wifi-adapter-admission.ts";
+import { withWifiAdapterLock } from "../../wifi/wifi-adapter-lock.ts";
+import { normalizeMacAddress } from "../../wifi/wifi-permanent-mac.ts";
 import { type Effect, type Epoch, type Radio, sameEpoch } from "./reducer.ts";
 
 export type Identity = Readonly<{
@@ -59,10 +62,13 @@ export interface NetworkOwner {
 	 * Must not remove adopted/foreign resources; return false if ownership is unknown. */
 	removeOwned(scope: string, signal: AbortSignal): Promise<boolean>;
 }
+// Physical identity only. The adapter lock key is an owner mapping that can
+// change (composite hotspot owners, Limited rows) and is never compared here.
 const sameIdentity = (a: Identity | null, b: Identity): boolean =>
 	a !== null &&
 	a.physical === b.physical &&
-	wifiAdapterLockKey(a.permanentMac) === wifiAdapterLockKey(b.permanentMac) &&
+	normalizeMacAddress(a.permanentMac) !== undefined &&
+	normalizeMacAddress(a.permanentMac) === normalizeMacAddress(b.permanentMac) &&
 	sameEpoch(a.epoch, b.epoch);
 
 export class EffectAdapter {
@@ -196,25 +202,40 @@ export class EffectAdapter {
 			return false;
 		}
 	}
+	/**
+	 * Run `work` under the lock Wi-Fi itself uses for this radio: the owner its
+	 * verified registry row resolves to, admitted before the lock and re-checked
+	 * under it (same owner, same registry object, same sampled lifetime). A
+	 * Limited, Unverified or missing row, or one replaced or transferred to
+	 * another owner in between, refuses before any effect.
+	 */
 	private async locked<T>(
 		expected: Holder,
 		work: () => Promise<T>,
+		admitted?: WifiAdapterAdmission,
 	): Promise<T> {
-		const result = await withWifiAdapterLock(
-			wifiAdapterLockKey(expected.identity.permanentMac),
-			async () => {
-				const identity = await this.bounded((signal) =>
-					this.owner.identity(expected.radio, signal),
-				);
-				if (!sameIdentity(identity, expected.identity))
-					throw new Error("Identity unknown or replaced");
-				try {
-					return await work();
-				} finally {
-					await Promise.allSettled([...this.unsettled]);
-				}
-			},
-		);
+		const admission =
+			admitted ?? admitWifiAdapterByMac(expected.identity.permanentMac);
+		if (!admission) throw new Error("Radio identity uncertain");
+		const result = await withWifiAdapterLock(admission.owner, async () => {
+			if (!wifiAdapterAdmissionCurrent(admission))
+				throw new Error("Radio replaced or owner changed");
+			const identity = await this.bounded((signal) =>
+				this.owner.identity(expected.radio, signal),
+			);
+			if (!sameIdentity(identity, expected.identity))
+				throw new Error("Identity unknown or replaced");
+			let done: T;
+			try {
+				done = await work();
+			} finally {
+				await Promise.allSettled([...this.unsettled]);
+			}
+			// The lock keeps Wi-Fi out, not a replug; never ACK across one.
+			if (!wifiAdapterAdmissionCurrent(admission))
+				throw new Error("Radio replaced during the effect");
+			return done;
+		});
 		if (!result.success) throw new Error(result.error);
 		return result.result;
 	}
@@ -321,6 +342,9 @@ export class EffectAdapter {
 						);
 						if (!identity || !sameEpoch(identity.epoch, effect.epoch))
 							return null;
+						// Admission: an uncertain radio gets no durable intent and no effect.
+						const admission = admitWifiAdapterByMac(identity.permanentMac);
+						if (!admission) return null;
 						if (record.commands.length >= 1024) return null;
 						const intent = {
 							effect: structuredClone(effect),
@@ -340,6 +364,7 @@ export class EffectAdapter {
 									effect.operation,
 								);
 							},
+							admission,
 						);
 						if (
 							this.closed.has(effect.operation) ||
