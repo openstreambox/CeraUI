@@ -127,6 +127,8 @@ interface Notice {
 	name: string;
 	type: string;
 	msg: string;
+	key?: string;
+	params?: Record<string, unknown>;
 }
 
 function backendFor(
@@ -143,8 +145,18 @@ function backendFor(
 		saveConfig: () => {},
 		...(scheduleTimeout === undefined ? {} : { scheduleTimeout }),
 		bridge: {
-			notify: (name, type, msg) => {
-				notices.push({ name, type, msg });
+			notify: (
+				name,
+				type,
+				msg,
+				_duration,
+				_persistent,
+				_dismissable,
+				_authedOnly,
+				key,
+				params,
+			) => {
+				notices.push({ name, type, msg, key, params });
 			},
 			notificationExists: () => false,
 			removeNotification: () => {},
@@ -406,6 +418,8 @@ test("a mix left out on a cold capability cache is not blamed on the engine", as
 	expect(notices[0]?.msg).toContain("audio mix");
 	expect(notices[0]?.msg).not.toContain("does not support");
 	expect(notices[0]?.msg).toContain("not confirmed");
+	expect(notices[0]?.key).toBe("notifications.startFeatures.unconfirmed");
+	expect(notices[0]?.params).toEqual({ features: ["audio-mix"] });
 });
 
 test("only the receiving engine's own answer is worded as unsupported", async () => {
@@ -416,6 +430,8 @@ test("only the receiving engine's own answer is worded as unsupported", async ()
 	await backend.start(mixConfig(), START);
 
 	expect(notices[0]?.msg).toContain("does not support");
+	expect(notices[0]?.key).toBe("notifications.startFeatures.unsupported");
+	expect(notices[0]?.params).toEqual({ features: ["audio-mix"] });
 });
 
 test("a saved composition on an engine known to lack composition is surfaced", async () => {
