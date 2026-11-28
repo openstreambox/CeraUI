@@ -256,6 +256,11 @@ const remoteTimeout = 5000;
 const remoteConnectTimeout = 10000;
 
 let remoteWs: WebSocket | undefined;
+let authenticatedPowerPeer: WebSocket | undefined;
+
+export function isRemotePowerPeerAuthenticated(): boolean {
+	return remoteWs !== undefined && authenticatedPowerPeer === remoteWs;
+}
 let remoteStatusHandled = false;
 
 export function getRemoteWebSocket() {
@@ -271,6 +276,7 @@ function handleRemote(conn: WebSocket, msg: RemoteMessage) {
 					type,
 				);
 				if (value === true) {
+					authenticatedPowerPeer = conn;
 					addAuthedSocket(conn);
 					sendInitialStatus(conn, {
 						notifications: false,
@@ -360,6 +366,7 @@ function remoteClose(conn: WebSocket) {
 	conn.removeListener("close", remoteClose);
 	conn.removeListener("message", (msg) => remoteHandleMsg(conn, msg));
 	remoteWs = undefined;
+	authenticatedPowerPeer = undefined;
 
 	if (!remoteStatusHandled) {
 		broadcastMsgLocal(
