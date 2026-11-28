@@ -1085,10 +1085,14 @@ export class CerastreamBackend implements StreamingBackend {
 				// Gated fields are checked against this engine's own answer, not the
 				// shared snapshot the params were assembled from, which may predate
 				// this connection.
-				// The audio is settled at dispatch; a gated field that first appears
-				// there has no answer from this engine and is left out.
+				// Audio settled at dispatch (upstream defers it from assembly) may
+				// carry a mix, so such a Start reads the answer as well. A gated field
+				// that appears at dispatch without an answer is still left out.
 				let startCaps: GetCapabilitiesResult | undefined;
-				if (carriesGatedStartFields(params)) {
+				if (
+					carriesGatedStartFields(params) ||
+					opts.audioAtDispatch !== undefined
+				) {
 					startCaps = await this.readStartCapabilities(client);
 					assertStreamLaunchOwnership();
 				}
