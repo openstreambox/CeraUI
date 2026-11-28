@@ -8,6 +8,7 @@ import { StubRemoteSocket } from "./status-client.ts";
 mock.module("ws", () => ({ default: StubRemoteSocket }));
 
 export function useRemotePrivacySocket(): void {
+	let timeouts: ReturnType<typeof spyOn<typeof globalThis, "setTimeout">>;
 	let intervals: ReturnType<typeof spyOn<typeof globalThis, "setInterval">>;
 	beforeEach(() => {
 		spyOn(mockService, "shouldUseMocks").mockReturnValue(false);
@@ -17,10 +18,13 @@ export function useRemotePrivacySocket(): void {
 		});
 		spyOn(ssh, "getSshStatus").mockResolvedValue(undefined);
 		intervals = spyOn(globalThis, "setInterval");
+		timeouts = spyOn(globalThis, "setTimeout");
 	});
 	afterEach(() => {
 		for (const result of intervals.mock.results)
 			if (result.type === "return") clearInterval(result.value);
+		for (const result of timeouts.mock.results)
+			if (result.type === "return") clearTimeout(result.value);
 		mock.restore();
 	});
 }
