@@ -302,6 +302,42 @@ describe("the replay fence — every start waits for the mode", () => {
 		expect(launchedConfigs.map((config) => config.max_br)).toEqual([4000]);
 	});
 
+	test("a switch to onboard HDMI saved during the replay does not launch the unchecked input", async () => {
+		getConfig().previewEncode = "hardware";
+		getConfig().max_br = 5000;
+		getConfig().selected_video_input = "/dev/video-usb-capture";
+		const signalChecks: string[] = [];
+		setPreviewEncodeReplayTransport(async (mode) => {
+			// The save lands after the signal check skipped the USB capture card.
+			getConfig().selected_video_input = "/dev/hdmirx";
+			getConfig().max_br = 4000;
+			dispatches.push({ kind: "reload-config", mode });
+		});
+
+		const result = await startStream(
+			testPipeline,
+			"192.0.2.10",
+			5000,
+			"sid",
+			{
+				hdmiVideoSignal: async () => {
+					signalChecks.push("onboard");
+					return false;
+				},
+			},
+			"att_preview",
+			undefined,
+			acceptStartAudio(),
+		);
+
+		expect(result).toEqual({ success: true });
+		expect(signalChecks).toEqual([]);
+		expect(
+			launchedConfigs.map((config) => config.selected_video_input),
+		).toEqual(["/dev/video-usb-capture"]);
+		expect(launchedConfigs.map((config) => config.max_br)).toEqual([4000]);
+	});
+
 	test("an idle engine restart does not latch the replay off — the next start asserts it again", async () => {
 		getConfig().previewEncode = "hardware";
 

@@ -209,8 +209,10 @@ export async function startStream(
 		}),
 		...startAudio.config,
 	});
+	// The capture this Start checks below is the one it launches.
+	const checked = configNow();
 	const selectedInput =
-		configNow().selected_video_input ?? deviceRegistry.getActiveInput();
+		checked.selected_video_input ?? deviceRegistry.getActiveInput();
 	// The fixed receiver node cannot establish signal on a different input.
 	if (
 		pipeline.source === "hdmi" &&
@@ -259,9 +261,10 @@ export async function startStream(
 		await refreshBluetoothAudioDevices();
 		assertStreamLaunchOwnership();
 	}
-	// Read after the awaits above: a bitrate changed live meanwhile is the one
-	// written below, not a copy taken before them.
-	const config = configNow();
+	// Only the bitrate is read after the awaits above: a change made live
+	// meanwhile is the one written below. A capture save made meanwhile counts
+	// for the next Start, as its signal check has not run.
+	const config: RuntimeConfig = { ...checked, max_br: configNow().max_br };
 	const launchConfig = resolveLaunchConfig(config);
 	const chosen = launchConfig.asrc;
 	const wasAuto = config.asrc === AUDIO_SOURCE_AUTO;
