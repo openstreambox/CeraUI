@@ -154,6 +154,7 @@ vi.mock("$lib/stores/auth-status.svelte", () => ({
 	// A signed-in page: its own session token re-authenticates a new socket.
 	getSessionToken: () => "token-abc",
 	forgetSessionToken: () => {},
+	forgetRejectedToken: () => {},
 	getAuthMessage: () => ({ success: true }),
 	authStatusStore: {
 		value: true,
