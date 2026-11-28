@@ -7,6 +7,8 @@
 	"connectivity.deviceBoundProbe",
 	"deviceLogs.journalFollow",
 	"deviceLogs.journalScan",
+	"devices.helperUnit",
+	"devices.helperUnitState",
 	"exec.execFileP",
 	"ingest.srtForward",
 	"ingest.srtLiveTransmit",

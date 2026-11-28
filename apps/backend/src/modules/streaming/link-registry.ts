@@ -148,6 +148,16 @@ export function resetBondIdentities(): void {
 	byIface = new Map();
 }
 
+/** Controller path and link id only. Interface names and serials stay here. */
+export function publishedLinkPaths(): { idPath: string; linkId: string }[] {
+	return identities.flatMap((identity) => {
+		if (identity.linkId === undefined || identity.idPath === undefined) {
+			return [];
+		}
+		return [{ idPath: identity.idPath, linkId: identity.linkId }];
+	});
+}
+
 /** The identity the writer minted for `linkId`, if it is still published. */
 export function identityForLinkId(
 	linkId: string | undefined,
