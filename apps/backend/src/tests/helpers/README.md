@@ -150,3 +150,21 @@ version comparison already uses the supervised async spawn policy.
 The singleton boot-order test locates the nonblocking orchestrator launch and
 asserts that it exists before comparing order; an absent source match cannot
 stand in for startup ordering.
+
+Durable-store tests whose subject is authority rather than the kernel flush may
+call `recordFsyncsPerTest()` from `recorded-fsync.ts` at file scope. On ext4 a
+directory fsync forces a commit of the running journal transaction, if there is
+one, and waits for it; in data=ordered mode that commit first writes out the data
+the transaction tracks, which in a parallel run includes other processes' new
+files. The private state writers fsync each new directory's ancestry up to `/`.
+Under a parallel gate those commits were the main wait that turned
+millisecond tests into 5-second timeouts. Inside each test of such a file,
+every fsync and fdatasync form (namespace, default `node:fs` object,
+`FileHandle`) records the synced path in order, and an optional observer sees
+each one as it happens, so a test can check file state at the sync (for
+example that a directory sync follows the rename). The spies are restored after
+each test. Files, renames and modes stay real, and no assertion or timeout
+changes. Limits: a closed or invalid descriptor still fails, but a live
+descriptor the kernel would refuse to sync (a pipe, EINVAL) is accepted, and
+writeback errors cannot occur. Tests of fsync behaviour keep observing or
+injecting it directly.
