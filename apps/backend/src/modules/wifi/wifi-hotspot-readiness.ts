@@ -297,7 +297,7 @@ export function beginHotspotStartTerminal(
 	publish: (result: HotspotReadinessResult, waited: boolean) => void,
 	onError: (error: unknown) => void,
 	/** Runs once the wait is over, whether or not it published a frame. */
-	done: () => void = () => {},
+	done?: () => void,
 ): () => void {
 	if (!steering || steering.active?.() === false)
 		return () => {
@@ -305,7 +305,7 @@ export function beginHotspotStartTerminal(
 				if (hotspotOperationCurrent(start.ticket))
 					publish({ success: true }, false);
 			} finally {
-				done();
+				done?.();
 			}
 		};
 	const fence = captureHotspotSteeringFence(row, uuid, start);
@@ -322,7 +322,7 @@ export function beginHotspotStartTerminal(
 				release();
 				onError(error);
 			})
-			.finally(done);
+			.finally(() => done?.());
 	};
 }
 
