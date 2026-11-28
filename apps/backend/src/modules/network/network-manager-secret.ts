@@ -1,12 +1,16 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { open } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { logger } from "../../helpers/logger.ts";
 import { run, runWithStdin } from "../../helpers/run.ts";
+import { nmConnGetFields } from "./network-manager.ts";
 import { stageKeyfilePublication } from "./network-manager-keyfile-publication.ts";
 import type { NmProfileReadTrace } from "./network-manager-profile-diagnostics.ts";
 import { readNmProfileFileSecret } from "./network-manager-profile-file.ts";
 import {
+	type NmProfileInstance,
 	readNmProfileInstance,
+	sameNmProfileFile,
 	sameNmProfileResource,
 } from "./network-manager-profile-instance.ts";
 import { openNmProfileFile } from "./network-manager-profile-write.ts";
@@ -87,6 +91,44 @@ export async function readVerifiedNmWifiSecret(
 	}
 }
 
+/** One dispatch's scope: only writes made inside it can leave it a receipt. */
+export type NmRollbackScope = {
+	readonly uuid: string;
+	receipt?: NmProfileInstance | undefined;
+};
+const rollbackScope = new AsyncLocalStorage<NmRollbackScope>();
+
+/** Run one dispatch so a verified rollback of its own write reaches only it. */
+export function runInNmRollbackScope<T>(
+	scope: NmRollbackScope,
+	dispatch: () => T,
+): T {
+	return rollbackScope.run(scope, dispatch);
+}
+
+/** The restored bytes and the secret NM shows positively agree; unreadable is unverified. */
+async function restoredSecretLoaded(
+	uuid: string,
+	file: NmProfileInstance["file"],
+	original: Buffer,
+): Promise<boolean> {
+	const current = await openNmProfileFile(file);
+	try {
+		if (!current?.bytes.equals(original)) return false;
+	} finally {
+		await current?.handle.close();
+	}
+	const kept = await readNmProfileFileSecret(file);
+	if (!kept) return false;
+	const shown = (
+		await nmConnGetFields(uuid, ["802-11-wireless-security.psk"] as const)
+	)?.[0];
+	// A keyfile without a PSK needs NM to show none; one with a PSK needs NM to show it.
+	return kept.password === undefined || kept.password === ""
+		? shown === ""
+		: isNmWifiSecretAvailable(shown) && shown === kept.password;
+}
+
 /** Keep credentials in stdin and mode-0600 keyfiles, never the process table. */
 export async function writeNmWifiSecret(
 	uuid: string,
@@ -116,6 +158,8 @@ export async function writeNmWifiSecret(
 		logger.warn("NM profile write rejected", { reason });
 		return false;
 	};
+	const scope = rollbackScope.getStore();
+	if (scope?.uuid === uuid) scope.receipt = undefined;
 	const beforeTrace: NmProfileReadTrace = {};
 	const before = await readNmProfileInstance(uuid, undefined, beforeTrace);
 	if (!before)
@@ -147,6 +191,41 @@ export async function writeNmWifiSecret(
 	const publication = stageKeyfilePublication(expected, original, temporary);
 	let stage: "file-publish-failed" | "load-failed" | "post-read-failed" =
 		"file-publish-failed";
+	let loaded = false;
+	/*
+	  Once NM may have loaded the submitted keyfile, a rejection alone would leave
+	  NM on the new values while every caller keeps the old ones. Put the original
+	  back (only over our own bytes) and reload it. Only a reload that succeeded,
+	  read back as exactly the restored file on the same NM run and object with
+	  the original settings, earns a receipt; anything less stays unverified.
+	*/
+	const rollBack = async (
+		reason: Parameters<typeof reject>[0],
+	): Promise<false> => {
+		reject(reason);
+		try {
+			const restoredFile = publication.restore(submitted);
+			if (!restoredFile) return false;
+			await run("nmcli", ["connection", "load", filename]);
+			const restored = await readNmProfileInstance(uuid);
+			if (
+				restored?.file &&
+				sameNmProfileFile(restoredFile, restored.file) &&
+				restored.runId === before.runId &&
+				restored.path === before.path &&
+				restored.fingerprint === before.fingerprint &&
+				(await restoredSecretLoaded(uuid, restored.file, original))
+			) {
+				if (scope?.uuid === uuid) scope.receipt = restored;
+				logger.warn("NM profile write rolled back");
+				return false;
+			}
+		} catch (error: unknown) {
+			if (!(error instanceof Error)) throw error;
+		}
+		logger.error("NM profile rollback could not be verified");
+		return false;
+	};
 	try {
 		const file = await open(temporary, "wx", 0o600);
 		try {
@@ -167,6 +246,7 @@ export async function writeNmWifiSecret(
 			return reject("publish-target-replaced");
 		stage = "load-failed";
 		publication.beginLoad();
+		loaded = true;
 		await run("nmcli", ["connection", "load", filename]);
 		stage = "post-read-failed";
 		const trace: NmProfileReadTrace = {};
@@ -179,7 +259,7 @@ export async function writeNmWifiSecret(
 			trace,
 		);
 		if (!after)
-			return reject(
+			return await rollBack(
 				trace.exit === "fields-unreadable"
 					? "post-read-fields-unreadable"
 					: trace.exit === "submitted-settings-mismatch"
@@ -188,16 +268,16 @@ export async function writeNmWifiSecret(
 							? "post-read-secret-unreadable"
 							: "post-read-unverified",
 			);
-		if (!after.file) return reject("post-file-unreadable");
-		if (after.runId !== before.runId) return reject("post-run-changed");
-		if (after.path !== before.path) return reject("post-path-changed");
+		if (!after.file) return await rollBack("post-file-unreadable");
+		if (after.runId !== before.runId) return await rollBack("post-run-changed");
+		if (after.path !== before.path) return await rollBack("post-path-changed");
 		if (!publication.ownsLive(submitted))
 			return reject("publish-target-replaced");
 		publication.commit();
 		return true;
 	} catch (error: unknown) {
 		if (!(error instanceof Error)) throw error;
-		return reject(stage);
+		return loaded ? await rollBack(stage) : reject(stage);
 	} finally {
 		await publication.finish(submitted);
 	}
