@@ -20,7 +20,8 @@ export async function fakeShadowSysfs(radios: () => readonly RadioFixture[]) {
 		"readDevicePath",
 	).mockImplementation(async (ifname) => {
 		const radio = radios().find((row) => row.ifname === ifname);
-		return radio ? `platform-equivalence-phy${radio.phy}` : undefined;
+		if (!radio || radio.devicePath === null) return undefined;
+		return radio.devicePath ?? `platform-equivalence-phy${radio.phy}`;
 	});
 	const text = spyOn(radioIdentityReaders, "readText").mockImplementation(
 		async (path) => {
