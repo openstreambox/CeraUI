@@ -27731,22 +27731,6 @@
       ]
     },
     {
-      "source": "apps/backend/src/rpc/procedures/captive-portal.procedure.ts",
-      "call": "broadcastMsg",
-      "message": "\"config\"",
-      "fields": [
-        {
-          "path": "captive_portal_enabled",
-          "types": [
-            "undefined",
-            "false",
-            "true"
-          ],
-          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
-        }
-      ]
-    },
-    {
       "source": "apps/backend/src/mocks/scenario-control.ts",
       "call": "broadcastMsg",
       "message": "\"relays\"",
@@ -28251,8 +28235,7 @@
     "apps/backend/src/modules/wifi/wifi-interfaces.ts": "d179b2269a86b9c365020f59c66bcabff6fd963186ae7899f7b0e874bb87c158",
     "apps/backend/src/modules/wifi/wifi.ts": "709b09c21fbca6e341b47e128c43fa6716e1cc0a90fb480b27699adfaec5a70a",
     "apps/backend/src/rpc/compat.ts": "72b36615b97ab0a66ff668280a088fcef088de4dbf9c4546bd8694bf0373969c",
-    "apps/backend/src/rpc/config-broadcast.ts": "8fac59e6becfa70e2c55ad6623b1f19182801f041c05722cf6f2c14dcc9b44bc",
-    "apps/backend/src/rpc/procedures/captive-portal.procedure.ts": "79c1fabf54a4b83f35b35519716e920d18bdb57113cb28f7ded6e6fa406d8656",
+    "apps/backend/src/rpc/config-broadcast.ts": "57ee4d91c4ebc82e7351c448b3b4f7ecb2e9951f610c4b1005a7b9903a0ba974",
     "apps/backend/src/rpc/procedures/network.procedure.ts": "a44dfdcbe37ac32f9c65392671072332b072e50b841344e13dc467954d207640",
     "apps/backend/src/rpc/procedures/streaming.procedure.ts": "1beba963d32f3c469cd83b992e646069defb81ae9edab4efd736028a52c3e593",
     "bun.lock": "311175002287ebf799cc23dabe3e294949bc3e12c86b409a1436c747f87a7fd2",
@@ -28271,7 +28254,7 @@
     "packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
     "packages/rpc/src/schemas/status.schema.ts": "0d20c6279b9dee59945f5322c8c23e8da84f3fce681e00038fe63ee6c37b6f3e",
-    "packages/rpc/src/schemas/streaming.schema.ts": "7efcdedaddbc65598d39f1b58b221158c6223d5898295c07748f762fe95791c1",
+    "packages/rpc/src/schemas/streaming.schema.ts": "b590d87d6c753b0f18c3eaf248993ead46e8291fec7b6ba1b25c5145a088b760",
     "packages/rpc/src/schemas/system.schema.ts": "be2db8dd7bbfcc4e6cba2812d4ad49f3d74d75d96216eec59532eb136f1ec009",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "ac5e6859c7723d4381f1502246d9778262c663d80d06b5b2eb5aaf1796da5613",
     "packages/rpc/src/schemas/usb-devices.schema.ts": "0d840933a0d31877d51fd2bf6b91469ec890e96103714c2ee9bf4aaa539cdb7c",
