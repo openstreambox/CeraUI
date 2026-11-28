@@ -109,12 +109,15 @@ export interface MutationCaptureDeps {
 		readUdevDatabase?: () => Promise<string>,
 	): Promise<readonly UsbDeviceSnapshot[]>;
 	readSerial(path: string): Promise<string | undefined>;
+	/** The kernel's device number at a sysfs path: it changes on every replug. */
+	readDevnum(path: string): Promise<string | undefined>;
 }
 
 export const defaultMutationCaptureDeps: MutationCaptureDeps = {
 	enumerate: (readUdevDatabase = readMutationUdevExportDb) =>
 		createUsbEnumerator({ readUdevDatabase }).enumerate(),
 	readSerial: (path) => readUsbSerialAttribute(join(path, "serial")),
+	readDevnum: (path) => readUsbSerialAttribute(join(path, "devnum")),
 };
 
 let activeDeps: MutationCaptureDeps = defaultMutationCaptureDeps;
@@ -142,20 +145,43 @@ export function captureUsbDescriptor(device: UsbDeviceSnapshot) {
 	};
 }
 
+function deviceNumber(value: string | undefined): number | undefined {
+	return value !== undefined && /^\d+$/.test(value.trim())
+		? Number(value.trim())
+		: undefined;
+}
+
 async function serialFor(device: UsbDeviceSnapshot, deps: MutationCaptureDeps) {
 	// modem-control 1.4.0 preserves the udev property without promoting it.
 	const property =
 		device.udevProperties?.ID_SERIAL_SHORT ??
 		device.udevProperties?.ID_USB_SERIAL_SHORT;
-	const raw =
-		(device.sysfsPath === undefined
-			? undefined
-			: await deps.readSerial(device.sysfsPath)) ?? device.serialNumber;
+	let attribute: string | undefined;
+	let unbound: string | undefined;
+	if (device.sysfsPath !== undefined) {
+		attribute = await deps.readSerial(device.sysfsPath);
+		unbound = attribute;
+		// The path outlives the device: a replug at the same port reuses it.
+		// Only a serial read while the enumerated device number still holds
+		// belongs to the device whose descriptors the snapshot holds; without
+		// that proof the read is no unit evidence at all.
+		if (attribute !== undefined) {
+			const enumerated = deviceNumber(device.udevProperties?.DEVNUM);
+			const now =
+				enumerated === undefined
+					? undefined
+					: deviceNumber(await deps.readDevnum(device.sysfsPath));
+			if (now === undefined || now !== enumerated) attribute = "";
+		}
+	}
+	const raw = attribute ?? device.serialNumber;
 	const reported = usbSerialIdentity(property, device.vendorId);
 	const observed = usbSerialIdentity(raw ?? property, device.vendorId);
 	return {
 		observed,
 		reported,
+		// Not this lifetime's identity, but still a serial some device holds.
+		unbound: usbSerialIdentity(unbound, device.vendorId),
 		agrees: property === undefined || observed.key === reported.key,
 	};
 }
@@ -182,7 +208,8 @@ async function reliableUnitLinkId(
 		peers.some(
 			(peer) =>
 				peer.observed.key === observed.key ||
-				peer.reported.key === observed.key,
+				peer.reported.key === observed.key ||
+				peer.unbound.key === observed.key,
 		)
 	)
 		return undefined;
@@ -190,6 +217,14 @@ async function reliableUnitLinkId(
 	if (observed.isShared(remembered)) return undefined;
 
 	return mintLinkId(`usb-serial:${observed.key}`);
+}
+
+/** The unit identity of a device from one enumeration, read with the active capture deps. */
+export function observedUnitLinkId(
+	device: UsbDeviceSnapshot,
+	devices: readonly UsbDeviceSnapshot[],
+): Promise<string | undefined> {
+	return reliableUnitLinkId(device, devices, activeDeps);
 }
 
 /** Record an opaque unit identity if the enumerated modem has a reliable serial. */
