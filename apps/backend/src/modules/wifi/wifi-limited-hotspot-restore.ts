@@ -49,6 +49,7 @@ import {
 } from "./wifi-hybrid-target-diagnostics.ts";
 import { sampleWifiOperationRadio } from "./wifi-operation-binding.ts";
 import { wifiAdapterKeyMac, wifiAdapterKeyPort } from "./wifi-permanent-mac.ts";
+import { observeProvisioningApProfile } from "./wifi-provisioning-ap.ts";
 import { sameRadioLifetime, wifiRadioIdentity } from "./wifi-radio-identity.ts";
 
 /** Boot-only D12 path. Requests never receive this activation authority. */
@@ -104,9 +105,17 @@ export async function restoreLimitedHotspot(
 			"802-11-wireless.channel",
 			"connection.interface-name",
 			"match.path",
+			"connection.id",
 		] as const);
 	const fields = await readProfile();
 	if (stopped()) return undefined;
+	if (
+		observeProvisioningApProfile(stored.conn, {
+			id: fields?.[5],
+			mode: fields?.[0],
+		})
+	)
+		return pending("owned profile is the device image's setup AP");
 	if (fields === undefined) {
 		refuse("owned AP profile missing");
 		return { success: false, error: "activation-failed" };
