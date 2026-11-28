@@ -185,6 +185,10 @@ export const defaultMutationJournalDeps: MutationJournalDeps = {
 
 let activeDeps: MutationJournalDeps = defaultMutationJournalDeps;
 
+export function currentMutationJournalDeps(): MutationJournalDeps {
+	return activeDeps;
+}
+
 export function setMutationJournalDeps(
 	deps: Partial<MutationJournalDeps>,
 ): void {
@@ -261,32 +265,45 @@ export async function readMutationEntry(
 	return parseEntry(raw, slotFile(stableKey));
 }
 
-/**
- * Every readable entry on disk. `onUnreadable` names each damaged slot and keeps
- * reading; without it a read fault still throws.
- */
-export async function listMutationEntries(
+/** Inventory either reports each unreadable slot and continues, or the caller
+ * throws to reject a partial census. Failure to list the directory still throws. */
+export async function scanMutationEntries(
+	onUnreadable: (slot: string, readError?: unknown) => void,
 	deps: MutationJournalDeps = activeDeps,
-	requireComplete = false,
-	onUnreadable?: (slot: string) => void,
 ): Promise<readonly ModemMutationEntry[]> {
 	const names = await deps.fs.listDir(deps.dir);
 	const entries: ModemMutationEntry[] = [];
 	for (const name of names) {
 		if (!name.endsWith(".json")) continue;
-		let entry: ModemMutationEntry | undefined;
+		let raw: string | undefined;
 		try {
-			const raw = await deps.fs.readText(join(deps.dir, name));
-			if (raw === undefined) continue;
-			entry = parseEntry(raw, name);
+			raw = await deps.fs.readText(join(deps.dir, name));
 		} catch (error) {
-			if (onUnreadable === undefined) throw error;
+			onUnreadable(name, error);
+			continue;
 		}
-		if (entry !== undefined) entries.push(entry);
-		else if (onUnreadable !== undefined) onUnreadable(name);
-		else if (requireComplete) throw new MutationJournalInventoryError(name);
+		if (raw === undefined) continue;
+		const entry = parseEntry(raw, name);
+		if (entry === undefined) onUnreadable(name);
+		else entries.push(entry);
 	}
 	return entries;
+}
+
+/**
+ * Every readable entry on disk. `onUnreadable` names each damaged slot and keeps
+ * reading; without it a read fault still throws.
+ */
+export function listMutationEntries(
+	deps: MutationJournalDeps = activeDeps,
+	requireComplete = false,
+	onUnreadable?: (slot: string) => void,
+): Promise<readonly ModemMutationEntry[]> {
+	return scanMutationEntries((name, readError) => {
+		if (onUnreadable !== undefined) return onUnreadable(name);
+		if (readError !== undefined) throw readError;
+		if (requireComplete) throw new MutationJournalInventoryError(name);
+	}, deps);
 }
 
 export class MutationJournalInventoryError extends Error {
@@ -301,7 +318,7 @@ export async function listUnreadableSlots(
 	deps: MutationJournalDeps = activeDeps,
 ): Promise<readonly string[]> {
 	const bad: string[] = [];
-	await listMutationEntries(deps, false, (slot) => bad.push(slot));
+	await scanMutationEntries((name) => bad.push(name), deps);
 	return bad;
 }
 

@@ -24,6 +24,7 @@ import {
 import { getConfig } from "../modules/config.ts";
 import { resetBootReadiness } from "../modules/system/readiness.ts";
 import {
+	clearUnreadableRecordProcedure,
 	configureModemProcedure,
 	getAllModemsProcedure,
 	scanModemProcedure,
@@ -159,6 +160,21 @@ function enterInitializing(): void {
 }
 
 describe("lifecycle state: dbus initializing", () => {
+	test("disk-only journal confirmation requires authentication and works before a modem row exists", async () => {
+		enterInitializing();
+		const input = { token: crypto.randomUUID(), confirm: true } as const;
+		const context = makeContext();
+		expect(
+			await call(clearUnreadableRecordProcedure, input, { context }),
+		).toEqual({ success: false, error: "no_entry" });
+		expect(
+			await refusalCode(() =>
+				call(clearUnreadableRecordProcedure, input, {
+					context: { ...context, isAuthenticated: () => false },
+				}),
+			),
+		).toBe("UNAUTHORIZED");
+	});
 	for (const procedure of MODEM_PROCEDURES) {
 		test(`${procedure.name} refuses with the typed init error`, async () => {
 			// Given a dbus backend whose first snapshot has not landed

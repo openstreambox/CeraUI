@@ -1,7 +1,16 @@
 import { beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+	setMutationBlocks,
+	tryAcquireLifecycle,
+	tryAcquireModemMutation,
+} from "../streaming/lifecycle-admission.ts";
+import {
+	beginRecoveryBarrier,
+	resetRecoveryBarrier,
+} from "../streaming/recovery-barrier.ts";
 import type { CellularControl, CellularControlTarget } from "./modems.ts";
 import { mutationJournalRevision } from "./mutation-journal-revision.ts";
 import {
@@ -221,6 +230,7 @@ function box(
 			},
 		}) as unknown as CellularControl;
 	const deps: UsbSpeedDeps = {
+		missingUnitReturning: async () => false,
 		ids: () => Array.from({ length: units }, (_, i) => i),
 		stableKey: (id) => `key-${id}`,
 		target: async (id) => target(id),
@@ -294,10 +304,153 @@ test("a stored value that is already right needs only the reset", async () => {
 
 test("a setter readback mismatch stops before the reset", async () => {
 	const b = box({ setterReadback: "312" });
-	await runUsbSpeedPreparation(b.deps);
+	const messages: string[] = [];
+	await runUsbSpeedPreparation({
+		...b.deps,
+		log: (message) => messages.push(message),
+	});
+	expect(messages.at(-1)).toContain("setter readback differs");
+	expect(messages.at(-1)).not.toContain("module reset");
 	expect(b.calls).not.toContain("reset 0");
 	expect(b.calls).toContain("release 0");
-	expect(b.records.get(b.key(0))).toMatchObject({ phase: "failed" });
+	expect(b.records.get(b.key(0))).toMatchObject({
+		phase: "failed",
+		attempts: 1,
+	});
+});
+
+test("two lost setter replies exhaust the budget and preserve the original USB setting", async () => {
+	const b = box();
+	const deps: UsbSpeedDeps = {
+		...b.deps,
+		acquire: async (target) => {
+			const control = await b.deps.acquire(target);
+			return {
+				...control,
+				setUsbSpeed: async (desired) => {
+					await control.setUsbSpeed(desired);
+					throw new Error("port closed before readback");
+				},
+			};
+		},
+	};
+	for (let poll = 0; poll < 3; poll++) {
+		await runUsbSpeedPreparation(deps);
+		b.advance(USB_SPEED_PAUSE_MS);
+	}
+	expect(b.calls.filter((call) => call === "set 0 20")).toHaveLength(2);
+	expect(b.calls).not.toContain("reset 0");
+	expect(b.records.get(b.key(0))).toMatchObject({
+		original: "312",
+		wrote: true,
+		attempts: 2,
+		phase: "blocked",
+	});
+});
+
+test("a restart after setter dispatch retains the attempt even when the outcome never reached disk", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "usbspeed-interrupted-"));
+	const previous = process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+	process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = dir;
+	const b = box({ setterReadback: "312" });
+	const countsAtDispatch: number[] = [];
+	const messages: string[] = [];
+	try {
+		for (let boot = 0; boot < 3; boot++) {
+			resetUsbSpeedPreparationForTest();
+			let interrupted = false;
+			await runUsbSpeedPreparation({
+				...b.deps,
+				log: (message) => messages.push(message),
+				read: defaultUsbSpeedDeps.read,
+				write: async (entry) => {
+					// Nothing after this process cut can reach the next boot.
+					if (interrupted) throw new Error("process interrupted");
+					await defaultUsbSpeedDeps.write(entry);
+				},
+				acquire: async (target) => {
+					const control = await b.deps.acquire(target);
+					return {
+						...control,
+						setUsbSpeed: async (value) => {
+							const result = await control.setUsbSpeed(value);
+							interrupted = true;
+							const saved = await defaultUsbSpeedDeps.read(b.key(0));
+							if (saved?.kind !== "usbspeed")
+								throw new Error("missing original setting");
+							countsAtDispatch.push(saved.attempts);
+							return result;
+						},
+					};
+				},
+			});
+			b.advance(USB_SPEED_PAUSE_MS);
+		}
+		expect(b.calls.filter((line) => line === "set 0 20")).toHaveLength(2);
+		expect(countsAtDispatch).toEqual([1, 2]);
+		const file = join(dir, `${b.key(0)}.json`);
+		expect(
+			messages.filter((line) => line.includes("usbspeed: blocked")),
+		).toEqual([
+			`wwan0 usbspeed: blocked (still at 5000 Mbit/s after 2 attempts) modem=0 record=${file}`,
+		]);
+		expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({
+			key: b.key(0),
+			kind: "usbspeed",
+			phase: "blocked",
+		});
+		expect(b.calls).not.toContain("reset 0");
+		expect(await defaultUsbSpeedDeps.read(b.key(0))).toMatchObject({
+			original: "312",
+			wrote: true,
+			attempts: 2,
+			phase: "blocked",
+		});
+	} finally {
+		if (previous === undefined)
+			delete process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+		else process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = previous;
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("a reused modem index and interface log each blocked unit's own preparation record", async () => {
+	const b = box({ units: 2 });
+	const lines: string[] = [];
+	const directory = process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+	delete process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+	try {
+		for (const id of [0, 1]) {
+			const target = await b.deps.target(id, `key-${id}`);
+			if (!target) throw new Error("missing fixture modem");
+			const key = b.key(id);
+			b.records.set(
+				key,
+				record({
+					key,
+					phase: "blocked",
+					attempts: 2,
+					reason: "attempts exhausted",
+				}),
+			);
+			await runUsbSpeedPreparation({
+				...b.deps,
+				ids: () => [4],
+				target: async () => ({ ...target, id: 4, ifname: "wwan0" }),
+				log: (line) => lines.push(line),
+			});
+		}
+		expect(lines).toEqual(
+			[0, 1].map(
+				(id) =>
+					`wwan0 usbspeed: blocked (attempts exhausted) modem=4 record=/data/ceralive/cellular-preparation/${b.key(id)}.json`,
+			),
+		);
+		expect(b.calls).toEqual([]);
+	} finally {
+		if (directory !== undefined)
+			process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = directory;
+	}
 });
 
 test("a stream that starts during the takeover stops before any command", async () => {
@@ -484,4 +637,240 @@ test("starting is busy even before the streaming commit", async () => {
 		seedStreamLifecycleState("idle");
 	}
 	expect(defaultUsbSpeedDeps.streaming()).toBe(false);
+});
+
+for (const guard of ["boot replay", "quarantine", "mode write"] as const) {
+	test(`USB preparation waits for ${guard} without spending a reset attempt`, async () => {
+		const b = box();
+		const key = "key-0";
+		if (guard === "boot replay") beginRecoveryBarrier();
+		if (guard === "quarantine")
+			setMutationBlocks([
+				{ stableKey: key, refusal: "mutation_blocked", blocksStreaming: true },
+			]);
+		const owner =
+			guard === "mode write" ? tryAcquireModemMutation(key) : undefined;
+		try {
+			expect(await runUsbSpeedPreparation(b.deps)).toEqual([]);
+			expect(b.calls).toEqual([]);
+		} finally {
+			if (owner?.admitted) owner.lease.release();
+			setMutationBlocks([]);
+			resetRecoveryBarrier();
+		}
+		expect(await runUsbSpeedPreparation(b.deps)).toEqual([0]);
+	});
+}
+
+test("Start wins during slow inhibition without consuming a reset or releasing the modem key", async () => {
+	const b = box();
+	const inhibit = Promise.withResolvers<void>();
+	const entered = Promise.withResolvers<void>();
+	const run = runUsbSpeedPreparation({
+		...b.deps,
+		acquire: async (target) => {
+			entered.resolve();
+			await inhibit.promise;
+			return b.deps.acquire(target);
+		},
+	});
+	await entered.promise;
+	const start = tryAcquireLifecycle("streaming");
+	try {
+		expect(start.admitted).toBe(true);
+		expect(tryAcquireModemMutation("key-0").admitted).toBe(false);
+		inhibit.resolve();
+		expect(await run).toEqual([]);
+		expect(b.records.size).toBe(0);
+		expect(b.calls).not.toContain("reset 0");
+	} finally {
+		inhibit.resolve();
+		if (start.admitted) start.lease.release();
+	}
+});
+
+for (const cut of ["attempted write", "setter readback"] as const) {
+	test(`two Starts winning at the ${cut} leave the USB reset budget available`, async () => {
+		const b = box();
+		const counts = [];
+		const messages: string[] = [];
+		for (let win = 0; win < 2; win++) {
+			const entered = Promise.withResolvers<void>();
+			const resume = Promise.withResolvers<void>();
+			const run = runUsbSpeedPreparation({
+				...b.deps,
+				log: (message) => messages.push(message),
+				write: async (record) => {
+					await b.deps.write(record);
+					if (cut === "attempted write" && record.phase === "attempted") {
+						entered.resolve();
+						await resume.promise;
+					}
+				},
+				acquire: async (target) => {
+					const control = await b.deps.acquire(target);
+					return {
+						...control,
+						setUsbSpeed: async (value) => {
+							const readback = await control.setUsbSpeed(value);
+							if (cut === "setter readback") {
+								entered.resolve();
+								await resume.promise;
+							}
+							return readback;
+						},
+					};
+				},
+			});
+			await entered.promise;
+			const start = tryAcquireLifecycle("streaming");
+			try {
+				expect(start.admitted).toBe(true);
+				resume.resolve();
+				expect(await run).toEqual([]);
+			} finally {
+				resume.resolve();
+				if (start.admitted) start.lease.release();
+			}
+			const record = b.records.get(b.key(0));
+			expect(record).toMatchObject({
+				original: "312",
+				phase: "attempted",
+				wrote: true,
+			});
+			counts.push(record?.attempts);
+			b.advance(USB_SPEED_PAUSE_MS);
+		}
+		expect(b.calls).not.toContain("reset 0");
+		expect(counts).toEqual([0, 0]);
+		expect(
+			messages.filter(
+				(line) => line === "wwan0 usbspeed deferred: stream started",
+			),
+		).toHaveLength(2);
+		expect(await runUsbSpeedPreparation(b.deps)).toEqual([0]);
+		expect(b.records.get(b.key(0))).toMatchObject({
+			attempts: 1,
+			phase: "awaiting-usb",
+		});
+	});
+}
+
+test("a reset-only deferral keeps an earlier attempt through restart", async () => {
+	const b = box({ stored: "20" });
+	const key = b.key(0);
+	b.records.set(key, record({ key, phase: "failed", attempts: 1, started: 0 }));
+	await runUsbSpeedPreparation({
+		...b.deps,
+		write: async (entry) => {
+			await b.deps.write(entry);
+			b.setStreaming(true);
+		},
+	});
+	expect(b.records.get(key)).toMatchObject({
+		original: "312",
+		attempts: 1,
+		reason: "stream started",
+	});
+	expect(b.calls).not.toContain("reset 0");
+	b.setStreaming(false);
+	resetUsbSpeedPreparationForTest();
+	b.advance(USB_SPEED_PAUSE_MS);
+	expect(await runUsbSpeedPreparation(b.deps)).toEqual([0]);
+	expect(b.calls).not.toContain("set 0 20");
+	expect(b.records.get(key)).toMatchObject({
+		attempts: 2,
+		phase: "awaiting-usb",
+	});
+});
+
+test("Start is refused through USB reset and pending control release", async () => {
+	const b = box();
+	const closing = Promise.withResolvers<void>();
+	const release = Promise.withResolvers<void>();
+	const run = runUsbSpeedPreparation({
+		...b.deps,
+		acquire: async (target) => {
+			const control = await b.deps.acquire(target);
+			return {
+				...control,
+				close: async () => {
+					closing.resolve();
+					await release.promise;
+					await control.close();
+				},
+			};
+		},
+	});
+	await closing.promise;
+	try {
+		expect(b.calls).toContain("reset 0");
+		const start = tryAcquireLifecycle("streaming");
+		if (start.admitted) start.lease.release();
+		expect(start.admitted).toBe(false);
+	} finally {
+		release.resolve();
+		await run;
+	}
+	const start = tryAcquireLifecycle("streaming");
+	if (start.admitted) start.lease.release();
+	expect(start.admitted).toBe(true);
+});
+
+test("a negative wall-clock age expires the USB return and takeover cooldown", () => {
+	const future = base.now + 86_400_000;
+	expect(
+		decideUsbSpeed({ ...base, record: record({ started: future }) }).update
+			?.phase,
+	).toBe("failed");
+	expect(decideUsbSpeed({ ...base, abortedAt: future }).action).toBe("write");
+});
+
+test("another modem waits through an absent unit's durable return window after restart", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "usb-return-window-"));
+	const previous = process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+	process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = dir;
+	try {
+		const a = box();
+		const disk = {
+			read: defaultUsbSpeedDeps.read,
+			write: defaultUsbSpeedDeps.write,
+			missingUnitReturning: defaultUsbSpeedDeps.missingUnitReturning,
+		};
+		expect(await runUsbSpeedPreparation({ ...a.deps, ...disk })).toEqual([0]);
+		resetUsbSpeedPreparationForTest();
+		expect(await disk.missingUnitReturning(new Set(), a.deps.now() - 1)).toBe(
+			false,
+		);
+		const b = box({ units: 2 });
+		const remaining = { ...b.deps, ...disk, ids: () => [1] };
+		b.advance(USB_SPEED_RETURN_WINDOW_MS - 1);
+		expect(await runUsbSpeedPreparation(remaining)).toEqual([]);
+		expect(b.calls).toEqual([]);
+		b.advance(1);
+		expect(await runUsbSpeedPreparation(remaining)).toEqual([1]);
+	} finally {
+		if (previous === undefined)
+			delete process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+		else process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = previous;
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("the read-only census of missing units leaves Start available", async () => {
+	const b = box();
+	let admitted: boolean | undefined;
+	expect(
+		await runUsbSpeedPreparation({
+			...b.deps,
+			missingUnitReturning: async () => {
+				const start = tryAcquireLifecycle("streaming");
+				admitted = start.admitted;
+				if (start.admitted) start.lease.release();
+				return true;
+			},
+		}),
+	).toEqual([]);
+	expect(admitted).toBe(true);
+	expect(b.calls).toEqual([]);
 });

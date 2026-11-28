@@ -431,6 +431,11 @@ export const BACKEND_RPC_PARITY: ParityRecord = {
 		reason:
 			"NetworkView re-reads it on the device's own events, and MutationBlockNotice renders each block on its Cellular row, or at the top of that card when the modem is not listed.",
 	},
+	"modems.clearUnreadableRecord": {
+		disposition: "wired",
+		reason:
+			"The recovery warning asks the operator to confirm archiving one unreadable rollback record.",
+	},
 	"modems.acknowledgeMutation": {
 		disposition: "wired",
 		reason:
