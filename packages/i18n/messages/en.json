@@ -208,6 +208,7 @@
 	"auth.passwordTooShort": "Use at least 8 characters",
 	"auth.passwordsDoNotMatch": "Passwords don't match",
 	"auth.placeholderConfirmPassword": "Re-enter your password",
+	"auth.placeholderCreatePassword": "Create a password",
 	"auth.placeholderNewPassword": "Create a secure password (min 8 characters)",
 	"auth.placeholderPassword": "Enter your password",
 	"auth.rememberMe": "Remember me",
