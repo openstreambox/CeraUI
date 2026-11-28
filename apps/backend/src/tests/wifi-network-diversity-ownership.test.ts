@@ -171,8 +171,9 @@ afterEach(async () => {
 describe("one resolved lock for operator, move-back and AP reconciliation", () => {
 	test("an operator join racing a move-back and an AP reconciliation writes once, under A's owner", async () => {
 		const nm = new Nm();
-		// Profiles are A's by its permanent MAC; the lock is its composite owner.
-		expect(wifiAdapterLockKey(A)).toBe(COMPOSITE);
+		// Profiles are A's by its permanent MAC; a sole radio's lock is that
+		// plain address, whatever port its profile names.
+		expect(wifiAdapterLockKey(A)).toBe(A);
 		const choice = beginWifiOperatorChoice(A, nm.diversity);
 		// The join is in flight: the move-back leaves A alone.
 		await nm.run(5 * MIN);
