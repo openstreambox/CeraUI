@@ -1,3 +1,5 @@
+import { isIPv4 } from "node:net";
+
 export function ipToInt(ip: string) {
 	return (
 		ip
@@ -22,6 +24,7 @@ const localIpPatterns = [
 	/^169\.254\./, // Link-local addresses
 ];
 
+/** A private, loopback or link-local IPv4 literal. A hostname never is. */
 export function isLocalIp(ip: string) {
-	return localIpPatterns.some((pattern) => pattern.test(ip));
+	return isIPv4(ip) && localIpPatterns.some((pattern) => pattern.test(ip));
 }

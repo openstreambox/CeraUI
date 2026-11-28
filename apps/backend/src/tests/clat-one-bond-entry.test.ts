@@ -61,6 +61,7 @@ import {
 } from "../modules/streaming/bond-entry.ts";
 import {
 	genSrtlaBondEntries,
+	genSrtlaBondEntriesForLocalIpAddress,
 	resolveSrtla,
 	revalidateClatBondEntries,
 } from "../modules/streaming/srtla.ts";
@@ -310,11 +311,33 @@ test("the local sender keeps a translated subnet route through write-time revali
 	setup.bind_map_file = `${ips}.bindmap.json`;
 	resetBindMapWriter();
 	try {
-		setBondOptOut("wwan0", true);
-		expect(genSrtlaBondEntries()).toEqual([]);
+		expect(
+			genSrtlaBondEntriesForLocalIpAddress(receiver).map((e) => e.iface),
+		).toEqual(["clat2"]);
 		expect((await prepareSrtlaIpAddresses(receiver)).ok).toBe(true);
 		expect(readFileSync(ips, "utf8").trim()).toBe(receiver);
 
+		// Same lease, but the TUN leaves a /24 receiver's subnet while the write
+		// is queued: the bond rule alone would keep it, the subnet rule drops it.
+		const tun = getNetworkInterfaces().clat2;
+		if (!tun) throw new Error("missing translator netdev");
+		const neighbour = "10.254.0.3";
+		tun.netmask = "255.255.255.0";
+		expect(
+			genSrtlaBondEntriesForLocalIpAddress(neighbour).map((e) => e.iface),
+		).toEqual(["clat2"]);
+		read.mockImplementationOnce(async () => {
+			tun.netmask = "255.255.255.255";
+			return snapshot;
+		});
+		expect(
+			(await prepareSrtlaIpAddresses(neighbour, undefined, "refresh")).ok,
+		).toBe(true);
+		expect(readFileSync(ips, "utf8")).toBe("");
+		expect(isBondCandidate("clat2", tun)).toBe(true);
+
+		expect((await prepareSrtlaIpAddresses(receiver)).ok).toBe(true);
+		expect(readFileSync(ips, "utf8").trim()).toBe(receiver);
 		read.mockImplementationOnce(async () => {
 			setClatTranslationsForTest(
 				new Map([["clat2", { ...first, generation: "successor" }]]),
@@ -326,7 +349,6 @@ test("the local sender keeps a translated subnet route through write-time revali
 		).toBe(true);
 		expect(readFileSync(ips, "utf8")).toBe("");
 	} finally {
-		setBondOptOut("wwan0", false);
 		setConfigFilePath(configPath);
 		if (ipsPath === undefined) delete setup.ips_file;
 		else setup.ips_file = ipsPath;
@@ -335,6 +357,33 @@ test("the local sender keeps a translated subnet route through write-time revali
 		read.mockRestore();
 		resetBindMapWriter();
 	}
+});
+
+test("a translated link follows its modem's bond toggle for a LAN receiver too", async () => {
+	await scanBox();
+	const receiver = "10.254.0.2";
+	dir = mkdtempSync(join(tmpdir(), "clat-local-toggle-"));
+	const configPath = getConfigFilePath();
+	setConfigFilePath(join(dir, "config.json"));
+	setBondOptOut("wwan0", true);
+	try {
+		expect(genSrtlaBondEntries()).toEqual([]);
+		expect(genSrtlaBondEntriesForLocalIpAddress(receiver)).toEqual([]);
+		await expect(prepareSrtlaIpAddresses(receiver)).rejects.toThrow(
+			"no_available_network_connections",
+		);
+	} finally {
+		setBondOptOut("wwan0", false);
+		setConfigFilePath(configPath);
+	}
+});
+
+test("a LAN receiver on the translator's subnet never swaps it in for native IPv4", async () => {
+	await scanBox({ nativeIpv4: "198.51.100.10" });
+	expect(genSrtlaBondEntries().map((e) => [e.iface, e.ip])).toEqual([
+		["wwan0", "198.51.100.10"],
+	]);
+	expect(genSrtlaBondEntriesForLocalIpAddress("10.254.0.2")).toEqual([]);
 });
 
 test("an IPv6 receiver gets the native parent only, never the IPv4 translator", async () => {

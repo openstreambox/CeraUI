@@ -299,6 +299,15 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Received invalid configuration for modem ", ""],
 	["Received invalid network type ", " for modem ", ""],
 	["Received unavailable network ", " for modem ", ""],
+	[
+		"Receiver ",
+		" is a private address and no bonded link is on its subnet; offering every bonded link in case it is routed (on its subnet but out of the bond: ",
+		")",
+	],
+	[
+		"Receiver ",
+		" is a private address and no bonded link is on its subnet; offering every bonded link in case it is routed (on its subnet but out of the bond: none)",
+	],
 	["Reconnecting modem ", " to apply ", ""],
 	["Recording the Wi-Fi network choice failed: ", ""],
 	["Registered modem"],

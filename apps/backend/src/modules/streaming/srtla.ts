@@ -159,10 +159,12 @@ function admitEntry(int: NetworkInterface, entry: BondEntry): boolean {
 function collectBondEntries(
 	accept: (name: string, int: NetworkInterface) => boolean,
 	requireMappableDuplicate: boolean,
+	family: "receiver" | "ipv4" = "receiver",
 ): BondEntry[] {
 	const entries: BondEntry[] = [];
 	const networkInterfaces = getNetworkInterfaces();
-	const preferIpv6 = receiverIpv6Only && !requireMappableDuplicate;
+	const preferIpv6 =
+		family === "receiver" && receiverIpv6Only && !requireMappableDuplicate;
 	for (const name in networkInterfaces) {
 		const networkInterface = networkInterfaces[name];
 		const ip = requireMappableDuplicate
@@ -224,6 +226,11 @@ export function genSrtlaBondEntries(): BondEntry[] {
 	return collectBondEntries(isBondCandidate, false);
 }
 
+/** The bond as an IPv4 receiver gets it, whatever the last receiver was. */
+function genIpv4SrtlaBondEntries(): BondEntry[] {
+	return collectBondEntries(isBondCandidate, false, "ipv4");
+}
+
 function isLocalBondCandidate(
 	name: string,
 	int: NetworkInterface,
@@ -247,25 +254,56 @@ function isLocalBondCandidate(
 		parent = currentParent;
 	}
 	return (
-		!isUsbReplacementPending(owner) && !isHeldOutByModemBlock(owner, parent)
+		!isUsbReplacementPending(owner) &&
+		!isHeldOutByModemBlock(owner, parent) &&
+		isBondCandidate(name, int)
+	);
+}
+
+/** Is this published bond row an IPv4 source on the receiver's subnet? */
+function isOnReceiverSubnet(entry: BondEntry, receiver: string): boolean {
+	if (isIP(entry.ip) !== 4) return false;
+	const int = getNetworkInterfaces()[entry.iface];
+	return (
+		int?.ip === entry.ip &&
+		int.netmask !== undefined &&
+		isSameSubnet(receiver, entry.ip, int.netmask)
 	);
 }
 
 /**
- * The local-subnet variant, now equally interface-aware.
+ * The bonded links on a private receiver's subnet.
  *
- * It deliberately keeps its own membership rule — reaching a receiver on the
- * LAN is a routing question, not a bonding one, so it does not consult the
- * bond toggle — but it must still describe each link, or a same-subnet pair of
- * twins would collapse exactly as the bonded pair used to.
+ * A receiver on the LAN narrows the bond to the rows that share its subnet; it
+ * never widens it. The narrowing runs on the finished IPv4 bond (the receiver
+ * is an IPv4 literal, whatever family the previous receiver preferred), after
+ * one-row-per-modem deduplication, so it can only drop rows the
+ * normal bond publishes, never swap one in (a modem's translator for its native
+ * IPv4, say). Every rule `isBondCandidate` applies (the user's bond toggle,
+ * hotspot and shared-LAN exclusions, pending identity) holds here too.
  */
 export function genSrtlaBondEntriesForLocalIpAddress(
 	ipAddress: string,
 ): BondEntry[] {
-	return collectBondEntries(
-		(name, int) => isLocalBondCandidate(name, int, ipAddress),
-		true,
+	return genIpv4SrtlaBondEntries().filter((entry) =>
+		isOnReceiverSubnet(entry, ipAddress),
 	);
+}
+
+/**
+ * Every addressed interface on the receiver's subnet, bonded or not. Only for
+ * saying which links could have reached a LAN receiver but are out of the bond.
+ */
+export function interfacesOnSubnet(ipAddress: string): string[] {
+	const networkInterfaces = getNetworkInterfaces();
+	return Object.keys(networkInterfaces).filter((name) => {
+		const int = networkInterfaces[name];
+		return (
+			int?.ip !== undefined &&
+			int.netmask !== undefined &&
+			isSameSubnet(ipAddress, int.ip, int.netmask)
+		);
+	});
 }
 
 export function genSrtlaIpList(): string[] {

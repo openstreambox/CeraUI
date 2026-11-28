@@ -40,4 +40,9 @@ describe("isLocalIp", () => {
 		expect(isLocalIp("not.an.ip")).toBe(false);
 		expect(isLocalIp("")).toBe(false);
 	});
+
+	it("should return false for a hostname that starts like a private range", () => {
+		expect(isLocalIp("10.relay.example")).toBe(false);
+		expect(isLocalIp("192.168.example.net")).toBe(false);
+	});
 });
