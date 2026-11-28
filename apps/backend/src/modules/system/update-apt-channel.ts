@@ -1,4 +1,5 @@
 import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
+import { imageAptSourceInUse } from "./image-apt-source.ts";
 import { pendingPackageSuccess } from "./update-orchestrator/pending-success-fence.ts";
 import {
 	readStoredStateFile,
@@ -25,6 +26,8 @@ export async function reconcileAptChannel(
 ): Promise<boolean> {
 	if (pendingPackageSuccess.pending) return false;
 	if (mode !== "capable") return false;
+	// The image's own apt source is the only one; never add the first-party archive.
+	if (imageAptSourceInUse()) return false;
 	const desired = buildCeraliveSources(arch);
 	const current = await readStoredStateFile(file, STORED_STATE_LIMITS.settings);
 	if (current === desired) return false;

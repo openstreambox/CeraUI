@@ -39,6 +39,7 @@
 
 import { resolve } from "node:path";
 import { SpawnAbortError, SpawnTimeoutError } from "./bounded-spawn.ts";
+import { assertOwnerMayRun, type EffectOwner } from "./effect-owner.ts";
 import {
 	type ChildExitObserver,
 	execFileP,
@@ -75,6 +76,12 @@ export type RunOpts = {
 	 * the child is ever spawned.
 	 */
 	signal?: AbortSignal;
+	/**
+	 * Whom the command is run for. Once that owner has ended the command is
+	 * refused before it starts with an OwnerEndedError (effect-owner.ts). A
+	 * running command is never killed for it: that is what `signal` is for.
+	 */
+	owner?: EffectOwner | undefined;
 } & ChildExitObserver;
 
 /**
@@ -327,6 +334,8 @@ export async function run(
 		});
 	}
 
+	// Asked before anything is logged or started: an ended owner is silent.
+	assertOwnerMayRun(opts?.owner, [bin, ...args]);
 	const redacted = `${bin} ${redactArgv(args)}`.trim();
 	logger.debug(`run: ${redacted}`);
 
@@ -337,6 +346,8 @@ export async function run(
 	try {
 		const { stdout, stderr } = await execFileP(bin, [...args], {
 			...opts,
+			// Asked above already.
+			owner: undefined,
 			maxBuffer: opts?.maxBuffer ?? DEFAULT_MAX_BUFFER,
 			timeout: opts?.timeout ?? DEFAULT_TIMEOUT_MS,
 		});

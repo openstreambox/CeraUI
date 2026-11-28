@@ -11,6 +11,9 @@
 import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { type EffectOwner, ownedFiles } from "../../helpers/effect-owner.ts";
+
+type OwnedFiles = ReturnType<typeof ownedFiles>;
 
 const RUN_DIR = "/run/ceralive";
 const MAX_READ_BYTES = 64 * 1024;
@@ -43,11 +46,12 @@ export function softwareUpdateOutputPaths(): SoftwareUpdateOutputPaths {
 }
 
 async function secureOutputDirectory(
+	files: OwnedFiles,
 	directory: string,
 	expectedUid: number,
 ): Promise<void> {
-	await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-	const stat = await fs.lstat(directory);
+	await files.makeDirectory("spool:secure-directory", directory, 0o700);
+	const stat = await files.inspect("spool:secure-directory", directory);
 	if (!stat.isDirectory() || stat.isSymbolicLink()) {
 		throw new UnsafeSoftwareUpdateOutputPathError(directory, "not a directory");
 	}
@@ -60,20 +64,19 @@ async function secureOutputDirectory(
 			"writable by peers",
 		);
 	}
-	await fs.chmod(directory, 0o700);
+	await files.setMode("spool:secure-directory", directory, 0o700);
 }
 
 async function createOutputFile(
+	files: OwnedFiles,
 	filePath: string,
 	expectedUid: number,
 ): Promise<void> {
-	await fs.rm(filePath, { force: true });
-	const handle = await fs.open(
+	await files.removeFile("spool:remove-file", filePath);
+	const handle = await files.createExclusive(
+		"spool:create-file",
+		"spool:set-mode",
 		filePath,
-		constants.O_WRONLY |
-			constants.O_CREAT |
-			constants.O_EXCL |
-			constants.O_NOFOLLOW,
 		0o600,
 	);
 	try {
@@ -90,10 +93,18 @@ async function createOutputFile(
 	}
 }
 
+/**
+ * Makes the unit's two output files anew. `owner` is the install they are
+ * made for: every step that removes, creates or changes a file asks first
+ * whether that install still owns the updater (effect-owner.ts), so one that
+ * ended touches no file a newer install's unit may already be writing to.
+ */
 export async function prepareSoftwareUpdateOutput(
 	paths: SoftwareUpdateOutputPaths,
 	expectedUid = 0,
+	owner?: EffectOwner,
 ): Promise<void> {
+	const files = ownedFiles(owner);
 	const directories = new Set([
 		path.dirname(paths.stdout),
 		path.dirname(paths.stderr),
@@ -111,9 +122,9 @@ export async function prepareSoftwareUpdateOutput(
 			"missing directory",
 		);
 	}
-	await secureOutputDirectory(directory, expectedUid);
-	await createOutputFile(paths.stdout, expectedUid);
-	await createOutputFile(paths.stderr, expectedUid);
+	await secureOutputDirectory(files, directory, expectedUid);
+	await createOutputFile(files, paths.stdout, expectedUid);
+	await createOutputFile(files, paths.stderr, expectedUid);
 }
 
 export async function readSoftwareUpdateOutput(
