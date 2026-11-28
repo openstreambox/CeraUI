@@ -65,6 +65,20 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => ({
 	}),
 }));
 
+// Upstream shows a start failure once per attempt and reason for the page's
+// life. Each case here is a fresh page, so the shown set starts empty per case.
+const presented = vi.hoisted(() => new Set<string>());
+vi.mock(
+	"$lib/streaming/start-failure-presentation.svelte",
+	async (original) => ({
+		...(await original<
+			typeof import("$lib/streaming/start-failure-presentation.svelte")
+		>()),
+		claimStartFailurePresentation: (id: string) =>
+			!presented.has(id) && Boolean(presented.add(id)),
+	}),
+);
+
 vi.mock("$lib/rpc/streaming-optimism.svelte", async () => ({
 	getStreamingOptimismState: () => "idle",
 	getStreamingStopReason: (
@@ -136,6 +150,7 @@ import {
 import LiveView from "./LiveView.svelte";
 
 beforeEach(() => {
+	presented.clear();
 	Element.prototype.scrollIntoView = vi.fn();
 	setLiveStatus({});
 	setLiveStopReason(undefined);
