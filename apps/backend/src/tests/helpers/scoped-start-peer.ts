@@ -51,7 +51,15 @@ export type Scenario =
 	| "unknown";
 type Peer = { pending: string; prepared: boolean; index: number };
 
-export async function scopedStartPeer(scenario: Scenario) {
+/**
+ * `advertised` adds to what the peer's get-capabilities answers: a start is
+ * authorized against the receiving engine's own answer, so a test whose start
+ * carries a mix has the peer advertise `audio_mix`.
+ */
+export async function scopedStartPeer(
+	scenario: Scenario,
+	advertised: Partial<GetCapabilitiesResult> = {},
+) {
 	const dir = await mkdtemp(join(tmpdir(), "scoped-"));
 	const path = join(dir, "engine.sock");
 	const requests: { method: string; peer: number; attemptId?: string }[] = [];
@@ -132,6 +140,7 @@ export async function scopedStartPeer(scenario: Scenario) {
 							} else {
 								reply({
 									...capabilities,
+									...advertised,
 									features:
 										scenario === "legacy" ||
 										scenario === "legacy-deadline" ||

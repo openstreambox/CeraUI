@@ -2392,7 +2392,9 @@ test.each([
 		missing,
 		legacy,
 	}) => {
-		const peer = await scopedStartPeer("legacy-success");
+		const peer = await scopedStartPeer("legacy-success", {
+			audio_mix: CAPS.audio_mix,
+		});
 		const clients: CerastreamClient[] = [];
 		onTestFinished(async () => {
 			for (const client of clients) await client.close();
