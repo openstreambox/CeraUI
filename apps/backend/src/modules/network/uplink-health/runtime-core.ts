@@ -100,7 +100,7 @@ export class UplinkHealthRuntimeCore {
 
 		for (const iface of present) {
 			const entry = interfaces[iface];
-			if (!entry?.ip) {
+			if (!(entry?.ip ?? entry?.ipv6)) {
 				this.#observe(
 					{
 						iface,
@@ -132,7 +132,7 @@ export class UplinkHealthRuntimeCore {
 				round >= (this.#samples.get(candidate.name)?.round ?? 0) &&
 				generations.get(candidate.name) ===
 					this.#samples.get(candidate.name)?.generation &&
-				entry?.ip === candidate.ip &&
+				(entry?.ip ?? entry?.ipv6) === candidate.ip &&
 				this.#deps.exclusionReason(entry) === undefined
 			);
 		};
@@ -140,9 +140,14 @@ export class UplinkHealthRuntimeCore {
 		// uplink, so the ACTIVE round is skipped whole rather than recording a
 		// failure nothing measured. The passive telemetry and address-loss
 		// observations above are independent evidence and still stand.
-		const target =
-			active.length > 0 ? await this.#deps.resolveTarget() : undefined;
-		if (target !== undefined) {
+		const targets = new Map<4 | 6, string>();
+		for (const family of new Set(
+			active.map((candidate): 4 | 6 => (candidate.ip.includes(":") ? 6 : 4)),
+		)) {
+			const target = await this.#deps.resolveTarget(family);
+			if (target !== undefined) targets.set(family, target);
+		}
+		if (targets.size > 0) {
 			for (
 				let offset = 0;
 				offset < active.length;
@@ -150,9 +155,18 @@ export class UplinkHealthRuntimeCore {
 			) {
 				const batch = active
 					.slice(offset, offset + UPLINK_HEALTH_CONFIG.maxConcurrentProbes)
-					.filter(isCurrent);
+					.filter(
+						(candidate) =>
+							isCurrent(candidate) &&
+							targets.has(candidate.ip.includes(":") ? 6 : 4),
+					);
 				const outcomes = await Promise.all(
-					batch.map((candidate) => this.#deps.probe(candidate, target)),
+					batch.map((candidate) =>
+						this.#deps.probe(
+							candidate,
+							targets.get(candidate.ip.includes(":") ? 6 : 4) as string,
+						),
+					),
 				);
 				for (const [index, candidate] of batch.entries()) {
 					if (!isCurrent(candidate)) continue;
@@ -201,7 +215,7 @@ export class UplinkHealthRuntimeCore {
 		])) {
 			const entry = interfaces[iface];
 			const present = entry !== undefined;
-			const ip = entry?.ip;
+			const ip = entry?.ip ?? entry?.ipv6;
 			const eligible = this.#deps.exclusionReason(entry) === undefined;
 			const previous = this.#samples.get(iface);
 			if (
@@ -256,7 +270,8 @@ export class UplinkHealthRuntimeCore {
 				now - telemetry.lastReadMs >= UPLINK_HEALTH_CONFIG.telemetryExpiryMs;
 			const key = JSON.stringify([link.iface, link.link_id ?? link.conn_id]);
 			seen.add(key);
-			const ip = this.#deps.interfaces()[link.iface]?.ip;
+			const entry = this.#deps.interfaces()[link.iface];
+			const ip = entry?.ip ?? entry?.ipv6;
 			const generation = this.#samples.get(link.iface)?.generation;
 			let sample = this.#recentNaks.get(key);
 			if (!sample || sample.ip !== ip || sample.generation !== generation) {
