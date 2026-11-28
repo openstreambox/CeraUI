@@ -16,6 +16,7 @@ import {
 	genSrtlaBondEntriesForLocalIpAddress,
 } from "../modules/streaming/srtla.ts";
 import * as websocket from "../modules/ui/websocket-server.ts";
+import { wifiInterfaceReaders } from "../modules/wifi/wifi-concurrent-interface.ts";
 import {
 	firstSightIfconfig,
 	firstSightPhysicalDevice,
@@ -684,4 +685,77 @@ test("a USB scan that sees a non-USB name replaced holds the successor like the 
 	f.set("eth9", ok("pci"));
 	await updateNetif();
 	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+});
+
+test("a scan that alone saw the netdev change holds the successor when no later read can show it", async () => {
+	const output = firstSightIfconfig("eth9", "192.0.2.2");
+	const f = fixture(output, []);
+	f.set("eth9", ok("pci"));
+	// The poll records only the kernel index: the sysfs node is unreadable.
+	f.setSysfsNodeUnavailable();
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+
+	// The scan's own first read sees the node, then a different netdev takes the
+	// name while the scan waits. At the end only the new node is readable, so
+	// nothing but the scan's comparison shows the replacement.
+	f.setSysfsNodeUnavailable(false);
+	f.block("eth9");
+	const scan = f.settle();
+	await f.enteredFor("eth9");
+	f.setIndex("eth9", 29);
+	f.setSysfsIndexUnavailable();
+	f.set("eth9", err("EIO"));
+	f.release();
+	await scan;
+	await f.settle();
+	await updateNetif();
+	f.clock.now += 20_000;
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).not.toContain(
+		"eth9",
+	);
+
+	// A current non-USB bus read is positive evidence and lifts the hold.
+	f.set("eth9", ok("pci"));
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+});
+
+test("a sample without a MAC keeps the published MAC, so the next MAC change still advances the token", async () => {
+	const output = firstSightIfconfig(MODEM, IP);
+	const f = fixture(output, []);
+	f.set(MODEM, ok("usb"));
+	await updateNetif();
+	const initial = getNetworkInterfaceIncarnation(MODEM);
+	expect(initial).toBeDefined();
+
+	f.setOutput(output.replace("        ether 02:00:00:00:00:01\n", ""));
+	await updateNetif();
+	expect(getNetworkInterfaceIncarnation(MODEM)).toBe(initial);
+
+	f.setOutput(output.replace("02:00:00:00:00:01", "02:00:00:00:00:02"));
+	await updateNetif();
+	expect(getNetworkInterfaceIncarnation(MODEM)).not.toBe(initial);
+});
+
+test("wireless sysfs read while another netdev takes the name cannot lift a held radio's hold", async () => {
+	const RADIO = "wlan9";
+	const f = fixture(firstSightIfconfig(RADIO, "192.0.2.3"), []);
+	f.set(RADIO, ok("usb"));
+	await updateNetif();
+	scanModule.holdUsbReplacementIdentity(RADIO);
+
+	// The poll validated this netdev; a different one takes the name while the
+	// wireless evidence is read, so that evidence is not this row's.
+	let swapped = false;
+	spyOn(wifiInterfaceReaders, "pathExists").mockImplementation((path) => {
+		if (!path.startsWith(`/sys/class/net/${RADIO}/`)) return false;
+		if (!swapped) {
+			swapped = true;
+			f.setIndex(RADIO, 29);
+		}
+		return true;
+	});
+	await updateNetif();
+	expect(scanModule.isUsbReplacementPending(RADIO)).toBe(true);
 });
