@@ -85,7 +85,7 @@ import {
 	setMockHotspotConfig,
 } from "../../mocks/providers/wifi.ts";
 import { resolveMockWifiDevice } from "../../mocks/providers/wifi-incarnation.ts";
-import { isRealDevice } from "../../modules/system/device-detection.ts";
+import { hasCapability } from "../../modules/system/board-capabilities.ts";
 import {
 	handleWifi,
 	wifiBuildMsg,
