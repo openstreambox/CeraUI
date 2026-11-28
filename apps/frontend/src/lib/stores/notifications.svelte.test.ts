@@ -130,6 +130,45 @@ describe("resolveNotificationText", () => {
 // toActiveNotification — duration seconds → ms
 // ============================================
 
+describe("the stream-start-features notice", () => {
+	const startFeatureTranslations = {
+		"notifications.startFeatures.unconfirmed": (
+			params?: Record<string, string | number | boolean>,
+		) => `Stream ohne ${params?.features}: nicht bestätigt.`,
+		"notifications.startFeatures.audioMix": () => "Audiomix",
+		"notifications.startFeatures.customLayout": () => "eigene Anordnung",
+		"notifications.startFeatures.pair": (
+			params?: Record<string, string | number | boolean>,
+		) => `${params?.first} und ${params?.second}`,
+	};
+
+	it("renders the reason key with the localized feature list", () => {
+		const text = resolveNotificationText(
+			makeNotification({
+				key: "notifications.startFeatures.unconfirmed",
+				params: { features: ["audio-mix", "custom-layout"] },
+				msg: "Streaming without the audio mix and the custom layout",
+			}),
+			startFeatureTranslations,
+		);
+		expect(text).toBe(
+			"Stream ohne Audiomix und eigene Anordnung: nicht bestätigt.",
+		);
+	});
+
+	it("falls back to the wire text for a feature token it does not know", () => {
+		const text = resolveNotificationText(
+			makeNotification({
+				key: "notifications.startFeatures.unconfirmed",
+				params: { features: ["audio-mix", "something-new"] },
+				msg: "English fallback",
+			}),
+			startFeatureTranslations,
+		);
+		expect(text).toBe("English fallback");
+	});
+});
+
 describe("toActiveNotification", () => {
 	it("retains the wire key and params for render-time translation without changing the input", () => {
 		const notification = makeNotification({

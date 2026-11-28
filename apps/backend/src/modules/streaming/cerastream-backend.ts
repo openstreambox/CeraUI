@@ -248,6 +248,9 @@ export interface CerastreamBridge {
 		duration: number,
 		isPersistent: boolean,
 		isDismissable: boolean,
+		authedOnly?: boolean,
+		key?: string,
+		params?: Record<string, unknown>,
 	): void;
 	notificationExists(name: string): boolean;
 	removeNotification(name: string): void;
