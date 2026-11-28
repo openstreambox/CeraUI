@@ -43,6 +43,28 @@ export function getStreamLiveness(
 	});
 }
 
+/** What the box's own stream session alone says, without client carrying
+ * evidence: idle, still waiting only for the startup reconciliation, or not yet
+ * confirmed stopped. Refusal copy reads it to say which part of an unknown
+ * answer is still being checked; admission never reads it. */
+export type OwnStreamState = "idle" | "reconciling" | "unconfirmed";
+
+export function getOwnStreamState(): OwnStreamState {
+	if (testSource) return testSource() === "idle" ? "idle" : "unconfirmed";
+	const leaf = streamLiveness();
+	const evidence: StreamLivenessEvidence = {
+		reconciled: isStreamReconciliationCompleted(),
+		live: getIsStreaming() || leaf === "streaming",
+		lifecycle: getStreamLifecycleState(),
+		sentinel: leaf === "idle" ? "absent" : "unknown",
+	};
+	if (deriveStreamLiveness(evidence) === "idle") return "idle";
+	return !evidence.reconciled &&
+		deriveStreamLiveness({ ...evidence, reconciled: true }) === "idle"
+		? "reconciling"
+		: "unconfirmed";
+}
+
 export function isStreamConfirmedIdle(): boolean {
 	return getStreamLiveness() === "idle";
 }
