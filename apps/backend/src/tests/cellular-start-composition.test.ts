@@ -10,6 +10,7 @@ import {
 	publishSrtlaBond,
 	resetPublishedBond,
 } from "../modules/streaming/srtla.ts";
+import { acceptStartAudio } from "../modules/streaming/start-audio.ts";
 import { createStreamSessionOrchestrator } from "../modules/streaming/stream-session-orchestrator.ts";
 import { streamSessionProductionDeps } from "../modules/streaming/stream-session-production.ts";
 import {
@@ -101,6 +102,7 @@ test("Start reaches the engine with healthy USB uplinks beside a failed modem, w
 						balancer: "adaptive",
 						srt_latency: 2000,
 					},
+					acceptStartAudio(),
 				);
 				if (!result.success) throw new Error(result.error);
 			},
