@@ -198,6 +198,7 @@ function useUdevDevice(serial: string, rawSerial?: string): void {
 		`E: ID_REVISION=${PRE_STATE.firmwareRevision}`,
 		`E: ID_PATH=${KEY}`,
 		`E: ID_SERIAL_SHORT=${serial}`,
+		"E: DEVNUM=004",
 		"E: ID_USB_INTERFACES=:ff0000:",
 		"",
 		"P: /devices/platform/test/usb1/1-4/1-4:1.0",
@@ -208,6 +209,8 @@ function useUdevDevice(serial: string, rawSerial?: string): void {
 	setMutationCaptureDeps({
 		...createUsbEnumerator({ readUdevDatabase: async () => udev }),
 		readSerial: async () => rawSerial,
+		// The same USB lifetime the record describes.
+		readDevnum: async () => "4",
 	});
 }
 
@@ -275,6 +278,8 @@ test("literal underscores cannot verify a singleton against historical raw diges
 
 test("the production journal reader rejects BOM bytes before trusting the udev property", async () => {
 	await writeFile(join(dir, "serial"), "\uFEFFfixture_ABC123\n");
+	// The read is bound to the enumerated lifetime, so only the BOM refuses it.
+	await writeFile(join(dir, "devnum"), "4\n");
 	setMutationCaptureDeps({
 		enumerate: async () => [
 			{
@@ -282,7 +287,7 @@ test("the production journal reader rejects BOM bytes before trusting the udev p
 				productId: "0801",
 				physicalUid: KEY,
 				sysfsPath: dir,
-				udevProperties: { ID_SERIAL_SHORT: "fixture_ABC123" },
+				udevProperties: { ID_SERIAL_SHORT: "fixture_ABC123", DEVNUM: "4" },
 				interfaces: [],
 				bDeviceClass: 0,
 			},
@@ -291,6 +296,9 @@ test("the production journal reader rejects BOM bytes before trusting the udev p
 	const unit = mintLinkId("usb-serial:2c7c:fixture_ABC123");
 	expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
 	expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
+	// Control: the same bound read without the BOM is that unit.
+	await writeFile(join(dir, "serial"), "fixture_ABC123\n");
+	expect(await captureModemUnitLinkId(KEY)).toBe(unit);
 });
 
 test("a different vendor's legacy digest and a canonical digest do not prevent replay", async () => {

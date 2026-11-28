@@ -47,6 +47,10 @@ export async function operatorMutationBlocks(): Promise<
 			const checkable =
 				entry.state === "failed" &&
 				device.status === "present" &&
+				// The same unit evidence Check again applies before it retires.
+				(entry.unitLinkId === undefined ||
+					(device.identity === "usb-descriptor" &&
+						device.unitLinkId === entry.unitLinkId)) &&
 				(entry.kind === "router-subnet"
 					? routerSubnetCheckProof(
 							entry.preState,
