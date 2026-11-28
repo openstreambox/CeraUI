@@ -9,6 +9,8 @@ indication stays on for about 2 minutes. These are observations of the box only;
 a stream or what happens off the box. Check the stream itself.
 
 Connect a device offers Moblin, IRL Pro, another SRT app, or Just internet.
+With client steering active, Just internet routes each new IPv4 internet
+connection over one working link.
 For SRT, configure the listener and an SRTLA receiver first. The screen copies
 the configured listener address and passphrase; it never invents credentials.
 The wide layout shows Wi-Fi and address QR codes (the Wi-Fi code behind Show
@@ -69,8 +71,10 @@ que no detecte una subida lenta. El aviso permanece unos 2 minutos después de l
 última actividad detectada. Solo describe lo
 que observa la caja; comprueba la emisión directamente.
 
-La conexión ofrece Moblin, IRL Pro, otra aplicación SRT o solo internet. SRT usa
-la dirección y la contraseña configuradas en la caja. Los códigos QR de Wi-Fi y
+La conexión ofrece Moblin, IRL Pro, otra aplicación SRT o solo internet.
+Con el enrutamiento de clientes activo, Solo internet dirige cada nueva
+conexión IPv4 a internet por un enlace disponible.
+SRT usa la dirección y la contraseña configuradas en la caja. Los códigos QR de Wi-Fi y
 de la dirección aparecen en la vista ancha, excepto en la pantalla táctil de la
 caja. Copiar está disponible en todas las vistas.
 Mantén las contraseñas fuera de cámara. Sin el relé administrado, el dispositivo
