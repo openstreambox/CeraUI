@@ -75,6 +75,8 @@ if (!child && unavailable && process.env.CERALIVE_REQUIRE_REAL_NM === "1")
 			"/run/cellular-profile-fixture/intent";
 		process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR =
 			"/run/cellular-profile-fixture/preparation";
+		process.env.CERALIVE_APN_PROVENANCE_STATE_DIR =
+			"/run/cellular-profile-fixture/provenance";
 		const uuid = process.env.CERALIVE_PROFILE_UUID;
 		if (!uuid) throw new Error("Missing synthetic profile");
 		const identity = {

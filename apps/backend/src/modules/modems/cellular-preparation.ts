@@ -4,6 +4,7 @@ import {
 	nmConnSetFields,
 } from "../network/network-manager.ts";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
+import { readApnProvenance, resolveApnOrigin } from "./apn-provenance.ts";
 import {
 	type CarrierIntentIdentity,
 	effectiveCarrierAutomatic,
@@ -76,6 +77,7 @@ export interface CellularPreparationDeps {
 	readonly fields: typeof nmConnGetFields;
 	readonly setFields: typeof nmConnSetFields;
 	readonly intent: typeof readCarrierIntent;
+	readonly provenance: typeof readApnProvenance;
 	readonly journal: typeof withJournaledModemMutation;
 	readonly now: () => number;
 	readonly busy?: () => boolean;
@@ -94,6 +96,7 @@ export const defaultCellularPreparationDeps: CellularPreparationDeps = {
 	fields: nmConnGetFields,
 	setFields: nmConnSetFields,
 	intent: readCarrierIntent,
+	provenance: readApnProvenance,
 	journal: withJournaledModemMutation,
 	now: Date.now,
 	busy: () => getStreamLifecycleState() !== "idle",
@@ -180,20 +183,22 @@ async function takeProfile(
 		!(await deps.setFields(uuid, { "connection.autoconnect": "no" }))
 	)
 		return "blocked";
-	if (
+	// A pending intent can carry the provider database's APN for this SIM
+	// (`apn-provenance.ts`): that APN is the choice, never a placeholder to hand
+	// back to NetworkManager's own lookup.
+	const generic =
 		!policy &&
 		record.birth &&
 		selected.intent?.phase === "pending" &&
 		selected.values[2] !== "yes" &&
-		!deps.autoConfigSupported()
-	)
-		return "preserved";
-	const enableGeneric =
-		!policy &&
-		record.birth &&
-		selected.intent?.phase === "pending" &&
-		selected.values[2] !== "yes" &&
-		deps.autoConfigSupported();
+		resolveApnOrigin(
+			selected.intent,
+			await deps.provenance(selected.identity),
+			false,
+			selected.values[3] ?? "",
+		)?.origin !== "provider-database";
+	if (generic && !deps.autoConfigSupported()) return "preserved";
+	const enableGeneric = generic && deps.autoConfigSupported();
 	if (
 		enableGeneric &&
 		!(await deps.setFields(uuid, { "gsm.auto-config": "yes", "gsm.apn": "" }))

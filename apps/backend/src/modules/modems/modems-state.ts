@@ -23,6 +23,7 @@ import type {
 	SimLockRequired,
 } from "./mmcli.ts";
 import type { ModemStatus } from "./modem-registration.ts";
+import type { ApnHint } from "./provider-apn.ts";
 import type { SimPresence } from "./sim-presence.ts";
 import { carryRadioRegistration } from "./state/radio-registration.ts";
 
@@ -39,6 +40,14 @@ export type ModemConfig = {
 	password: string;
 	roaming: boolean;
 	network: string;
+	/**
+	 * What the dialog may say about the APN, from CeraUI's records: the provider
+	 * database chose the APN in use (`apn-provenance.ts`), or it lists nothing
+	 * for the SIM's network while NetworkManager picks the APN. Not written to
+	 * NetworkManager; the wire derives `apn_source` from it. `undefined` clears
+	 * it on a save that no longer applies.
+	 */
+	apn_hint?: ApnHint | undefined;
 };
 
 export type AvailableNetwork = {

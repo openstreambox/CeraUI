@@ -85,3 +85,34 @@ test("a runtime default-store read fault uses the same owner for read-only verif
 	expect(isRecoveryPending()).toBe(false);
 	expect(await readCarrierIntent(identity)).toEqual(repaired);
 });
+
+test("boot inventory reads the APN provenance store: a damaged record holds recovery until repaired", async () => {
+	const dir = process.env.CERALIVE_APN_PROVENANCE_STATE_DIR;
+	if (!dir) throw new Error("Private fixture state required");
+	const store = { dir },
+		key = "b".repeat(64),
+		clock = new JournalRetryClock();
+	await writePrivateJson(store, key, {
+		version: 1,
+		key,
+		origin: "provider-database",
+		apn: "web",
+	});
+	const result = await initMutationRecovery({ sleep: clock.sleep });
+	expect(result.unreadable).toBe(1);
+	expect(isRecoveryPending()).toBe(true);
+	const done = awaitRecoveryBarrier();
+	const repaired = {
+		version: 1,
+		key,
+		origin: "provider-database",
+		apn: "web",
+		network: "23217",
+	};
+	await writePrivateJson(store, key, repaired);
+	clock.advance();
+	await Promise.race([done, clock.at(2)]);
+	expect(isRecoveryPending()).toBe(false);
+	expect(await readPrivateJson(store, key)).toEqual(repaired);
+	await writePrivateJson(store, key, undefined);
+});

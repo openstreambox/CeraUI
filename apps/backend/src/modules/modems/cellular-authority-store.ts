@@ -26,7 +26,8 @@ export type CellularAuthorityKind =
 	| "automatic-carrier-intent"
 	| "cellular-preparation"
 	| "cellular-internal-context"
-	| "cellular-internal-owner";
+	| "cellular-internal-owner"
+	| "apn-provenance";
 /** The shared data partition, `/data` unless `CERALIVE_DATA_DIR` moves it, as it
  * does for the event store and shadow evidence: a dev host or a served test
  * device never has a `/data`, and an unwritable one reads as a recovery fault. */

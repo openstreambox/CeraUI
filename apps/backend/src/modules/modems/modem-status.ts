@@ -34,6 +34,7 @@ import {
 	type ModemConfig,
 	type SimLock,
 } from "./modems-state.ts";
+import { type ApnSource, deriveApnSource } from "./provider-apn.ts";
 import {
 	commitRadioRoster,
 	radioForModem,
@@ -67,7 +68,7 @@ export type ModemsResponseModemFull = ModemsResponseModemBase & {
 	config?: Pick<
 		ModemConfig,
 		"apn" | "username" | "password" | "roaming" | "network" | "autoconfig"
-	> & { autoconfig_supported: boolean };
+	> & { autoconfig_supported: boolean; apn_source?: ApnSource };
 	no_sim?: true;
 	sim_presence?: SimPresence;
 	sim_lock?: SimLock;
@@ -121,14 +122,21 @@ function buildModemMessage(
 		};
 
 		if (modem.config) {
+			const autoconfig =
+				resolveGsmAutoconfigSupport() && modem.config.autoconfig;
+			const apnSource = deriveApnSource(modem.config.apn_hint, {
+				...modem.config,
+				autoconfig,
+			});
 			fullState.config = {
 				apn: modem.config.apn,
 				username: modem.config.username,
 				password: modem.config.password,
 				roaming: modem.config.roaming,
 				network: modem.config.network,
-				autoconfig: resolveGsmAutoconfigSupport() && modem.config.autoconfig,
+				autoconfig,
 				autoconfig_supported: resolveGsmAutoconfigSupport(),
+				...(apnSource !== undefined ? { apn_source: apnSource } : {}),
 			};
 		} else if (claimsNoSim(modem.sim_presence)) {
 			// An NM profile is provisioned only after a SIM has been read AND a

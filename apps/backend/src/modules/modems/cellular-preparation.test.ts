@@ -124,6 +124,7 @@ function fixture(equipment = "000000000000001") {
 			return true;
 		},
 		intent: async () => undefined,
+		provenance: async () => undefined,
 		journal: async (_key, _kind, _inverse, work) => {
 			calls.push("armed");
 			const result = await work({
@@ -484,3 +485,142 @@ for (const kind of ["qmap", "eps"] as const) {
 		});
 	}
 }
+
+// A profile created with the provider database's APN keeps a pending automatic
+// intent expecting that APN, with a provenance record beside it, and no
+// carrier table row selects its SIM (`apn-provenance.ts`).
+async function databaseProfile(opts: {
+	intent: "database" | "carrier-applied";
+	provenance: boolean;
+	birth?: boolean;
+}) {
+	const f = fixture("000000000000011");
+	const { newCarrierIntent } = await import("./automatic-carrier-intent.ts");
+	const { databaseApnIntent, newApnProvenance } = await import(
+		"./apn-provenance.ts"
+	);
+	const target = f.target();
+	const identity = {
+		uuid: UUID,
+		deviceId: target.deviceId,
+		simId: target.simId,
+	};
+	let autoconnect = "yes",
+		nmAuto = "no",
+		apn = "web",
+		readsRecord = opts.provenance;
+	const deps: CellularPreparationDeps = {
+		...f.deps,
+		fields: async () =>
+			[
+				target.deviceId,
+				target.simId,
+				nmAuto,
+				apn,
+				autoconnect,
+				opts.birth ? `cellular-${UUID}` : "gsm",
+			] as never,
+		setFields: async (_uuid, fields) => {
+			f.calls.push(
+				fields["gsm.auto-config"] ? "generic-lookup" : "profile-demote",
+			);
+			autoconnect = fields["connection.autoconnect"] ?? autoconnect;
+			nmAuto = fields["gsm.auto-config"] ?? nmAuto;
+			apn = fields["gsm.apn"] ?? apn;
+			return true;
+		},
+		intent: async () =>
+			opts.intent === "database"
+				? databaseApnIntent(identity, "web")
+				: newCarrierIntent(identity, "automatic", "web"),
+		provenance: async () =>
+			readsRecord ? newApnProvenance(identity, "web", "23217") : undefined,
+	};
+	return {
+		f,
+		deps,
+		apn: () => apn,
+		autoconnect: () => autoconnect,
+		olderBuild: () => {
+			readsRecord = false;
+		},
+	};
+}
+
+test("a provider database APN keeps QMAP and raw-IP preparation with no carrier row", async () => {
+	const { f, deps, apn } = await databaseProfile({
+		intent: "database",
+		provenance: true,
+	});
+	const run = () =>
+		prepareCellularActivation(UUID, f.target(), undefined, f.current, deps);
+	expect(await run()).toBe("waiting-usb");
+	expect(f.calls).toContain("qmap-fix");
+	expect(f.calls.indexOf("profile-demote")).toBeLessThan(
+		f.calls.indexOf("acquire"),
+	);
+	expect(await run()).toBe("pending");
+	expect(await run()).toBe("ready");
+	expect(f.raw()).toBe("Y");
+	// No carrier row: the initial EPS bearer is not the database's to set.
+	expect(f.calls).not.toContain("eps-set");
+	expect(apn()).toBe("web");
+});
+
+test("a backend that never reads the record finishes the preparation this one began", async () => {
+	// This build disarms the profile and persists its baseline, then the other
+	// OS slot's older backend boots: it sees only the pending intent and must
+	// take the persisted, disarmed profile on to readiness rather than strand it.
+	const { f, deps, autoconnect, olderBuild } = await databaseProfile({
+		intent: "database",
+		provenance: true,
+	});
+	const run = () =>
+		prepareCellularActivation(UUID, f.target(), undefined, f.current, deps);
+	expect(await run()).toBe("waiting-usb");
+	expect(autoconnect()).toBe("no");
+	expect(
+		[...f.records.values()].some((record) => record.kind === "profile"),
+	).toBe(true);
+	olderBuild();
+	expect(await run()).toBe("pending");
+	expect(await run()).toBe("ready");
+	expect(f.raw()).toBe("Y");
+	expect(autoconnect()).toBe("no");
+});
+
+test("a carrier table APN whose row is no longer selected stays preserved", async () => {
+	const { f, deps } = await databaseProfile({
+		intent: "carrier-applied",
+		provenance: false,
+	});
+	expect(
+		await prepareCellularActivation(
+			UUID,
+			f.target(),
+			undefined,
+			f.current,
+			deps,
+		),
+	).toBe("preserved");
+	expect(f.calls).not.toContain("acquire");
+});
+
+test("a profile born under preparation keeps its database APN", async () => {
+	const { f, deps, apn } = await databaseProfile({
+		intent: "database",
+		provenance: true,
+		birth: true,
+	});
+	expect(
+		await prepareCellularActivation(
+			UUID,
+			f.target(),
+			undefined,
+			f.current,
+			deps,
+		),
+	).toBe("waiting-usb");
+	expect(f.calls).not.toContain("generic-lookup");
+	expect(apn()).toBe("web");
+});
