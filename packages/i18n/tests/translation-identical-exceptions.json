@@ -369,6 +369,26 @@
 		"locales": ["de", "es", "fr", "pt-BR"],
 		"reason": "es live.encoder.route.reason.passthrough-off reads \"El passthrough está desactivado en la configuración guardada.\"; fr live.encoder.route.reason.passthrough-off reads \"Le passthrough est désactivé dans les réglages enregistrés.\" de live.encoder.route.reason.passthrough-off reads \"Passthrough ist in den gespeicherten Einstellungen ausgeschaltet.\"; pt-BR live.encoder.passthrough.disclosurePassthrough starts \"Passthrough — a câmera controla o bitrate\", keeping the term untranslated."
 	},
+	"live.phone.details": {
+		"value": "Details",
+		"locales": ["de"],
+		"reason": "de hud.expandDetails reads \"Details anzeigen\"."
+	},
+	"live.phone.links": {
+		"value": "Links",
+		"locales": ["pt-BR"],
+		"reason": "pt-BR live.ingest.linksReadyTitle reads \"Links prontos\", keeping the term untranslated."
+	},
+	"live.phone.moblin": {
+		"value": "Moblin",
+		"locales": ["ar", "de", "es", "fr", "hi", "ja", "ko", "pt-BR", "zh"],
+		"reason": "Name of the Moblin streaming app on the phone Home app choice; app names are not translated."
+	},
+	"live.phone.srt": {
+		"value": "IRL Pro",
+		"locales": ["ar", "de", "es", "fr", "hi", "ja", "ko", "pt-BR", "zh"],
+		"reason": "Name of the IRL Pro streaming app on the phone Home app choice; app names are not translated."
+	},
 	"live.preview.encode.activeHardware": {
 		"value": "{element} — hardware",
 		"locales": ["es", "pt-BR"],
