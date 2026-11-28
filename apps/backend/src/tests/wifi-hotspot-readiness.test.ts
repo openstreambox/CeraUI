@@ -1,11 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
 import {
+	beginSteeringVerification,
 	enableSteeringReadiness,
 	hotspotSteeringPending,
 	hotspotSteeringVerified,
 	publishSteeringReadiness,
 	resetSteeringReadinessForTest,
-	steeringReadinessGeneration,
+	steeringVerificationMark,
 } from "../modules/network/uplink-steering/readiness.ts";
 import {
 	awaitHotspotSteering,
@@ -26,7 +27,7 @@ function fakeClock() {
 }
 
 function fence(owned: () => boolean = () => true): HotspotSteeringFence {
-	return { apIfname: "wlan0", incarnation: 7, since: 0, owned };
+	return { apIfname: "wlan0", uuid: "ap0", incarnation: 7, since: 0, owned };
 }
 
 for (const delay of [3500, 7900, 15_000]) {
@@ -106,34 +107,73 @@ test("a stuck reconciliation cannot extend the hard deadline", async () => {
 	expect(performance.now() - started).toBeLessThan(22_000);
 }, 25_000);
 
+const ZONE = [{ ifname: "wlan0", ipv4Cidr: "10.42.0.0/24" }];
+
+/** A verification whose plan saw `wlan0` at lifetime `entry` and read back `after`. */
+function verify(entry: number | undefined, after: number | undefined = entry) {
+	const begun = beginSteeringVerification(["wlan0"], () => entry);
+	publishSteeringReadiness(ZONE, begun, () => after);
+}
+
 test("only a verification after the confirmation, for the same AP lifetime, counts", () => {
 	enableSteeringReadiness();
-	publishSteeringReadiness(
-		[{ ifname: "wlan0", ipv4Cidr: "10.42.0.0/24" }],
-		() => 7,
-	);
-	const since = steeringReadinessGeneration();
+	verify(7);
+	const since = steeringVerificationMark();
 	// Verified before the confirmation: not proof for this Start.
 	expect(hotspotSteeringVerified("wlan0", 7, since)).toBe(false);
-	publishSteeringReadiness(
-		[{ ifname: "wlan0", ipv4Cidr: "10.42.0.0/24" }],
-		() => 8,
-	);
+	verify(8);
 	// A newer verification of another lifetime under the same name.
 	expect(hotspotSteeringVerified("wlan0", 7, since)).toBe(false);
-	publishSteeringReadiness(
-		[{ ifname: "wlan0", ipv4Cidr: "10.42.0.0/24" }],
-		() => 7,
-	);
+	verify(7);
 	expect(hotspotSteeringVerified("wlan0", 7, since)).toBe(true);
 	expect(hotspotSteeringVerified("wlan0", undefined, since)).toBe(false);
 	publishSteeringReadiness([]);
 	expect(hotspotSteeringVerified("wlan0", 7, since)).toBe(false);
 });
 
+test("a verification in flight at the confirmation does not certify it", () => {
+	enableSteeringReadiness();
+	// Planned (and its lifetimes taken) before NM confirmed the AP...
+	const inFlight = beginSteeringVerification(["wlan0"], () => 7);
+	const since = steeringVerificationMark();
+	// ...and read back after: same lifetime, but it began too early.
+	publishSteeringReadiness(ZONE, inFlight, () => 7);
+	expect(hotspotSteeringVerified("wlan0", 7, since)).toBe(false);
+	verify(7);
+	expect(hotspotSteeringVerified("wlan0", 7, since)).toBe(true);
+});
+
+test("a zone whose AP lifetime changed between plan and readback is left out", () => {
+	enableSteeringReadiness();
+	const since = steeringVerificationMark();
+	// The plan was built for lifetime 7; the readback finds a new lifetime 8.
+	verify(7, 8);
+	expect(hotspotSteeringVerified("wlan0", 7, since)).toBe(false);
+	expect(hotspotSteeringVerified("wlan0", 8, since)).toBe(false);
+	expect(hotspotSteeringPending("wlan0", 8)).toBe(true);
+	// An interface that had no lifetime at plan time is never verified.
+	verify(undefined, 8);
+	expect(hotspotSteeringVerified("wlan0", 8, since)).toBe(false);
+	// Without the plan's entry nothing is verified either.
+	publishSteeringReadiness(ZONE);
+	expect(hotspotSteeringPending("wlan0", 8)).toBe(true);
+	verify(8);
+	expect(hotspotSteeringVerified("wlan0", 8, since)).toBe(true);
+	expect(hotspotSteeringPending("wlan0", 8)).toBe(false);
+});
+
+test("the status hint names the AP lifetime, not just the name", () => {
+	enableSteeringReadiness();
+	verify(7);
+	expect(hotspotSteeringPending("wlan0", 7)).toBe(false);
+	// The same name with a new lifetime is still waiting.
+	expect(hotspotSteeringPending("wlan0", 8)).toBe(true);
+	expect(hotspotSteeringPending("wlan0", undefined)).toBe(true);
+});
+
 test("without steering nothing waits and no AP shows as pending", () => {
 	expect(hotspotSteeringVerified("wlan0", undefined, 0)).toBe(true);
-	expect(hotspotSteeringPending("wlan0")).toBe(false);
+	expect(hotspotSteeringPending("wlan0", 7)).toBe(false);
 	enableSteeringReadiness();
-	expect(hotspotSteeringPending("wlan0")).toBe(true);
+	expect(hotspotSteeringPending("wlan0", 7)).toBe(true);
 });
