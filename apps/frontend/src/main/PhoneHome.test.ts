@@ -283,7 +283,7 @@ it("clearing absent credentials reports the resulting state without claiming a s
 	);
 	await waitFor(() => expect(onclearcredential).toHaveBeenCalledOnce());
 	expect(
-		screen.getByText("No Moblin password is saved on this box."),
+		screen.getByText("No Moblin password is saved on this device."),
 	).toBeTruthy();
 	expect(screen.queryByText(/has stopped lending/)).toBeNull();
 });
