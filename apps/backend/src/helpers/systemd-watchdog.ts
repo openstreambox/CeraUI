@@ -1,14 +1,29 @@
 import { dlopen, ptr } from "bun:ffi";
 
-function notifyWatchdog(): void {
-	const library = dlopen("libsystemd.so.0", {
+/** Longest gap between pulses on a healthy loop. */
+export const WATCHDOG_PULSE_MAX_MS = 1000;
+
+function loadNotify() {
+	return dlopen("libsystemd.so.0", {
 		sd_notify: { args: ["i32", "cstring"], returns: "i32" },
 	});
-	try {
-		library.symbols.sd_notify(0, ptr(Buffer.from("WATCHDOG=1\0")));
-	} finally {
-		library.close();
-	}
+}
+let library: ReturnType<typeof loadNotify> | undefined;
+const pulse = Buffer.from("WATCHDOG=1\0");
+
+function notifyWatchdog(): void {
+	library ??= loadNotify();
+	library.symbols.sd_notify(0, ptr(pulse));
+}
+
+/** Pulse interval for a WATCHDOG_USEC value. A short interval leaves almost the
+ * whole WatchdogSec for a stall that starts just before a pulse was due; at half
+ * the interval that budget would be only half of WatchdogSec. */
+export function watchdogPulseMs(usec: number): number {
+	return Math.max(
+		1,
+		Math.min(Math.floor(usec / 2000), WATCHDOG_PULSE_MAX_MS, 2147483647),
+	);
 }
 
 /** A main-loop timer stops pulsing if the owner hangs. No independent helper. */
@@ -40,5 +55,5 @@ export function startServiceWatchdog(
 			return () => clearInterval(timer);
 		});
 	notify();
-	return schedule(notify, Math.min(Math.floor(usec / 2000), 2147483647));
+	return schedule(notify, watchdogPulseMs(usec));
 }
