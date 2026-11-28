@@ -31,6 +31,7 @@
 */
 
 import {
+	deriveModemStableKey,
 	type ModemRadioPower,
 	type ModemRegistrationRejection,
 	modemRadioPowerSchema,
@@ -70,6 +71,7 @@ import {
 	type SimInfo,
 } from "./mmcli.ts";
 import { rememberModemIdentity } from "./mode-choice-identity.ts";
+import { readModemIdPaths } from "./modem-id-path-source.ts";
 import { isHimiUfiRouter, modemHardwareName } from "./modem-identity.ts";
 import { sanitizeModemConfigForNetworkManager } from "./modem-nm-config.ts";
 import {
@@ -825,3 +827,45 @@ export async function refreshModemStatus(id: ModemId): Promise<void> {
 }
 
 export { readRadioNas } from "./mmcli.ts";
+
+export interface ModemPairReadDeps {
+	readonly paths: typeof readModemIdPaths;
+	readonly list: typeof mmList;
+	readonly readSim: typeof readReadyModemSim;
+}
+
+/** Fresh transport projection for recovery before roster hydration. */
+export async function isModemPairAtStableKey(
+	key: string,
+	pair: { readonly deviceId: string; readonly simId: string },
+	deps: ModemPairReadDeps = {
+		paths: readModemIdPaths,
+		list: mmList,
+		readSim: readReadyModemSim,
+	},
+): Promise<boolean> {
+	const paths = await deps.paths();
+	let pairMatches = 0;
+	let keyMatches = false;
+	for (const id of (await deps.list()) ?? []) {
+		const sim = await deps.readSim(id);
+		if (!sim || sim === "unreadable") continue;
+		if (
+			sim.modemInfo["modem.generic.device-identifier"] !== pair.deviceId ||
+			sim.simInfo["sim.properties.iccid"] !== pair.simId
+		)
+			continue;
+		pairMatches++;
+		const interfaces = sim.modemInfo["modem.generic.ports"]
+			.filter((port) => port.endsWith(" (net)"))
+			.map((port) => port.slice(0, -6));
+		if (
+			interfaces.some((ifname) => {
+				const path = paths.get(ifname);
+				return path !== undefined && deriveModemStableKey(path) === key;
+			})
+		)
+			keyMatches = true;
+	}
+	return pairMatches === 1 && keyMatches;
+}
