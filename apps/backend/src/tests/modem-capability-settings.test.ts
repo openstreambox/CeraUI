@@ -46,7 +46,13 @@ import type { AppWebSocket, RPCContext } from "../rpc/types.ts";
 
 const KEY = "platform-xhci-hcd.0.auto-usb-0:1.4.1";
 
-const IMPLEMENTED = ["five-g-pref", "band-lock", "gps", "ussd"] as const;
+const IMPLEMENTED = [
+	"five-g-pref",
+	"band-lock",
+	"gps",
+	"ussd",
+	"esim",
+] as const;
 
 /**
  * A scripted `mmcli --location-status` answer. The capability list is the bench
@@ -265,14 +271,14 @@ describe("a probe that PROVES a capability republishes the roster", () => {
 });
 
 describe("a module this build does not ship is REFUSED, never persisted", () => {
-	test("`esim` is refused with its typed reason", async () => {
-		const result = await callSet("esim", true);
+	test("`fcc-auto-unlock` is refused with its typed reason", async () => {
+		const result = await callSet("fcc-auto-unlock", true);
 		expect(result.success).toBe(false);
 		expect(result.error).toBe("module_not_implemented");
 	});
 
 	test("the refusal writes NOTHING — not the key, not a false", async () => {
-		await callSet("esim", true);
+		await callSet("fcc-auto-unlock", true);
 		expect(getConfig().modem_capabilities).toBeUndefined();
 	});
 
@@ -284,7 +290,7 @@ describe("a module this build does not ship is REFUSED, never persisted", () => 
 
 	test("a refusal never disturbs a gate that was already on", async () => {
 		await callSet("gps", true);
-		await callSet("esim", true);
+		await callSet("fcc-auto-unlock", true);
 		expect(getConfig().modem_capabilities?.gps).toBe(true);
 	});
 });
@@ -340,4 +346,11 @@ describe("THE GATE IS A PRECONDITION, NOT A BYPASS", () => {
 			"implemented",
 		);
 	});
+});
+
+test("eSIM can be enabled without claiming an unprobed card is supported", async () => {
+	evidence({ capability: {} });
+	expect((await callSet("esim", true)).success).toBe(true);
+	expect(getConfig().modem_capabilities?.esim).toBe(true);
+	expect(resolveModemCapabilityClaims(KEY, IMPLEMENTED).esim).toBe("enabled");
 });

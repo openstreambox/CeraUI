@@ -15,35 +15,20 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-/*
-  The Ethernet role transition, and the boot reconciliation of the operator's
-  persisted choice.
-
-  Nested role calls reject before admission. The frame contract below applies
-  to outside callers.
-
-  EVERY EXIT PATH ENDS IN A TERMINAL FRAME, with exactly one publisher per path
-  — the `wifi-adapter-mode-transition.ts` contract, applied to a wired port. A
-  refusal decided here publishes here; an admitted transition publishes a pending
-  frame and then exactly one terminal frame once NetworkManager has answered.
-
-  ROLLBACK IS PERSIST-FIRST. The role is written before NetworkManager is
-  touched (so a device that dies mid-transition comes back trying for the
-  operator's role) and RESTORED the moment NM refuses, so a failed flip leaves
-  neither the config nor the netif flags half-applied.
-*/
-
 import { AsyncLocalStorage } from "node:async_hooks";
+/* The persisted role is intent. Restoring it does not undo uncertain NM effects. */
 
+import { randomUUID } from "node:crypto";
 import type { EthernetRole, EthernetRoleError } from "@ceraui/rpc/schemas";
-
 import { logger } from "../../helpers/logger.ts";
 import {
 	ETHERNET_ROLE_DEFAULT,
 	getEthernetRole,
 	getPersistedEthernetRoles,
+	getSharedEthernetProfile,
 	isEthernetRoleCandidate,
 	persistEthernetRole,
+	reserveSharedEthernetProfile,
 	restoreEthernetRole,
 } from "./ethernet-role.ts";
 import {
@@ -55,13 +40,15 @@ import {
 	getNetworkInterfaces,
 	triggerNetworkInterfacesChange,
 } from "./network-interfaces.ts";
-import { nmConnect, nmConnSetFields, nmDeviceProp } from "./network-manager.ts";
+import {
+	createEthernetNm,
+	type EthernetActiveConnection,
+	type EthernetOwnedProfile,
+	type EthernetSharedProfile,
+	nmConnect,
+	nmConnSetFields,
+} from "./network-manager.ts";
 
-/**
- * `shared` is what makes NetworkManager run DHCP + DNS + NAT on the port;
- * `auto` restores the ordinary DHCP-client uplink. Nothing else on the profile
- * is touched — the operator's addressing, DNS and route settings are theirs.
- */
 const IPV4_METHOD_FOR_ROLE: Record<EthernetRole, string> = {
 	uplink: "auto",
 	"shared-lan": "shared",
@@ -69,7 +56,17 @@ const IPV4_METHOD_FOR_ROLE: Record<EthernetRole, string> = {
 
 export interface EthernetRoleTransitionDeps {
 	readonly listInterfaces: () => Record<string, unknown>;
-	readonly resolveConnection: (ifname: string) => Promise<string | undefined>;
+	readonly resolveConnection: (
+		ifname: string,
+	) => Promise<EthernetActiveConnection>;
+	readonly readProfile: (
+		uuid: string,
+		ifname: string,
+	) => Promise<EthernetOwnedProfile>;
+	readonly addConnection: (profile: EthernetSharedProfile) => Promise<boolean>;
+	readonly readOwnedProfile: (ifname: string) => string | undefined;
+	readonly reserveProfile: (ifname: string, uuid: string) => void;
+	readonly newUuid: () => string;
 	readonly setFields: (
 		uuid: string,
 		fields: Record<string, string>,
@@ -85,29 +82,19 @@ export interface EthernetRoleTransitionDeps {
 	readonly refreshInterfaces: () => void;
 }
 
-/**
- * The device's active connection for this interface.
- *
- * `nmcli` prints NOTHING for a device NetworkManager holds no connection on, so
- * an empty read is "no profile to configure" rather than a failed one — the
- * caller answers `no_connection` and writes nothing.
- */
-async function resolveDeviceConnection(
-	ifname: string,
-): Promise<string | undefined> {
-	const values = await nmDeviceProp(ifname, "GENERAL.CON-UUID");
-	const uuid = values?.[0]?.trim();
-	return uuid ? uuid : undefined;
-}
-
 function refreshNetifRoleFlags(): void {
 	applySharedLanBondGate(getNetworkInterfaces());
 	triggerNetworkInterfacesChange();
 }
-
+const ethernetNm = createEthernetNm();
 export const defaultEthernetRoleDeps: EthernetRoleTransitionDeps = {
 	listInterfaces: getNetworkInterfaces,
-	resolveConnection: resolveDeviceConnection,
+	resolveConnection: ethernetNm.active,
+	readProfile: ethernetNm.profile,
+	addConnection: ethernetNm.addShared,
+	readOwnedProfile: getSharedEthernetProfile,
+	reserveProfile: reserveSharedEthernetProfile,
+	newUuid: randomUUID,
 	setFields: nmConnSetFields,
 	activate: nmConnect,
 	persistRole: persistEthernetRole,
@@ -122,30 +109,68 @@ export interface SetEthernetRoleResult {
 	applied?: EthernetRole;
 	error?: EthernetRoleError;
 }
-
-/**
- * Apply the role to NetworkManager: rewrite `ipv4.method`, then re-activate so
- * the change takes effect. NM bakes the method into the ACTIVATION, so a write
- * with no re-activation leaves the port running its previous method while the
- * profile claims otherwise.
- */
 async function applyRoleToNetworkManager(
 	ifname: string,
 	role: EthernetRole,
 	deps: EthernetRoleTransitionDeps,
+	allowCreate: boolean,
 ): Promise<EthernetRoleError | undefined> {
-	const uuid = await deps.resolveConnection(ifname);
-	if (!uuid) return "no_connection";
-
-	const written = await deps.setFields(uuid, {
+	const initial = await deps.resolveConnection(ifname);
+	if (deps.listInterfaces()[ifname] === undefined) return "unknown_interface";
+	if (initial.kind === "unavailable") return "no_connection";
+	let uuid =
+		initial.kind === "active" ? initial.uuid : deps.readOwnedProfile(ifname);
+	if (!uuid) {
+		if (!allowCreate || role !== "shared-lan") return "no_connection";
+		uuid = deps.newUuid();
+		// This synchronous atomic reservation must finish before any profile add.
+		deps.reserveProfile(ifname, uuid);
+	}
+	const selectedUuid = uuid;
+	const owned = deps.readOwnedProfile(ifname) === selectedUuid;
+	const stillSelected = async () => {
+		const active = await deps.resolveConnection(ifname);
+		return (
+			deps.listInterfaces()[ifname] !== undefined &&
+			(active.kind === "active"
+				? active.uuid === selectedUuid
+				: active.kind === "absent" && initial.kind === "absent")
+		);
+	};
+	if (owned) {
+		const profile = await deps.readProfile(selectedUuid, ifname);
+		if (profile.kind === "unavailable") return "no_connection";
+		if (profile.kind === "absent") {
+			if (initial.kind !== "absent" || !allowCreate || role !== "shared-lan")
+				return "no_connection";
+			if (!(await stillSelected())) return "apply_failed";
+			if (!(await deps.addConnection({ ifname, uuid: selectedUuid })))
+				return "apply_failed";
+			// An acknowledged add alone does not prove its UUID/type/interface binding.
+			if ((await deps.readProfile(selectedUuid, ifname)).kind !== "present")
+				return "apply_failed";
+		}
+	}
+	if (!(await stillSelected())) return "apply_failed";
+	const fields: Record<string, string> = {
 		"ipv4.method": IPV4_METHOD_FOR_ROLE[role],
-	});
-	if (!written) return "apply_failed";
-
-	const activated = await deps.activate(uuid);
-	if (!activated) return "apply_failed";
-
-	return undefined;
+	};
+	if (owned)
+		fields["connection.autoconnect"] = role === "uplink" ? "yes" : "no";
+	if (!(await deps.setFields(selectedUuid, fields))) return "apply_failed";
+	if (
+		owned &&
+		(await deps.readProfile(selectedUuid, ifname)).kind !== "present"
+	)
+		return "apply_failed";
+	if (!(await stillSelected())) return "apply_failed";
+	if (!(await deps.activate(selectedUuid))) return "apply_failed";
+	const applied = await deps.resolveConnection(ifname);
+	return deps.listInterfaces()[ifname] !== undefined &&
+		applied.kind === "active" &&
+		applied.uuid === selectedUuid
+		? undefined
+		: "apply_failed";
 }
 
 export class EthernetRoleReentryError extends Error {
@@ -209,53 +234,49 @@ export async function setEthernetRole(
 			return { success: false, error };
 		};
 		if (!isEthernetRoleCandidate(name)) return refuse("not_ethernet");
-		if (deps.listInterfaces()[name] === undefined) {
+		if (deps.listInterfaces()[name] === undefined)
 			return refuse("unknown_interface");
-		}
-
 		const previous = deps.readPersistedRole(name);
-		if ((previous ?? ETHERNET_ROLE_DEFAULT) === role) {
-			// Already there: nothing is dispatched, so no NM answer will ever settle
-			// and this branch owes the terminal frame itself. The role is still
-			// recorded — the operator has now stated it explicitly.
+		let persisted = false;
+		let failure: EthernetRoleError | undefined;
+		try {
 			deps.persistRole(name, role);
-			deps.refreshInterfaces();
-			deps.publishOutcome(name, { success: true, role, ...correlation });
-			return { success: true, applied: role };
+			persisted = true;
+			if (
+				(previous ?? ETHERNET_ROLE_DEFAULT) === role &&
+				role === "uplink" &&
+				!deps.readOwnedProfile(name)
+			) {
+				deps.refreshInterfaces();
+				deps.publishOutcome(name, { success: true, role, ...correlation });
+				return { success: true, applied: role };
+			}
+			const pending = { pending: true, role } as const;
+			deps.publishOutcome(name, { ...pending, ...correlation });
+			failure = await applyRoleToNetworkManager(name, role, deps, true);
+		} catch {
+			failure = "apply_failed";
 		}
-
-		deps.persistRole(name, role);
-		const pending = { pending: true, role } as const;
-		deps.publishOutcome(name, { ...pending, ...correlation });
-
-		const failure = await applyRoleToNetworkManager(name, role, deps);
 		if (failure !== undefined) {
-			deps.restoreRole(name, previous);
+			if (persisted) {
+				try {
+					deps.restoreRole(name, previous);
+				} catch {
+					logger.warn("ethernet role: could not restore persisted intent");
+				}
+			}
+			// This restores intent/bond flags only. Profiles and unknown device effects
+			// are retained; only an explicit request can inspect/retry the reservation.
 			deps.refreshInterfaces();
 			return refuse(failure);
 		}
-
 		deps.refreshInterfaces();
 		deps.publishOutcome(name, { success: true, role, ...correlation });
 		return { success: true, applied: role };
 	});
 }
 
-/**
- * Re-apply every stated `shared-lan` role at boot.
- *
- * IDEMPOTENT: it compares against the persisted role and re-asserts the SAME
- * NetworkManager method, so running it twice writes the same value twice and
- * dispatches nothing new. An `uplink` entry is skipped entirely — that is the
- * default, and rewriting `ipv4.method auto` onto every ordinary port at boot
- * would touch profiles the operator never asked us to touch.
- *
- * FAIL-SOFT for outside callers; nested calls reject before admission. A port
- * that is not present, or whose NM profile could not be rewritten, is LOGGED
- * and left alone — the role is deliberately NOT cleared, because a device that
- * has not finished enumerating must not be read as a refusal that discards the
- * operator's choice.
- */
+/** Boot reuses profiles only; it cannot allocate, add or discard a reservation. */
 export async function reconcileEthernetRoles(
 	deps: EthernetRoleTransitionDeps = defaultEthernetRoleDeps,
 	readRoles: () => Readonly<
@@ -279,7 +300,11 @@ export async function reconcileEthernetRoles(
 			[...ports].map((ifname) =>
 				withEthernetRoleQueue(ifname, async () => {
 					try {
-						if (readRoles()[ifname] !== "shared-lan") return;
+						if (
+							!isEthernetRoleCandidate(ifname) ||
+							readRoles()[ifname] !== "shared-lan"
+						)
+							return;
 						if (deps.listInterfaces()[ifname] === undefined) {
 							logger.debug(
 								`ethernet role reconcile: ${ifname} is not present; leaving shared-lan pending`,
@@ -291,6 +316,7 @@ export async function reconcileEthernetRoles(
 							ifname,
 							"shared-lan",
 							deps,
+							false,
 						);
 						if (failure !== undefined) {
 							logger.warn(
@@ -309,9 +335,8 @@ export async function reconcileEthernetRoles(
 		);
 
 		deps.refreshInterfaces();
-	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		logger.error(`ethernet role reconcile failed: ${message}`);
+	} catch {
+		logger.warn("ethernet role reconciliation unavailable");
 	}
 }
 

@@ -15,6 +15,9 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { refreshWifiApClientZones } from "../network/network-interfaces.ts";
+import { hotspotSteeringPending } from "../network/uplink-steering/readiness.ts";
+
 /* NetworkManager / nmcli based Wifi Manager */
 
 import {
@@ -218,6 +221,7 @@ export type WifiInterfaceResponseMessage = Pick<
 		clients?: HotspotClients;
 		warnings?: string[];
 	};
+	radio_identity?: BaseWifiInterface["radioIdentity"];
 	supports_hotspot?: true;
 	supports_ap_sta_concurrency?: true;
 	mode?: "station" | "hotspot";
@@ -398,6 +402,8 @@ function buildWifiSnapshot(
 		const identity = wifiRadioIdentity.state.rows.get(wifiInterface.ifname);
 		const incarnation = projectWifiRadioIncarnation(wifiInterface, identity);
 		if (incarnation !== undefined) entry.incarnation = incarnation;
+		if (wifiInterface.radioIdentity)
+			entry.radio_identity = wifiInterface.radioIdentity;
 		if (wifiInterface.degradedReason !== undefined) {
 			entry.degraded_reason = wifiInterface.degradedReason;
 		}
@@ -416,7 +422,7 @@ function buildWifiSnapshot(
 		}
 		ifs[id] = entry;
 
-		if (isApMode(wifiInterface) || isConcurrentHotspot(wifiInterface)) {
+		if (canHotspot(wifiInterface)) {
 			// One capability read backs both derivations, so the security the
 			// device OFFERS and the width it REPORTS can never describe different
 			// radios.
@@ -487,16 +493,31 @@ function buildWifiSnapshot(
 
 		entry.mode = isApMode(wifiInterface) ? "hotspot" : "station";
 		entry.observed_mode = displayObservedWifiAdapterMode(wifiInterface);
+		let steering: "activating" | undefined;
+		if (
+			(isApMode(wifiInterface) || isConcurrentHotspot(wifiInterface)) &&
+			hotspotSteeringPending(
+				wifiInterface.concurrentHotspot?.activeConn
+					? wifiInterface.concurrentHotspot.ifname
+					: wifiInterface.ifname,
+			)
+		) {
+			steering = "activating";
+		}
+		if (steering !== undefined) entry.transition = steering;
 		let needsLocalOverride = false;
+		let localRowTransition: typeof entry.transition;
 		if (canHotspot(wifiInterface)) {
-			const localTransition = projectHotspotTransition(wifiInterface);
-			const rawTransition = wifiInterface.hotspot.transition;
+			const localTransition =
+				projectHotspotTransition(wifiInterface) ?? steering;
+			const rawTransition = wifiInterface.hotspot.transition ?? steering;
 			const transition =
 				legacyTransitions || legacyOverrides ? rawTransition : localTransition;
 			if (transition !== undefined) entry.transition = transition;
 			const leaving = projectWifiModeWitness(wifiInterface, incarnation);
 			if (leaving !== undefined) entry.leaving = leaving;
 			needsLocalOverride = transition !== localTransition;
+			localRowTransition = localTransition;
 		}
 
 		const capabilities = getWifiCapabilitiesForInterface(
@@ -512,7 +533,11 @@ function buildWifiSnapshot(
 			// Keep the raw flag in its original wire order without rebuilding telemetry.
 			legacyOverrides[id] = entry;
 			const { transition: _rawTransition, ...local } = entry;
-			ifs[id] = local;
+			// A Start awaiting its client zone stays activating on the local wire.
+			ifs[id] =
+				localRowTransition === undefined
+					? local
+					: { ...local, transition: localRowTransition };
 		}
 	}
 
@@ -525,6 +550,7 @@ function buildWifiSnapshot(
 }
 
 export function broadcastWifiState() {
+	refreshWifiApClientZones();
 	const legacyOverrides: WifiStatusRows = {};
 	const wifi = buildWifiSnapshot(true, { legacyOverrides });
 	if (Object.keys(legacyOverrides).length > 0) {
@@ -786,6 +812,10 @@ export function wifiSiblingConnections(uuid: ConnectionUUID): ConnectionUUID[] {
 }
 
 async function wifiForget(uuid: ConnectionUUID) {
+	// AP profiles are managed only through the owned hotspot lifecycle, never the station sibling sweep.
+	const mode = await nmConnGetFields(uuid, ["802-11-wireless.mode"] as const);
+	if (mode?.[0] === "ap") return;
+
 	if (wifiSearchConnection(uuid) === undefined) return;
 
 	let deleted = false;
@@ -798,6 +828,27 @@ async function wifiForget(uuid: ConnectionUUID) {
 		await wifiUpdateScanResult();
 		wifiScheduleScanRefresh();
 	}
+}
+
+/*
+  A failed join can leave profile effects unresolved. Neither timestamp zero
+  nor a returned UUID proves exclusive ownership, so this legacy cleanup
+  entrypoint retains profiles. Explicit Forget remains the deletion owner.
+*/
+export type WifiFailedConnsDeps = {
+	listConns: (fields: string) => Promise<string[] | undefined>;
+	deleteConn: (uuid: ConnectionUUID) => Promise<boolean>;
+};
+
+const defaultFailedConnsDeps: WifiFailedConnsDeps = {
+	listConns: nmConnsGet,
+	deleteConn: nmConnDelete,
+};
+
+export async function wifiDeleteFailedConns(
+	_deps: WifiFailedConnsDeps = defaultFailedConnsDeps,
+) {
+	logger.warn("Wi-Fi join cleanup withheld: profile ownership is unconfirmed");
 }
 
 export type NmcliRun = {
