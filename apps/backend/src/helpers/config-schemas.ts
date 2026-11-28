@@ -336,6 +336,10 @@ export const runtimeConfigSchema = z.object({
 	last_seen_devices: z.array(lastSeenDeviceSchema).optional(),
 	captive_portal_enabled: z.boolean().optional(),
 	autostart: z.boolean().optional(),
+	// Reconnect the stream on its own after every link was lost, for up to
+	// `auto_reconnect_max_s` (stream-reconnect.ts). Absent = on, 120 s.
+	auto_reconnect: z.boolean().optional(),
+	auto_reconnect_max_s: z.number().int().min(30).max(3600).optional(),
 
 	// Remote/cloud settings
 	remote_key: z.string().optional(),

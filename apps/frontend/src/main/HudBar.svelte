@@ -73,7 +73,8 @@ const carrying = $derived(getStatus()?.carrying?.state);
 // A supervised connection restart is between its Stop and its Start: say that,
 // never "Idle" or "Streaming stopped". Nobody stopped the stream.
 const restarting = $derived(!isLive && !isOffline && getStatus()?.connection_restarting === true);
-const clientLabel = $derived(restarting ? m['hud.restartingConnection']() : carrying === 'streaming' ? m['hud.forwarding']() : carrying === 'unknown' ? m['hud.checking']() : null);
+const reconnecting = $derived(restarting && getStatus()?.stream_reconnect?.state === 'reconnecting');
+const clientLabel = $derived(reconnecting ? m['hud.reconnecting']() : restarting ? m['hud.restartingConnection']() : carrying === 'streaming' ? m['hud.forwarding']() : carrying === 'unknown' ? m['hud.checking']() : null);
 type HudLifecycle = 'live' | 'idle' | 'offline' | 'forwarding' | 'checking' | 'restarting';
 const lifecycle = $derived<HudLifecycle>(isOffline ? 'offline' : isLive ? 'live' : restarting ? 'restarting' : carrying === 'streaming' ? 'forwarding' : carrying === 'unknown' ? 'checking' : 'idle');
 

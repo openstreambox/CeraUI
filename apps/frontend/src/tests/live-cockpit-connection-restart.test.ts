@@ -73,6 +73,9 @@ describe("LiveCockpit during a supervised connection restart", () => {
 		const { container, getByTestId, queryByTestId, getByRole, rerender } =
 			render(LiveCockpit, { props: props({ isStreaming: true }) });
 		expect(queryByTestId("live-restarting-banner")).toBeNull();
+		expect(getByTestId("live-summary-label").textContent?.trim()).toBe(
+			"Now streaming",
+		);
 
 		// The restart's Stop lands.
 		await rerender(props({ isStreaming: false, restarting: true }));
@@ -83,6 +86,9 @@ describe("LiveCockpit during a supervised connection restart", () => {
 			"Viewers see your BRB screen for a few seconds.",
 		);
 		expect(band.textContent).toContain(m["live.restartingConnectionBody"]());
+		expect(getByTestId("live-summary-label").textContent?.trim()).toBe(
+			"Stream setup",
+		);
 		// Stop stays, so an operator Stop can still cancel the restart.
 		expect(getByRole("button", { name: m["live.stopStream"]() })).toBeTruthy();
 		expect(container.textContent).not.toContain(m["live.startStream"]());

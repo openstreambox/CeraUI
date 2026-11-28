@@ -1043,6 +1043,9 @@ export const configMessageSchema = z.object({
 	bitrate_overlay: z.boolean().optional(),
 	captive_portal_enabled: z.boolean().optional(),
 	autostart: z.boolean().optional(),
+	// Reconnect after every link was lost; absent = on, 120 s.
+	auto_reconnect: z.boolean().optional(),
+	auto_reconnect_max_s: z.number().int().optional(),
 	srtla_addr: z.string().optional(),
 	srtla_port: z.number().optional(),
 	srt_streamid_configured: z.boolean().optional(),
@@ -1166,6 +1169,8 @@ export const GET_CONFIG_KEYS = [
 	'selected_ingest_endpoint',
 	'detectionMethod',
 	'modem_provisioning',
+	'auto_reconnect',
+	'auto_reconnect_max_s',
 ] as const satisfies readonly (keyof ConfigMessage)[];
 
 // Sent right after a `config` broadcast whose write cleared settings, on the
@@ -1206,6 +1211,44 @@ export const restartConnectionOutputSchema = z.object({
 	error: z.literal('offer_not_current').optional(),
 });
 export type RestartConnectionOutput = z.infer<typeof restartConnectionOutputSchema>;
+
+// "Keep trying" on the reconnect notice or the Live banner. `token` is the
+// reconnect window's own (status.stream_reconnect.token): the device restarts
+// the window only while that one is current, so an old notice can't reopen it.
+export const keepReconnectingInputSchema = z.object({
+	token: z.string().min(1).max(128),
+});
+export type KeepReconnectingInput = z.infer<typeof keepReconnectingInputSchema>;
+export const keepReconnectingOutputSchema = z.object({
+	success: z.boolean(),
+	result: z.enum(['reconnecting', 'refused']),
+	error: z.literal('reconnect_not_current').optional(),
+});
+export type KeepReconnectingOutput = z.infer<typeof keepReconnectingOutputSchema>;
+
+// The box's reconnect settings: whether the stream reconnects on its own after
+// every link was lost, and for how long it keeps trying (seconds).
+export const RECONNECT_MAX_S_MIN = 30;
+export const RECONNECT_MAX_S_MAX = 3600;
+export const RECONNECT_MAX_S_DEFAULT = 120;
+export const setReconnectInputSchema = z
+	.object({
+		enabled: z.boolean().optional(),
+		max_s: z.number().int().min(RECONNECT_MAX_S_MIN).max(RECONNECT_MAX_S_MAX).optional(),
+	})
+	.refine((input) => input.enabled !== undefined || input.max_s !== undefined, {
+		message: 'enabled or max_s is required',
+	});
+export type SetReconnectInput = z.infer<typeof setReconnectInputSchema>;
+// `applied` = what was persisted, defaults included.
+export const setReconnectOutputSchema = z.object({
+	success: z.boolean(),
+	applied: z.object({
+		enabled: z.boolean(),
+		max_s: z.number().int(),
+	}),
+});
+export type SetReconnectOutput = z.infer<typeof setReconnectOutputSchema>;
 
 // Streaming setConfig output — includes applied config fields post-clamp, plus a
 // stable structured `error` code (e.g. "unknown_source") returned when a setConfig

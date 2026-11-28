@@ -16,9 +16,14 @@ interface Props {
 	 * instead of "Not streaming".
 	 */
 	restarting?: boolean;
+	/**
+	 * After every link was lost: still reconnecting, or the window ran out and
+	 * nothing retries until the streamer picks "Keep trying" or Stop.
+	 */
+	reconnect?: 'reconnecting' | 'expired' | null;
 }
 
-const { isStreaming, unconfirmed = false, restarting = false }: Props = $props();
+const { isStreaming, unconfirmed = false, restarting = false, reconnect = null }: Props = $props();
 </script>
 
 <!-- Header: stream status + title only (T12 demotion). The server destination now
@@ -46,8 +51,12 @@ const { isStreaming, unconfirmed = false, restarting = false }: Props = $props()
 			role="status"
 			data-testid="live-header-restarting"
 		>
-			<span class="bg-status-warning h-2 w-2 shrink-0 rounded-full motion-safe:animate-pulse"></span>
-			{m["live.restartingConnection"]()}
+			<span class={['bg-status-warning h-2 w-2 shrink-0 rounded-full', reconnect !== 'expired' && 'motion-safe:animate-pulse']}></span>
+			{reconnect === 'reconnecting'
+				? m["live.reconnectingChip"]()
+				: reconnect === 'expired'
+					? m["live.reconnectExpiredChip"]()
+					: m["live.restartingConnection"]()}
 		</span>
 	{:else if !unconfirmed}
 		<span

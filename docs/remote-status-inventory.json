@@ -5611,6 +5611,38 @@
 			]
 		},
 		{
+			"source": "apps/backend/src/modules/streaming/stream-reconnect-wiring.ts",
+			"call": "broadcastMsg",
+			"message": "\"status\"",
+			"fields": [
+				{
+					"path": "stream_reconnect",
+					"types": ["null"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "stream_reconnect.state",
+					"types": ["\"reconnecting\"", "\"expired\""],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "stream_reconnect.remaining_ms",
+					"types": ["number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "stream_reconnect.token",
+					"types": ["string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "stream_reconnect.reason",
+					"types": ["\"no_link\"", "\"start_failed\""],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				}
+			]
+		},
+		{
 			"source": "apps/backend/src/modules/modems/modem-status.ts",
 			"call": "broadcastMsg",
 			"message": "\"status\"",
@@ -6114,6 +6146,16 @@
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
 				},
 				{
+					"path": "modems.*.config.password",
+					"types": ["string"],
+					"decision": "not needed remotely: withhold local network identity, account or management detail"
+				},
+				{
+					"path": "modems.*.config.network",
+					"types": ["string"],
+					"decision": "not needed remotely: withhold local network identity, account or management detail"
+				},
+				{
 					"path": "modems.*.config.apn",
 					"types": ["string"],
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -6124,18 +6166,8 @@
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
 				},
 				{
-					"path": "modems.*.config.password",
-					"types": ["string"],
-					"decision": "not needed remotely: withhold local network identity, account or management detail"
-				},
-				{
 					"path": "modems.*.config.roaming",
 					"types": ["false", "true"],
-					"decision": "not needed remotely: withhold local network identity, account or management detail"
-				},
-				{
-					"path": "modems.*.config.network",
-					"types": ["string"],
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
 				},
 				{
@@ -6991,15 +7023,15 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"usb\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
-						"\"other\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
-						"\"raw_video\""
+						"\"test\"",
+						"\"network\"",
+						"\"raw_video\"",
+						"\"usb\"",
+						"\"other\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
@@ -7052,12 +7084,12 @@
 				},
 				{
 					"path": "pipelines.*.defaultFramerate",
-					"types": ["60", "23.98", "24", "25", "29.97", "30", "50", "59.94"],
+					"types": ["60", "24", "23.98", "25", "29.97", "30", "50", "59.94"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
 					"path": "pipelines.*.requires_gateway",
-					"types": ["\"rtmp\"", "\"srt\""],
+					"types": ["\"srt\"", "\"rtmp\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -7374,15 +7406,15 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"usb\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
-						"\"other\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
-						"\"raw_video\""
+						"\"test\"",
+						"\"network\"",
+						"\"raw_video\"",
+						"\"usb\"",
+						"\"other\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
@@ -7868,12 +7900,12 @@
 				},
 				{
 					"path": "pipelines.*.defaultFramerate",
-					"types": ["60", "23.98", "24", "25", "29.97", "30", "50", "59.94"],
+					"types": ["60", "24", "23.98", "25", "29.97", "30", "50", "59.94"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
 					"path": "pipelines.*.requires_gateway",
-					"types": ["\"rtmp\"", "\"srt\""],
+					"types": ["\"srt\"", "\"rtmp\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -9582,15 +9614,15 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"usb\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
-						"\"other\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
-						"\"raw_video\""
+						"\"test\"",
+						"\"network\"",
+						"\"raw_video\"",
+						"\"usb\"",
+						"\"other\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
@@ -9635,12 +9667,12 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
+						"\"test\"",
+						"\"network\"",
 						"\"raw_video\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -9768,15 +9800,15 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"usb\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
-						"\"other\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
-						"\"raw_video\""
+						"\"test\"",
+						"\"network\"",
+						"\"raw_video\"",
+						"\"usb\"",
+						"\"other\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
@@ -9805,7 +9837,7 @@
 				},
 				{
 					"path": "sources[].defaultFramerate",
-					"types": ["undefined", "60", "23.98", "24", "25", "29.97", "30", "50", "59.94"],
+					"types": ["undefined", "60", "24", "23.98", "25", "29.97", "30", "50", "59.94"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -9854,12 +9886,12 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
+						"\"test\"",
+						"\"network\"",
 						"\"raw_video\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -9901,12 +9933,12 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
+						"\"test\"",
+						"\"network\"",
 						"\"raw_video\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -9933,7 +9965,7 @@
 				},
 				{
 					"path": "sources[].requiresGateway",
-					"types": ["\"rtmp\"", "\"srt\""],
+					"types": ["\"srt\"", "\"rtmp\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -10034,15 +10066,15 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"usb\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
-						"\"other\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
-						"\"raw_video\""
+						"\"test\"",
+						"\"network\"",
+						"\"raw_video\"",
+						"\"usb\"",
+						"\"other\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
@@ -10071,7 +10103,7 @@
 				},
 				{
 					"path": "sources[].defaultFramerate",
-					"types": ["undefined", "60", "23.98", "24", "25", "29.97", "30", "50", "59.94"],
+					"types": ["undefined", "60", "24", "23.98", "25", "29.97", "30", "50", "59.94"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -10120,12 +10152,12 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
+						"\"test\"",
+						"\"network\"",
 						"\"raw_video\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -10167,12 +10199,12 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
+						"\"test\"",
+						"\"network\"",
 						"\"raw_video\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -10199,7 +10231,7 @@
 				},
 				{
 					"path": "sources[].requiresGateway",
-					"types": ["\"rtmp\"", "\"srt\""],
+					"types": ["\"srt\"", "\"rtmp\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -10300,15 +10332,15 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"usb\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
-						"\"other\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
-						"\"raw_video\""
+						"\"test\"",
+						"\"network\"",
+						"\"raw_video\"",
+						"\"usb\"",
+						"\"other\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
@@ -10337,7 +10369,7 @@
 				},
 				{
 					"path": "sources[].defaultFramerate",
-					"types": ["undefined", "60", "23.98", "24", "25", "29.97", "30", "50", "59.94"],
+					"types": ["undefined", "60", "24", "23.98", "25", "29.97", "30", "50", "59.94"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -10386,12 +10418,12 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
+						"\"test\"",
+						"\"network\"",
 						"\"raw_video\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -10433,12 +10465,12 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
+						"\"test\"",
+						"\"network\"",
 						"\"raw_video\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -10465,7 +10497,7 @@
 				},
 				{
 					"path": "sources[].requiresGateway",
-					"types": ["\"rtmp\"", "\"srt\""],
+					"types": ["\"srt\"", "\"rtmp\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -10894,15 +10926,15 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"usb\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
-						"\"other\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
-						"\"raw_video\""
+						"\"test\"",
+						"\"network\"",
+						"\"raw_video\"",
+						"\"usb\"",
+						"\"other\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
@@ -11317,8 +11349,8 @@
 					"path": "tailscale.state",
 					"types": [
 						"\"unknown\"",
-						"\"unavailable\"",
 						"\"off\"",
+						"\"unavailable\"",
 						"\"connected\"",
 						"\"needs_key\"",
 						"\"needs_approval\"",
@@ -11450,7 +11482,7 @@
 				},
 				{
 					"path": "bond_mapping.state",
-					"types": ["\"degraded\"", "\"absent\"", "\"active\""],
+					"types": ["\"degraded\"", "\"active\"", "\"absent\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -11866,6 +11898,31 @@
 				{
 					"path": "connection_restarting",
 					"types": ["false", "true"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "stream_reconnect",
+					"types": ["null"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "stream_reconnect.state",
+					"types": ["\"reconnecting\"", "\"expired\""],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "stream_reconnect.remaining_ms",
+					"types": ["number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "stream_reconnect.token",
+					"types": ["string"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "stream_reconnect.reason",
+					"types": ["\"no_link\"", "\"start_failed\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -12637,8 +12694,8 @@
 					"path": "tailscale.state",
 					"types": [
 						"\"unknown\"",
-						"\"unavailable\"",
 						"\"off\"",
+						"\"unavailable\"",
 						"\"connected\"",
 						"\"needs_key\"",
 						"\"needs_approval\"",
@@ -13435,6 +13492,16 @@
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
 				},
 				{
+					"path": "modems.*.config.password",
+					"types": ["string"],
+					"decision": "not needed remotely: withhold local network identity, account or management detail"
+				},
+				{
+					"path": "modems.*.config.network",
+					"types": ["string"],
+					"decision": "not needed remotely: withhold local network identity, account or management detail"
+				},
+				{
 					"path": "modems.*.config.apn",
 					"types": ["string"],
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -13445,18 +13512,8 @@
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
 				},
 				{
-					"path": "modems.*.config.password",
-					"types": ["string"],
-					"decision": "not needed remotely: withhold local network identity, account or management detail"
-				},
-				{
 					"path": "modems.*.config.roaming",
 					"types": ["false", "true"],
-					"decision": "not needed remotely: withhold local network identity, account or management detail"
-				},
-				{
-					"path": "modems.*.config.network",
-					"types": ["string"],
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
 				},
 				{
@@ -13702,7 +13759,7 @@
 				},
 				{
 					"path": "relay_protocol",
-					"types": ["undefined", "\"srt\"", "\"srtla\"", "\"rist\""],
+					"types": ["undefined", "\"srtla\"", "\"srt\"", "\"rist\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -13742,9 +13799,9 @@
 					"path": "profile_decided_by",
 					"types": [
 						"undefined",
+						"\"operator\"",
 						"\"device\"",
 						"\"auto\"",
-						"\"operator\"",
 						"\"cohort\"",
 						"\"global\""
 					],
@@ -13850,7 +13907,7 @@
 				},
 				{
 					"path": "framerate",
-					"types": ["undefined", "60", "23.98", "24", "25", "29.97", "30", "50", "59.94"],
+					"types": ["undefined", "60", "24", "23.98", "25", "29.97", "30", "50", "59.94"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -13870,7 +13927,7 @@
 				},
 				{
 					"path": "failover_rate_policy",
-					"types": ["undefined", "\"retime\"", "\"adapt\""],
+					"types": ["undefined", "\"adapt\"", "\"retime\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -13900,12 +13957,12 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
+						"\"test\"",
+						"\"network\"",
 						"\"raw_video\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -13999,15 +14056,15 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"usb\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
-						"\"other\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
-						"\"raw_video\""
+						"\"test\"",
+						"\"network\"",
+						"\"raw_video\"",
+						"\"usb\"",
+						"\"other\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
@@ -14045,6 +14102,16 @@
 					"path": "autostart",
 					"types": ["undefined", "false", "true"],
 					"decision": "needed: typed scalar or closed enum"
+				},
+				{
+					"path": "auto_reconnect",
+					"types": ["undefined", "false", "true"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "auto_reconnect_max_s",
+					"types": ["undefined", "number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
 					"path": "remote_key",
@@ -14414,12 +14481,12 @@
 				},
 				{
 					"path": "pipelines.*.defaultFramerate",
-					"types": ["60", "23.98", "24", "25", "29.97", "30", "50", "59.94"],
+					"types": ["60", "24", "23.98", "25", "29.97", "30", "50", "59.94"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
 					"path": "pipelines.*.requires_gateway",
-					"types": ["\"rtmp\"", "\"srt\""],
+					"types": ["\"srt\"", "\"rtmp\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -14505,15 +14572,15 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"usb\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
-						"\"other\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
-						"\"raw_video\""
+						"\"test\"",
+						"\"network\"",
+						"\"raw_video\"",
+						"\"usb\"",
+						"\"other\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
@@ -14542,7 +14609,7 @@
 				},
 				{
 					"path": "sources[].defaultFramerate",
-					"types": ["undefined", "60", "23.98", "24", "25", "29.97", "30", "50", "59.94"],
+					"types": ["undefined", "60", "24", "23.98", "25", "29.97", "30", "50", "59.94"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -14591,12 +14658,12 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
+						"\"test\"",
+						"\"network\"",
 						"\"raw_video\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -14638,12 +14705,12 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
+						"\"test\"",
+						"\"network\"",
 						"\"raw_video\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -14670,7 +14737,7 @@
 				},
 				{
 					"path": "sources[].requiresGateway",
-					"types": ["\"rtmp\"", "\"srt\""],
+					"types": ["\"srt\"", "\"rtmp\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -17168,7 +17235,7 @@
 				},
 				{
 					"path": "bond_mapping.state",
-					"types": ["\"degraded\"", "\"absent\"", "\"active\""],
+					"types": ["\"degraded\"", "\"active\"", "\"absent\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -17541,7 +17608,7 @@
 				},
 				{
 					"path": "show[].action.command",
-					"types": ["\"restart-connection\""],
+					"types": ["\"restart-connection\"", "\"keep-reconnecting\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -17628,7 +17695,7 @@
 				},
 				{
 					"path": "show[].action.command",
-					"types": ["\"restart-connection\""],
+					"types": ["\"restart-connection\"", "\"keep-reconnecting\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -17744,7 +17811,7 @@
 				},
 				{
 					"path": "show[].action.command",
-					"types": ["\"restart-connection\""],
+					"types": ["\"restart-connection\"", "\"keep-reconnecting\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -17836,7 +17903,7 @@
 				},
 				{
 					"path": "show[].action.command",
-					"types": ["\"restart-connection\""],
+					"types": ["\"restart-connection\"", "\"keep-reconnecting\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -18025,7 +18092,7 @@
 				},
 				{
 					"path": "relay_protocol",
-					"types": ["undefined", "\"srt\"", "\"srtla\"", "\"rist\""],
+					"types": ["undefined", "\"srtla\"", "\"srt\"", "\"rist\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -18065,9 +18132,9 @@
 					"path": "profile_decided_by",
 					"types": [
 						"undefined",
+						"\"operator\"",
 						"\"device\"",
 						"\"auto\"",
-						"\"operator\"",
 						"\"cohort\"",
 						"\"global\""
 					],
@@ -18173,7 +18240,7 @@
 				},
 				{
 					"path": "framerate",
-					"types": ["undefined", "60", "23.98", "24", "25", "29.97", "30", "50", "59.94"],
+					"types": ["undefined", "60", "24", "23.98", "25", "29.97", "30", "50", "59.94"],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -18193,7 +18260,7 @@
 				},
 				{
 					"path": "failover_rate_policy",
-					"types": ["undefined", "\"retime\"", "\"adapt\""],
+					"types": ["undefined", "\"adapt\"", "\"retime\""],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
@@ -18223,12 +18290,12 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
+						"\"test\"",
+						"\"network\"",
 						"\"raw_video\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -18322,15 +18389,15 @@
 						"\"unknown\"",
 						"\"hdmi\"",
 						"\"camlink\"",
-						"\"usb\"",
-						"\"network\"",
-						"\"test\"",
 						"\"audio\"",
-						"\"other\"",
 						"\"uvc_h264\"",
 						"\"uvc_h265\"",
 						"\"mjpeg\"",
-						"\"raw_video\""
+						"\"test\"",
+						"\"network\"",
+						"\"raw_video\"",
+						"\"usb\"",
+						"\"other\""
 					],
 					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
@@ -18368,6 +18435,16 @@
 					"path": "autostart",
 					"types": ["undefined", "false", "true"],
 					"decision": "needed: typed scalar or closed enum"
+				},
+				{
+					"path": "auto_reconnect",
+					"types": ["undefined", "false", "true"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+				},
+				{
+					"path": "auto_reconnect_max_s",
+					"types": ["undefined", "number"],
+					"decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
 				},
 				{
 					"path": "remote_key",
@@ -19503,8 +19580,8 @@
 						"null",
 						"\"cellular\"",
 						"\"app\"",
-						"\"network\"",
 						"\"device\"",
+						"\"network\"",
 						"\"engine\"",
 						"\"kernel\"",
 						"\"bonding\"",
@@ -19992,9 +20069,9 @@
 					"path": "append[].family",
 					"types": [
 						"\"cellular\"",
+						"\"device\"",
 						"\"network\"",
 						"\"capture\"",
-						"\"device\"",
 						"\"stream\"",
 						"\"update\""
 					],
@@ -20024,7 +20101,7 @@
 		}
 	],
 	"dependencies": {
-		"apps/backend/src/helpers/config-schemas.ts": "9fbc23665164d9af7404be5a0537910c72f38347c455f221b1b7954691ab9fc9",
+		"apps/backend/src/helpers/config-schemas.ts": "84c9b39445b1be1e6a9e01c7db81b7ac4b6e8c1ab7eb4fba90ba7294f1558622",
 		"apps/backend/src/main.ts": "d4c1672afc99fb31937cb2f04f60c5ba9ba14cb6d03b0cbddc04c354740208fa",
 		"apps/backend/src/mocks/mock-service.ts": "a63bd3928b5eb26f0532d574ddf45b1930b6608267f659c16f05b389fe4ce7f4",
 		"apps/backend/src/mocks/providers/streaming.ts": "75b66fd2f9522b848218dba5f0338473434c0837c5878bab5d3747c12177c925",
@@ -20064,6 +20141,8 @@
 		"apps/backend/src/modules/streaming/pipelines.ts": "ae4583ee7b41116e4161e8ef447e5466ba0c024f8a8a2f74f1f843eb9897ef9e",
 		"apps/backend/src/modules/streaming/sources.ts": "bac77a5fe7cbca7b9a4c078498a83ee445157db0f06a55c618e3ba9b3e33425c",
 		"apps/backend/src/modules/streaming/stream-lifecycle-status.ts": "33aa1a07d69097df21fb3288ef4af93078d71a44e85a7f22d1b79d928357aa80",
+		"apps/backend/src/modules/streaming/stream-reconnect-wiring.ts": "10b5b9b25939c502bf1744722a8ea839a045a9c8321064c67a5ffc794bd89c9e",
+		"apps/backend/src/modules/streaming/stream-reconnect.ts": "74aeef9c2e5d6825bb432608bad0923abb56fadae48d820aac7b4c0d3408e4ec",
 		"apps/backend/src/modules/streaming/streaming.ts": "23c15756441476805f27bd156c71445554ef038417d0c869405e2888c4290147",
 		"apps/backend/src/modules/system/apt-progress.ts": "d7813bc7d07cef5c4e0c0c8199272a5e3ebe0d7c8f6a8c197c30a50b30dc7a8a",
 		"apps/backend/src/modules/system/carrying-runtime.ts": "5cd7325e6a2f1d12187c73bf699a01618666b3330b3b8517c25648690e184d6c",
@@ -20085,7 +20164,7 @@
 		"apps/backend/src/modules/system/tailscale.ts": "b2731b7eed6258db2efef8de0187b03dbf66cdeed37cee035f4c5788dc7f2fdf",
 		"apps/backend/src/modules/system/update-orchestrator/runtime.ts": "82d6821ee4c0f8856ca6f534c84f817c6a6736b8a090fee0a90b50d0b807326f",
 		"apps/backend/src/modules/ui/notifications.ts": "3d236e5edeea33cf1ccd8b1b935ff8680afbe4785a42ace8262f14204f0835f1",
-		"apps/backend/src/modules/ui/status.ts": "ab9c2055f1bfd2d5489abe9a21875691ff6651847b69a23171b6104db1040eff",
+		"apps/backend/src/modules/ui/status.ts": "565fd8fa89b280fab6b2f57d7c20ba5cbd129104e20c13c2784001d9988bb911",
 		"apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "e2c3ce9b12f5eba0d9a91779327bb0990eb240656dcf5aa8d6b160e974700cac",
 		"apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "81ce3006cdb0437edcc66c87134703c36fb2642eac2b5a862396c9ef546972d4",
 		"apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts": "8e599c2a0b7b2fc1772892d89ef51346eb88b77371bf458074b8f1da6f96aea7",
@@ -20095,7 +20174,7 @@
 		"apps/backend/src/rpc/compat.ts": "72b36615b97ab0a66ff668280a088fcef088de4dbf9c4546bd8694bf0373969c",
 		"apps/backend/src/rpc/config-broadcast.ts": "57ee4d91c4ebc82e7351c448b3b4f7ecb2e9951f610c4b1005a7b9903a0ba974",
 		"apps/backend/src/rpc/procedures/network.procedure.ts": "a44dfdcbe37ac32f9c65392671072332b072e50b841344e13dc467954d207640",
-		"apps/backend/src/rpc/procedures/streaming.procedure.ts": "1beba963d32f3c469cd83b992e646069defb81ae9edab4efd736028a52c3e593",
+		"apps/backend/src/rpc/procedures/streaming.procedure.ts": "384eb0d1ed786841926a5c19b65883eabedce9c15b68c0e0110e875f48ca0ef4",
 		"bun.lock": "311175002287ebf799cc23dabe3e294949bc3e12c86b409a1436c747f87a7fd2",
 		"packages/rpc/src/schemas/addons.schema.ts": "4d03862d5f9a8a2353a37ece742a96213d926e0e7ddc735b98329959dbb22ae6",
 		"packages/rpc/src/schemas/audio-level.schema.ts": "eb4bd01a1d605776e8f11eab8c8acb5f8333c6868e0bbab5802a4118f507a225",
@@ -20106,13 +20185,13 @@
 		"packages/rpc/src/schemas/logs.schema.ts": "d56584362e084a92eeb4c5d91d753a317b9f29140b4909ebc3f714e05a723038",
 		"packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
 		"packages/rpc/src/schemas/network.schema.ts": "fd3ccb0b89bd33488e52125e541f4a68ad9a6d9eaa2119769972d58bf961220e",
-		"packages/rpc/src/schemas/notifications.schema.ts": "e9ef46263064939d078285ff30d063664880f8d693ed010c5da15179e7087a60",
+		"packages/rpc/src/schemas/notifications.schema.ts": "e5f04138079183ac1aca0e7599ee4693d5f0924852c2b31357eccdb81af9380f",
 		"packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",
 		"packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",
 		"packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",
 		"packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
-		"packages/rpc/src/schemas/status.schema.ts": "0d20c6279b9dee59945f5322c8c23e8da84f3fce681e00038fe63ee6c37b6f3e",
-		"packages/rpc/src/schemas/streaming.schema.ts": "b590d87d6c753b0f18c3eaf248993ead46e8291fec7b6ba1b25c5145a088b760",
+		"packages/rpc/src/schemas/status.schema.ts": "2d957e30a2acca336931bc3d6c08697e55a04a8fc7850afc130e5b90a939ab72",
+		"packages/rpc/src/schemas/streaming.schema.ts": "fabf55fc0fbaf7a3b07d19201564cc747bc5a19a4c4e8a6622c74530b8086467",
 		"packages/rpc/src/schemas/system.schema.ts": "a20d3c7f8201818af886a9ef0bcbd201683e9bb59b237bff74b40d82c9ce325f",
 		"packages/rpc/src/schemas/update-orchestrator.schema.ts": "ac5e6859c7723d4381f1502246d9778262c663d80d06b5b2eb5aaf1796da5613",
 		"packages/rpc/src/schemas/usb-devices.schema.ts": "0d840933a0d31877d51fd2bf6b91469ec890e96103714c2ee9bf4aaa539cdb7c",

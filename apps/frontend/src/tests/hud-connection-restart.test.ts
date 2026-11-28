@@ -20,7 +20,10 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => {
 		"./fixtures/reactive-hud-restart.svelte"
 	);
 	return {
-		getStatus: () => ({ connection_restarting: state.restarting }),
+		getStatus: () => ({
+			connection_restarting: state.restarting,
+			stream_reconnect: state.reconnect,
+		}),
 	};
 });
 
@@ -103,6 +106,19 @@ describe("the HUD during a supervised connection restart", () => {
 		render(HudBar);
 		expect(leadBadge()).toBe(m["hud.restartingConnection"]());
 		expect(leadBadge()).toBe("Restarting connection");
+		for (const phrase of NEVER) expect(leadBadge()).not.toContain(phrase);
+		expect(screen.queryByTestId("stream-health")).toBeNull();
+	});
+
+	it("says the stream is reconnecting, not idle, during the reconnect window", () => {
+		hudRestart.restarting = true;
+		hudRestart.reconnect = {
+			state: "reconnecting",
+			remaining_ms: 60_000,
+			token: "w1",
+		};
+		render(HudBar);
+		expect(leadBadge()).toBe("Reconnecting");
 		for (const phrase of NEVER) expect(leadBadge()).not.toContain(phrase);
 		expect(screen.queryByTestId("stream-health")).toBeNull();
 	});

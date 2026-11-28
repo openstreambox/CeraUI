@@ -5,7 +5,8 @@
   cockpit is held in summary-only mode after a stop, and `bitrateDraft`, mirrored
   onto `data-bitrate-draft` — the real BitrateAdjuster is purely presentational,
   so the value LiveView threads down IS the value the operator sees. `restarting`
-  is mirrored onto `data-restarting` for the connection-restart test. The summary's
+  is mirrored onto `data-restarting` and the reconnect state onto
+  `data-reconnect` for the connection-restart and reconnect tests. The summary's
   audio line inputs, `audioCurrent` and `audioEmbedded`, are mirrored the same way.
 -->
 <script lang="ts">
@@ -13,6 +14,7 @@ const props: {
 	summaryMode?: boolean;
 	bitrateDraft?: number;
 	restarting?: boolean;
+	reconnect?: { state: string } | null;
 	audioCurrent?: string;
 	audioEmbedded?: boolean;
 } = $props();
@@ -23,6 +25,7 @@ const props: {
 	data-summary-mode={props.summaryMode ? 'true' : 'false'}
 	data-bitrate-draft={props.bitrateDraft}
 	data-restarting={props.restarting ? 'true' : 'false'}
+	data-reconnect={props.reconnect?.state ?? 'none'}
 	data-audio-current={props.audioCurrent}
 	data-audio-embedded={props.audioEmbedded ? 'true' : 'false'}
 ></div>

@@ -7,7 +7,22 @@ import { captureStatusSchema } from '@ceralive/cerastream/dist/capture-status.js
 import { sessionSwitchTargetSchema } from '@ceralive/cerastream/dist/session-switch.js';
 import { z } from 'zod';
 
+export const streamReconnectStatusSchema = z.discriminatedUnion('state', [
+	z.object({
+		state: z.literal('reconnecting'),
+		remaining_ms: z.number().int().nonnegative(),
+		token: z.string().min(1).max(128),
+	}),
+	z.object({
+		state: z.literal('expired'),
+		reason: z.enum(['no_link', 'start_failed']),
+		token: z.string().min(1).max(128),
+	}),
+]);
+export type StreamReconnectStatus = z.infer<typeof streamReconnectStatusSchema>;
+
 // The engine's known `active_encode.route_reason` tokens; the wire accepts future ones too.
+
 export { ROUTE_REASONS } from '@ceralive/cerastream/dist/constants.js';
 export type { SessionSwitchTarget } from '@ceralive/cerastream/dist/session-switch.js';
 
@@ -577,6 +592,12 @@ export const statusResponseSchema = z.object({
 	// Start. Explicit boolean on every snapshot and on each change, for the same
 	// latch reason as `cellular_initializing`. Absent = an older backend.
 	connection_restarting: z.boolean().optional(),
+	// The reconnect window after every link was lost: `reconnecting` with the
+	// time left when published (a client counts down from its own receipt), or
+	// `expired`, when nothing retries until "Keep trying" or Stop. `null` on
+	// every snapshot without one, so a missed frame cannot latch it. Absent = an
+	// older backend.
+	stream_reconnect: streamReconnectStatusSchema.nullable().optional(),
 	// Every enumerated wireless/BT adapter this host bound NO driver to. Emitted
 	// as an EXPLICIT array — `[]` included — from the moment the probe has run,
 	// so a consumer can tell "every adapter is driven" (a positive answer) from
