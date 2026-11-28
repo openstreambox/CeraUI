@@ -3196,6 +3196,7 @@
 	"live.phone.moblinCleared": "このボックスには Moblin のパスワードが保存されていません。",
 	"live.phone.moblinFailed": "Moblin のパスワードを適用できませんでした。ボックスを確認して、もう一度お試しください。すでに保存されている可能性があります。",
 	"live.phone.moblinBusy": "Moblin のパスワードを変更する前に、ボックスがどの配信にも使われていないと確認するまでお待ちください。",
+	"network.sharing.ipv6Only": "この機器の Wi-Fi に接続した端末は、この回線経由で IPv4 サイトにまだアクセスできません。",
 	"systemLogs.tabs.label": "ログの表示",
 	"systemLogs.tabs.events": "イベント",
 	"systemLogs.tabs.raw": "生ログ",
