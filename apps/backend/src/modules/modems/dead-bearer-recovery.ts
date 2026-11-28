@@ -22,9 +22,13 @@
   - the health record for the modem's interface is `down`, its latest
     evidence is a failed probe, and at least DEAD_BEARER_MIN_FAILURES probes
     in a row have failed since the last success;
-  - while a stream runs, the sender has no fresh row for this interface: a
-    link the sender is using and hearing back from is not dead, whatever the
-    probe says;
+  - while a stream runs, the sender's own per-link evidence says this
+    interface carries nothing (`linkCarryingState`: its byte counter stood
+    still across fresh snapshots, CLAT translator traffic counted for its
+    modem). A link that moves stream data is not dead, whatever the probe
+    says, and a row's mere presence proves nothing: the sender keeps a row
+    for every uplink in its IP list. When the evidence is missing, stale or
+    too short ("unknown"), nothing happens;
   - NetworkManager reports the device connected (state 100) and ModemManager
     the modem registered or connected;
   - this module has seen the outage continuously for 60 s while an
@@ -56,7 +60,8 @@ import {
 } from "../network/network-manager.ts";
 import type { UplinkHealthRecord } from "../network/uplink-health/model.ts";
 import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
-import { buildLinkTelemetry } from "../streaming/link-telemetry.ts";
+import type { LinkCarryingState } from "../streaming/link-progress.ts";
+import { linkCarryingState } from "../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import { automaticActivationReady } from "./cellular-preparation.ts";
 import {
@@ -82,7 +87,6 @@ export const DEAD_BEARER_ALONE_HOLD_MS = 300_000;
 export const DEAD_BEARER_STABLE_MS = 300_000;
 export const DEAD_BEARER_AFTER_DIAL_MS = 60_000;
 export const DEAD_BEARER_MIN_FAILURES = 6;
-export const DEAD_BEARER_TELEMETRY_FRESH_MS = 15_000;
 export const DEAD_BEARER_SPACING_MS = [
 	60_000, 120_000, 240_000, 480_000, 900_000,
 ] as const;
@@ -106,8 +110,11 @@ export interface DeadBearerInput {
 	readonly owned: boolean;
 	/** The modem has an active CLAT translator. */
 	readonly translated: boolean;
-	/** The sender has a fresh row for this interface while streaming. */
-	readonly carryingStream: boolean;
+	/**
+	 * `idle` when no stream runs; otherwise the sender's verdict on whether
+	 * stream data goes out on this interface (`linkCarryingState`).
+	 */
+	readonly stream: "idle" | LinkCarryingState;
 	/** NetworkManager device state code of the modem's profile. */
 	readonly nmState: string | undefined;
 	/** ModemManager `modem.generic.state`. */
@@ -169,7 +176,11 @@ export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 	if (!input.owned) return none("profile not owned by preparation");
 	if (input.translated) return none("judged by its translator");
 	if (!outageRecord(record)) return none("no failed-probe outage");
-	if (input.carryingStream) return none("carrying stream traffic");
+	// Only positive evidence of no traffic lets a live link go; "unknown" is
+	// not that evidence.
+	if (input.stream === "carrying") return none("carrying stream traffic");
+	if (input.stream === "unknown")
+		return none("stream traffic on this link unknown");
 	if (input.nmState !== "100") return none("bearer not connected");
 	if (input.mmState !== "registered" && input.mmState !== "connected")
 		return none("modem not registered");
@@ -214,8 +225,9 @@ export interface DeadBearerDeps {
 	/** The physical modem interface a CLAT TUN translates for, if any. */
 	readonly clatParent: (iface: string) => string | undefined;
 	readonly streaming: () => boolean;
-	readonly telemetry: typeof buildLinkTelemetry;
-	/** Wall clock, only to compare with health and telemetry timestamps. */
+	/** The sender's per-link verdict; CLAT translator rows count for the modem. */
+	readonly carrying: (iface: string) => LinkCarryingState;
+	/** Wall clock, only to compare with health record timestamps. */
 	readonly wallNow: () => number;
 	readonly readAutoconnect: (uuid: string) => Promise<string | undefined>;
 	readonly automaticReady: typeof automaticActivationReady;
@@ -246,7 +258,7 @@ const defaultDeps: DeadBearerDeps = {
 	clatParent: (iface) =>
 		isClatTunName(iface) ? clatTranslationForTun(iface)?.parent : undefined,
 	streaming: getIsStreaming,
-	telemetry: buildLinkTelemetry,
+	carrying: linkCarryingState,
 	wallNow: Date.now,
 	readAutoconnect: async (uuid) =>
 		(await nmConnGetFields(uuid, ["connection.autoconnect"] as const))?.[0],
@@ -291,15 +303,8 @@ function translated(iface: string): boolean {
 		.some((record) => deps.clatParent(record.iface) === iface);
 }
 
-function carryingStream(iface: string, wallNow: number): boolean {
-	if (!deps.streaming()) return false;
-	const telemetry = deps.telemetry();
-	if (
-		!telemetry ||
-		wallNow - telemetry.lastReadMs >= DEAD_BEARER_TELEMETRY_FRESH_MS
-	)
-		return false;
-	return telemetry.links.some((link) => link.iface === iface && !link.stale);
+function streamState(iface: string): DeadBearerInput["stream"] {
+	return deps.streaming() ? deps.carrying(iface) : "idle";
 }
 
 /** Inputs read fresh; undefined when the modem is not a candidate at all. */
@@ -327,7 +332,7 @@ async function readInput(
 		record,
 		otherUplinkUp: independentUplinkUp(modem.ifname, wallNow),
 		translated: translated(modem.ifname),
-		carryingStream: carryingStream(modem.ifname, wallNow),
+		stream: streamState(modem.ifname),
 		lastDial: deps.lastDial(key),
 		memory,
 	};
