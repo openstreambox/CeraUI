@@ -2033,7 +2033,12 @@ the background. The orchestrator also proves the name free
 (`proveInstallUnitFree`: `not-found`, nothing else) right before every package
 launch, so a pinned or unreadable unit leaves it in `awaiting-idle` for the next
 tick instead of a recorded `DOWNLOAD_FAILED`, whose `failed` phase would outlive
-the reboot that clears the pin. A proof that finds the unit gone clears the pin
+the reboot that clears the pin. While the install waits on the unit, the orchestrator's wire state
+(only in `awaiting-idle`) carries `install_wait`: `unit_pinned` while the
+stopped unit stays loaded (the device says a restart lets it install) and
+`unit_unreadable` while the unit cannot be read; a tick republishes it when
+it moves without a transition, and Install now refuses with
+`install_unit_waiting` instead of "nothing to install". A proof that finds the unit gone clears the pin
 (a temporary reference, such as a D-Bus client's, can hold a stopped unit for a
 moment). A start that still finds the unit pinned throws
 `DetachedAptServicePinnedError` (as the `cause` of the launch refusal described

@@ -51,6 +51,8 @@ import {
 	getLastInstallUnitVerdict,
 	getUpdateState,
 	type InstallUnitVerdict,
+	type InstallUnitWait,
+	installUnitWait,
 	isAptAllDiscovery,
 	type PackageLaunchTicket,
 	proveInstallUnitFree,
@@ -302,6 +304,8 @@ export interface OrchestratorRuntimeDeps {
 	 * launch. A refused launch then stays a retry instead of a recorded failure.
 	 */
 	readonly installUnitFree?: () => Promise<boolean>;
+	/** Why a queued install waits on the install unit, if it does. */
+	readonly installUnitWait?: () => InstallUnitWait | null;
 	readonly getPackageInstallWireState: () => UpdateState;
 	readonly stopPackageInstallUnit: () => Promise<void>;
 	readonly killAndRestartRaucForStream: () => Promise<void>;
@@ -440,6 +444,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 		startSoftwareUpdate(notePackageCommitSucceeded, ticket),
 	takePackageLaunchRefusal,
 	installUnitFree: proveInstallUnitFree,
+	installUnitWait,
 	getPackageInstallWireState: getUpdateState,
 	stopPackageInstallUnit: stopPackageInstallUnitForStream,
 	killAndRestartRaucForStream,
@@ -804,9 +809,21 @@ export function setOrchestratorStateForTest(next: OrchestratorState): void {
 	adoptState(next);
 }
 
+// A queued install's wait reason only means something while it is queued.
+function currentInstallWait(): InstallUnitWait | null {
+	return state.phase === "awaiting-idle"
+		? (deps.installUnitWait?.() ?? null)
+		: null;
+}
+
+// The wait reason the last published wire state carried.
+let publishedInstallWait: InstallUnitWait | null = null;
+
 export function getOrchestratorWireState(): UpdateOrchestratorWireState {
 	const rollbackAttemptId =
 		state.phase === "kernel-rolled-back" ? state.kernelAttempt?.id : undefined;
+	const installWait = currentInstallWait();
+	publishedInstallWait = installWait;
 	return {
 		schema: 1,
 		phase: state.phase,
@@ -814,7 +831,17 @@ export function getOrchestratorWireState(): UpdateOrchestratorWireState {
 		failure_reason: state.failureReason,
 		cellular_override_id: state.cellularOverrideId,
 		...(rollbackAttemptId === undefined ? {} : { rollbackAttemptId }),
+		...(installWait === null ? {} : { install_wait: installWait }),
 	};
+}
+
+/**
+ * The install unit's wait reason changes without a state transition (a
+ * proof, a pin noted by the launcher), so a queued install republishes it
+ * when it moved.
+ */
+function refreshInstallWait(): void {
+	if (currentInstallWait() !== publishedInstallWait) publishWireState();
 }
 
 export type OsUpdateSummary = {
@@ -988,7 +1015,8 @@ export type ManualInstallOutcome =
 				| "busy"
 				| "not_available"
 				| "stream_active"
-				| "booted_version_unknown";
+				| "booted_version_unknown"
+				| "install_unit_waiting";
 	  };
 
 const PACKAGE_PIPELINE_BUSY_PHASES: readonly OrchestratorState["phase"][] = [
@@ -1104,6 +1132,7 @@ export async function installUpdatesNow(
 		...(scoped ? { isCurrent: () => packageRefusal() === undefined } : {}),
 	});
 	if (launch?.started) return { started: true };
+	refreshInstallWait();
 	if (scoped) {
 		const refusal = packageRefusal();
 		if (refusal) return refusal;
@@ -1113,7 +1142,11 @@ export async function installUpdatesNow(
 		case "streaming":
 			return { started: false, reason: "stream_active" };
 		case "check_unavailable":
-			return { started: false, reason: "not_available" };
+			// Queued, but the install unit's name is not free: say so instead
+			// of "nothing to install".
+			return currentInstallWait() === null
+				? { started: false, reason: "not_available" }
+				: { started: false, reason: "install_unit_waiting" };
 		case "already_updating":
 		case "updates_disabled":
 		case undefined:
@@ -3112,6 +3145,7 @@ export async function runOrchestratorTick(): Promise<void> {
 		const ticket = besideOfferTicket();
 		if (await maybeCheckOsWhilePackagesWait(await deps.loadSettings(), ticket))
 			await maybeStartPackageInstall({ bypassIdle: false });
+		refreshInstallWait();
 	} else if (state.phase === "downloading" || state.phase === "committing") {
 		await readjudicateDeferredDownload();
 		pendingPackageSuccess.assertEffectsAllowed();

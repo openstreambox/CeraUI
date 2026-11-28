@@ -36,6 +36,7 @@ import { dialogActivityPhase } from '$lib/updates/update-dialog-view';
 import { createUpdateSurface } from '$lib/updates/update-surface.svelte';
 import {
 	etaMinutes,
+	installWaitKey,
 	phaseLabelKey,
 	progressPercent,
 	updateCapabilityView,
@@ -84,6 +85,7 @@ const credentialsRejected = $derived(transportCredentialsRejected(details));
 const activityPhase = $derived(dialogActivityPhase(orchestrator, view.system, view.kernel));
 const activityPercent = $derived(activityPhase ? progressPercent(orchestrator) : undefined);
 const activityEta = $derived(activityPhase ? etaMinutes(orchestrator?.progress?.etaSeconds) : undefined);
+const activityWait = $derived(activityPhase ? installWaitKey(orchestrator) : undefined);
 </script>
 
 <AppDialog
@@ -152,6 +154,11 @@ const activityEta = $derived(activityPhase ? etaMinutes(orchestrator?.progress?.
 					<span class="text-muted-foreground">{m['settings.updates.activity.title']()}</span>
 					<span class="font-medium">{resolveMessageKey(phaseLabelKey(activityPhase))}</span>
 				</p>
+				{#if activityWait}
+					<p class="text-muted-foreground text-sm" data-testid="update-install-wait">
+						{resolveMessageKey(activityWait)}
+					</p>
+				{/if}
 				{#if activityPercent !== undefined}
 					<Progress value={activityPercent} />
 					<p class="text-muted-foreground flex justify-between text-xs tabular-nums">

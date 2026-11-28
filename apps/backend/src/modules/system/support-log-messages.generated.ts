@@ -2176,6 +2176,7 @@ export const SUPPORT_REASON_TEMPLATES: readonly (readonly string[])[] = [
 	["identity-unresolved"],
 	["identity_unavailable"],
 	["illegal_lifecycle_transition"],
+	["install_unit_waiting"],
 	["interface-removed"],
 	["invalid-certificate"],
 	["invalid-date"],

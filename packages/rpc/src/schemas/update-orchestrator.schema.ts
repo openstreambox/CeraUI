@@ -205,5 +205,10 @@ export const updateOrchestratorWireStateSchema = z.object({
 	failure_reason: z.string().nullable(),
 	cellular_override_id: z.string().nullable(),
 	rollbackAttemptId: z.uuid().optional(),
+	// Only while `awaiting-idle`: why the queued package install cannot launch
+	// yet. `unit_pinned`: the last install's stopped unit is still loaded, so
+	// a new one waits for a restart; `unit_unreadable`: the install unit could
+	// not be read. Gone once the name is proven free.
+	install_wait: z.enum(['unit_pinned', 'unit_unreadable']).optional(),
 });
 export type UpdateOrchestratorWireState = z.infer<typeof updateOrchestratorWireStateSchema>;
