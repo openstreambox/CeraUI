@@ -2034,6 +2034,8 @@
 	"network.wifiMode.error.noDevice": "The device could not find this adapter, so nothing was changed.",
 	"network.wifiMode.error.unsupported": "This radio does not support the requested mode, so it kept its previous one.",
 	"network.wifiMode.error.capabilityUnproven": "Running Wi-Fi and an access point together has not been proven on this radio, so the device refused the change.",
+	"network.wifiMode.savedHybrid.title": "Hybrid is saved, but this radio cannot run it",
+	"network.wifiMode.savedHybrid.body": "This radio is not qualified to run Wi-Fi and a hotspot at the same time, so the device kept the Wi-Fi connection and did not start the hotspot. Your Hybrid choice and hotspot settings stay saved. Switch to Hotspot to broadcast from this radio alone (its Wi-Fi uplink disconnects), or run the hotspot on another radio.",
 	"network.wifiMode.error.activationFailed": "The adapter could not activate the requested mode and kept its previous one.",
 	"network.wifiMode.error.hybridChannelNotPermitted": "Hybrid is unavailable because the connected Wi-Fi channel does not permit starting a hotspot. Wi-Fi stays connected.",
 	"network.wifiMode.error.notConfirmed": "The device never reported the result, so the adapter's mode is unknown.",
