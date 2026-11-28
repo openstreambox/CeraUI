@@ -670,6 +670,9 @@ test.each([true, false])(
 );
 
 test("Prepare stores new credentials without overwriting an unrecorded saved AP", async () => {
+	// The train acknowledges a store-only pair only once it is on disk.
+	scratch = await mkdtemp(join(tmpdir(), "hotspot-ownership-"));
+	await initHotspotCredentials(join(scratch, "credentials.json"));
 	const iface = radio();
 	profiles.set(FOREIGN, profile(B));
 	const before = JSON.stringify(profiles.get(FOREIGN));
