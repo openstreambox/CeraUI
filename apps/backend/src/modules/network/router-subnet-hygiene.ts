@@ -325,7 +325,7 @@ export async function prepareSubnetRewrite(
 	  }
 > {
 	const isCurrent = netdevLifetimeFence(ifname);
-	if (!supportsSubnetRewrite(vidPid) || !(await deps.isRealDevice())) {
+	if (!supportsSubnetRewrite(vidPid) || !(await deps.canManageModems())) {
 		return { ok: false, reason: "unsupported" };
 	}
 	const bootId = z.uuid().safeParse(readSystemBootId());

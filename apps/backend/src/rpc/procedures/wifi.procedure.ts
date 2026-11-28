@@ -54,7 +54,6 @@ import {
 	hotspotToggleInputSchema,
 	hotspotToggleOutputSchema,
 	type SetWifiAdapterModeOutput,
-	type SuccessResponse,
 	setWifiAdapterModeInputSchema,
 	setWifiAdapterModeOutputSchema,
 	setWifiCountryInputSchema,
@@ -624,7 +623,7 @@ export const setWifiCountryProcedure = authedProcedure
 	.handler(async ({ input }) => {
 		if (shouldUseMocks()) return persistWifiCountry(input.country);
 
-		if (!(await isRealDevice())) {
+		if (!(await hasCapability("wifi-country"))) {
 			return {
 				success: false,
 				error: "unavailable_in_emulated_mode" as const,

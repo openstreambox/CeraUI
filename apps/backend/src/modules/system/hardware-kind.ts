@@ -39,7 +39,7 @@
  *                    field absent) fall through — this MUST NEVER block boot.
  *   2. device-tree — `detectHardwareKindFromDeviceTree()` (Todo 14b): the same
  *                    reliable `/proc/device-tree/compatible`→`model`→DMI probes
- *                    `isRealDevice()` uses. `unknown` (unrecognised board) falls
+ *                    the legacy device classifier uses. `unknown` (unrecognised board) falls
  *                    through rather than guessing.
  *   3. setup.hw    — the static `setup.json` `hw` value (fallback + test seam; NOT
  *                    removed — a dev/CI host with no device-tree and no engine
