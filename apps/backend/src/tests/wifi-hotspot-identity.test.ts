@@ -635,7 +635,7 @@ describe("hotspot prepare — credentials before activation", () => {
 		expect(result.success).toBe(false);
 	});
 
-	test("an existing profile is modified without the checked store write", async () => {
+	test("an existing profile is modified, and the reply waits for the durable store write", async () => {
 		const rec = makeRecorder({
 			findHotspotConn: async () => ({
 				uuid: "profile-uuid",
@@ -644,10 +644,13 @@ describe("hotspot prepare — credentials before activation", () => {
 				channel: "auto",
 			}),
 		});
+		const checked: Array<string | undefined> = [];
+		const remember = rec.deps.credentials.rememberChecked;
 		rec.deps.credentials = {
 			...rec.deps.credentials,
-			rememberChecked: () => {
-				throw new Error("not the store-only path");
+			rememberChecked: (mac, creds) => {
+				checked.push(creds.conn);
+				return remember?.(mac, creds) ?? false;
 			},
 		};
 		const result = await prepareHotspotForInterface(
@@ -663,7 +666,89 @@ describe("hotspot prepare — credentials before activation", () => {
 			password: "my own pass",
 		});
 		expect(rec.setFields.map(([uuid]) => uuid)).toEqual(["profile-uuid"]);
+		expect(checked).toEqual(["profile-uuid"]);
 		expect(rec.activated).toHaveLength(0);
+	});
+
+	test("a modified profile whose store write fails is reported, and memory follows the profile", async () => {
+		const rec = makeRecorder({
+			findHotspotConn: async () => ({
+				uuid: "profile-uuid",
+				ssid: "CERALIVE_791c",
+				password: "old-secret",
+				channel: "auto",
+			}),
+		});
+		rec.deps.credentials = {
+			...rec.deps.credentials,
+			rememberChecked: () => false,
+		};
+		const iface = makeHotspotIface();
+		const result = await prepareHotspotForInterface(
+			PERM_MAC,
+			iface,
+			{ name: "Rig Cam", password: "my own pass" },
+			rec.deps,
+		);
+
+		expect(result).toEqual({
+			success: false,
+			error: "activation-failed",
+			reason: "credential-store-unwritten",
+		});
+		expect(rec.setFields.map(([uuid]) => uuid)).toEqual(["profile-uuid"]);
+		expect(iface.hotspot.name).toBe("Rig Cam");
+	});
+
+	test("an unchanged explicit pair is acknowledged only after a durable write", async () => {
+		const rec = makeRecorder();
+		const iface = makeHotspotIface();
+		const shown = await prepareHotspotForInterface(
+			PERM_MAC,
+			iface,
+			{},
+			rec.deps,
+		);
+		if (!shown.success) throw new Error("prepare failed");
+		let durable = false;
+		rec.deps.credentials = {
+			...rec.deps.credentials,
+			rememberChecked: () => durable,
+		};
+		const pair = { name: shown.name, password: shown.password };
+
+		expect(
+			await prepareHotspotForInterface(PERM_MAC, iface, pair, rec.deps),
+		).toEqual({
+			success: false,
+			error: "activation-failed",
+			reason: "credential-store-unwritten",
+		});
+		durable = true;
+		expect(
+			await prepareHotspotForInterface(PERM_MAC, iface, pair, rec.deps),
+		).toMatchObject({ success: true, ...pair });
+		expect(rec.setFields).toHaveLength(0);
+	});
+
+	test("an explicit pair is refused while the real store is not initialized", async () => {
+		const rec = makeRecorder();
+		rec.deps.credentials = {
+			...rec.deps.credentials,
+			rememberChecked: rememberHotspotCredentialsChecked,
+		};
+		const result = await prepareHotspotForInterface(
+			PERM_MAC,
+			makeHotspotIface(),
+			{ name: "Rig Cam", password: "my own pass" },
+			rec.deps,
+		);
+
+		expect(result).toEqual({
+			success: false,
+			error: "activation-failed",
+			reason: "credential-store-unwritten",
+		});
 	});
 
 	test("a live AP answers with its credentials and accepts no change here", async () => {
@@ -944,6 +1029,17 @@ describe("hotspot credentials store — checked write", () => {
 		expect(JSON.parse(fs.readFileSync(file, "utf8")).adapters[key].ssid).toBe(
 			"a",
 		);
+	});
+
+	test("refuses before the store is initialized and leaves memory unchanged", () => {
+		resetHotspotCredentialsForTest();
+		expect(
+			rememberHotspotCredentialsChecked(PERM_MAC, {
+				ssid: "Rig Cam",
+				password: "my own pass",
+			}),
+		).toBe(false);
+		expect(getHotspotCredentials(PERM_MAC)).toBeUndefined();
 	});
 
 	test("a failed write returns false and leaves memory unchanged", () => {
