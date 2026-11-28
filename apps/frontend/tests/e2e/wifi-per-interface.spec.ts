@@ -133,7 +133,7 @@ test.describe('Per-interface WiFi connect', () => {
 		// At rest the rungs are not merely unopened — a closed bits-ui popover
 		// renders no content at all, so nothing anywhere on the page claims a mode
 		// the operator has not asked to see.
-		await expect(page.getByRole('radio', { name: 'Hotspot', exact: true })).toHaveCount(0);
+		await expect(page.getByRole('radio', { name: 'Share as hotspot', exact: true })).toHaveCount(0);
 
 		const testIds: string[] = [];
 
@@ -148,13 +148,13 @@ test.describe('Per-interface WiFi connect', () => {
 
 			// Exactly ONE hotspot rung behind this radio's affordance, exposing its
 			// accessible name through the mode's own word (getByRole matches it) …
-			const hotspotRung = popover.getByRole('radio', { name: 'Hotspot', exact: true });
+			const hotspotRung = popover.getByRole('radio', { name: 'Share as hotspot', exact: true });
 			await expect(hotspotRung).toHaveCount(1);
 			await expect(hotspotRung).toBeVisible();
 
 			// … rendering the VISIBLE word rather than an icon alone (Todo 14's
 			// deliberate inversion — a mode rung's whole job is to carry its word) …
-			await expect(hotspotRung).toHaveText('Hotspot');
+			await expect(hotspotRung).toHaveText('Share as hotspot');
 
 			// … and keeping the 44px touch-target sizing token.
 			await expect(hotspotRung).toHaveClass(/min-h-\[var\(--touch-target-min\)\]/);
