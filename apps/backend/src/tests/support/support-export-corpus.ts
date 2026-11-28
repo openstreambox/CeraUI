@@ -345,7 +345,7 @@ privateRecords.push(
 	{
 		record: event({
 			level: "error",
-			msg: "nmConnect err: nmcli exited with code 10: Error: No network with SSID 'Bobs Home' found.",
+			msg: "nmConnNew err: nmcli exited with code 10: Error: No network with SSID 'Bobs Home' found.",
 		}),
 		secret: "Bobs Home",
 	},
