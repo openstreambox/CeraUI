@@ -588,7 +588,7 @@ const unlockMarker = () => {
 	chmodSync(otaStreamingMarkerPath(), 0o600);
 };
 
-test("a restart during a stream this backend launched adopts it and refuses a second start", async () => {
+test("a restart during a stream this backend launched keeps it unconfirmed and refuses a second start", async () => {
 	setCarryingOtaProtection(true);
 	const live = launchSession(bootMarker);
 	expect(await live.start()).toMatchObject({ result: "started" });
@@ -597,7 +597,7 @@ test("a restart during a stream this backend launched adopts it and refuses a se
 	const restarted = await restartBackend();
 	const next = launchSession(restarted, undefined, () => "streaming");
 	restarted.setCarryingOtaProtection(true);
-	expect(await next.session.reconcile()).toBe("streaming");
+	expect(await next.session.reconcile()).toBe("reconciling");
 	expect(await next.start()).toMatchObject({ result: "busy" });
 	expect(next.launches()).toBe(0);
 	restarted.setCarryingOtaProtection(false);
@@ -610,13 +610,13 @@ test("a restart during a stream this backend launched adopts it and refuses a se
 });
 
 test.if(unprivileged)(
-	"a stream another client started beside an unwritable line is adopted again after a restart",
+	"a stream another client started beside an unwritable line stays protected and unconfirmed after a restart",
 	async () => {
 		setCarryingOtaProtection(true);
 		// The engine runs a session this backend did not launch.
 		const first = launchSession(bootMarker, undefined, () => "streaming");
 		lockMarker();
-		expect(await first.session.reconcile()).toBe("streaming");
+		expect(await first.session.reconcile()).toBe("reconciling");
 		// Neither the rewrite nor the replacement could take the file.
 		expect(markerLine()).toBe("carrying\n");
 
@@ -626,7 +626,7 @@ test.if(unprivileged)(
 		const next = launchSession(restarted, undefined, () => "streaming");
 		restarted.setCarryingOtaProtection(true);
 		expect(restarted.encoderOtaStreamLiveness()).toBe("unknown");
-		expect(await next.session.reconcile()).toBe("streaming");
+		expect(await next.session.reconcile()).toBe("reconciling");
 		expect(markerLine()).toBe("");
 		expect(await next.start()).toMatchObject({ result: "busy" });
 		expect(next.launches()).toBe(0);
@@ -644,7 +644,7 @@ test.if(unprivileged)(
 		setCarryingOtaProtection(true);
 		const first = launchSession(bootMarker, undefined, () => "streaming");
 		lockMarker();
-		expect(await first.session.reconcile()).toBe("streaming");
+		expect(await first.session.reconcile()).toBe("reconciling");
 		unlockMarker();
 		expect(markerLine()).toBe("carrying\n");
 
@@ -662,7 +662,7 @@ test.if(unprivileged)(
 
 		// The engine is back (the reconnect loop reconciles again).
 		engine = "streaming";
-		expect(await next.session.reconcile()).toBe("streaming");
+		expect(await next.session.reconcile()).toBe("reconciling");
 		expect(markerLine()).toBe("");
 		expect(await next.session.stop("operator")).toEqual({ result: "stopped" });
 		expect(markerPresent()).toBe(false);
@@ -704,7 +704,7 @@ test("one silent answer is not enough when the next one hears a stream", async (
 		restarted,
 	);
 	restarted.setCarryingOtaProtection(true);
-	expect(await session.reconcile()).toBe("streaming");
+	expect(await session.reconcile()).toBe("reconciling");
 	expect(markerLine()).toBe("");
 	expect(await session.stop("operator")).toEqual({ result: "stopped" });
 	restarted.setCarryingOtaProtection(false);
