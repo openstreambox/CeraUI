@@ -34,13 +34,15 @@ export function getDisruptiveActionDecision(options?: {
 	)
 		return { allowed: false, reason: "update_in_progress" };
 	return decideDisruptiveAction({
-		streamLiveness:
-			options?.powerAction === "poweroff" &&
-			setup.engine === "none" &&
-			getStreamLiveness() === "unknown" &&
-			carryingTracker.startupChecking(performance.now())
-				? "idle"
-				: getStreamLiveness(),
+		// A phone-only box may power off while only the restart window's blanket
+		// carrying hold says unknown. Encoder uncertainty and client traffic that
+		// is still qualifying keep refusing.
+		streamLiveness: getStreamLiveness({
+			waiveCarryingStartupHold:
+				options?.powerAction === "poweroff" &&
+				setup.engine === "none" &&
+				carryingTracker.startupChecking(performance.now()),
+		}),
 		updateBusy: [
 			...getOrchestratorDisruptionBusyReasons().filter(
 				(reason) =>
