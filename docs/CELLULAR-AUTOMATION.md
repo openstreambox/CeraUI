@@ -55,6 +55,35 @@ autoconnect choice (or enable a newly created manual profile). Interrupted
 firmware preparation is held for explicit recovery rather than claiming an
 unverified restoration. This has host/fixture evidence only.
 
+### APN for a new SIM
+
+A new SIM's profile normally starts on Automatic APN. NetworkManager then looks
+the APN up in the mobile provider database by the network the modem is
+registered on and takes the first entry marked for internet use. That is the
+wrong APN for a roaming SIM, for an MVNO SIM with its own network code on a host
+network, and where the first entry is an IMS APN. In those cases CeraUI applies
+the APN the database lists for the SIM's own network itself: the profile stays
+on Automatic APN, NetworkManager's own lookup is turned off for it, and the
+modem dialog says beside the switch which APN Automatic APN uses and that it
+comes from the provider database. Saving the dialog with Automatic APN on keeps
+that APN; turning Automatic APN off shows it in the APN field to change. When
+the database lists no internet APN for the SIM's network, NetworkManager keeps
+picking the APN and the dialog says so beside the switch; if mobile data does
+not connect, turn Automatic APN off and enter the provider's APN. Networks that
+a qualified row of the carrier table above covers are left to its takeover.
+
+CeraUI records who chose each APN it writes, next to the profile's automatic or
+manual intent: the provider database (for which network), the carrier table, or
+someone in the modem dialog. A database APN belongs to the SIM it was
+looked up for. A new profile for another SIM of the same operator therefore gets
+its own lookup instead of a copy; an APN someone entered is copied as
+before. Because a database APN keeps the profile automatic, modems admitted for
+transport preparation get their QMAP and raw-IP preparation as with any other
+automatic profile. Existing profiles are never changed. The check runs once,
+when the profile is created: a SIM that was not yet registered is judged as if
+on its home network, so if it later roams and mobile data does not connect,
+enter the APN from your provider.
+
 ### RM520N-GL at USB 2
 
 The RM520N-GL raises its own receiver's noise floor when its USB 3 link is
@@ -207,6 +236,38 @@ Guardar un perfil manual restaura la elección anterior de conexión automática
 o la activa para un perfil manual nuevo. Una preparación de firmware interrumpida
 requiere recuperación explícita; no se supone que se haya restaurado. Estos
 cambios solo tienen pruebas en el host y en entornos de prueba.
+
+### APN para una SIM nueva
+
+El perfil de una SIM nueva empieza normalmente con APN Automático. NetworkManager
+busca entonces el APN en la base de datos de operadores móviles según la red en
+la que está registrado el módem y toma la primera entrada marcada para internet.
+Ese APN es incorrecto para una SIM en roaming, para una SIM de un operador móvil
+virtual con su propio código de red sobre una red anfitriona y cuando la primera
+entrada es un APN de IMS. En esos casos CeraUI aplica él mismo el APN que la base
+de datos indica para la red propia de la SIM: el perfil sigue con APN Automático,
+la búsqueda propia de NetworkManager se desactiva para él y el diálogo del módem
+indica junto al interruptor qué APN usa APN Automático y que viene de la base de
+datos de operadores. Guardar el diálogo con APN Automático activado conserva ese
+APN; al desactivar APN Automático aparece en el campo APN para cambiarlo. Si la
+base de datos no indica ningún APN de internet para la red de la SIM,
+NetworkManager sigue eligiendo el APN y el diálogo lo indica junto al
+interruptor; si los datos móviles no se conectan, desactiva APN Automático e
+introduce el APN de tu operador. Las redes que cubre una fila calificada de la
+tabla de operadores de arriba quedan para esa tabla.
+
+CeraUI registra quién eligió cada APN que escribe, junto a la intención
+automática o manual del perfil: la base de datos de operadores (para qué red), la
+tabla de operadores o alguien en el diálogo del módem. Un APN de la base de
+datos pertenece a la SIM para la que se buscó. Por eso, un perfil nuevo para otra
+SIM del mismo operador hace su propia búsqueda en lugar de copiarlo; un APN
+introducido por alguien se copia como antes. Como un APN de la base de datos
+mantiene el perfil automático, los módems admitidos para la preparación del
+transporte reciben su preparación de QMAP y raw-IP como con cualquier otro perfil
+automático. Los perfiles existentes nunca se modifican. La comprobación se hace
+una sola vez, al crear el perfil: una SIM que aún no estaba registrada se evalúa
+como si estuviera en su red propia; si después está en roaming y los datos
+móviles no se conectan, introduce el APN de tu operador.
 
 ### RM520N-GL en USB 2
 

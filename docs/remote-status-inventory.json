@@ -6149,6 +6149,11 @@
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
 				},
 				{
+					"path": "modems.*.config.apn_source",
+					"types": ["\"provider-database\"", "\"not-listed\""],
+					"decision": "not needed remotely: withhold local network identity, account or management detail"
+				},
+				{
 					"path": "modems.*.no_sim",
 					"types": ["true"],
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -13470,6 +13475,11 @@
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
 				},
 				{
+					"path": "modems.*.config.apn_source",
+					"types": ["\"provider-database\"", "\"not-listed\""],
+					"decision": "not needed remotely: withhold local network identity, account or management detail"
+				},
+				{
 					"path": "modems.*.no_sim",
 					"types": ["true"],
 					"decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -20035,8 +20045,8 @@
 		"apps/backend/src/modules/devices/usb-devices-wire.ts": "6097472a422e724c3979c507064509c8dd6b56e045c62d822a5b72525e3b54e2",
 		"apps/backend/src/modules/devices/usb-events.ts": "3eed84dd1003d7fe60a9aa9742dd74b75118a6daaaf1197546d25ed7bdd94995",
 		"apps/backend/src/modules/modems/modem-network-scan.ts": "b66e5ea40679d5fae6cf922d803f42f306e08bb53bc95ac6ead6d1f5229c00f7",
-		"apps/backend/src/modules/modems/modem-status.ts": "5b2ad8ab2883c13f4c3ec9e47e4c5d2e81e6858631327aa1654233f26d9de1b9",
-		"apps/backend/src/modules/modems/modems-state.ts": "c10839333989d89e998cae6a507f78aacad29117127b22a1a42bed90ef2350e1",
+		"apps/backend/src/modules/modems/modem-status.ts": "ae0a1531183e1203862c338cc615b6e8912e29aa2ad3ec30f183f71b83994ce6",
+		"apps/backend/src/modules/modems/modems-state.ts": "7ef2fcd41c74345fd0d0c4e9c1cfe8940594b4799de31683851cddbc56bfa695",
 		"apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
 		"apps/backend/src/modules/network/network-ingest.ts": "04753a910fc6443947813f8396ee72053d663b3948f1e0ea35a8c973a0fee9dc",
 		"apps/backend/src/modules/network/network-interfaces.ts": "40d32fb0812ac305da0492d8438f4b422a1cceac334955f62d40f44b2d4a18f1",

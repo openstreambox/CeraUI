@@ -458,6 +458,17 @@ readback. A manual save persists manual intent before its NM write, including
 when the APN is unchanged. Corrupt authority defers rather than assuming absence.
 An applied APN is a conflict witness, never carrier identity.
 
+A manual intent holds the operator's APN and an applied automatic intent the
+carrier table's. An APN the provider database chose for a new SIM's profile
+keeps a pending automatic intent expecting that APN, so every build, including
+one booted from the other slot, keeps the profile automatic and prepares its
+transport. The private `apn-provenance.ts` store, a separate authority kind in
+its own directory under the same key, records that the database chose it and
+for which network; it counts only while the pending intent expects that APN and
+NM holds it. Profile copying reads it, never APN values: a database APN is
+never copied to another SIM's profile, which gets its own lookup. Older builds
+never read this directory.
+
 The isolated real-NM fixture uses a private system bus, state/config directories,
 network and mount namespaces, with host rfkill hidden. It verifies profile writes,
 intent rehydration and manual retirement. It does not model a modem, initial

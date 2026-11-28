@@ -7,6 +7,7 @@ import {
 	listPrivateJsonKeys,
 	readPrivateJson,
 } from "../../helpers/private-json-state.ts";
+import { parseApnProvenanceSlot } from "./apn-provenance.ts";
 import { parseCarrierIntentSlot } from "./automatic-carrier-intent.ts";
 import { cellularAuthorityMigration } from "./cellular-authority-store.ts";
 import { parsePreparationRecord } from "./cellular-preparation-state.ts";
@@ -56,6 +57,11 @@ export async function inventoryCellularAuthority(
 			"automatic-carrier-intent",
 			process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR,
 			parseCarrierIntentSlot,
+		],
+		[
+			"apn-provenance",
+			process.env.CERALIVE_APN_PROVENANCE_STATE_DIR,
+			parseApnProvenanceSlot,
 		],
 		[
 			"cellular-preparation",
