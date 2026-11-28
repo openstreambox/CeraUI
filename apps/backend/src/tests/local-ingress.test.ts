@@ -305,7 +305,7 @@ describe("transports", () => {
 			settings: async () => ({
 				getConfig: () => ({ captive_portal_enabled: true }),
 				saveConfig: () => undefined,
-				broadcastMsg: () => undefined,
+				broadcastConfig: () => undefined,
 			}),
 		});
 		const context = createContext(captured.ws as unknown as AppWebSocket);

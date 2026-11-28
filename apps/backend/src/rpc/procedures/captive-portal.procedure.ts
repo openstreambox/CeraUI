@@ -17,10 +17,9 @@ interface PortalDeps {
 	settings(): Promise<{
 		getConfig(): { captive_portal_enabled?: boolean | undefined };
 		saveConfig(): void;
-		broadcastMsg(
-			type: "config",
-			config: { captive_portal_enabled?: boolean | undefined },
-		): void;
+		broadcastConfig(config: {
+			captive_portal_enabled?: boolean | undefined;
+		}): void;
 	}>;
 }
 export function createCaptivePortalProcedure(deps: PortalDeps) {
@@ -54,7 +53,7 @@ export function createCaptivePortalProcedure(deps: PortalDeps) {
 						config.captive_portal_enabled = previous;
 						throw error;
 					}
-					settings.broadcastMsg("config", config);
+					settings.broadcastConfig(config);
 					return (await deps.owner()).status(peer, via);
 				}
 				if (sender) throw Error("Sign in from the box's Wi-Fi.");
@@ -83,7 +82,6 @@ export const captivePortalProcedure = createCaptivePortalProcedure({
 		(await import("../../modules/wifi/captive-portal-runtime.ts")).signInWindow,
 	settings: async () => ({
 		...(await import("../../modules/config.ts")),
-		broadcastMsg: (await import("../../modules/ui/websocket-server.ts"))
-			.broadcastMsg,
+		broadcastConfig: (await import("../config-broadcast.ts")).broadcastConfig,
 	}),
 });
