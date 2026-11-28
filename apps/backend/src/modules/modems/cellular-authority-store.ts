@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
 	type PrivateJsonMigration,
 	PrivateMigrationBusy,
@@ -26,14 +27,19 @@ export type CellularAuthorityKind =
 	| "cellular-preparation"
 	| "cellular-internal-context"
 	| "cellular-internal-owner";
+/** The shared data partition, `/data` unless `CERALIVE_DATA_DIR` moves it, as it
+ * does for the event store and shadow evidence: a dev host or a served test
+ * device never has a `/data`, and an unwritable one reads as a recovery fault. */
 export function cellularAuthorityMigration<T>(
 	kind: CellularAuthorityKind,
 	parse: PrivateJsonMigration<T>["parse"],
+	env: Record<string, string | undefined> = process.env,
 ): PrivateJsonMigration<T> {
+	const data = env.CERALIVE_DATA_DIR?.trim() || "/data";
 	return {
 		source: { dir: `/var/lib/ceralive/${kind}` },
-		destination: { dir: `/data/ceralive/${kind}` },
-		receipts: { dir: `/data/ceralive/${kind}-migration` },
+		destination: { dir: join(data, "ceralive", kind) },
+		receipts: { dir: join(data, "ceralive", `${kind}-migration`) },
 		parse,
 	};
 }
