@@ -43,6 +43,7 @@ import {
 	setMutationBlocks,
 } from "../streaming/lifecycle-admission.ts";
 
+import { syncHeldOutModemNotices } from "./held-out-modem-notice.ts";
 import { readMutationUdevExportDb } from "./modem-id-path-source.ts";
 import { listMutationEntries, mutationSlotName } from "./mutation-journal.ts";
 import {
@@ -225,5 +226,6 @@ export async function reconcileMutationBlocks(
 		readableKeys: new Set(blocking.map((entry) => entry.stableKey)),
 		revision,
 	};
+	syncHeldOutModemNotices(blocks);
 	return { blocks, unreadable };
 }
