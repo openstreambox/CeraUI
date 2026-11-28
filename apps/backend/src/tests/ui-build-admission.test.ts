@@ -148,6 +148,9 @@ const UNGATED = [
 	"getEngine",
 	"getMockHardware",
 	"getPipelines",
+	// "Keep trying" restarts the reconnect window of the session the device
+	// holds, by its token; like "Restart connection", any page may ask.
+	"keepReconnecting",
 	"listDevices",
 	// The train's stale-link "Restart connection" relaunches the session the
 	// device holds; like Stop, an older page may always ask for it.
@@ -155,6 +158,8 @@ const UNGATED = [
 	"setBitrate",
 	"setMockDeviceAttached",
 	"setMockHardware",
+	// A box setting outside Live's source and format choices, like autostart.
+	"setReconnect",
 	"stop",
 	"streamHealth",
 ];

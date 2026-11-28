@@ -44,6 +44,8 @@
 		"src/tests/uplink-steering-source-kernel.test.ts",
 		"src/tests/uplink-steering-mark-layout.test.ts",
 		"src/tests/uplink-steering-rename-kernel.test.ts",
+		"src/modules/streaming/stream-reconnect.test.ts",
+		"src/modules/streaming/connection-restart.test.ts",
 		"test-harness/live-engine-restart.ts"
 	],
 	"exclude": []

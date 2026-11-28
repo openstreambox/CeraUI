@@ -30,7 +30,7 @@ export const notificationNavigateActionSchema = z.object({
 // targets, a command is a TYPED name, never a free-form call. `token` names the
 // one offer the command answers, so a tap on an outdated notice is refused by
 // the device instead of acting on a different situation.
-export const NOTIFICATION_ACTION_COMMANDS = ['restart-connection'] as const;
+export const NOTIFICATION_ACTION_COMMANDS = ['restart-connection', 'keep-reconnecting'] as const;
 export const notificationActionCommandSchema = z.enum(NOTIFICATION_ACTION_COMMANDS);
 export type NotificationActionCommand = z.infer<typeof notificationActionCommandSchema>;
 

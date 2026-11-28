@@ -969,6 +969,11 @@
 		"locales": ["ar", "de", "es", "fr", "hi", "ja", "ko", "pt-BR", "zh"],
 		"reason": "Rockchip RK3588 system-on-chip product name."
 	},
+	"settings.index.autoReconnectMinutes": {
+		"value": "{minutes} min",
+		"locales": ["es", "fr", "pt-BR"],
+		"reason": "\"min\" is the minute symbol in Spanish, French and Portuguese as in English (SI/ISO 80000); only the number placeholder changes."
+	},
 	"settings.index.groups.software": {
 		"value": "Software",
 		"locales": ["de", "es", "pt-BR"],

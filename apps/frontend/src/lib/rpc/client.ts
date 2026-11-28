@@ -39,6 +39,8 @@ import type {
 	HotspotToggleInput,
 	HotspotToggleOutput,
 	InstallUpdatesNowInput,
+	KeepReconnectingInput,
+	KeepReconnectingOutput,
 	KioskConfigureInput,
 	KioskConfigureOutput,
 	KioskOskInput,
@@ -125,6 +127,8 @@ import type {
 	SetModemGpsInput,
 	SetModemGpsOutput,
 	SetPasswordInput,
+	SetReconnectInput,
+	SetReconnectOutput,
 	SetRouterControlInput,
 	SetRouterControlOutput,
 	SetRouterNetModeInput,
@@ -895,6 +899,10 @@ export interface TypedRPC {
 		restartConnection: (
 			input: RestartConnectionInput,
 		) => Promise<RestartConnectionOutput>;
+		keepReconnecting: (
+			input: KeepReconnectingInput,
+		) => Promise<KeepReconnectingOutput>;
+		setReconnect: (input: SetReconnectInput) => Promise<SetReconnectOutput>;
 		setBitrate: (input: BitrateInput) => Promise<BitrateOutput>;
 		getPipelines: () => Promise<unknown>;
 		getAudioCodecs: () => Promise<unknown>;

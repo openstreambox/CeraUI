@@ -17,6 +17,8 @@ import {
 	getEngineOutputSchema,
 	getMockHardwareOutputSchema,
 	type InputMode,
+	keepReconnectingInputSchema,
+	keepReconnectingOutputSchema,
 	listDevicesOutputSchema,
 	pipelinesMessageSchema,
 	reloadAudioDelayInputSchema,
@@ -36,6 +38,8 @@ import {
 	setMockDeviceAttachedOutputSchema,
 	setMockHardwareInputSchema,
 	setMockHardwareOutputSchema,
+	setReconnectInputSchema,
+	setReconnectOutputSchema,
 	setSourceVisibilityInputSchema,
 	setSourceVisibilityOutputSchema,
 	srtEncryptionUnavailable,
@@ -503,19 +507,69 @@ export const streamingStartProcedure = authedProcedure
 export const restartConnectionProcedure = authedProcedure
 	.input(restartConnectionInputSchema)
 	.output(restartConnectionOutputSchema)
-	.handler(async ({ input, context }) => {
+	.handler(async ({ input }) => {
 		const { connectionRestartDeps, requestConnectionRestart } = await import(
 			"../../modules/streaming/connection-restart.ts"
 		);
 		const request = requestConnectionRestart(
 			input.token,
-			await connectionRestartDeps(
-				context.ws as unknown as import("ws").default,
-				"ui",
-			),
+			await connectionRestartDeps("ui"),
 		);
 		void request.done;
 		return request.output;
+	});
+
+/**
+ * "Keep trying" on the reconnect notice or the Live banner: another full
+ * reconnect window, only while the window named by the token is current.
+ */
+export const keepReconnectingProcedure = authedProcedure
+	.input(keepReconnectingInputSchema)
+	.output(keepReconnectingOutputSchema)
+	.handler(async ({ input }) => {
+		const { keepReconnecting } = await import(
+			"../../modules/streaming/stream-reconnect-wiring.ts"
+		);
+		const result = await keepReconnecting(input.token);
+		return result === "reconnecting"
+			? { success: true, result }
+			: { success: false, result, error: "reconnect_not_current" };
+	});
+
+/**
+ * The box's reconnect settings. A running window keeps its deadline; the new
+ * maximum applies from the next window (or "Keep trying"), and turning it off
+ * ends a running automatic window at its next step. A save that fails changes
+ * nothing in memory. The echo is the one config broadcast every setting uses
+ * (rpc/config-broadcast.ts), in its public form (rpc/events.ts).
+ */
+export const setReconnectProcedure = authedProcedure
+	.input(setReconnectInputSchema)
+	.output(setReconnectOutputSchema)
+	.handler(async ({ input }) => {
+		const { reconnectSettings } = await import(
+			"../../modules/streaming/stream-reconnect.ts"
+		);
+		const config = getConfig();
+		const before = {
+			auto_reconnect: config.auto_reconnect,
+			auto_reconnect_max_s: config.auto_reconnect_max_s,
+		};
+		if (input.enabled !== undefined) config.auto_reconnect = input.enabled;
+		if (input.max_s !== undefined) config.auto_reconnect_max_s = input.max_s;
+		try {
+			saveConfig();
+		} catch (error) {
+			config.auto_reconnect = before.auto_reconnect;
+			config.auto_reconnect_max_s = before.auto_reconnect_max_s;
+			throw error;
+		}
+		broadcastConfig(config);
+		const applied = reconnectSettings(config);
+		return {
+			success: true,
+			applied: { enabled: applied.enabled, max_s: applied.maxMs / 1000 },
+		};
 	});
 
 /**
@@ -665,6 +719,8 @@ export const getConfigProcedure = authedProcedure
 			// means the device never opted in, which the UI must NOT read as an
 			// explicit `false` (see configMessageSchema).
 			modem_provisioning: config.modem_provisioning,
+			auto_reconnect: config.auto_reconnect,
+			auto_reconnect_max_s: config.auto_reconnect_max_s,
 		};
 	});
 

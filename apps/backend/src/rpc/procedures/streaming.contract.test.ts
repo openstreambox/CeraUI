@@ -28,6 +28,7 @@ import { updateStatus } from "../../modules/streaming/streaming.ts";
 import { appRouter } from "../router.ts";
 import type { AppWebSocket, RPCContext } from "../types.ts";
 import {
+	keepReconnectingProcedure,
 	reloadAudioDelayProcedure,
 	restartConnectionProcedure,
 	setAudioMixProcedure,
@@ -35,6 +36,7 @@ import {
 	setConfigProcedure,
 	setMockDeviceAttachedProcedure,
 	setMockHardwareProcedure,
+	setReconnectProcedure,
 	setSourceVisibilityProcedure,
 	streamingStartProcedure,
 	streamingStopProcedure,
@@ -93,6 +95,18 @@ const MUTATIONS: ReadonlyArray<{
 		name: "restartConnection",
 		procedure: restartConnectionProcedure,
 		args: { token: "no-current-offer" },
+	},
+	// No reconnect window is current in the idle baseline: refused.
+	{
+		name: "keepReconnecting",
+		procedure: keepReconnectingProcedure,
+		args: { token: "no-current-window" },
+	},
+	// The defaults, so the baseline other tests read is unchanged.
+	{
+		name: "setReconnect",
+		procedure: setReconnectProcedure,
+		args: { enabled: true, max_s: 120 },
 	},
 	{
 		name: "setBitrate",
@@ -218,6 +232,79 @@ describe("streaming setter-contract — contains-envelope (S3)", () => {
 			error: "offer_not_current",
 		});
 		expect(result).not.toHaveProperty("reason");
+	});
+
+	test("Keep trying without a current reconnect window is refused with an error, never a reason", async () => {
+		const result = await callMutation(keepReconnectingProcedure, {
+			token: "no-current-window",
+		});
+		expect(result).toEqual({
+			success: false,
+			result: "refused",
+			error: "reconnect_not_current",
+		});
+	});
+
+	test("setReconnect persists and answers what was applied", async () => {
+		const result = await callMutation(setReconnectProcedure, { max_s: 300 });
+		expect(result).toEqual({
+			success: true,
+			applied: { enabled: true, max_s: 300 },
+		});
+		expect(getConfig().auto_reconnect_max_s).toBe(300);
+		const off = await callMutation(setReconnectProcedure, { enabled: false });
+		expect(off).toEqual({
+			success: true,
+			applied: { enabled: false, max_s: 300 },
+		});
+		await callMutation(setReconnectProcedure, { enabled: true, max_s: 120 });
+		await expect(
+			callMutation(setReconnectProcedure, { max_s: 5 }),
+		).rejects.toThrow();
+	});
+
+	test("setReconnect echoes through the one config broadcast, in its public form, and a failed save changes nothing", async () => {
+		const { spyOn } = await import("bun:test");
+		const compat = await import("../compat.ts");
+		const { buildMessage } = await import("../events.ts");
+		const configModule = await import("../../modules/config.ts");
+		const wire: string[] = [];
+		const broadcast = spyOn(compat, "broadcastMsg").mockImplementation(
+			(type: string, data: unknown) => {
+				if (type === "config") wire.push(buildMessage(type, data));
+			},
+		);
+		const stored = getConfig();
+		const before = { srt_streamid: stored.srt_streamid };
+		stored.srt_streamid = "publish-key-4417";
+		try {
+			await callMutation(setReconnectProcedure, { max_s: 600 });
+			expect(wire).toHaveLength(1);
+			const frame = JSON.parse(wire[0] ?? "{}").config;
+			expect(frame).toMatchObject({
+				auto_reconnect: true,
+				auto_reconnect_max_s: 600,
+				srt_streamid_configured: true,
+			});
+			expect(wire[0]).not.toContain("publish-key-4417");
+			const save = spyOn(configModule, "saveConfig").mockImplementation(() => {
+				throw new Error("disk full");
+			});
+			try {
+				await expect(
+					callMutation(setReconnectProcedure, { enabled: false, max_s: 60 }),
+				).rejects.toThrow();
+			} finally {
+				save.mockRestore();
+			}
+			expect(getConfig().auto_reconnect).toBe(true);
+			expect(getConfig().auto_reconnect_max_s).toBe(600);
+			expect(wire).toHaveLength(1);
+		} finally {
+			broadcast.mockRestore();
+			stored.srt_streamid = before.srt_streamid;
+			await callMutation(setReconnectProcedure, { enabled: true, max_s: 120 });
+		}
 	});
 
 	test("domain-rich mutations carry success WITHOUT a forced applied field", async () => {

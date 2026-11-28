@@ -53,6 +53,7 @@ import PhoneBoxHealth from './PhoneBoxHealth.svelte';
 
 import DeviceStatsSection from './settings/DeviceStatsSection.svelte';
 import PortalSetting from './settings/PortalSetting.svelte';
+import ReconnectSetting from './settings/ReconnectSetting.svelte';
 import RemoteControlStatus from './settings/RemoteControlStatus.svelte';
 import ThermalNotice from './settings/ThermalNotice.svelte';
 
@@ -419,6 +420,7 @@ let now = $state(Date.now());
 									/>
 								</span>
 							</div>
+							<ReconnectSetting />
 						{/if}
 						<!-- Row titles and descriptions wrap instead of truncating: at 390 px a
 						     one-line description cut most of them mid-sentence ("Set the password
