@@ -272,6 +272,58 @@ test("a journal begun without a usable census holds its unit as unproven", async
 	expect((await readMutationEntry(KEY))?.state).toBe("failed");
 });
 
+test("a journal begun while a usable census missed the modem holds its unit as unproven", async () => {
+	useUdevDevice("fixture-original-5b2");
+	// The parser reads the export, but the modem's record is not in it.
+	setMutationCaptureDeps({
+		...createUsbEnumerator({ readUdevDatabase: async () => USB_ROOT }),
+	});
+	const failed = await withJournaledModemMutation(
+		KEY,
+		"usb-mode",
+		PRE_STATE,
+		async () => ({
+			confirmed: false,
+			value: undefined,
+		}),
+	);
+	expect(failed.ok).toBe(true);
+	const entry = await readMutationEntry(KEY);
+	if (entry === undefined)
+		throw new Error("fixture mutation was not journaled");
+	expect(entry.unitUnproven).toBe(true);
+	expect(entry.unitLinkId).toBeUndefined();
+	await commitMutationEntry({ ...entry, state: "executing" });
+	// A later occupant with the same descriptors is not the restored original.
+	useUdevDevice("fixture-replacement-a72");
+	const summary = await initMutationRecovery();
+	expect(summary.rolledBack).toBe(0);
+	expect((await readMutationEntry(KEY))?.state).toBe("failed");
+});
+
+test("a serial-less modem the census lists keeps descriptor-only replay", async () => {
+	useDevice(present());
+	const failed = await withJournaledModemMutation(
+		KEY,
+		"usb-mode",
+		PRE_STATE,
+		async () => ({
+			confirmed: false,
+			value: undefined,
+		}),
+	);
+	expect(failed.ok).toBe(true);
+	const entry = await readMutationEntry(KEY);
+	if (entry === undefined)
+		throw new Error("fixture mutation was not journaled");
+	expect(entry.unitUnproven).toBeUndefined();
+	expect(entry.unitLinkId).toBeUndefined();
+	await commitMutationEntry({ ...entry, state: "executing" });
+	const summary = await initMutationRecovery();
+	expect(summary.rolledBack).toBe(1);
+	expect(await readMutationEntry(KEY)).toBeUndefined();
+});
+
 test.each(["fixture ABC123", "fixture_ABC123"])(
 	"a remembered shared digest for %s prevents capture and unit verification",
 	async (remembered) => {
