@@ -361,7 +361,7 @@ describe("ADR-003 publication protocol", () => {
 			"utf8",
 		);
 		expect(session).toContain(
-			"if (publication.changed && getIsStreaming()) restartSrtla();",
+			"if (publication.changed && getIsStreaming()) void restartSrtla();",
 		);
 	});
 });

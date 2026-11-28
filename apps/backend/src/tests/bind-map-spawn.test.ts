@@ -15,7 +15,10 @@ import {
 	resolveBindMapArgs,
 } from "../modules/streaming/bind-map-spawn.ts";
 import type { PublishedBond } from "../modules/streaming/srtla.ts";
-import type { CapabilityProbeResult } from "../modules/streaming/srtla-capabilities.ts";
+import {
+	type CapabilityProbeResult,
+	classifyCapabilityDocument,
+} from "../modules/streaming/srtla-capabilities.ts";
 
 const TWIN_IP = "192.168.8.100";
 const SIDECAR = "/tmp/srtla_ips.bindmap.json";
@@ -133,4 +136,25 @@ describe("pre-spawn bind-map gate", () => {
 			expect(h.causes).toHaveLength(1);
 		}
 	});
+});
+
+test("intentional empty mode requires explicit support and a valid bind map", async () => {
+	for (const offered of [true, "true", undefined]) {
+		const probe = classifyCapabilityDocument(
+			0,
+			JSON.stringify({
+				capabilities: { bind_map: true, allow_empty_bond: offered },
+			}),
+		);
+		expect(
+			await resolveBindMapArgs(EXEC, harness(publishedBond, probe).deps),
+		).toEqual([
+			"--bind-map",
+			SIDECAR,
+			...(offered === true ? ["--allow-empty-bond"] : []),
+		]);
+		expect(
+			await resolveBindMapArgs(EXEC, harness(failedBond, probe).deps),
+		).toEqual([]);
+	}
 });

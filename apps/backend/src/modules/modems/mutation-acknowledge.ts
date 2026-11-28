@@ -66,7 +66,7 @@ import {
 } from "./mutation-journal-revision.ts";
 import { isLegalMutationTransition } from "./mutation-journal-state.ts";
 import { withRetirementKey } from "./mutation-retirement-key.ts";
-import { statesMatch } from "./mutation-rollback.ts";
+import { captureModemUnitLinkId, statesMatch } from "./mutation-rollback.ts";
 import { resolveMutationDevice } from "./router-subnet-recovery-device.ts";
 
 function fail(error: ModemMutationAckOutput["error"]): ModemMutationAckOutput {
@@ -169,6 +169,21 @@ async function acknowledgeHeld(
 	if (device.status !== "present") return fail("read_failed");
 
 	if (mode === "verified-rollback") {
+		if (
+			entry.unitLinkId !== undefined &&
+			device.identity === "usb-descriptor"
+		) {
+			// A different unit at the journaled port is not the original device.
+			let unitLinkId: string | undefined;
+			try {
+				unitLinkId = await captureModemUnitLinkId(stableKey);
+			} catch {
+				return fail("read_failed");
+			}
+			if (!isMutationJournalRevisionCurrent(revision))
+				return fail("not_blocked");
+			if (unitLinkId !== entry.unitLinkId) return quarantine(entry);
+		}
 		// Descriptor equality cannot verify an irreversible eUICC profile operation.
 		if (entry.kind === "esim") return fail("state_mismatch");
 		if (entry.kind === "router-subnet") {
