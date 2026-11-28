@@ -1650,6 +1650,27 @@ test("an engine restart restores the single input a Start's engine took instead 
 	expect(await restart()).toEqual(device("Primary"));
 });
 
+test("an engine restart restores the single input a Start sent when the shared snapshot had no mix", async () => {
+	// Assembly leaves the mix out before any engine is asked; the engine the
+	// restoration reaches does advertise it.
+	const snapshot = async (caps: GetCapabilitiesResult) => {
+		clearCapabilitiesCache();
+		await initPipelines({
+			fetchEngineCapabilities: async () => ({
+				caps,
+				schemaVersion: SCHEMA_VERSION,
+			}),
+			fetchEngineDevices: async () => ({ devices: [] }),
+		});
+	};
+	await snapshot({ ...CAPS, audio_mix: undefined });
+	await running("Primary", "mix");
+	expect(launchedAudio()).toEqual([device("Primary")]);
+	expect(captureArmedStreamConfig().audio_inputs).toBeNull();
+	await snapshot(CAPS);
+	expect(await restart()).toEqual(device("Primary"));
+});
+
 test("an engine restart restores the level the engine applied, not the one asked for", async () => {
 	liveEngine(undefined, (update) => ({ ...update, gain_db: -11 }));
 	await running("Primary", "mix");
