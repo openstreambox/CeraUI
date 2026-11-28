@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { expect, type Page, test } from "./fixtures/index.js";
 
-import { evidencePath, navigateTo } from "./helpers";
+import { ensureAuthenticated, evidencePath, navigateTo } from "./helpers";
 
 /**
  * T18 — SSH / power / update surface regressions (ceraui-os-interaction-ux),
@@ -335,3 +335,62 @@ test.describe(
 		});
 	},
 );
+
+for (const [reason, message] of [
+	[
+		"shutdown_inhibited",
+		"Shutdown was refused while streaming, carrying client traffic, or protected by another shutdown lock. Stop the activity and try again.",
+	],
+	[
+		"other_users",
+		"Other users are logged in. Ask them to finish before trying again.",
+	],
+	[
+		"shutdown_unavailable",
+		"Shutdown is unavailable. Check the system service before trying again.",
+	],
+	[
+		"shutdown_uncertain",
+		"The power request could not be confirmed. Check the box before trying again.",
+	],
+] as const) {
+	test(
+		`power refusal ${reason} stays on screen with relevant emergency guidance`,
+		{ tag: reason === "shutdown_inhibited" ? "@visual" : "@functional" },
+		async ({ page }, testInfo) => {
+			await page.addInitScript(installWsHarness, TOKEN);
+			await page.goto("/");
+			await ensureAuthenticated(page);
+			await openSettingsDialog(page, /Reboot \/ Power/);
+			const power = page.getByRole("dialog", { name: POWER_DIALOG });
+			await expect(power).toBeVisible();
+			await expect(power.getByText(/Emergency override \(root\)/)).toHaveCount(0);
+			if (reason === "shutdown_inhibited")
+				await page.screenshot({
+					path: evidencePath(`power-ready-${testInfo.project.name}.png`),
+					animations: "disabled",
+				});
+			await armFake(page, "system.reboot", { success: false, failureReason: reason });
+			await power.getByRole("button", { name: "Reboot", exact: true }).click();
+			const confirm = page.getByRole("dialog", { name: "Are you sure?" });
+			await confirm.getByRole("button", { name: "Reboot", exact: true }).click();
+			const refusal = page.getByText(message);
+			await expect(refusal).toBeVisible();
+			await expect.poll(async () => {
+				const bounds = await refusal.boundingBox();
+				return bounds !== null && bounds.y >= 0 &&
+					bounds.y + bounds.height <= (page.viewportSize()?.height ?? 0);
+			}).toBe(true);
+			await expect(power.getByText(/Emergency override \(root\)/)).toHaveCount(
+				reason === "shutdown_inhibited" ? 1 : 0,
+			);
+			await expect(power).toBeVisible();
+			await expect(page.locator('[data-disconnect-banner="rebooting"]')).toHaveCount(0);
+			if (reason === "shutdown_inhibited")
+				await page.screenshot({
+					path: evidencePath(`power-refused-${testInfo.project.name}.png`),
+					animations: "disabled",
+				});
+		},
+	);
+}
