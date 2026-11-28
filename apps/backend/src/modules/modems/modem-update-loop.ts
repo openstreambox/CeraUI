@@ -84,6 +84,7 @@ import {
 	refreshModemIdPaths,
 } from "./modem-wire-producer.ts";
 import { getModem, getModemIds, removeModem } from "./modems-state.ts";
+import { reconcileReturnedMutationBlocks } from "./mutation-blocks.ts";
 import { maybeAutoUnlockSimPins } from "./sim-autounlock.ts";
 import {
 	type ModemDiffEntry,
@@ -375,6 +376,8 @@ export async function runModemStatusPoll(): Promise<void> {
 		logger.warn("Radio diagnostics unavailable for this poll");
 	}
 	broadcastRadioHealth();
+	// Presence reconciliation must not delay carrier work or radio observations.
+	await reconcileReturnedMutationBlocks();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -61,6 +61,12 @@ export async function verifyMigratedPrivateJson<T>(
 	)
 		throw new Error("Private authority migration is incomplete or changed");
 }
+export class PrivateMigrationBusy extends Error {
+	constructor() {
+		super("Private authority migration is busy");
+	}
+}
+
 /** Copy authority before writing a migration receipt. The source is retained.
  * A receipt permits subsequent destination updates or deletion without reviving
  * the old baseline. Changed source authority and conflicting copies block.
@@ -80,7 +86,7 @@ export async function withMigratedPrivateJson<T, Result>(
 	if (migration.source.dir === migration.destination.dir)
 		throw new Error("Migration requires independent stores");
 	const lease = await io.acquire(migration.receipts, key);
-	if (!lease) throw new Error("Private authority migration is busy");
+	if (!lease) throw new PrivateMigrationBusy();
 	try {
 		const sourceValue = await io.read(migration.source, key),
 			source =

@@ -69,6 +69,7 @@ import type {
 	ModemBandsInput,
 	ModemBandsOutput,
 	ModemCapabilitiesOutput,
+	ModemClearUnreadableRecordInput,
 	ModemConfigInput,
 	ModemConfigOutput,
 	ModemCredentialsInput,
@@ -932,6 +933,9 @@ export interface TypedRPC {
 		getRadioHealth: () => Promise<
 			Record<string, import("@ceraui/rpc/schemas").RadioHealth>
 		>;
+		clearUnreadableRecord: (
+			input: ModemClearUnreadableRecordInput,
+		) => Promise<ModemMutationAckOutput>;
 		configure: (input: ModemConfigInput) => Promise<ModemConfigOutput>;
 		scan: (input: ModemScanInput) => Promise<ModemScanOutput>;
 		unlockSim: (input: SimUnlockInput) => Promise<SimUnlockOutput>;
