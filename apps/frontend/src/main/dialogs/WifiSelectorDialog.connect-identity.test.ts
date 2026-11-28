@@ -400,6 +400,11 @@ describe("WifiSelectorDialog — radio-local disconnect and forget", () => {
 		operation: "disconnect" | "forget",
 		ssid: string,
 	) {
+		// Disconnect and Forget live in the network's Manage panel, not on the row.
+		const manage = screen.getByRole("button", { name: `Manage ${ssid}` });
+		if (manage.getAttribute("aria-expanded") !== "true") {
+			await fireEvent.click(manage);
+		}
 		await fireEvent.click(
 			screen.getByRole("button", {
 				name: `${operation === "disconnect" ? "Disconnect" : "Forget"} ${ssid}`,
