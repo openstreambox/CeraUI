@@ -75,8 +75,8 @@ export type ProbeCandidate = {
  * BOND — and "do not send bonded video over this link" is not "this link may
  * not be used to check whether the device has Internet". Excluding it here
  * would silently widen this fix into a behaviour change for every
- * operator-disabled interface. The two error flags already imply `enabled ===
- * false`, so nothing dup-IP or hotspot escapes through this.
+ * operator-disabled interface. Nothing dup-IP or hotspot escapes through this:
+ * the error flags are read directly above.
  */
 export function probeExclusionReason(
 	entry: NetworkInterface | undefined,
