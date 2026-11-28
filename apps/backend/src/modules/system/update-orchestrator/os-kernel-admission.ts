@@ -16,6 +16,7 @@ import {
 } from "./kernel-state.ts";
 import { cmsSigner, fetchAsOta } from "./os-agent.ts";
 import type { OsChannelManifest } from "./os-manifest.ts";
+import { manifestSignerRefusal } from "./os-manifest-signer.ts";
 import { readRootSlots } from "./slot-status.ts";
 import {
 	decodeAuthorityUtf8,
@@ -40,15 +41,7 @@ export async function verifyKernelSidecar(
 	const signer = await verify(data, signature).catch((cause: unknown) => {
 		throw new KernelUpdateError("os_kernel_identity_unknown", { cause });
 	});
-	if (
-		signer.cn !== "CeraLive OTA Manifest Signer" ||
-		!signer.eku.includes("codeSigning") ||
-		signer.eku.includes("emailProtection") ||
-		![
-			"CN=CeraLive RAUC Intermediate CA,O=CeraLive",
-			"CN=CeraLive RAUC Bench Intermediate CA,O=CeraLive",
-		].includes(signer.issuer)
-	)
+	if (manifestSignerRefusal(signer))
 		throw new KernelUpdateError("os_kernel_identity_unknown");
 	const parsed = osKernelSidecarSchema.parse(
 		parseAuthorityJson(decodeAuthorityUtf8(data)),
