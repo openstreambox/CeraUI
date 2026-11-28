@@ -3739,5 +3739,17 @@
 	"notifications.power.sink": "电源板无法与某个移动电源的充电芯片通信。该移动电源无法启动设备，也无法暂停供电。",
 	"notifications.power.unproven": "电源板无法确认有移动电源在为设备供电。备用电池过热时，它不会自动关闭设备。",
 	"notifications.power.jump": "备用电池的温度突然升高。传感器可能有故障。如果温度一直这么高，设备将在一分钟后关机。",
-	"notifications.power.status": "{text}"
+	"notifications.power.status": "{text}",
+	"network.changeSafety.askBefore.own": "此更改会断开你通过 {via} 与盒子的连接。",
+	"network.changeSafety.askBefore.unknown": "此更改可能会断开你与盒子的连接。",
+	"network.changeSafety.askBefore.undo": "进行更改（如果我在 {seconds} 秒内未确认则撤销）",
+	"network.changeSafety.askBefore.keep": "我知道自己在做什么：断开我的连接，不要撤销。我可能需要切换连接或重置盒子才能重新连上。",
+	"network.changeSafety.confirm.prompt": "仍然连接着？请在 {seconds} 秒内确认，否则盒子会撤销更改。",
+	"network.changeSafety.confirm.action": "确认",
+	"network.changeSafety.notice.disconnected": "没有人及时确认此更改，所以盒子已撤销它。仍要进行更改吗？",
+	"network.changeSafety.notice.restart": "在你确认前网络已重启，所以盒子已撤销它。仍要更改吗？",
+	"network.changeSafety.notice.make": "进行更改",
+	"network.changeSafety.notice.leave": "保持撤销",
+	"network.changeSafety.kept.undo": "撤销上一次网络更改",
+	"network.changeSafety.summary.ethernetRole": "{ifname} 端口角色更改"
 }

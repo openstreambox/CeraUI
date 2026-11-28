@@ -163,6 +163,7 @@ function makeDeps(
 		refreshInterfaces: () => {
 			applySharedLanBondGate(getNetworkInterfaces());
 		},
+		networkChangeTouches: async () => false,
 		...over,
 	};
 }
