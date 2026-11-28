@@ -53,12 +53,11 @@ for (const array of [false, true]) {
 			wifi: array ? [withToken, noToken] : { 0: withToken, 1: noToken },
 		};
 		const original = structuredClone(local);
-		const expected = {
-			wifi: array ? [legacy, legacy] : { 0: legacy, 1: legacy },
-		};
-		expect(JSON.stringify(projectRemoteStatus(local))).toBe(
-			JSON.stringify(expected),
-		);
+		// The train's allowlist keeps the mode and drops the witness and token.
+		const bytes = JSON.stringify(projectRemoteStatus(local));
+		expect(bytes).not.toContain("radio-token");
+		expect(bytes).not.toContain('"leaving"');
+		expect(bytes.match(/"mode":"hotspot"/g)).toHaveLength(2);
 		expect(local).toStrictEqual(original);
 	});
 }

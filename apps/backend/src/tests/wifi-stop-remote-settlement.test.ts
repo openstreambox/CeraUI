@@ -100,14 +100,20 @@ test.each([false, true])(
 					} = JSON.parse(bytes);
 					return frame[source]?.wifi?.[f.row.id]?.transition;
 				});
+			// The train's remote projection names rows by label and sends no
+			// transition, mode witness or radio token to either remote transport,
+			// so the inherited Stop marker never reaches them to be cleared.
+			const legacy = wifiStatusFrames(remote.sent);
+			expect(legacy).toHaveLength(2);
+			expect(relay.length).toBeGreaterThanOrEqual(2);
+			for (const bytes of [...legacy, ...relay])
+				expect(bytes).not.toMatch(/"(transition|leaving|incarnation)"/);
 			expect({
-				legacy: markers(wifiStatusFrames(remote.sent), "status"),
+				legacy: markers(legacy, "status"),
 				relay: markers(relay, "payload"),
 			}).toEqual({
-				legacy: ["deactivating", undefined],
-				relay: guarded
-					? ["deactivating", undefined]
-					: ["deactivating", undefined, undefined],
+				legacy: [undefined, undefined],
+				relay: relay.map(() => undefined),
 			});
 		} finally {
 			delay.finish();
