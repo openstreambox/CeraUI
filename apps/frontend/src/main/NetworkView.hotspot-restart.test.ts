@@ -262,19 +262,21 @@ it.each([
 	},
 );
 
-it("closes an editor that first mounts after its radio was replaced", async () => {
+it("closes an editor whose radio is replaced before its first render", async () => {
 	await push(liveRow("radio-A"));
 	const { default: NetworkView } = await import("./NetworkView.svelte");
 	render(NetworkView);
 	await tick();
 	const button = await screen.findByTestId("open-hotspot-dialog");
+	// The click captures radio-A; radio-B replaces it before the lazy editor
+	// renders its first frame, and no later frame follows.
 	button.click();
-	wire.message("status", {
-		wifi: { "0": withheld({ transition: "activating" }) },
-	});
-	await screen.findByTestId("hotspot-status");
-	await push(liveRow("radio-B"));
-	await closedWithNotice();
+	wire.message("status", { wifi: { "0": liveRow("radio-B") } });
+	await waitFor(() => expect(toast.warning).toHaveBeenCalledWith(RADIO_LOST));
+	expect(screen.queryByTestId("hotspot-status")).toBeNull();
+	await tick();
+	expect(screen.queryByTestId("hotspot-status")).toBeNull();
+	expect(toast.warning).toHaveBeenCalledTimes(1);
 });
 
 it("settles a detached Save after Setup is reopened on the replacement radio", async () => {
