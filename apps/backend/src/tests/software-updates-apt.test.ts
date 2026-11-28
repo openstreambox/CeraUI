@@ -305,6 +305,8 @@ describe("buildDetachedAptUpgradeCommand() — service-cgroup isolation", () => 
 			"systemd-run",
 			"--unit=ceralive-software-update.service",
 			"--description=CeraLive software update",
+			// A shutdown's write drain waits for it, without keeping it loaded.
+			"--property=Before=ceralive-write-drain.service",
 			"--remain-after-exit",
 			"--quiet",
 			"--service-type=exec",
