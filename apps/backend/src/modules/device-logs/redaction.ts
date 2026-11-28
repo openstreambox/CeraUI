@@ -25,6 +25,23 @@ function isLocalIPv4(a: number, b: number): boolean {
 	);
 }
 
+// SRT passphrase fields by name, as srt-secret-redaction.ts masks them, so a value
+// that is no longer held (changed, cleared or never loaded) stays out too.
+const NAMED_PASSPHRASES: readonly RegExp[] = [
+	/(?<=passphrase=)(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s&"']+)/gi,
+	/(?<=passphrase"\s*:\s*)"(?:[^"\\]|\\.)*"/gi,
+	/(?<=passphrase\\"\s*:\s*\\")(?:\\\\\\\\|\\\\\\"|\\\\[^"\\]|[^"\\])+(?=\\")/gi,
+];
+
+function namedPassphrase(match: string): string {
+	// Already masked upstream of the journal, possibly with trailing punctuation.
+	if (match === '""' || /^"?\[REDACTED(?::[a-z0-9_]+)?\]/.test(match))
+		return match;
+	return match.startsWith('"')
+		? '"[REDACTED:srt_passphrase]"'
+		: "[REDACTED:srt_passphrase]";
+}
+
 /** Held values shorter than this are not matched: too many false hits. */
 export const MIN_REDACTED_LENGTH = 4;
 
@@ -38,7 +55,7 @@ interface Redactor {
 	 */
 	readonly unredacted: readonly string[];
 	structured(value: string | number | boolean | null): void;
-	/** Held secrets only, without the identifier and address patterns. */
+	/** Held secrets and SRT passphrase fields, without identifier and address patterns. */
 	known(value: string): { readonly text: string; readonly redactions: number };
 	text(
 		value: string,
@@ -114,12 +131,20 @@ export function buildRedactor(
 			if (exact.test(String(value))) throw new BundleReadError("collision");
 		},
 		known(value: string) {
-			if (exact === null) return { text: value, redactions: 0 };
 			let redactions = 0;
-			const text = value.replace(exact, (match) => {
-				redactions++;
-				return literals.get(percentCase(match)) ?? "[REDACTED]";
-			});
+			let text =
+				exact === null
+					? value
+					: value.replace(exact, (match) => {
+							redactions++;
+							return literals.get(percentCase(match)) ?? "[REDACTED]";
+						});
+			for (const pattern of NAMED_PASSPHRASES)
+				text = text.replace(pattern, (match) => {
+					const next = namedPassphrase(match);
+					if (next !== match) redactions++;
+					return next;
+				});
 			return { text, redactions };
 		},
 		text(value: string, exempt) {
@@ -267,6 +292,7 @@ export function buildRedactor(
 				/eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+/g,
 				() => "[REDACTED:token]",
 			);
+			for (const pattern of NAMED_PASSPHRASES) mask(pattern, namedPassphrase);
 			spans.sort((a, b) => a.start - b.start);
 			const merged: typeof spans = [];
 			for (const span of spans) {
