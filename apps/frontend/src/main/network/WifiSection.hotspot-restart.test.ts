@@ -300,3 +300,58 @@ it("settles a detached Save after Setup is reopened on the replacement radio", a
 	expect(screen.getByTestId("hotspot-status")).toBeTruthy();
 	expect(configure).toHaveBeenCalledTimes(1);
 });
+
+/** Setup again on the radio now on screen. */
+async function reopen() {
+	await fireEvent.click(screen.getByTestId("open-hotspot-setup"));
+	await screen.findByTestId("hotspot-status");
+}
+
+it.each([
+	["oldest first", ["radio-A", "radio-B"]],
+	["newest first", ["radio-B", "radio-A"]],
+] as const)(
+	"settles two detached Saves on successive radios (%s)",
+	async (_case, order) => {
+		await push(liveRow("radio-A"));
+		await openEditor();
+		for (const [token, replacement] of [
+			["radio-A", "radio-B"],
+			["radio-B", "radio-C"],
+		] as const) {
+			await fireEvent.click(screen.getByTestId("hotspot-save"));
+			await waitFor(() =>
+				expect(getOperationPhase(wifiHotspotConfigOpKey("0", token))).toBe(
+					"pending",
+				),
+			);
+			await push(liveRow(replacement));
+			await waitFor(() =>
+				expect(screen.queryByTestId("hotspot-status")).toBeNull(),
+			);
+			await reopen();
+		}
+		expect(configure).toHaveBeenCalledTimes(2);
+		expect(toast.warning).toHaveBeenCalledTimes(2);
+
+		for (const token of order) {
+			wire.message("wifi", {
+				hotspot: { config: { device: 0, incarnation: token, success: true } },
+			});
+			await tick();
+			expect(getOperationPhase(wifiHotspotConfigOpKey("0", token))).toBe(
+				"confirmed",
+			);
+		}
+		expect(getOperationPhase(wifiHotspotConfigOpKey("0", "radio-A"))).toBe(
+			"confirmed",
+		);
+		expect(getOperationPhase(wifiHotspotConfigOpKey("0", "radio-B"))).toBe(
+			"confirmed",
+		);
+		expect(getOperationPhase(wifiHotspotConfigOpKey("0", "radio-C"))).toBe(
+			"idle",
+		);
+		expect(screen.getByTestId("hotspot-status")).toBeTruthy();
+	},
+);
