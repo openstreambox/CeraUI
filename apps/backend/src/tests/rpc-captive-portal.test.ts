@@ -42,7 +42,7 @@ const captivePortalProcedure = createCaptivePortalProcedure({
 		saveConfig: () => {
 			if (failSave) throw Error("disk full");
 		},
-		broadcastMsg: () => undefined,
+		broadcastConfig: () => undefined,
 	}),
 });
 const context = (authenticated = true) =>
