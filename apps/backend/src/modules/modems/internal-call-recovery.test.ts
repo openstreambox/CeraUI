@@ -1,8 +1,10 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { acquirePrivateStateLease } from "../../helpers/private-state-lease.ts";
+import { recordFsyncsPerTest } from "../../tests/helpers/recorded-fsync.ts";
 import { cellularHandoffSteps } from "../network/cellular-host-handoff.ts";
 import { resetLifecycleInterlock } from "../streaming/lifecycle-admission.ts";
 import {
@@ -43,6 +45,13 @@ import {
 } from "./mutation-journal.ts";
 import { mutationSlotName } from "./mutation-journal-parse.ts";
 
+// Real files, recorded fsyncs: no test waits on another process's writeback.
+let observeSync: ((path: string) => void) | undefined;
+recordFsyncsPerTest((path) => observeSync?.(path));
+afterEach(() => {
+	observeSync = undefined;
+});
+
 function required<T>(value: T | undefined): T {
 	if (value === undefined) throw new Error("Synthetic authority unavailable");
 	return value;
@@ -79,6 +88,50 @@ async function fixture(
 		resetLifecycleInterlock();
 		await rm(dir, { recursive: true, force: true });
 	}
+}
+/** Interleaves the fixture's modem and host effects with each sync of the
+ * journal, owner and context stores, named by the record state it makes
+ * durable. Lease files and directory ancestry are left out. */
+function recordStoreSyncs(f: Awaited<ReturnType<typeof state>>) {
+	const journal = realpathSync(f.journalDir),
+		root = dirname(journal),
+		owner = join(root, "0"),
+		context = join(root, "1"),
+		entry = join(journal, `${mutationSlotName(f.initial.stableKey)}.json`),
+		stores = new Map([
+			[journal, "journal"],
+			[owner, "owner"],
+			[context, "context"],
+		]),
+		log: string[] = [];
+	let effects = 0;
+	const flush = () => {
+		log.push(...f.events.slice(effects));
+		effects = f.events.length;
+	};
+	const records = (dir: string) =>
+		readdirSync(dir).filter((name) => name.endsWith(".json"));
+	observeSync = (path) => {
+		flush();
+		if (path === journal)
+			log.push(
+				`journal directory, ${existsSync(entry) ? JSON.parse(readFileSync(entry, "utf8")).state : "no entry"}`,
+			);
+		else if (path === owner)
+			log.push(
+				`owner directory, ${records(owner).length ? "record" : "no record"}`,
+			);
+		else if (path === context)
+			log.push(
+				`context directory, ${records(context).map((name) => JSON.parse(readFileSync(join(context, name), "utf8")).phase)}`,
+			);
+		else if (stores.has(dirname(path)))
+			log.push(`${stores.get(dirname(path))} temporary`);
+	};
+	return () => {
+		flush();
+		return log.filter((value, index) => value !== log[index - 1]);
+	};
 }
 async function state(journalDir: string) {
 	const equipment = "000000000000001",
@@ -329,6 +382,7 @@ async function state(journalDir: string) {
 test("startup restores the current unit context and host before completing its journal and releasing its lease", async () =>
 	fixture(async (f) => {
 		await commitMutationEntry(f.entry());
+		const syncs = recordStoreSyncs(f);
 		const retained = await retainInternalCallInverse(f.initial, f.deps);
 		expect(retained).toBeDefined();
 		expect(
@@ -358,6 +412,32 @@ test("startup restores the current unit context and host before completing its j
 		expect(lease).toBeDefined();
 		lease?.release();
 		expect(await required(retained).cleanup()).toBe(true);
+		// Each modem effect follows the context cursor synced for it, each host
+		// effect follows a synced owner record, and the journal's completion was
+		// synced before the owner record's removal, after the last effect.
+		const log = syncs();
+		expect(
+			log.filter((value) =>
+				/^(context directory|activate-|define)/.test(value),
+			),
+		).toEqual([
+			"context directory, deactivating",
+			"activate-false",
+			"context directory, defined",
+			"context directory, restoring",
+			"define",
+			"context directory, parked",
+		]);
+		for (const [index, value] of log.entries())
+			if (/^(up|managed|ra)-/.test(value))
+				expect(log[index - 1]).toBe("owner directory, record");
+		expect(log.slice(log.indexOf("nm-close") + 1)).toEqual([
+			"journal temporary",
+			"journal directory, executing",
+			"journal temporary",
+			"journal directory, completed",
+			"owner directory, no record",
+		]);
 	}));
 
 test("consumer and host uncertainty retain authority without acquiring a modem control", async () =>

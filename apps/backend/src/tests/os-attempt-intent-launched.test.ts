@@ -1,5 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
+import { existsSync, realpathSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { OsAgentError } from "../modules/system/update-orchestrator/os-agent.ts";
+import { OS_ATTEMPT_INTENT_NAME } from "../modules/system/update-orchestrator/os-attempt-intent-store.ts";
 import { OsStageError } from "../modules/system/update-orchestrator/os-stage-error.ts";
 import { loadOrchestratorState } from "../modules/system/update-orchestrator/persistence.ts";
 import {
@@ -8,11 +11,44 @@ import {
 	installUpdatesNow,
 } from "../modules/system/update-orchestrator/runtime.ts";
 import { lifecycleFixture } from "./helpers/os-attempt-lifecycle-fixture.ts";
+import { recordFsyncsPerTest } from "./helpers/recorded-fsync.ts";
+
+// Real files, recorded fsyncs: no test waits on another process's writeback.
+let observeSync: ((path: string) => void) | undefined;
+recordFsyncsPerTest((path) => observeSync?.(path));
 
 const fixtures: ReturnType<typeof lifecycleFixture>[] = [];
 afterEach(() => {
+	observeSync = undefined;
 	for (const f of fixtures.splice(0)) f.cleanup();
 });
+
+/** Names each sync of the fixture's state directory by what it makes durable:
+ * a store's temporary file, or the directory with or without the intent. */
+function stateDirectorySyncs(f: ReturnType<typeof lifecycleFixture>) {
+	const dir = realpathSync(dirname(f.file)),
+		intent = join(dir, OS_ATTEMPT_INTENT_NAME),
+		syncs: string[] = [];
+	observeSync = (path) => {
+		if (path === dir)
+			syncs.push(
+				`directory, intent ${existsSync(intent) ? "present" : "absent"}`,
+			);
+		else if (dirname(path) !== dir) return;
+		else if (basename(path).startsWith(`.${OS_ATTEMPT_INTENT_NAME}.`))
+			syncs.push("intent temporary");
+		else if (basename(path).startsWith(`.${basename(f.file)}.`))
+			syncs.push("state temporary");
+	};
+	return syncs;
+}
+/** The syncs before and after the producer ran, repeats collapsed. */
+function aroundProducer(syncs: string[]) {
+	const runs = syncs.filter((sync, index) => sync !== syncs[index - 1]),
+		launch = runs.indexOf("producer");
+	expect(launch).toBeGreaterThan(0);
+	return { before: runs.slice(0, launch), after: runs.slice(launch + 1) };
+}
 
 for (const [reason, mode] of [
 	["os_transport_failed", "automatic"],
@@ -26,8 +62,10 @@ for (const [reason, mode] of [
 		// Given an actual runtime launch with a private on-disk job and intent.
 		const f = lifecycleFixture();
 		fixtures.push(f);
+		const syncs = stateDirectorySyncs(f);
 		await f.offer({
 			stageOs: async () => {
+				syncs.push("producer");
 				throw new OsStageError(reason);
 			},
 		});
@@ -43,6 +81,19 @@ for (const [reason, mode] of [
 			mode,
 			reason,
 		});
+		// The launching intent's record and its directory were synced before the
+		// producer ran; after it, the settled round reached the directory before
+		// the intent's removal did, and that removal was synced last.
+		const { before, after } = aroundProducer(syncs);
+		expect(before.slice(before.lastIndexOf("intent temporary"))).toEqual([
+			"intent temporary",
+			"directory, intent present",
+		]);
+		expect(after).toEqual([
+			"state temporary",
+			"directory, intent present",
+			"directory, intent absent",
+		]);
 		await f.restart();
 		expect(await loadOrchestratorState(f.file)).toEqual(settled);
 		expect(f.intentStore.read()).toBeNull();

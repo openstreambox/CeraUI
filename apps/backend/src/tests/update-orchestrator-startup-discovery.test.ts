@@ -1,4 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
+import { readFileSync, realpathSync } from "node:fs";
+import { basename, dirname } from "node:path";
 import {
 	loadOrchestratorState,
 	saveOrchestratorState,
@@ -19,9 +21,15 @@ import {
 	NOW,
 	runtimeFixture,
 } from "./helpers/os-unlaunched-runtime-fixture.ts";
+import { recordFsyncsPerTest } from "./helpers/recorded-fsync.ts";
+
+// Real files, recorded fsyncs: no test waits on another process's writeback.
+let observeSync: ((path: string) => void) | undefined;
+recordFsyncsPerTest((path) => observeSync?.(path));
 
 const fixtures: ReturnType<typeof runtimeFixture>[] = [];
 afterEach(() => {
+	observeSync = undefined;
 	for (const f of fixtures.splice(0)) f.cleanup();
 });
 
@@ -80,11 +88,29 @@ for (const kind of ["packages", "os"] as const) {
 				: { osCheck: { ...history, lastAttemptAt: NOW } }),
 		};
 		saveOrchestratorState(baseline, f.file);
+		const dir = realpathSync(dirname(f.file)),
+			syncs: string[] = [];
+		observeSync = (path) => {
+			if (path === dir)
+				syncs.push(
+					`directory, ${JSON.parse(readFileSync(f.file, "utf8")).phase}`,
+				);
+			else if (
+				dirname(path) === dir &&
+				basename(path).startsWith(`.${basename(f.file)}.`)
+			)
+				syncs.push("state temporary");
+		};
 		// When startup loads the interrupted phase.
 		await startUpdateOrchestrator(f.deps);
 		const settled = getOrchestratorState();
 		// Then normalization is durable, preserves history and permits explicit discovery again.
 		expect(settled).toEqual(normalizeStartupDiscovery(baseline, NOW));
+		// The idle record was synced before its rename and its directory after it.
+		expect(syncs.filter((sync, i) => sync !== syncs[i - 1])).toEqual([
+			"state temporary",
+			"directory, idle",
+		]);
 		expect(await loadOrchestratorState(f.file)).toEqual(settled);
 		expect((await checkUpdatesNow()).started).toBe(true);
 		expect(checks).toBe(1);
