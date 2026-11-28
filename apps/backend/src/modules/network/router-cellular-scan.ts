@@ -68,6 +68,7 @@ import {
 	hasNetdevWitness,
 	type NetdevWitness,
 	netdevChanged,
+	netdevEvidenceContinues,
 	netdevWitness,
 	noteNetdevWitness,
 	onNetdevRetired,
@@ -862,10 +863,16 @@ async function runUsbNetScan(
 					current.present !== false && hasNetdevWitness(current),
 				);
 				stale.add(name);
-			} else if (
-				netdevChanged(previous, read.witness) ||
-				hasNetdevWitness(read.witness) !== hasNetdevWitness(current)
-			) {
+			} else if (netdevChanged(previous, read.witness)) {
+				// The scan's first read already saw a different netdev than the one
+				// recorded. That read is the evidence; the final one need not repeat it.
+				retireNetdev(
+					name,
+					true,
+					read.witness.present !== false && hasNetdevWitness(read.witness),
+				);
+				stale.add(name);
+			} else if (hasNetdevWitness(read.witness) !== hasNetdevWitness(current)) {
 				stale.add(name);
 			} else {
 				noteNetdevWitness(name, current);
@@ -915,8 +922,12 @@ async function runUsbNetScan(
 		setPresentPhysicalDevices(presentDeviceRecords());
 		let identified = false;
 		for (const [name, descriptor] of physicalDescriptors) {
+			const read = reads.get(name);
 			if (
 				awaitingReplacementIdentity.has(name) &&
+				// The anchoring read must positively continue the held successor.
+				read !== undefined &&
+				netdevEvidenceContinues(netdevWitness(name), read.witness) &&
 				(descriptor.deviceClass === "wired-ethernet" ||
 					resolvePhysicalDevice(descriptor).anchor !== "ifname")
 			) {
