@@ -8,6 +8,7 @@ import {
 	flushReplies,
 	RESTORE,
 	resetTab,
+	ScriptedSocket,
 	start,
 	TOKEN,
 } from "../../tests/harness/scripted-socket";
@@ -20,24 +21,49 @@ beforeAll(async () => {
 	await import("../../main/Auth.svelte");
 }, COMPILE_MS);
 
+/** The socket the client opens next, after its reconnect backoff. */
+async function nextSocket(): Promise<ScriptedSocket> {
+	const count = ScriptedSocket.instances.length;
+	for (
+		let waited = 0;
+		waited < 60_000 && ScriptedSocket.instances.length === count;
+		waited += 250
+	)
+		await vi.advanceTimersByTimeAsync(250);
+	const socket = ScriptedSocket.instances.at(-1);
+	if (!socket) throw new Error("No pending WebSocket");
+	socket.open();
+	return socket;
+}
+
 beforeEach(resetTab);
 
-it("retains the token and offers sign-in on a live replay timeout after first-run setup", async () => {
+it("retains the token and offers sign-in after repeated live replay timeouts after first-run setup", async () => {
 	const { first, replace, setupPassword, signIn, auth, subscriptions } =
 		await start();
 	await setupPassword(true);
 	await signIn();
 
-	const second = replace(first);
-	expect(second.request("auth.login").input).toEqual(RESTORE);
-	// RPC deadline, not a sleep: no auth reply arrives on this open link.
-	for (let elapsed = 0; elapsed < 30_000; elapsed += 10_000) {
-		second.push({ ping: { t: Date.now() } });
-		await vi.advanceTimersByTimeAsync(10_000);
+	// The train's re-auth recycles a socket whose replay gets no answer and
+	// replays on the next one; only the third stall offers sign-in.
+	let socket = replace(first);
+	for (let stall = 1; stall <= 3; stall++) {
+		expect(socket.request("auth.login").input).toEqual(RESTORE);
+		// RPC deadline, not a sleep: no auth reply arrives on this open link.
+		for (let elapsed = 0; elapsed < 30_000; elapsed += 10_000) {
+			socket.push({ ping: { t: Date.now() } });
+			await vi.advanceTimersByTimeAsync(10_000);
+		}
+		expect(socket.sent.map(({ path }) => path.join("."))).toEqual([
+			"auth.login",
+		]);
+		if (stall < 3) {
+			expect(auth.getAuthStatus()).toBe(true);
+			socket = await nextSocket();
+		}
 	}
 	expect(auth.getAuthStatus()).toBe(false);
 	expect(localStorage.getItem("auth")).toBe(TOKEN);
-	expect(second.sent.map(({ path }) => path.join("."))).toEqual(["auth.login"]);
 	expect(subscriptions.getStatus()?.set_password).not.toBe(true);
 });
 
@@ -109,16 +135,24 @@ it("signs out on rejection, without sending protected reads or replaying again",
 });
 
 it.each(["not remembered", "cleared by another tab"] as const)(
-	"requires sign-in without replay when the credential is %s",
+	"replays this tab's own token when the credential is %s, without writing the shared slot",
 	async (reason) => {
 		const { first, replace, signIn, auth } = await start();
 		await signIn(reason !== "not remembered");
 		if (reason === "cleared by another tab") localStorage.removeItem("auth");
 
+		// The train signs every new socket in with the token this tab holds in
+		// memory, whether or not it was remembered, so a dropped link does not
+		// end a signed-in session. The shared slot stays as the sign-in left it.
 		const second = replace(first);
 		await flushReplies();
-		expect(second.sent).toEqual([]);
-		expect(auth.getAuthStatus()).toBe(false);
+		expect(
+			second.sent.map(({ path, input }) => [path.join("."), input]),
+		).toEqual([["auth.login", RESTORE]]);
+		second.reply("auth.login", { success: true });
+		await flushReplies();
+		expect(auth.getAuthStatus()).toBe(true);
+		expect(localStorage.getItem("auth")).toBeNull();
 	},
 );
 
@@ -141,12 +175,16 @@ it("gives each replacement its own replay even when older login and hydration ar
 
 	const second = replace(first);
 	const third = replace(second);
+	// The train settles the interrupted attempt before replaying on the newest
+	// socket, one turn later.
+	await flushReplies();
 	expect(third.request("auth.login").input).toEqual(RESTORE);
 	second.reply("auth.login", { success: false });
 	third.reply("auth.login", { success: true });
 	await flushReplies();
 	third.reply("streaming.getConfig", {});
 	const fourth = replace(third);
+	await flushReplies();
 	expect(fourth.request("auth.login").input).toEqual(RESTORE);
 	third.reply("status.getStatus", {});
 	await flushReplies();
