@@ -61,6 +61,7 @@ const predicates = [
 	"quiescence-thrown",
 	"live-producer-conflict",
 	"foreign-or-unrecorded-guardian",
+	"guard-not-retired",
 	"signed-candidate-expired",
 ] as const;
 type StageFailurePredicate = (typeof predicates)[number];
