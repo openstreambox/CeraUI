@@ -116,7 +116,13 @@ function radio({
 		conn,
 		hw: "aa:bb:cc:dd:ee:01",
 		saved,
-		saved_key_mgmt: { [CHOSEN_UUID]: "wpa-psk" },
+		// The device reports key management for every saved profile.
+		saved_key_mgmt: {
+			[CHOSEN_UUID]: "wpa-psk",
+			...Object.fromEntries(
+				Object.values(saved).map((uuid) => [uuid, "wpa-psk"]),
+			),
+		},
 		available: ssids.map((ssid) => ({
 			active: ssid === activeSsid,
 			ssid,
