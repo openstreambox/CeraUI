@@ -957,24 +957,27 @@ test("a stable identity deadline is inclusive and does not release a peer early"
 	expectVeto(before);
 });
 
-test("an ineligible alias is vetoed only if the actual legacy migration leaves no candidate", async () => {
+// Bond preferences are keyed by the exact link id only. An older serial
+// spelling neither excludes a link nor migrates to present devices, so the
+// alias disable leaves eth1 in the bond whether or not eth1's physical record
+// is in the presence registry.
+test("an ineligible alias is not vetoed by a legacy opt-out that no longer applies", async () => {
 	const request = { ...backupOff, name: "held0" };
-	const migrated = await replay("legacy-migrated", "REAL", "none", "migrate", [
-		request,
-	]);
-	const unseen = await replay(
-		"legacy-unseen",
-		"REAL",
-		"none",
-		"unseen-legacy",
-		[request],
-	);
-	expect(unseen.frames.at(-1)).toEqual({
-		id: "request-0",
-		result: { success: true, applied: request },
-	});
-	expect(unseen.after.bond.map(({ iface }) => iface)).toEqual(["eth1"]);
-	expectVeto(migrated);
+	const legacy = physicalRecord("legacy", "fixture:legacy").linkId;
+	const exact = physicalRecord("held0", "fixture:eth0").linkId;
+	for (const [label, topology] of [
+		["legacy-migrated", "migrate"],
+		["legacy-unseen", "unseen-legacy"],
+	] as const) {
+		const row = await replay(label, "REAL", "none", topology, [request]);
+		expect(row.before.bond.map(({ iface }) => iface)).toEqual(["eth0", "eth1"]);
+		expect(row.frames.at(-1)).toEqual({
+			id: "request-0",
+			result: { success: true, applied: request },
+		});
+		expect(row.after.bond.map(({ iface }) => iface)).toEqual(["eth1"]);
+		expect(row.after.preferences).toEqual({ [legacy]: true, [exact]: true });
+	}
 });
 
 test("a held USB function is vetoed only if the shared exact opt-out removes the last candidate", async () => {
