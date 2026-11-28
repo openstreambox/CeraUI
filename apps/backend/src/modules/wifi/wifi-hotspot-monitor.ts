@@ -34,6 +34,7 @@ import {
 	getWifiState,
 	setWifiState,
 } from "./state/wifi-state.ts";
+import { waitForHotspotReadiness } from "./wifi-hotspot-readiness.ts";
 import {
 	ownsWifiAdapterLock,
 	wifiAdapterLockKey,
