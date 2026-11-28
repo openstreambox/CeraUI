@@ -187,7 +187,8 @@ afterEach(async () => {
 	await rm(dir, { recursive: true, force: true });
 });
 
-function useUdevDevice(serial: string, rawSerial?: string): void {
+/** `serial` undefined is a record whose serial udev did not export. */
+function useUdevDevice(serial: string | undefined, rawSerial?: string): void {
 	const udev = [
 		"P: /devices/platform/test/usb1/1-4",
 		"E: DEVTYPE=usb_device",
@@ -196,7 +197,7 @@ function useUdevDevice(serial: string, rawSerial?: string): void {
 		`E: ID_MODEL=${PRE_STATE.model}`,
 		`E: ID_REVISION=${PRE_STATE.firmwareRevision}`,
 		`E: ID_PATH=${KEY}`,
-		`E: ID_SERIAL_SHORT=${serial}`,
+		...(serial === undefined ? [] : [`E: ID_SERIAL_SHORT=${serial}`]),
 		"E: DEVNUM=004",
 		"E: ID_USB_INTERFACES=:ff0000:",
 		"",
@@ -240,6 +241,78 @@ test("the journal captures a unit and replay does not verify a different unit on
 	expect(getMutationBlocks()).toEqual([
 		expect.objectContaining({ unitLinkId: entry.unitLinkId }),
 	]);
+});
+
+describe("a journaled unit is replaced only when one enumeration identifies another", () => {
+	async function journalOriginal(): Promise<ModemMutationEntry> {
+		useUdevDevice("fixture-original-5b2");
+		const failed = await withJournaledModemMutation(
+			KEY,
+			"usb-mode",
+			PRE_STATE,
+			async () => ({
+				confirmed: false,
+				value: undefined,
+			}),
+		);
+		expect(failed.ok).toBe(true);
+		const entry = await readMutationEntry(KEY);
+		if (entry?.unitLinkId === undefined)
+			throw new Error("fixture mutation was not journaled with its unit");
+		const executing = { ...entry, state: "executing" as const };
+		await commitMutationEntry(executing);
+		return executing;
+	}
+
+	test("a device whose unit udev did not establish is retried, not quarantined", async () => {
+		const entry = await journalOriginal();
+		// The original is back, but its record lacks the serial.
+		useUdevDevice(undefined);
+		const summary = await initMutationRecovery();
+		expect(summary.quarantined).toBe(0);
+		expect(summary.unreadable).toBe(1);
+		expect(await readMutationEntry(KEY)).toEqual(entry);
+		expect(isRecoveryPending()).toBe(true);
+		// Control: with its serial exported again, the retry restores it.
+		useUdevDevice("fixture-original-5b2");
+		expect((await initMutationRecovery()).rolledBack).toBe(1);
+		expect(await readMutationEntry(KEY)).toBeUndefined();
+	});
+
+	test("a census that missed the original is not paired with a later one that sees it", async () => {
+		const entry = await journalOriginal();
+		const parsed = modemControl.createUsbEnumerator({
+			readUdevDatabase: async () =>
+				[
+					"P: /devices/platform/test/usb1/1-4",
+					"E: DEVTYPE=usb_device",
+					"E: ID_VENDOR_ID=2c7c",
+					"E: ID_MODEL_ID=0801",
+					`E: ID_MODEL=${PRE_STATE.model}`,
+					`E: ID_REVISION=${PRE_STATE.firmwareRevision}`,
+					`E: ID_PATH=${KEY}`,
+					"E: ID_SERIAL_SHORT=fixture-original-5b2",
+					"E: DEVNUM=004",
+					"E: ID_USB_INTERFACES=:ff0000:",
+					"",
+					"P: /devices/platform/test/usb1/1-4/1-4:1.0",
+					"E: DEVTYPE=usb_interface",
+					"E: DRIVER=qmi_wwan",
+				].join("\n"),
+		});
+		let censuses = 0;
+		setMutationCaptureDeps({
+			// The first census misses the original as it re-enumerates.
+			enumerate: async () => (censuses++ === 0 ? [] : parsed.enumerate()),
+			readSerial: async () => undefined,
+			readDevnum: async () => "4",
+		});
+		const summary = await initMutationRecovery();
+		expect(summary.quarantined).toBe(0);
+		expect(summary.unreadable).toBe(1);
+		expect(await readMutationEntry(KEY)).toEqual(entry);
+		expect(isRecoveryPending()).toBe(true);
+	});
 });
 
 test("a journal begun without a usable census holds its unit as unproven", async () => {
