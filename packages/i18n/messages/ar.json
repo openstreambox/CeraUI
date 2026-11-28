@@ -3205,6 +3205,7 @@
 	"settings.portal.experimentalDescription": "متوقف افتراضيًا. سجّل الدخول إلى شبكة Wi-Fi الفندق من هاتفك. لا يزال يحتاج إلى اختبار على شبكات حقيقية. إيقافه يمنع فتح فترات جديدة؛ والفترات المفتوحة تُغلَق خلال عشر دقائق.",
 	"network.portal.experimentalDisabled": "فعّل تسجيل الدخول التجريبي إلى Wi-Fi في الإعدادات لاستخدام هذه الميزة.",
 	"settings.portal.experimentalSaveError": "تعذّر حفظ الإعداد.",
+	"network.portal.privacyHint": "إذا لم تظهر الصفحة، فأوقف مؤقتًا VPN أو Private Relay أو DNS الخاص / DNS الآمن على هذا الهاتف، ثم افتحها مجددًا. أعد تشغيلها عند الانتهاء. بثك لا يتغير.",
 	"live.audioMixer.label": "مدخلات الصوت",
 	"live.audioMixer.primary": "المدخل الرئيسي · دائمًا ضمن المزج",
 	"live.audioMixer.enable": "تضمين {name} في المزج",
