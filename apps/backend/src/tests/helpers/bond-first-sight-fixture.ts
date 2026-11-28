@@ -1,7 +1,9 @@
 import { spyOn } from "bun:test";
+import * as fs from "node:fs";
 import * as runner from "../../helpers/run.ts";
 import * as time from "../../helpers/time.ts";
 import { resolvePhysicalDevice } from "../../modules/modems/physical-identity.ts";
+import { netdevPresence } from "../../modules/network/netdev-lifetime.ts";
 import {
 	defaultRouterCellularScanDeps,
 	type RouterCellularScanDeps,
@@ -46,6 +48,11 @@ export function firstSightScan(
 		virtual?: readonly string[];
 		devices?: typeof constructedTwins;
 		usbReader?: RouterCellularScanDeps;
+		/**
+		 * Give every listed name a kernel index: `ip addr` reports it and the
+		 * netdev-lifetime sysfs witnesses (presence, index, node) agree with it.
+		 */
+		indexed?: boolean;
 	} = {},
 ) {
 	const clock = { now: 0 };
@@ -114,12 +121,36 @@ export function firstSightScan(
 				: { ok: true, target: `/sys/bus/${bus}` };
 		},
 	);
+	// The sysfs witnesses follow the fixture: a listed name is present, its index
+	// is the fixture's, and its node changes with the index (a new netdev).
+	const listed = (name: string) =>
+		output.split("\n\n").some((entry) => entry.split(":")[0] === name);
+	const realStatSync = fs.statSync;
+	if (options.indexed) {
+		spyOn(netdevPresence, "inSysfs").mockImplementation(listed);
+		spyOn(netdevPresence, "ifindex").mockImplementation((name) =>
+			listed(name) ? indices.get(name) : undefined,
+		);
+		spyOn(fs, "statSync").mockImplementation(((
+			path: fs.PathLike,
+			opts?: fs.StatSyncOptions,
+		) => {
+			const match = /^\/sys\/class\/net\/([^/]+)$/.exec(String(path));
+			if (!match) return realStatSync(path, opts);
+			const name = match[1] ?? "";
+			const index = indices.get(name);
+			return listed(name) && index !== undefined
+				? { dev: 1n, ino: BigInt(index) }
+				: undefined;
+		}) as typeof fs.statSync);
+	}
 	spyOn(runner, "run").mockImplementation(async (bin) => {
 		if (bin === "ifconfig") {
 			if (ifconfigGate) await ifconfigGate;
 			return output;
 		}
 		if (ipUnavailable) throw new Error("fixture address command unavailable");
+		if (!options.indexed) return "";
 		return output
 			.split("\n\n")
 			.flatMap((entry) => {
