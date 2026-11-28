@@ -11,7 +11,7 @@ import {
 import { wifiAdapterModeRecorder } from "../modules/wifi/wifi-adapter-mode.ts";
 import { cancelWifiAdapterReconciliation } from "../modules/wifi/wifi-adapter-reconcile-retry.ts";
 import { wifiHotspotStop } from "../modules/wifi/wifi-hotspot-config.ts";
-import { firstAp, MAC } from "./helpers/wifi-first-ap-fixture.ts";
+import { firstAp, MAC, OTHER_RADIO } from "./helpers/wifi-first-ap-fixture.ts";
 import { replayFirstApState } from "./helpers/wifi-first-ap-instances.ts";
 
 for (const busRestart of [false, true]) {
@@ -98,7 +98,7 @@ for (const attack of [
 	"reanchored-clone",
 ] as const) {
 	test(`NM run comparison preserves the operator's ${attack}`, async () => {
-		const f = await firstAp();
+		const f = await firstAp(undefined, false, OTHER_RADIO);
 		const modes = config.getConfig().wifi_modes;
 		const dir = await mkdtemp(join(tmpdir(), "first-ap-nm-replacement-"));
 		const path = join(dir, "hotspot_credentials.json");
@@ -132,6 +132,7 @@ for (const attack of [
 							? "settings-path"
 							: "same-settings",
 					reanchorThenReplace: attack === "reanchored-clone",
+					radioIfname: OTHER_RADIO,
 				}),
 			).toEqual({
 				result: true,

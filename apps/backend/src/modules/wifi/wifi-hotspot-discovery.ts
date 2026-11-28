@@ -87,6 +87,12 @@ import {
 	wifiAdapterKeyPort,
 } from "./wifi-permanent-mac.ts";
 import {
+	isProvisioningApConn,
+	observeProvisioningApProfile,
+	PROVISIONING_AP_FIELDS,
+	witnessProvisioningAp,
+} from "./wifi-provisioning-ap.ts";
+import {
 	type ReadRadioInventory,
 	radioIdentityReaders,
 	radioInventoryFor,
@@ -304,6 +310,17 @@ async function observeHotspotConn(
 	uuid: string,
 	options: HotspotAdoptionOptions,
 ): Promise<void> {
+	// The image's setup AP stays observable as the radio's active AP, never claimed.
+	if (isProvisioningApConn(uuid)) return releaseProvisioningAp(uuid);
+	// Under the image's marker, its active AP is the setup AP whatever its name.
+	if (
+		witnessProvisioningAp(
+			Object.values(getWifiInterfacesByMacAddress()),
+			uuid,
+			(id) => getHotspotCredentialOwners(id).length > 0,
+		)
+	)
+		return releaseProvisioningAp(uuid);
 	if (
 		macAddress_ !== undefined &&
 		((getWifiInterfaceByMacAddress(macAddress_) !== undefined &&
@@ -337,7 +354,12 @@ async function observeHotspotConn(
 			"802-11-wireless.channel",
 			"802-11-wireless-security.key-mgmt",
 			"802-11-wireless.mac-address",
+			"connection.id",
 		] as const);
+		if (
+			observeProvisioningApProfile(uuid, { id: fields?.[7], mode: fields?.[0] })
+		)
+			return releaseProvisioningAp(uuid);
 		if (fields?.[0] && fields[0] !== "ap" && row.hotspot.conn === uuid) {
 			delete row.hotspot.conn;
 			delete row.hotspot.name;
@@ -411,8 +433,13 @@ async function observeHotspotConn(
 		"802-11-wireless-security.pmf",
 		"connection.interface-name",
 		"802-11-wireless.mac-address",
+		...PROVISIONING_AP_FIELDS,
 	] as const);
 	if (wasHotspotConnDeletedSince(uuid, epoch)) return;
+	if (
+		observeProvisioningApProfile(uuid, { id: fields?.[13], mode: fields?.[14] })
+	)
+		return releaseProvisioningAp(uuid);
 	/*
 	  A profile's pinned `802-11-wireless.mac-address` is only a usable adapter key
 	  while it holds a PERMANENT address. Profiles written before that was enforced
@@ -738,6 +765,13 @@ async function observeHotspotConn(
 	);
 }
 
+/** Drop any cached claim on the setup AP; its observation stays on the row. */
+function releaseProvisioningAp(uuid: string): void {
+	for (const [key, row] of Object.entries(getWifiInterfacesByMacAddress()))
+		if (row && canHotspot(row) && row.hotspot.conn === uuid)
+			clearRejectedHotspotConn(key, uuid);
+}
+
 function clearRejectedHotspotConn(macAddress: string, uuid: string): void {
 	const iface = getWifiInterfaceByMacAddress(macAddress);
 	if (!iface || !canHotspot(iface) || iface.hotspot.conn !== uuid) return;
@@ -761,6 +795,7 @@ export function hasCompatibleHotspotProfile(
 	const pin = profileMac.toLowerCase();
 	return (
 		(!uuid || !deletingHotspotConns.has(uuid)) &&
+		!isProvisioningApConn(uuid) &&
 		canUseHotspotConnection(macAddress, uuid) &&
 		(pin === physicalMac ||
 			(!getWifiInterfaceByMacAddress(pin) && !getHotspotCredentials(pin)))
@@ -834,11 +869,12 @@ const AP_PROFILE_FIELDS = [
 	"802-11-wireless.band",
 	"802-11-wireless.channel",
 	"802-11-wireless.mac-address",
+	"connection.id",
 ] as const;
 
 type ApProfile = ExistingHotspotConn & { macAddress: MacAddress };
 
-/** `mode, ssid, psk, band, channel, mac-address` — mirrors AP_PROFILE_FIELDS. */
+/** `mode, ssid, psk, band, channel, mac-address, id` — mirrors AP_PROFILE_FIELDS. */
 type ApProfileFieldValues = readonly [
 	string,
 	string,
@@ -846,6 +882,7 @@ type ApProfileFieldValues = readonly [
 	string,
 	string,
 	string,
+	string?,
 ];
 
 export type HotspotProfileDeps = {
@@ -885,6 +922,8 @@ async function readApProfile(
 	if (wasHotspotConnDeletedSince(uuid, epoch)) return undefined;
 	if (deletingHotspotConns.has(uuid)) return undefined;
 	if (fields === undefined) return undefined;
+	if (observeProvisioningApProfile(uuid, { id: fields[6], mode: fields[0] }))
+		return undefined;
 	if (fields[0] !== "ap" || !fields[1]) return undefined;
 	return {
 		uuid,
