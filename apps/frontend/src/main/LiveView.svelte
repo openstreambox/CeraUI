@@ -1249,7 +1249,8 @@ function handleStop() {
 	if (typeof window !== 'undefined' && window.stopStreamingWithNotificationClear) {
 		window.stopStreamingWithNotificationClear(prepareDispatch);
 	} else {
-		void stopStreaming(prepareDispatch);
+		// A Stop that could not be sent has already posted its own notice.
+		void stopStreaming(prepareDispatch).catch(() => undefined);
 	}
 }
 

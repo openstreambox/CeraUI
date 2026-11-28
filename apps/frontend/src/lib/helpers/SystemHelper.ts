@@ -7,7 +7,7 @@ import type {
 
 import { rpc, rpcClient } from "$lib/rpc/client";
 import { NotSentError } from "$lib/rpc/rpc-error";
-import { stopOnceSignedIn } from "$lib/rpc/stop-intent";
+import { noticeStopNotSent, stopOnceSignedIn } from "$lib/rpc/stop-intent";
 import { createPassword } from "$lib/stores/auth-status.svelte";
 import { sendSessionTransition } from "$lib/streaming/compositionWrites.svelte";
 
@@ -129,12 +129,15 @@ export const stopStreaming = async (
 	prepareDispatch?: () => boolean,
 	onSent?: () => void,
 ) => {
+	let declined = false;
 	const send = () =>
-		sendSessionTransition("idle", () =>
-			prepareDispatch?.() === false
-				? undefined
-				: rpc.streaming.stop(undefined, onSent),
-		);
+		sendSessionTransition("idle", () => {
+			if (prepareDispatch?.() === false) {
+				declined = true;
+				return undefined;
+			}
+			return rpc.streaming.stop(undefined, onSent);
+		});
 	try {
 		await send();
 	} catch (error) {
@@ -145,7 +148,16 @@ export const stopStreaming = async (
 		) {
 			// Refused while the new socket is being signed in: keep it as the one
 			// pending Stop, sent once the session is back (rpc/stop-intent.ts).
-			await stopOnceSignedIn(send);
+			await stopOnceSignedIn(async () => {
+				declined = false;
+				await send();
+				// A later link change withdrew this Stop's claim while it waited
+				// (streaming-optimism): nothing went out, so say so.
+				if (declined) {
+					noticeStopNotSent();
+					throw new NotSentError("reconnected");
+				}
+			});
 			return;
 		}
 		console.error("Failed to stop streaming:", error);
