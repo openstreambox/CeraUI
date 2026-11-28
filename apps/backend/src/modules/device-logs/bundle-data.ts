@@ -18,6 +18,7 @@ import { readUpdateChannel } from "../system/update-settings.ts";
 import { collectVersionContext } from "../system/version-context.ts";
 import { getAllHotspotCredentials } from "../wifi/hotspot-credentials.ts";
 import { listBoots } from "./boots.ts";
+import { type BundleStateRecord, collectBundleState } from "./bundle-state.ts";
 import {
 	BundleReadError,
 	buildRedactor,
@@ -39,6 +40,8 @@ interface BundleData {
 		/** The image's /boot FAT fault marker; optional only for older fixtures. */
 		readonly bootFat?: BootFatFault;
 	};
+	/** Null when the record could not be screened clean; the bundle then omits it. */
+	readonly state: BundleStateRecord | null;
 	readonly events: readonly DeviceEvent[];
 	readonly bootRecords: readonly EventBootRecord[];
 	readonly secrets: ReadonlyArray<{
@@ -158,6 +161,13 @@ export async function collectBundleData(): Promise<BundleData> {
 	];
 	const disk = getDeviceStatsSnapshot()?.disk;
 	const bootFatFact = withoutHeldSecret(bootFat, secrets);
+	const events = readEvents();
+	const state = await collectBundleState({
+		boots: available,
+		journalBoots,
+		events,
+		secrets,
+	});
 	return structuredClone({
 		exportedBy,
 		boots: journalBoots.map((bootId) => ({
@@ -175,7 +185,8 @@ export async function collectBundleData(): Promise<BundleData> {
 			data: disk ? { used: disk.used, total: disk.total } : null,
 			...(bootFatFact ? { bootFat: bootFatFact } : {}),
 		},
-		events: readEvents(),
+		state,
+		events,
 		bootRecords: readBoots(),
 		secrets,
 	});

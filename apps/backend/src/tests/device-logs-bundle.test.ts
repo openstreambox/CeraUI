@@ -26,6 +26,7 @@ import { notifyUpdate } from "../modules/system/update-orchestrator/notification
 import { scheduledPackageNoticeIdentity } from "../modules/system/update-orchestrator/package-notice-retirement.ts";
 import { setOrchestratorStateFilePathForTest } from "../modules/system/update-orchestrator/persistence.ts";
 import { notificationWithdraw } from "../modules/ui/notifications.ts";
+import { bundleStateFixture } from "./helpers/bundle-state.ts";
 import {
 	bootId,
 	journal,
@@ -78,6 +79,7 @@ function snapshot() {
 			},
 		],
 		bootRecords: [{ bootId, startedAt: 0, versions: context }],
+		state: bundleStateFixture(),
 		secrets: [
 			{ kind: "stream", value: "stream-secret" },
 			{ kind: "ssh", value: "ssh-password" },
@@ -245,7 +247,7 @@ test("preview and download use the same redacted pipeline, stored boot versions 
 		expect(logBundleManifestSchema.safeParse(manifest).success).toBe(true);
 		expect(manifest.sections).toEqual([
 			{ id: "versions", entries: 3, redactions: 0 },
-			{ id: "settings", entries: 1, redactions: 0 },
+			{ id: "settings", entries: 2, redactions: 0 },
 			{ id: "events", entries: 2, redactions: 0 },
 			{
 				id: "journal",
@@ -272,6 +274,7 @@ test("preview and download use the same redacted pipeline, stored boot versions 
 			"versions",
 			"versions",
 			"versions",
+			"settings",
 			"settings",
 			"events",
 			"events",
@@ -1094,9 +1097,10 @@ test("the /boot FAT fault classification reaches the downloaded settings record"
 		settings: { ...base.settings, bootFat },
 	}));
 	const manifest = await previewBundle();
+	// The settings record plus the device state record.
 	expect(manifest.sections[1]).toEqual({
 		id: "settings",
-		entries: 1,
+		entries: 2,
 		redactions: 0,
 	});
 	const { lines } = await unpack(await download());
