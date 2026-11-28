@@ -145,14 +145,19 @@ for (const name of [MODEM, "eth1", "wlan1"]) {
 			scan.release();
 			await scan.settle();
 			expect(netIfBuildMsg()[name]?.enabled).toBe(!optedOut);
-			expect(local()).toEqual([
-				{
-					iface: name,
-					ip: IP,
-					linkId: expected.linkId,
-					idPath: expected.idPath,
-				},
-			]);
+			// A LAN receiver narrows the bond; an opted-out link stays out of it.
+			expect(local()).toEqual(
+				optedOut
+					? []
+					: [
+							{
+								iface: name,
+								ip: IP,
+								linkId: expected.linkId,
+								idPath: expected.idPath,
+							},
+						],
+			);
 			await srtla.publishSrtlaBond(srtla.genSrtlaBondEntries());
 			if (optedOut) expect(identityForIface(name)).toBeUndefined();
 			else {
