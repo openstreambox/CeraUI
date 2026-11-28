@@ -2924,6 +2924,62 @@ test("a profile reconnect can verify Auto HDMI to cover off-source RTMP Track 1 
 	});
 });
 
+test("a verified Auto RTMP profile reconnect does not send unsupported saved video overrides", async () => {
+	const peer = await embeddedStartPeer();
+	const audio_inputs = [entry("rtmp", [1]), entry("Second", [2])];
+	Object.assign(getConfig(), {
+		pipeline: "rtmp",
+		source: "rtmp",
+		asrc: "Auto",
+	});
+	expect(
+		await call(setConfigProcedure, { audio_inputs }, context()),
+	).toMatchObject({ success: true });
+	expect(await start()).toMatchObject({ success: true });
+	const live = getStreamSessionSnapshot();
+	const checks = peer.checks.length;
+
+	// A persisted config can still carry geometry from an earlier HDMI stream.
+	Object.assign(getConfig(), { resolution: "720p", framerate: 30 });
+	saveConfig();
+	await setProfile();
+
+	expect(peer.stops().map(({ method }) => method)).toEqual(["stop"]);
+	expect(peer.starts().map(({ method }) => method)).toEqual([
+		"start-verified",
+		"start-verified",
+	]);
+	const replacement = peer.launchParams[1];
+	const route = mixed(
+		{ ...wire("rtmp", [1]), input_id: "embedded" },
+		wire("Second", [2]),
+	);
+	expect(replacement).toMatchObject({
+		pipeline: "rtmp",
+		audio: route,
+		mic_route_proofs: [reportProof("hw:card=second")],
+	});
+	expect(
+		Object.keys(replacement ?? {}).filter(
+			(field) => field === "resolution" || field === "framerate",
+		),
+	).toEqual([]);
+	const verifies = peer.checks
+		.slice(checks)
+		.filter(({ params }) => params.operation.kind === "verify");
+	expect(verifies.map(({ params }) => params.audio.inputs)).toEqual([
+		route.inputs,
+		route.inputs,
+	]);
+	expect(verifies[0]?.peer).toBeLessThan(peer.stops()[0]?.peer ?? 0);
+	expect(verifies[1]?.peer).toBe(peer.starts()[1]?.peer);
+	expect(peer.physical()).toBe("ours");
+	expect(getStreamSessionSnapshot()).toEqual({
+		state: "streaming",
+		generation: live.generation + 1,
+	});
+});
+
 test("legacy Auto restoration uses HDMI to cover the saved RTMP Track 1", async () => {
 	const peer = await hdmiAutoPeer();
 	hdmiAudioArrives();

@@ -84,7 +84,7 @@ import { resolvePinnedLaunchAudio, type StartAudio } from "../start-audio.ts";
 import { assertStreamLaunchOwnership } from "../stream-launch-ownership.ts";
 import { getStreamingBackend } from "../streaming-engine.ts";
 import { srtlaSendExec } from "./exec-paths.ts";
-import { resolveLaunchConfig } from "./launch-config.ts";
+import { resolveLaunchAsrc } from "./launch-config.ts";
 import { resolveProcessError } from "./process-error-patterns.ts";
 import { spawnStreamingLoop, stopProcessAndWait } from "./process-runner.ts";
 
@@ -181,11 +181,23 @@ export async function maybeProbeAudioSource(
  * later read of saved settings. Only live bitrate and the audio roster can
  * change while starting.
  */
-const autoLaunches = new WeakMap<StartAudio, ReturnType<typeof launchAudio>>();
+const autoLaunches = new WeakMap<StartAudio, LaunchAudioChoice>();
 
-function launchAudio(config: RuntimeConfig, startAudio: StartAudio) {
-	const { config: launchConfig, publish } = resolveLaunchConfig(config);
-	const chosen = launchConfig.asrc;
+interface LaunchAudioChoice {
+	readonly chosen: RuntimeConfig["asrc"];
+	readonly wasAuto: boolean;
+	readonly autoEvidence: AudioIdentityEvidence | undefined;
+	readonly audioEvidence: StartAudio["audioEvidence"];
+	readonly audioOff: boolean;
+	readonly micChoices: StartAudio["micChoices"];
+	readonly publish: (() => void) | undefined;
+}
+
+function launchAudio(
+	config: RuntimeConfig,
+	startAudio: StartAudio,
+): LaunchAudioChoice {
+	const { chosen, publish } = resolveLaunchAsrc(config);
 	const wasAuto = config.asrc === AUDIO_SOURCE_AUTO;
 	const autoEvidence =
 		wasAuto && chosen !== undefined && startAudio.restoration === undefined
@@ -201,10 +213,9 @@ function launchAudio(config: RuntimeConfig, startAudio: StartAudio) {
 	const audioOff = config.asrc === NO_AUDIO_ID;
 	const micChoices =
 		wasAuto && startAudio.restoration === undefined
-			? startAudio.autoMicChoices(launchConfig, audioOff)
+			? startAudio.autoMicChoices({ ...config, asrc: chosen }, audioOff)
 			: startAudio.micChoices;
 	return {
-		launchConfig,
 		chosen,
 		wasAuto,
 		autoEvidence,
@@ -216,13 +227,8 @@ function launchAudio(config: RuntimeConfig, startAudio: StartAudio) {
 }
 
 function resolveLaunchRoute(
-	{
-		launchConfig,
-		chosen,
-		wasAuto,
-		audioEvidence,
-		audioOff,
-	}: ReturnType<typeof launchAudio>,
+	config: RuntimeConfig,
+	{ chosen, wasAuto, audioEvidence, audioOff }: LaunchAudioChoice,
 	settings: StartAudio["config"],
 ) {
 	const asrc = wasAuto
@@ -232,9 +238,9 @@ function resolveLaunchRoute(
 				: (audioIdentitySuccessor(chosen) ?? chosen))
 		: settings.asrc;
 	return resolvePinnedLaunchAudio(
-		{ ...launchConfig, ...settings, asrc },
+		{ ...config, ...settings, asrc },
 		audioEvidence,
-		{ audioOff, embedded: isEmbeddedAudioPipeline(launchConfig.pipeline) },
+		{ audioOff, embedded: isEmbeddedAudioPipeline(config.pipeline) },
 	);
 }
 
@@ -266,15 +272,16 @@ async function launchMicProofs(
 
 /** Preflight only a destructive replacement. Dispatch still verifies independently. */
 export async function verifyReplacementAudio(
-	capture: Pick<RuntimeConfig, "pipeline" | "source">,
+	{ pipeline, source }: Pick<RuntimeConfig, "pipeline" | "source">,
 	startAudio: StartAudio,
 ): Promise<() => boolean> {
-	const audio = launchAudio({ ...capture, ...startAudio.config }, startAudio);
+	const capture = { pipeline, source, ...startAudio.config };
+	const audio = launchAudio(capture, startAudio);
 	const current = () => {
-		const resolved = resolveLaunchRoute(audio, startAudio.config);
+		const resolved = resolveLaunchRoute(capture, audio, startAudio.config);
 		if (!resolved.ok) return undefined;
 		const config = {
-			...audio.launchConfig,
+			...capture,
 			asrc: resolved.asrc,
 			audio_inputs: resolved.audio_inputs,
 		};
@@ -370,28 +377,15 @@ export async function startStream(
 		pipeline: pipeline.source,
 		...startAudio.config,
 	};
-	// Auto can first resolve from the live roster, but retries cannot choose a
-	// new microphone. Dispatch still rechecks the accepted physical identity.
-	const prechecked = autoLaunches.get(startAudio);
-	const audio =
-		prechecked === undefined
-			? launchAudio(config, startAudio)
-			: {
-					...prechecked,
-					launchConfig: { ...config, ...prechecked.launchConfig },
-				};
+	// Preflight and retries keep Auto's audio choice and proofs, never the
+	// config they resolved against. Dispatch still rechecks physical identity.
+	const audio = autoLaunches.get(startAudio) ?? launchAudio(config, startAudio);
 	if (audio.wasAuto)
 		autoLaunches.set(startAudio, { ...audio, publish: undefined });
 	audio.publish?.();
-	const {
-		launchConfig,
-		chosen,
-		wasAuto,
-		autoEvidence,
-		audioEvidence,
-		audioOff,
-		micChoices,
-	} = audio;
+	const { chosen, wasAuto, autoEvidence, audioEvidence, audioOff, micChoices } =
+		audio;
+	const launchConfig = { ...config, asrc: chosen };
 
 	// A fresh stream start clears any prior unexpected-exit health flag so the
 	// health rollup tracks this new session (ADR-0005 observe-and-notify). The
@@ -505,7 +499,7 @@ export async function startStream(
 				audioOff,
 				audioAtDispatch: () => {
 					const settings = startAudio.config;
-					const resolved = resolveLaunchRoute(audio, settings);
+					const resolved = resolveLaunchRoute(launchConfig, audio, settings);
 					if (!resolved.ok) throw unavailableAudioRoute(attemptId);
 					originalKeys = resolved.originalKeys;
 					launchedAsrc = resolved.asrc;

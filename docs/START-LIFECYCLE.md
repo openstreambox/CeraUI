@@ -306,7 +306,9 @@ proofs without preparing a Start. If the required route is unavailable, proof
 fails, or the plan changes during verification, the refusal is typed and
 non-retriable and the current stream and its marker are left alone. The same
 live generation and operator intent must still own the Stop. Dispatch verifies
-again; this does not reserve the microphone across the Stop.
+again; this does not reserve the microphone across the Stop. Only the resolved
+audio choice and its identity/proof state carry over from preflight or a retry.
+Every launch uses its validated capture, video, and transport settings.
 Ordinary Start and idle restoration use potential inputs for structural
 feasibility: they do not fix Auto at acceptance or treat an unplugged local
 input as permanently absent. Restoration first checks whether the engine is
