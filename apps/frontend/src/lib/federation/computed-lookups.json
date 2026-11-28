@@ -62,6 +62,11 @@
 			"why": "As pushNotification: no notification subscription in a hosted dialog."
 		},
 		{
+			"site": "apps/frontend/src/lib/streaming/compositionWrites.svelte.ts passes m: return configChangeReport(change, m);",
+			"families": [],
+			"why": "configChangeReport(change, msg) only reads key literals."
+		},
+		{
 			"site": "apps/frontend/src/lib/streaming/sourceSummary.ts t(entry.labelKey)",
 			"families": ["audio.sources", "settings.sources"],
 			"why": "Source summary entries carry a backend or pseudo-source label key."
