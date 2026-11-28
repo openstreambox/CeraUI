@@ -378,6 +378,37 @@ async function debian(
 }
 
 /**
+ * True unless NetworkManager reports at least one uplink as unmetered. An
+ * unreadable inventory counts as metered, so a failed probe never opens cellular.
+ */
+export async function onlyMeteredUplinksRemain(
+	deps: UpdateTransportDeps = defaultUpdateTransportDeps,
+): Promise<boolean> {
+	let nmcli: SpawnWithTimeoutResult;
+	try {
+		nmcli = await deps.run([
+			"nmcli",
+			"-t",
+			"-f",
+			UPDATE_INVENTORY_NMCLI_FIELDS,
+			"device",
+			"show",
+		]);
+	} catch {
+		return true;
+	}
+	if (nmcli.exitCode !== 0) return true;
+	const candidates = discoverCandidates(
+		deps.listIfnames(),
+		nmcli.stdout,
+		deps.mmIfnames(),
+		deps.routerIfnames(),
+		deps.dongleIfnames(),
+	);
+	return !candidates.some((c) => c.metered === false);
+}
+
+/**
  * Probe every candidate uplink × family for `profile` and rank them. Every
  * answer — including the early "nothing to probe" ones — is recorded as the
  * last selection, which the Updates dialog's Connection section reads back;
