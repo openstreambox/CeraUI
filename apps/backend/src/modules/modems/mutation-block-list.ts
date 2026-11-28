@@ -48,6 +48,7 @@ export async function operatorMutationBlocks(): Promise<
 				entry.state === "failed" &&
 				device.status === "present" &&
 				// The same unit evidence Check again applies before it retires.
+				entry.unitUnproven !== true &&
 				(entry.unitLinkId === undefined ||
 					(device.identity === "usb-descriptor" &&
 						device.unitLinkId === entry.unitLinkId)) &&

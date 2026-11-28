@@ -243,6 +243,36 @@ test("the journal captures a unit and replay does not verify a different unit on
 	]);
 });
 
+test("a journal begun without a usable census holds its unit as unproven", async () => {
+	useUdevDevice("fixture-original-5b2");
+	setMutationCaptureDeps({
+		enumerate: () =>
+			Promise.reject(new Error("udev export has no USB device records")),
+	});
+	const failed = await withJournaledModemMutation(
+		KEY,
+		"usb-mode",
+		PRE_STATE,
+		async () => ({
+			confirmed: false,
+			value: undefined,
+		}),
+	);
+	expect(failed.ok).toBe(true);
+	const entry = await readMutationEntry(KEY);
+	if (entry === undefined)
+		throw new Error("fixture mutation was not journaled");
+	expect(entry.unitUnproven).toBe(true);
+	expect(entry.unitLinkId).toBeUndefined();
+	await commitMutationEntry({ ...entry, state: "executing" });
+	// The census is usable again; a replacement with the same descriptors is
+	// not counted as the restored original.
+	useUdevDevice("fixture-replacement-a72");
+	const summary = await initMutationRecovery();
+	expect(summary.rolledBack).toBe(0);
+	expect((await readMutationEntry(KEY))?.state).toBe("failed");
+});
+
 test.each(["fixture ABC123", "fixture_ABC123"])(
 	"a remembered shared digest for %s prevents capture and unit verification",
 	async (remembered) => {

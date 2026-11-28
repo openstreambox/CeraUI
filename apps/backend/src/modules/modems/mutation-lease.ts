@@ -144,7 +144,10 @@ export async function withJournaledModemMutation<T>(
 	if (!acquired.ok) return refuse(acquired.refusal);
 	const key = acquired.lease.stableKey;
 
-	const identity = await captureModemJournalIdentity(key).catch(() => ({}));
+	// A census that failed proves no unit; descriptors alone must not verify it.
+	const identity = await captureModemJournalIdentity(key).catch(() => ({
+		unitUnproven: true as const,
+	}));
 	const at = journalNow();
 	let entry: ModemMutationEntry = {
 		version: MODEM_MUTATION_JOURNAL_VERSION,

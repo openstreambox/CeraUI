@@ -52,6 +52,7 @@ import {
 } from "../modules/modems/mutation-journal.ts";
 import { initMutationRecovery } from "../modules/modems/mutation-replay.ts";
 import {
+	captureModemJournalIdentity,
 	captureModemUnitLinkId,
 	clearMutationRollbacks,
 	resetMutationCaptureDeps,
@@ -606,5 +607,91 @@ describe("a journaled unit link and the state come from one observation", () => 
 		expect((await operatorMutationBlocks()).map((b) => b.checkable)).toEqual([
 			true,
 		]);
+	});
+});
+
+describe("a unit the journal could not prove when it began", () => {
+	const PATH = "/sys/devices/platform/xhci-hcd.0.auto/usb1/1-1/1-1.4/1-1.4.1";
+	const modem = (udevProperties: Record<string, string>) => ({
+		vendorId: "2c7c",
+		productId: "0801",
+		model: "RM520N-GL",
+		firmwareRevision: "RM520NGLAAR01A07M4G",
+		bDeviceClass: 0,
+		ifname: "wwan0",
+		physicalUid: KEY,
+		serialNumber: undefined,
+		interfaces: QMI,
+		sysfsPath: PATH,
+		udevProperties,
+	});
+
+	/** Every enumeration sees `record`; sysfs answers `serial` at `devnum`. */
+	function observe(record: object, serial: string, devnum = "7"): void {
+		setMutationCaptureDeps({
+			enumerate: () => Promise.resolve([record] as never),
+			readSerial: () => Promise.resolve(serial),
+			readDevnum: () => Promise.resolve(devnum),
+		});
+	}
+
+	async function seedUnproven(state: ModemMutationState): Promise<void> {
+		useDevice("qmi");
+		// A partial udev record: the serial reads, but no DEVNUM ties it to
+		// the device whose descriptors the record holds.
+		observe(modem({}), "UNIT-ORIGINAL-0001");
+		const identity = await captureModemJournalIdentity(KEY);
+		expect(identity).toEqual({
+			deviceVidPid: "2c7c:0801",
+			unitUnproven: true,
+		});
+		await commitMutationEntry({ ...(await seed(state)), ...identity });
+	}
+
+	/** A different, fully enumerated modem with the same descriptors and port. */
+	const replacement = () =>
+		observe(modem({ DEVNUM: "009" }), "UNIT-REPLACEMENT-0002", "9");
+
+	test("the journal keeps an unproven unit apart from a proven one", async () => {
+		await seedUnproven("failed");
+		expect((await readMutationEntry(KEY))?.unitUnproven).toBe(true);
+
+		// Control: the same modem with its device number is a unit link.
+		observe(modem({ DEVNUM: "007" }), "UNIT-ORIGINAL-0001");
+		const proven = await captureModemJournalIdentity(KEY);
+		expect(proven.unitLinkId).toBeDefined();
+		expect(proven.unitUnproven).toBeUndefined();
+	});
+
+	test("Check again is neither offered nor accepted, and Keep current still settles it", async () => {
+		await seedUnproven("failed");
+		await initMutationRecovery();
+		replacement();
+
+		expect((await operatorMutationBlocks()).map((b) => b.checkable)).toEqual([
+			false,
+		]);
+		expect(await acknowledgeMutation(KEY, "verified-rollback")).toEqual({
+			success: false,
+			error: "state_mismatch",
+		});
+		expect((await readMutationEntry(KEY))?.state).toBe("failed");
+
+		expect(await acknowledgeMutation(KEY, "force-rebaseline")).toMatchObject({
+			success: true,
+		});
+	});
+
+	test("boot replay does not count an executing entry as restored", async () => {
+		await seedUnproven("executing");
+		replacement();
+
+		await initMutationRecovery();
+
+		const entry = await readMutationEntry(KEY);
+		expect(entry?.state).toBe("failed");
+		expect(entry?.detail).toBe(
+			"the modem's unit was not proven when the change began, so replay cannot verify it",
+		);
 	});
 });
