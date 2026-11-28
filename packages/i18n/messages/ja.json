@@ -2112,7 +2112,7 @@
 	"network.sharing.band.sharingOffTitle": "共有はオフです",
 	"network.sharing.band.sharingOffBody": "本機のインターネットを共有するには、アクセスポイントを有効にするか、有線ポートを共有LANに設定してください。",
 	"network.sharing.band.noHealthyUplinkTitle": "正常なアップリンクがありません",
-	"network.sharing.band.noHealthyUplinkBody": "すべてのアップリンクが停止しているため、接続中の機器は外部に出られません。配信自体には影響しません。",
+	"network.sharing.band.noHealthyUplinkBody": "利用できるアップリンクがありません。本機は接続中の機器からの新しい IPv4 インターネット接続をブロックします。本機自身の配信経路は変わりません。",
 	"network.sharing.band.steeringUnavailableTitle": "回線への振り分けを利用できません",
 	"network.sharing.band.steeringUnavailableBody": "CeraUIは機器のアップリンクへの最新の振り分けを適用できませんでした。以前の設定が引き続き有効な場合があり、以前の設定がなければ機器は既定の経路を使用します。",
 	"network.sharing.band.uplinksUnreportedTitle": "アップリンクの状態は未報告",
