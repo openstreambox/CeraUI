@@ -430,6 +430,12 @@ export function stopGeneration(
 	generation: number,
 	confirmUnknown = false,
 ): Promise<void> {
+	// The adoption check closes before the engine stops (the retirement after
+	// the stop repeats it harmlessly); the interface and USB listeners stay
+	// until the stop has finished.
+	if (sessionResources?.generation === generation) {
+		sessionResources.closeReloadCheck();
+	}
 	setPendingAudioFollowAsrc(null);
 	return new Promise((resolve, reject) => {
 		let finishPromise: Promise<void> | undefined;

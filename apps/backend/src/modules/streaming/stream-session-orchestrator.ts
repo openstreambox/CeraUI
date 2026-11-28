@@ -354,6 +354,10 @@ export function createStreamSessionOrchestrator(
 	let stopFlight: Promise<StopResult> | undefined;
 	let lossRetirement: Promise<void> | undefined;
 	let currentLoss: (() => boolean) | undefined;
+	// The generation this process launched and then retired locally after its
+	// control connection was lost. Its engine session is this process's own,
+	// even though the retirement ended the sender that carried it.
+	let lossRetiredGeneration: number | undefined;
 	const stopDeadlineMs = deps.stopDeadlineMs ?? STOP_DEADLINE_MS;
 	const reconfigureDeadlineMs =
 		deps.reconfigureDeadlineMs ?? RECONFIGURE_DEADLINE_MS;
@@ -430,6 +434,7 @@ export function createStreamSessionOrchestrator(
 	});
 
 	const start = async (request: StreamStartRequest): Promise<StartResult> => {
+		lossRetiredGeneration = undefined;
 		const currentIntent = captureOperatorStopIntent();
 		const attemptId = deps.createAttemptId();
 
@@ -642,9 +647,12 @@ export function createStreamSessionOrchestrator(
 				if (active !== attempt) return;
 				try {
 					switch (rollback?.kind) {
-						case "legacy-dispatched":
-							await stopWithinDeadline(attempt.generation);
+						case "legacy-dispatched": {
+							const stopping = stopWithinDeadline(attempt.generation);
+							rollback.timeoutStop?.(stopping);
+							await stopping;
 							break;
+						}
 						case "transaction":
 							await rollback.run();
 							break;
@@ -917,6 +925,7 @@ export function createStreamSessionOrchestrator(
 		if (!ownership.commit(owner, "reconciling", "unknown")) return;
 		currentLoss = captureOperatorStopIntent();
 		deps.onStreamStopped?.("engine_loss");
+		lossRetiredGeneration = owner.generation;
 		const retirement = deps.retireRuntime?.(owner.generation);
 		lossRetirement = retirement;
 		try {
@@ -930,6 +939,7 @@ export function createStreamSessionOrchestrator(
 	};
 
 	const stop = (cause: StreamStopCause): Promise<StopResult> => {
+		lossRetiredGeneration = undefined;
 		if (cause === "operator") noteOperatorStopIntent();
 		deps.onStreamStopped?.(cause);
 		if (cause === "operator") {
@@ -1135,6 +1145,20 @@ export function createStreamSessionOrchestrator(
 			runtimeState === "streaming" &&
 			deps.canReconcileStreaming?.(active?.generation) === false
 		) {
+			// A session this same process launched and retired after losing its
+			// control connection is ours to Stop: the retirement ended its sender,
+			// so it carries nothing. Stopping it (the cause stays engine_loss, so
+			// an armed marker survives) lets restoration relaunch it, as before
+			// the retirement existed. A restarted process has no such record and
+			// still keeps the session protected below.
+			if (
+				lossRetiredGeneration !== undefined &&
+				lossRetiredGeneration === owner.generation &&
+				deps.canReconcileIdle?.() !== false
+			) {
+				lossRetiredGeneration = undefined;
+				return await retireOwnedSession(owner);
+			}
 			// The engine can retain a session after its sender dies. Keep the
 			// inhibitor and require an explicit Stop; never launch a replacement.
 			ownership.protect();

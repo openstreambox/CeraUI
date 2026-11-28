@@ -260,7 +260,7 @@ describe("WifiSection — the adapter mode control", () => {
 			await tick();
 
 			expect(
-				getByRole("radio", { name: "Station" }).getAttribute("aria-checked"),
+				getByRole("radio", { name: "Join Wi-Fi" }).getAttribute("aria-checked"),
 			).toBe("true");
 			expect(
 				getByRole("radio", { name: HYBRID_RUNG }).getAttribute("aria-checked"),
@@ -304,7 +304,7 @@ describe("WifiSection — the adapter mode control", () => {
 		await tick();
 		const checked = (name: string) =>
 			getByRole("radio", { name }).getAttribute("aria-checked");
-		expect(checked("Station")).toBe("true");
+		expect(checked("Join Wi-Fi")).toBe("true");
 		expect(checked(HYBRID_RUNG)).toBe("false");
 		expect(getByTestId("wifi-mode-pending-wifi0")).toBeTruthy();
 
@@ -312,7 +312,7 @@ describe("WifiSection — the adapter mode control", () => {
 		confirmOperation(wifiModeOpKey("wifi0", "radio-A"));
 		await tick();
 		expect(checked(HYBRID_RUNG)).toBe("true");
-		expect(checked("Station")).toBe("false");
+		expect(checked("Join Wi-Fi")).toBe("false");
 	});
 });
 
