@@ -65,6 +65,8 @@ process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = join(
 	runtimeRoot,
 	"cellular-preparation",
 );
+const previousSimParkDir = process.env.CERALIVE_GSM_SIM_PARK_DIR;
+process.env.CERALIVE_GSM_SIM_PARK_DIR = join(runtimeRoot, "gsm-sim-park");
 const previousCarrierIntentDir =
 	process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR;
 process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = join(
@@ -169,6 +171,9 @@ afterAll(async () => {
 		delete process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR;
 	else
 		process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = previousCarrierIntentDir;
+	if (previousSimParkDir === undefined)
+		delete process.env.CERALIVE_GSM_SIM_PARK_DIR;
+	else process.env.CERALIVE_GSM_SIM_PARK_DIR = previousSimParkDir;
 	if (previousPreparationDir === undefined)
 		delete process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
 	else

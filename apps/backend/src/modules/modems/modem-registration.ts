@@ -30,6 +30,8 @@
   loop publishes snapshots and broadcasts — none of that lives here.
 */
 
+import { readdir, readFile, readlink, realpath, stat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import {
 	deriveModemStableKey,
 	type ModemRadioPower,
@@ -57,6 +59,10 @@ import {
 	reconcileDuplicateGsmProfiles,
 } from "./gsm-duplicate-reconcile.ts";
 import {
+	defaultGsmSimSwapDeps,
+	settleSimSwapProfiles,
+} from "./gsm-sim-swap.ts";
+import {
 	type ModemId,
 	type ModemInfo,
 	mmConvertAccessTech,
@@ -83,6 +89,7 @@ import {
 } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
 import { withJournaledModemMutation } from "./mutation-lease.ts";
+import { captureModemState } from "./mutation-rollback.ts";
 import { deriveSimPresence } from "./sim-presence.ts";
 import {
 	getRadioRegistrationObservation,
@@ -392,6 +399,199 @@ async function resolveModemProfile(
 	return config;
 }
 
+/** One USB device as the twin check needs it. */
+export interface TwinUsbDevice {
+	readonly vidPid: string;
+	readonly sysfsPath: string | undefined;
+}
+
+export interface PresentSimDeps {
+	/** Every USB device on the bus; undefined when the bus cannot be read. */
+	readonly usbDevices: () => Promise<readonly TwinUsbDevice[] | undefined>;
+	/** Canonical sysfs path; undefined when it does not resolve. */
+	readonly resolvePath: (path: string) => Promise<string | undefined>;
+}
+
+const USB_DEVICES_DIR = "/sys/bus/usb/devices";
+
+/**
+ * Every USB device straight from sysfs: no subprocess, and no dependence on
+ * udev having imported its properties yet (a twin still being probed has its
+ * vid:pid in sysfs from the moment it enumerates).
+ */
+export async function readSysfsUsbDevices(
+	root: string = USB_DEVICES_DIR,
+): Promise<readonly TwinUsbDevice[] | undefined> {
+	try {
+		const devices: TwinUsbDevice[] = [];
+		for (const name of await readdir(root)) {
+			const dir = join(root, name);
+			let vendor: string;
+			let product: string;
+			try {
+				vendor = (await readFile(join(dir, "idVendor"), "utf8")).trim();
+				product = (await readFile(join(dir, "idProduct"), "utf8")).trim();
+			} catch (error) {
+				// Interfaces (`1-1:1.0`) have no ids; anything else is unreadable.
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+				return undefined;
+			}
+			devices.push({
+				vidPid: `${vendor}:${product}`.toLowerCase(),
+				sysfsPath: await realpath(dir),
+			});
+		}
+		return devices;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Is this modem a USB device? true or false only on positive evidence: its
+ * ModemManager physdev resolves to a sysfs path that is, or sits below, a USB
+ * device (USB ids, or the `usb` subsystem, which USB interfaces such as
+ * `1-1:1.0` carry without ids of their own). false only when every level up
+ * to the root was read, none is USB and the path is still there afterwards.
+ * Undefined when the modem or a path cannot be read, or the device went away
+ * during the walk: a USB modem udev has not finished with, or one being
+ * unplugged, must not be mistaken for one that is not on USB. A device that
+ * went away can still read as USB when a surviving ancestor shows USB
+ * evidence before the final check; both answers keep the intent pending.
+ */
+export async function isUsbModem(id: ModemId): Promise<boolean | undefined> {
+	const modemInfo = await mmGetModem(id);
+	const device = (
+		modemInfo?.["modem.generic.physdev"] ?? modemInfo?.["modem.generic.device"]
+	)?.trim();
+	if (!device) return undefined;
+	const path = await presentSimDeps.resolvePath(device);
+	if (path === undefined) return undefined;
+	const missing = (error: unknown) =>
+		(error as NodeJS.ErrnoException).code === "ENOENT";
+	for (let dir = path; ; dir = dirname(dir)) {
+		try {
+			await readFile(join(dir, "idVendor"), "utf8");
+			return true;
+		} catch (error) {
+			if (!missing(error)) return undefined;
+		}
+		try {
+			if (basename(await readlink(join(dir, "subsystem"))) === "usb")
+				return true;
+		} catch (error) {
+			if (!missing(error)) return undefined;
+		}
+		if (dirname(dir) === dir) break;
+	}
+	try {
+		await stat(path);
+		return false;
+	} catch {
+		return undefined;
+	}
+}
+
+const defaultPresentSimDeps: PresentSimDeps = {
+	usbDevices: () => readSysfsUsbDevices(),
+	resolvePath: async (path) => {
+		try {
+			return await realpath(path);
+		} catch {
+			return undefined;
+		}
+	},
+};
+let presentSimDeps = defaultPresentSimDeps;
+
+export function setPresentSimDepsForTest(
+	overrides: Partial<PresentSimDeps> | null,
+): void {
+	presentSimDeps =
+		overrides === null
+			? defaultPresentSimDeps
+			: { ...defaultPresentSimDeps, ...overrides };
+}
+
+/**
+ * ICCIDs of the SIMs in every present modem with this device id. Undefined
+ * when we cannot see every modem that may share it:
+ *
+ * - the list or any listed modem cannot be read, or a listed modem has no
+ *   device id yet;
+ * - a modem with this device id has no SIM object yet or an unreadable ICCID
+ *   (its SIM may still be probing, as `readReadyModemSim` reads it);
+ * - a USB device of the same vid:pid as a modem with this device id has no
+ *   ModemManager object (ModemManager lists a modem only after probing it,
+ *   so an identical twin may not be listed yet), or the bus or a sysfs path
+ *   cannot be read.
+ *
+ * The caller must not conclude a SIM is absent from a read that failed.
+ */
+export async function readPresentSimIds(
+	deviceId: string,
+	deps: PresentSimDeps = presentSimDeps,
+): Promise<ReadonlySet<string> | undefined> {
+	const ids = await mmList();
+	if (ids === undefined) return undefined;
+	const present = new Set<string>();
+	const listedPaths = new Set<string>();
+	const ownPaths = new Set<string>();
+	for (const id of ids) {
+		const modemInfo = await mmGetModem(id);
+		if (modemInfo === undefined) return undefined;
+		const listedId = modemInfo["modem.generic.device-identifier"]?.trim();
+		if (!listedId) return undefined;
+		// `physdev` is the sysfs path; `device` is the udev UID, which an
+		// ID_MM_PHYSDEV_UID rule can replace with a label. Older ModemManager
+		// reports only `device`.
+		const device = (
+			modemInfo["modem.generic.physdev"] ?? modemInfo["modem.generic.device"]
+		)?.trim();
+		const path = device ? await deps.resolvePath(device) : undefined;
+		if (path !== undefined) listedPaths.add(path);
+		if (listedId !== deviceId) continue;
+		if (path === undefined) return undefined;
+		ownPaths.add(path);
+		const simPath = modemInfo["modem.generic.sim"]?.match(
+			/^\/org\/freedesktop\/ModemManager1\/SIM\/(\d+)$/,
+		)?.[1];
+		if (simPath === undefined) return undefined;
+		const iccid = (await mmGetSim(Number(simPath)))?.[
+			"sim.properties.iccid"
+		]?.trim();
+		if (!iccid) return undefined;
+		present.add(iccid);
+	}
+	if (ownPaths.size === 0) return present;
+
+	const usb = await deps.usbDevices();
+	if (usb === undefined) return undefined;
+	const resolved: Array<{ vidPid: string; path: string | undefined }> = [];
+	for (const device of usb)
+		resolved.push({
+			vidPid: device.vidPid,
+			path:
+				device.sysfsPath === undefined
+					? undefined
+					: await deps.resolvePath(device.sysfsPath),
+		});
+	const models = new Set(
+		resolved
+			.filter((device) => device.path && ownPaths.has(device.path))
+			.map((device) => device.vidPid),
+	);
+	// Every modem with this device id must be a USB device we can see.
+	if (models.size === 0) return undefined;
+	for (const device of resolved)
+		if (
+			models.has(device.vidPid) &&
+			(device.path === undefined || !listedPaths.has(device.path))
+		)
+			return undefined;
+	return present;
+}
+
 export interface ReadyModemSim {
 	readonly modemInfo: ModemInfo;
 	readonly simInfo: SimInfo;
@@ -445,7 +645,9 @@ export async function resolveLateModemConfig(
 				modemStableKeyForId(id) !== stableKey ||
 				fresh === undefined ||
 				fresh === "unreadable" ||
-				fresh.modemInfo["modem.generic.state"] !== "registered" ||
+				// Another SIM's profile may already hold a bearer (gsm-sim-swap.ts).
+				(fresh.modemInfo["modem.generic.state"] !== "registered" &&
+					fresh.modemInfo["modem.generic.state"] !== "connected") ||
 				fresh.modemInfo["modem.generic.device-identifier"] !==
 					sim.modemInfo["modem.generic.device-identifier"] ||
 				fresh.simInfo["sim.properties.iccid"] !==
@@ -477,6 +679,104 @@ export async function resolveLateModemConfig(
 		home_network: sim.simInfo["sim.properties.operator-code"],
 	});
 	return "resolved";
+}
+
+/**
+ * Re-arm the parked profiles of the SIM this modem holds and park the ones
+ * bound to it for SIMs no modem with its device id holds (gsm-sim-swap.ts).
+ *
+ * Runs outside the update lock through `withJournaledModemMutation`
+ * ("modem-config"): the identity lease (refused while a stream is admitted or
+ * forwarded, during journal replay, on a blocked identity and while another
+ * mutation of this modem runs) plus an armed entry whose pre-state is the
+ * modem's descriptor capture with no `format`. Replay on any build, including
+ * one without this change, then takes the generic descriptor path: an
+ * unchanged modem is restored, because nothing a crash leaves needs undoing
+ * (the park records describe themselves). The lease spans the fresh read and
+ * every write, and the registration, physical key, device id and SIM are
+ * fenced across every await.
+ *
+ * "done" means both steps finished, or the modem is positively not on USB
+ * (nothing is journaled or parked for it); "retry" (refused, stale, a
+ * descriptor, SIM or profile we could not read, a store fault or a failed
+ * write) leaves the work for a later poll of the same registration. It never
+ * throws and always confirms its entry; like any journaled mutation, only a
+ * journal operation that fails (an entry write, or the directory sync when
+ * the entry is retired) raises the recovery barrier or blocks the modem.
+ */
+export async function settleModemSimSwap(
+	id: ModemId,
+	stableKey: string,
+	isCurrent: () => boolean,
+): Promise<"done" | "retry"> {
+	if (!isCurrent() || modemStableKeyForId(id) !== stableKey) return "retry";
+	const modem = getModem(id);
+	const iccid = modem?.iccid?.trim();
+	if (!modem?.config?.conn || !iccid) return "retry";
+	try {
+		const preState = await captureModemState(stableKey);
+		if (!isCurrent()) return "retry";
+		if (preState === undefined) {
+			// Only a modem positively off USB settles without a capture.
+			if ((await isUsbModem(id)) !== false) return "retry";
+			logger.info("gsm profile parking skipped: the modem is not on USB", {
+				module: "modems",
+				id,
+			});
+			return "done";
+		}
+		const guarded = await withJournaledModemMutation(
+			stableKey,
+			"modem-config",
+			preState,
+			async (mutation) => {
+				const fresh = await readReadyModemSim(id);
+				const current = (): boolean =>
+					isCurrent() && modemStableKeyForId(id) === stableKey;
+				if (
+					!current() ||
+					fresh === undefined ||
+					fresh === "unreadable" ||
+					fresh.simInfo["sim.properties.iccid"]?.trim() !== iccid
+				)
+					return { confirmed: true, value: "retry" as const };
+				await mutation.markExecuting();
+				const deviceId = fresh.modemInfo["modem.generic.device-identifier"];
+				const result = await settleSimSwapProfiles(
+					deviceId,
+					iccid,
+					{
+						...defaultGsmSimSwapDeps(readPresentSimIds),
+						setFields: (uuid, fields) =>
+							current()
+								? nmConnSetFields(uuid, fields)
+								: Promise.resolve(false),
+					},
+					current,
+				).catch((error: unknown) => {
+					logger.warn("gsm profile settle did not complete", {
+						module: "modems",
+						id,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					return { parked: 0, rearmed: 0, complete: false };
+				});
+				if (result.parked > 0 || result.rearmed > 0) resetGsmConnections();
+				return {
+					confirmed: true,
+					value: result.complete ? ("done" as const) : ("retry" as const),
+				};
+			},
+		);
+		return guarded.ok ? guarded.value : "retry";
+	} catch (error) {
+		logger.warn("gsm profile settle did not complete", {
+			module: "modems",
+			id,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return "retry";
+	}
 }
 
 /**
