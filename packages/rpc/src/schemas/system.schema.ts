@@ -363,6 +363,10 @@ export const updateStateSchema = z.discriminatedUnion('kind', [
 		reason: z.string(),
 		identity: updateIdentitySchema.optional(),
 		failure_id: z.uuid().optional(),
+		// An install the device queued ended before its unit was submitted, so
+		// the install transaction never ran: nothing was installed, and the
+		// device tries it again on its own.
+		retryable: z.literal(true).optional(),
 	}),
 ]);
 export type UpdateState = z.infer<typeof updateStateSchema>;
