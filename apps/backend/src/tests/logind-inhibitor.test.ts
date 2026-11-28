@@ -11,7 +11,8 @@ async function line(
 			const value = buffer.slice(0, newline).trim();
 			buffer = buffer.slice(newline + 1);
 			buffers.set(reader, buffer);
-			if (value && !value.startsWith("{")) return value;
+			// Skip log records, with or without a journal priority prefix.
+			if (value && !/^(<[0-7]>)?\{/.test(value)) return value;
 			continue;
 		}
 		const result = await reader.read();
