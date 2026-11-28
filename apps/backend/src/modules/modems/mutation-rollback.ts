@@ -65,6 +65,10 @@ export type RollbackResult =
 	| "failed"
 	| "unavailable"
 	| "absent"
+	// A different unit, positively identified, sits at the journaled port.
+	| "replaced"
+	// A device sits at the port, but its unit could not be established.
+	| "presence-unknown"
 	// The journal could not prove the modem's unit when it began.
 	| "unproven";
 
@@ -288,23 +292,45 @@ export async function captureModemUnitLinkId(
 	return (await captureModemJournalIdentity(stableKey)).unitLinkId;
 }
 
+/**
+ * What one enumeration shows at a journaled port. `replaced` needs a different
+ * unit positively identified in that same enumeration; a device whose unit could
+ * not be established there is `unknown`, never the original and never another.
+ */
+export type JournaledUnitObservation =
+	| { readonly status: "present"; readonly state: CapturedState }
+	| { readonly status: "empty" }
+	| { readonly status: "replaced" }
+	| { readonly status: "unknown" };
+
+export async function observeJournaledUnit(
+	stableKey: string,
+	deps: MutationCaptureDeps = activeDeps,
+	unitLinkId?: string,
+): Promise<JournaledUnitObservation> {
+	const devices = await deps.enumerate();
+	const device = devices.find(
+		(candidate) => deriveModemStableKey(candidate.physicalUid) === stableKey,
+	);
+	if (device === undefined) return { status: "empty" };
+	const state = {
+		...captureUsbDescriptor(device),
+		ifname: device.ifname ?? "",
+	};
+	if (unitLinkId === undefined) return { status: "present", state };
+	const unit = await reliableUnitLinkId(device, devices, deps);
+	if (unit === unitLinkId) return { status: "present", state };
+	return { status: unit === undefined ? "unknown" : "replaced" };
+}
+
 /** Find the original device at the journaled port when its unit identity is known. */
 export async function captureModemState(
 	stableKey: string,
 	deps: MutationCaptureDeps = activeDeps,
 	unitLinkId?: string,
 ): Promise<CapturedState | undefined> {
-	const devices = await deps.enumerate();
-	const device = devices.find(
-		(candidate) => deriveModemStableKey(candidate.physicalUid) === stableKey,
-	);
-	if (device === undefined) return undefined;
-	if (
-		unitLinkId !== undefined &&
-		(await reliableUnitLinkId(device, devices, deps)) !== unitLinkId
-	)
-		return undefined;
-	return { ...captureUsbDescriptor(device), ifname: device.ifname ?? "" };
+	const observed = await observeJournaledUnit(stableKey, deps, unitLinkId);
+	return observed.status === "present" ? observed.state : undefined;
 }
 
 /**
@@ -362,9 +388,12 @@ export async function rollbackMutation(
 	}
 	// Descriptor equality would accept a replacement with the same descriptors.
 	if (unitUnproven) return "unproven";
-	const current = await captureModemState(stableKey, undefined, unitLinkId);
+	const observed = await observeJournaledUnit(stableKey, undefined, unitLinkId);
 	assertMutationJournalRevision(revision);
-	if (current === undefined) return "absent";
+	if (observed.status === "empty") return "absent";
+	if (observed.status === "replaced") return "replaced";
+	if (observed.status === "unknown") return "presence-unknown";
+	const current = observed.state;
 	// Already back — nothing to undo. This is the common replay case: an `armed`
 	// entry means the mutation had not been dispatched at all.
 	if (statesMatch(preState, current)) return "restored";

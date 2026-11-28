@@ -183,15 +183,13 @@ async function replayEntry(
 		tally.rolledBack += 1;
 		return;
 	}
-	if (outcome === "absent") {
-		// With a journaled unit, "absent" can also mean another device at the
-		// port: the original is shown not to be there, though the port is in use.
-		const replaced =
-			entry.unitLinkId !== undefined &&
-			(await captureModemState(entry.stableKey).catch(() => undefined)) !==
-				undefined;
-		assertMutationJournalRevision(revision);
-		if (!replaced && !(await replayDeviceAbsenceProven(entry))) {
+	// A device whose unit one enumeration could not establish may be the
+	// original: retry, like any presence that could not be read.
+	if (outcome === "presence-unknown") throw new ReplayPresenceUnknownError();
+	if (outcome === "absent" || outcome === "replaced") {
+		// A different unit identified at the port shows the original is not
+		// there; an empty port still needs the kernel's absence proof.
+		if (outcome === "absent" && !(await replayDeviceAbsenceProven(entry))) {
 			throw new ReplayPresenceUnknownError();
 		}
 		await fenced(entry, revision, () =>
