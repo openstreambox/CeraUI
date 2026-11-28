@@ -434,7 +434,6 @@ export function createStreamSessionOrchestrator(
 	});
 
 	const start = async (request: StreamStartRequest): Promise<StartResult> => {
-		lossRetiredGeneration = undefined;
 		const currentIntent = captureOperatorStopIntent();
 		const attemptId = deps.createAttemptId();
 
@@ -553,6 +552,9 @@ export function createStreamSessionOrchestrator(
 		currentIntent: () => boolean,
 	): Promise<StartResult> => {
 		const owner = ownership.begin();
+		// Only an admitted Start replaces the lost session; a refused or busy one
+		// leaves its recovery record alone.
+		lossRetiredGeneration = undefined;
 		const attempt: ActiveAttempt = {
 			attemptId,
 			generation: owner.generation,
@@ -845,6 +847,8 @@ export function createStreamSessionOrchestrator(
 		event: Extract<EventParams, { type: "status" }>,
 	): void => {
 		if (event.state === "idle" && event.streaming === false) {
+			// A confirmed idle engine has no lost session left to Stop.
+			lossRetiredGeneration = undefined;
 			if (deps.canReconcileIdle?.() === false) {
 				ownership.protect();
 				if (
@@ -925,7 +929,12 @@ export function createStreamSessionOrchestrator(
 		if (!ownership.commit(owner, "reconciling", "unknown")) return;
 		currentLoss = captureOperatorStopIntent();
 		deps.onStreamStopped?.("engine_loss");
-		lossRetiredGeneration = owner.generation;
+		// Only a session this process launched is its own to Stop later; a lost
+		// observation-only socket proves no local session.
+		lossRetiredGeneration =
+			active?.launchAdmitted === true && active.generation === owner.generation
+				? owner.generation
+				: undefined;
 		const retirement = deps.retireRuntime?.(owner.generation);
 		lossRetirement = retirement;
 		try {
@@ -1141,6 +1150,8 @@ export function createStreamSessionOrchestrator(
 				currentObservation = undefined;
 		}
 		if (superseded()) return ownership.state;
+		// A confirmed idle engine has no lost session left to Stop.
+		if (runtimeState === "idle") lossRetiredGeneration = undefined;
 		if (
 			runtimeState === "streaming" &&
 			deps.canReconcileStreaming?.(active?.generation) === false
