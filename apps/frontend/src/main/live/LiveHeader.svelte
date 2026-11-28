@@ -42,11 +42,11 @@ const { isStreaming, unconfirmed = false, restarting = false }: Props = $props()
 		</span>
 	{:else if restarting}
 		<span
-			class="text-muted-foreground flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold tracking-wide uppercase"
+			class="text-muted-foreground flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-semibold tracking-wide uppercase"
 			role="status"
 			data-testid="live-header-restarting"
 		>
-			<span class="bg-status-warning h-2 w-2 rounded-full motion-safe:animate-pulse"></span>
+			<span class="bg-status-warning h-2 w-2 shrink-0 rounded-full motion-safe:animate-pulse"></span>
 			{m["live.restartingConnection"]()}
 		</span>
 	{:else if !unconfirmed}
@@ -63,7 +63,7 @@ const { isStreaming, unconfirmed = false, restarting = false }: Props = $props()
 	     competes for the row, so the subtitle stays visible. -->
 	<div class="min-w-0">
 		<h1 tabindex="-1" class={['text-2xl font-bold tracking-tight', isStreaming && !unconfirmed && 'max-sm:not-focus:sr-only']}>{m["live.title"]()}</h1>
-		<p class={['text-muted-foreground text-sm', (isStreaming || !unconfirmed) && 'sr-only sm:not-sr-only']}>{m["live.description"]()}</p>
+		<p class={['text-muted-foreground text-sm', (isStreaming || restarting || !unconfirmed) && 'sr-only sm:not-sr-only']}>{m["live.description"]()}</p>
 	</div>
 </header>
 
