@@ -3168,7 +3168,7 @@
 	"hotspotConfirm.activate": "Ativar ponto de acesso",
 	"hotspotConfirm.saveFailed": "Não foi possível salvar o novo nome e a nova senha. Nada mudou e o ponto de acesso continua desligado.",
 	"hotspotConfirm.passwordCharacters": "Use apenas letras, números e símbolos padrão (sem acentos nem emojis).",
-	"hotspotConfirm.inactiveHint": "Altere o nome, a senha ou o canal com o ponto de acesso desligado e toque em Salvar. Ativar ponto de acesso mostra o nome e a senha para confirmar antes de iniciá-lo.",
+	"hotspotConfirm.inactiveHint": "Altere o nome ou a senha com o ponto de acesso desligado e toque em Salvar. Ativar ponto de acesso mostra o nome e a senha para confirmar antes de iniciá-lo.",
 	"network.wifiMode.confirm.switchTo": "Mudar para {mode}",
 	"hotspotConfirm.firstTimeTitle": "Configure seu ponto de acesso",
 	"hotspotConfirm.firstTimeBody": "Este rádio nunca criou um ponto de acesso. Mantenha o nome e a senha sugeridos ou escolha os seus.",
