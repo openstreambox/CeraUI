@@ -892,7 +892,7 @@
 	"networking.types.modem": {
 		"value": "Modem",
 		"locales": ["de", "fr", "pt-BR"],
-		"reason": "\"Modem\" is the French word; fr network.modem.noSim reads \"Aucune carte SIM détectée\". de live.startFailure.class.modem_transition_active reads \"Ein Modem wechselt gerade den USB-Modus\"; pt-BR network.emptyStates.noDevicesDescription reads \"Nenhum adaptador WiFi ou modem celular detectado\"; \"Modem\" is the Portuguese word."
+		"reason": "\"Modem\" is the French word; fr network.modem.noSim reads \"Aucune carte SIM détectée\". de live.startFailure.class.modem_transition_active reads \"Ein Modem wechselt gerade den USB-Modus oder verbindet sich neu\"; pt-BR network.emptyStates.noDevicesDescription reads \"Nenhum adaptador WiFi ou modem celular detectado\"; \"Modem\" is the Portuguese word."
 	},
 	"networking.types.usb": {
 		"value": "USB",
