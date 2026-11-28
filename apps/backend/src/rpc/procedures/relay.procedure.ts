@@ -13,8 +13,8 @@
  *
  * The endpoint stage reuses the Task 7 transport adapter so validation stays in
  * lock-step with the live resolver. The two-phase design is: stages 1-4 vet the
- * config/DNS statically, then the `probe` stage does a single timeout-bounded,
- * post-connection UDP reachability check against the resolved `addr:port` (see
+ * config/DNS statically, then the `probe` stage tries each resolved address
+ * with a timeout-bounded UDP reachability check against `addr:port` (see
  * `transport/validate.ts`) — never a full SRT/SRTLA session.
  */
 
@@ -34,7 +34,10 @@ import {
 	NotImplementedError,
 	UnknownProtocolError,
 } from "../../modules/streaming/transport/types.ts";
-import { probeReachability } from "../../modules/streaming/transport/validate.ts";
+import {
+	PROBE_TIMEOUT_MS,
+	probeReachability,
+} from "../../modules/streaming/transport/validate.ts";
 import { authMiddleware } from "../middleware/auth.middleware.ts";
 import type { RPCContext } from "../types.ts";
 
@@ -87,16 +90,52 @@ export const relayValidateProcedure = authedProcedure
 		// (shouldUseMocks() === false) takes the real network path, untouched.
 		if (shouldUseMocks()) return resolveMockRelayValidate();
 
-		let resolvedIp: string;
+		// Nine seconds includes DNS and leaves 21 seconds before the client RPC
+		// timeout. DNS cannot be cancelled, but a late answer never starts probes.
+		const deadline = performance.now() + 9000;
+		let dnsTimer: ReturnType<typeof setTimeout> | undefined;
+		let addresses: { address: string; family: number }[];
 		try {
-			resolvedIp = (await lookup(addr)).address;
+			addresses = await Promise.race([
+				lookup(addr, { all: true }),
+				new Promise<never>((_, reject) => {
+					dnsTimer = setTimeout(() => reject(new Error("DNS deadline")), 9000);
+				}),
+			]);
 		} catch {
 			return fail("dns", `Cannot resolve host '${addr}'`);
+		} finally {
+			clearTimeout(dnsTimer);
 		}
 
-		// Post-connection reachability probe (rationale in transport/validate.ts).
-		const probe = await probeReachability(resolvedIp, input.port);
-		if (!probe.reachable) return fail("probe", probe.reason);
-
-		return { valid: true, stage: "probe" };
+		// The live sender prefers IPv4 when available. Preserve order within
+		// each family, alternating so a dead family cannot monopolize the budget.
+		const v4 = addresses.filter(({ family }) => family === 4);
+		const v6 = addresses.filter(({ family }) => family === 6);
+		const ordered = Array.from(
+			{ length: Math.max(v4.length, v6.length) },
+			(_, i) => [v4[i], v6[i]],
+		)
+			.flat()
+			.filter((a) => a !== undefined);
+		let reason = "timeout";
+		let unexpected: unknown;
+		for (const { address, family } of ordered) {
+			const remaining = deadline - performance.now();
+			if (remaining <= 0) break;
+			try {
+				const probe = await probeReachability(
+					address,
+					input.port,
+					Math.min(PROBE_TIMEOUT_MS, remaining),
+				);
+				if (probe.reachable)
+					return { valid: true, stage: "probe", reason: `IPv${family}` };
+				reason = probe.reason;
+			} catch (error) {
+				unexpected ??= error;
+			}
+		}
+		if (unexpected !== undefined) throw unexpected;
+		return fail("probe", reason);
 	});
