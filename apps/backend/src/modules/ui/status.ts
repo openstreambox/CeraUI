@@ -55,6 +55,7 @@ import {
 	getResolvedAsrcCandidates,
 	getResolvedAsrcReason,
 } from "../streaming/auto-audio.ts";
+import { isConnectionRestarting } from "../streaming/connection-restarting.ts";
 import { getEngineBitrateStatus } from "../streaming/engine-bitrate-status.ts";
 import { buildBondMapping } from "../streaming/link-mapping-report.ts";
 import {
@@ -119,6 +120,7 @@ export type StatusResponseMessage = {
 	engine_bitrate?: EngineBitrate | null;
 	preview_encoder_realized?: PreviewEncoderRealized | null;
 	cellular_initializing?: boolean;
+	connection_restarting?: boolean;
 	// Explicitly `| undefined`: the field carries a THIRD state beyond present /
 	// absent-because-empty — "the probe has not answered yet" — and under
 	// `exactOptionalPropertyTypes` that is the only shape that can express it.
@@ -159,6 +161,7 @@ export function sendStatus(conn: WebSocket, buildWifi = wifiBuildMsg) {
 			engine_bitrate: getEngineBitrateStatus(),
 			preview_encoder_realized: getPreviewEncoderRealizedStatus(),
 			cellular_initializing: !getCellularStack().ready,
+			connection_restarting: isConnectionRestarting(),
 			unclaimed_adapters: getUnclaimedAdapters(),
 		} satisfies StatusResponseMessage),
 	);

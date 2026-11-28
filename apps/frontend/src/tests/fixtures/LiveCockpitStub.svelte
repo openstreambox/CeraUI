@@ -4,13 +4,15 @@
   onto `data-summary-mode` so the post-stream summary-window test can assert the
   cockpit is held in summary-only mode after a stop, and `bitrateDraft`, mirrored
   onto `data-bitrate-draft` — the real BitrateAdjuster is purely presentational,
-  so the value LiveView threads down IS the value the operator sees. The summary's
+  so the value LiveView threads down IS the value the operator sees. `restarting`
+  is mirrored onto `data-restarting` for the connection-restart test. The summary's
   audio line inputs, `audioCurrent` and `audioEmbedded`, are mirrored the same way.
 -->
 <script lang="ts">
 const props: {
 	summaryMode?: boolean;
 	bitrateDraft?: number;
+	restarting?: boolean;
 	audioCurrent?: string;
 	audioEmbedded?: boolean;
 } = $props();
@@ -20,6 +22,7 @@ const props: {
 	data-testid="live-cockpit"
 	data-summary-mode={props.summaryMode ? 'true' : 'false'}
 	data-bitrate-draft={props.bitrateDraft}
+	data-restarting={props.restarting ? 'true' : 'false'}
 	data-audio-current={props.audioCurrent}
 	data-audio-embedded={props.audioEmbedded ? 'true' : 'false'}
 ></div>

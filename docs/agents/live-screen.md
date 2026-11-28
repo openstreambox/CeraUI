@@ -59,9 +59,11 @@ These test ids must keep their names and meaning: `idle-cockpit`,
 `live-cockpit`, `source-section`, `source-audio`, `open-audio-dialog`,
 `stream-setup-chain`, `setup-row`, `preview-disclosure`, `composition-card`,
 `composition-stale-notice`, `live-roadmap`, `live-summary-strip` and
-`summary-done`. No region may be added beyond the table above. The Live bar
-and its portaled confirmation also expose `live-bar-stop`, `live-stop-confirm`,
-`live-stop-keep` and `live-stop-end` for locale-independent test drivers.
+`summary-done`. No region or test id may be added beyond the table above,
+except the status banners of `LiveCockpit` (for example
+`live-restarting-banner`, below). The Live bar and its portaled confirmation
+also expose `live-bar-stop`, `live-stop-confirm`, `live-stop-keep` and
+`live-stop-end` for locale-independent test drivers.
 
 #### The layout while live [EXISTS]
 
@@ -273,6 +275,22 @@ rollup visible after Stop even if Details was never opened.
 - While it is mounted, the document's `scroll-padding-bottom` is the bar's
   height (plus the mobile dock below desktop chrome), so a control reached with
   Tab or scrolled into view stops above the bar, never under it (WCAG 2.4.11).
+
+#### A supervised connection restart [EXISTS]
+
+Between a connection restart's Stop and its Start (`status.connection_restarting`
+true, `is_streaming` false) the operator has stopped nothing, so the session
+goes on:
+
+- `live-cockpit` stays mounted, not in the post-stream summary window. Its
+  first status banner, `live-restarting-banner`, says "Restarting connection"
+  and that viewers see the BRB screen, as the HUD does. The other live banners
+  stay hidden.
+- `live-bar` keeps the bitrate control and Stop. A Stop pressed during the
+  restart cancels it and settles once the restart has ended.
+- `IngestStats` keeps the session open. The post-stream summary ("Session
+  ended") opens only when the restart ends without the stream running again.
+- The header chip says "Restarting connection" instead of "Not streaming".
 
 #### Link names
 
