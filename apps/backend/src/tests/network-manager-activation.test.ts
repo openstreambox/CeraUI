@@ -178,3 +178,63 @@ test("Down refuses inventory evidence invalidated during the active-object read"
 	expect(current).toBe(false);
 	expect(calls).toEqual([]);
 });
+
+test("a pending-only Down leaves an activation that has completed", async () => {
+	const calls: MethodCall[] = [];
+	mockActivationBus(
+		() => RUN_ID.split("/")[0] ?? "",
+		(call) => {
+			calls.push(call);
+		},
+		() => ({ uuid: "station", ifname: "wlan0", path: ACTIVE_PATH, state: 2 }),
+	);
+	expect(
+		await nmDisconnect("station", ACTIVE_PATH, RUN_ID, "wlan0", undefined, {
+			pendingOnly: true,
+		}),
+	).toBe(false);
+	expect(calls).toEqual([]);
+});
+
+test("a pending-only Down reads the state again before it asks, so a completion during the lookup is kept", async () => {
+	const calls: MethodCall[] = [];
+	// Every property read goes through this callback: Uuid, Devices and State
+	// together, then the device's Interface. The activation completes after
+	// that lookup, so only a State read right before Down can see it.
+	let reads = 0;
+	mockActivationBus(
+		() => RUN_ID.split("/")[0] ?? "",
+		(call) => {
+			calls.push(call);
+		},
+		() => ({
+			uuid: "station",
+			ifname: "wlan0",
+			path: ACTIVE_PATH,
+			state: reads++ < 4 ? 1 : 2,
+		}),
+	);
+	expect(
+		await nmDisconnect("station", ACTIVE_PATH, RUN_ID, "wlan0", undefined, {
+			pendingOnly: true,
+		}),
+	).toBe(false);
+	expect(calls).toEqual([]);
+});
+
+test("a pending-only Down still takes down an activation that is still activating", async () => {
+	const calls: MethodCall[] = [];
+	mockActivationBus(
+		() => RUN_ID.split("/")[0] ?? "",
+		(call) => {
+			calls.push(call);
+		},
+		() => ({ uuid: "station", ifname: "wlan0", path: ACTIVE_PATH, state: 1 }),
+	);
+	expect(
+		await nmDisconnect("station", ACTIVE_PATH, RUN_ID, "wlan0", undefined, {
+			pendingOnly: true,
+		}),
+	).toBe(true);
+	expect(calls.map((call) => call.member)).toEqual(["DeactivateConnection"]);
+});

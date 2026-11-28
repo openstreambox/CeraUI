@@ -71,6 +71,7 @@ type WifiLockOwner = {
 	readonly key: string;
 	live: boolean;
 	readonly parent: WifiLockOwner | undefined;
+	after?: (() => void)[];
 };
 const lockOwner = new AsyncLocalStorage<WifiLockOwner>();
 
@@ -79,6 +80,37 @@ export function ownsWifiAdapterLock(key: WifiAdapterLockKey): boolean {
 	for (let owner = lockOwner.getStore(); owner; owner = owner.parent)
 		if (owner.live && owner.key === key) return true;
 	return false;
+}
+
+/**
+ * Run `fn` once the adapter lock the caller runs under is released (the
+ * outermost one when locks nest), outside any lock owner's context, or as a
+ * microtask when no lock is held. A station operation's terminal frame and
+ * follow-up work run here, so they never see their own radio held, and they
+ * start before any later request can take that radio.
+ */
+export function afterWifiAdapterLockRelease(fn: () => void): void {
+	let outermost: WifiLockOwner | undefined;
+	for (let owner = lockOwner.getStore(); owner; owner = owner.parent)
+		if (owner.live) outermost = owner;
+	if (!outermost) {
+		queueMicrotask(() => lockOwner.exit(fn));
+		return;
+	}
+	outermost.after ??= [];
+	outermost.after.push(fn);
+}
+
+function runAfterRelease(owner: WifiLockOwner | undefined): void {
+	for (const fn of owner?.after ?? []) {
+		try {
+			lockOwner.exit(fn);
+		} catch (error: unknown) {
+			logger.warn(
+				`Wi-Fi work after an adapter lock release failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
 }
 
 /**
@@ -180,12 +212,14 @@ export function withWifiAdapterLock<T>(
 		typeof target === "string"
 			? target
 			: wifiAdapterLockKey(target.registryKey);
+	let held: WifiLockOwner | undefined;
 	return withDeviceLock(key, async () => {
 		const owner: WifiLockOwner = {
 			key,
 			live: true,
 			parent: lockOwner.getStore(),
 		};
+		held = owner;
 		const release = retainWifiAdapterOwners(
 			key,
 			getWifiInterfacesByMacAddress(),
@@ -196,7 +230,7 @@ export function withWifiAdapterLock<T>(
 			owner.live = false;
 			release();
 		}
-	});
+	}).finally(() => runAfterRelease(held));
 }
 
 /** The owner is held; retain current row aliases through binding and NM actions. */
