@@ -18,7 +18,10 @@ import {
 	kernelReceipt,
 	preflight,
 } from "./helpers/kernel-namespace.ts";
-import { runTestCommand } from "./helpers/run-test-command.ts";
+import {
+	backendTestRunner,
+	runTestCommand,
+} from "./helpers/run-test-command.ts";
 import suites from "./kernel-suites.json";
 
 const file = import.meta.filename;
@@ -48,7 +51,13 @@ async function sourceRule(source: string, table: string, priority = "100") {
 
 async function crashAfterSourceRule(name: string) {
 	const result = await runTestCommand(
-		[process.execPath, "test", file, "--test-name-pattern", `${name}$`],
+		[
+			process.execPath,
+			backendTestRunner,
+			file,
+			"--test-name-pattern",
+			`${name}$`,
+		],
 		{ env: { CERALIVE_SOURCE_CRASH: "1" } },
 	);
 	expect(result.code, result.stdout + result.stderr).toBe(73);

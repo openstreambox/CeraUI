@@ -12,7 +12,10 @@ import {
 	kernelRouteRunner as run,
 	setupKernelRoutes,
 } from "./helpers/default-route-kernel.ts";
-import { runTestCommand } from "./helpers/run-test-command.ts";
+import {
+	backendTestRunner,
+	runTestCommand,
+} from "./helpers/run-test-command.ts";
 
 const child = process.env.CERALIVE_FAILBACK_CHILD === "1";
 const probe = child
@@ -39,7 +42,7 @@ for (const scenario of [
 						"unshare",
 						"-Urn",
 						process.execPath,
-						"test",
+						backendTestRunner,
 						fileURLToPath(import.meta.url),
 						"-t",
 						`${name}$`,

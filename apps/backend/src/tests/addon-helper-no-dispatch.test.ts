@@ -14,6 +14,7 @@ import {
 	launchErrno,
 } from "./helpers/helper-dispatch-fixture.ts";
 import { helperLaunchFixture } from "./helpers/helper-launch-fixture.ts";
+import { backendTestRunner } from "./helpers/run-test-command.ts";
 import { sysextDescriptor } from "./sysext-action-fixture.ts";
 
 useSessionOwnerForFile();
@@ -136,7 +137,7 @@ test("real EMFILE in a private lowered-limit subprocess releases helper tickets 
 			"--nofile=128:128",
 			"--",
 			process.execPath,
-			"test",
+			backendTestRunner,
 			new URL("./helpers/helper-emfile-child.ts", import.meta.url).pathname,
 		],
 		{ stdout: "pipe", stderr: "pipe" },

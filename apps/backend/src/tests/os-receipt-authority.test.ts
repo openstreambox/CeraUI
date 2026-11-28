@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { JudgedOsReceipt } from "../modules/system/update-orchestrator/os-agent.ts";
 import {
@@ -51,7 +52,7 @@ test.each([
 	"keeps the exact inode when persisted authority drifts to %s",
 	async (phase) => {
 		// Given stale failed memory and a different persisted authority.
-		const dir = mkdtempSync("/var/tmp/ceraui-receipt-authority-");
+		const dir = mkdtempSync(`${tmpdir()}/ceraui-receipt-authority-`);
 		dirs.push(dir);
 		const bytes = JSON.stringify(receipt);
 		writeFileSync(join(dir, "os-staged.json"), bytes);

@@ -152,7 +152,20 @@ bun run check
 bun run test
 ```
 
-The package's `test` script runs `bun test --parallel` on the pinned Bun 1.4.5.
+The package's `test` script runs `bun test --parallel` on the pinned Bun 1.4.5
+with a private `TMPDIR`. The preload cleans each worker's fixture root, including
+the process safety stubs. Use `tmpdir()` for fixtures so they stay under that root.
+The test script checks that the run's temp directory is empty before removing it
+and fails if the workers leave any entries. The test preload records Node
+filesystem and Bun file writes aimed at shared temp paths outside the run's
+tree. The runner fails on those records even if a test catches the write error.
+Use `bun scripts/test-with-temp.mjs` from the backend directory to run a subset
+without the package script's default parallel option. Run with umask `022`
+because receipt fixtures exercise the production checks for group-writable files.
+Nested test runners inherit the owning worker's temp tree even when the parent
+starts with plain `bun test`, so replays can write to fixtures owned by that worker.
+Plain Bun workers also reject writes to shared temp paths and report caught
+violations during teardown. Use the wrapper for cleanup if a worker fails to import.
 Parallel execution was adopted on 1.4.2 after five smoke runs and twenty consecutive
 clean full-suite runs. Files run
 in isolated worker globals across worker processes, but filesystem paths are still shared. Tests that

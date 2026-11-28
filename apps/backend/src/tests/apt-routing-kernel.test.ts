@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { readlink } from "node:fs/promises";
 import { aptKernelTestAvailability } from "./helpers/apt-routing-kernel-probe.ts";
-import { runTestCommand } from "./helpers/run-test-command.ts";
+import {
+	backendTestRunner,
+	runTestCommand,
+} from "./helpers/run-test-command.ts";
 
 // Probe the id mapping too: plain -Urn support does not grant a subuid range.
 // Children already hold the required namespace and must not probe a nested one.
@@ -96,7 +99,7 @@ exec "$@"
 				setup,
 				"apt-kernel",
 				process.execPath,
-				"test",
+				backendTestRunner,
 				import.meta.path,
 				"-t",
 				`kernel ${name}:`,

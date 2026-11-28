@@ -6,6 +6,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { retireStagedReceipt } from "../modules/system/update-orchestrator/os-receipt-retirement-store.ts";
 import { receiptJudgment } from "./helpers/os-receipt-judgment.ts";
@@ -28,7 +29,7 @@ test.each(["read", "before-rename", "after-rename", "after-fsync"] as const)(
 	"converges after real SIGKILL at %s with an old consumed receipt",
 	async (boundary) => {
 		// Given real inodes and a killed child at each retirement boundary.
-		const dir = mkdtempSync("/var/tmp/ceraui-receipt-kill-");
+		const dir = mkdtempSync(`${tmpdir()}/ceraui-receipt-kill-`);
 		dirs.push(dir);
 		writeFileSync(join(dir, "os-staged.json"), bytes);
 		writeFileSync(join(dir, "os-staged.consumed.json"), "older");

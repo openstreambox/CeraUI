@@ -7,7 +7,10 @@ import {
 	kernelRouteRunner as run,
 	setupKernelRoutes,
 } from "./helpers/default-route-kernel.ts";
-import { runTestCommand } from "./helpers/run-test-command.ts";
+import {
+	backendTestRunner,
+	runTestCommand,
+} from "./helpers/run-test-command.ts";
 
 const child = process.env.CERALIVE_UNSUPPORTED_CHILD === "1";
 const probe = child
@@ -26,7 +29,7 @@ const unavailable = probe !== undefined && probe.code !== 0;
 					"unshare",
 					"-Urn",
 					process.execPath,
-					"test",
+					backendTestRunner,
 					fileURLToPath(import.meta.url),
 				],
 				{ env: { CERALIVE_UNSUPPORTED_CHILD: "1" } },
