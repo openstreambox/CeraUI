@@ -84,6 +84,7 @@ import {
 	DEFAULT_MIN_BITRATE,
 	DEFAULT_SRT_LATENCY,
 	type EventParams,
+	type GetCapabilitiesResult,
 	type ListDevicesParams,
 	type ListDevicesResult,
 	type ListSwitchTargetsResult,
@@ -131,6 +132,7 @@ import {
 	pinnedLaunchedAudio,
 	readArmedStreamMarker,
 } from "./armed-stream-marker.ts";
+import { NO_AUDIO_ID, resolveAudioMode } from "./audio.ts";
 import {
 	audioInputEngineId,
 	effectiveAudioInputs,
@@ -141,6 +143,7 @@ import {
 	getCurrentCapabilities,
 	getLastCapabilities,
 	invalidateCapabilities,
+	readSessionCapabilities,
 	refreshCapabilitiesFromClient,
 } from "./capabilities.ts";
 import {
@@ -185,8 +188,19 @@ import {
 	typedStartFailure,
 } from "./start-failure-taxonomy.ts";
 import {
+	authorizeStartFeatures,
+	carriesGatedStartFields,
+	type DroppedStartFeature,
+	featuresLeftOutAtAssembly,
+} from "./start-feature-authorization.ts";
+import {
+	clearStartFeatureNotice,
+	postStartFeatureNotice,
+} from "./start-feature-notice.ts";
+import {
 	ENGINE_CLOSE_DEADLINE_MS,
 	ENGINE_STOP_REQUEST_DEADLINE_MS,
+	START_CAPABILITY_PREFLIGHT_DEADLINE_MS,
 } from "./start-lifecycle-timing.ts";
 import {
 	assertStreamLaunchOwnership,
@@ -949,6 +963,10 @@ export class CerastreamBackend implements StreamingBackend {
 		try {
 			let params = this.buildStartParams(config, opts);
 			let audioMixInputs: CerastreamBackend["audioMixInputs"];
+			let droppedFeatures: DroppedStartFeature[] = [];
+			// "Unsupported" is said only on the receiving engine's own answer; an
+			// assembly omission rests on the shared snapshot (possibly a cold cache).
+			let capabilitiesAnswered = false;
 			await this.enqueue(async () => {
 				assertStreamLaunchOwnership();
 				let confirmStreaming: (() => void) | undefined;
@@ -1048,6 +1066,18 @@ export class CerastreamBackend implements StreamingBackend {
 						clientReleased = true;
 					}
 				});
+				// Gated fields are checked against this engine's own answer, not the
+				// shared snapshot the params were assembled from, which may predate
+				// this connection.
+				// The audio is settled at dispatch; a gated field that first appears
+				// there has no answer from this engine and is left out.
+				let startCaps: GetCapabilitiesResult | undefined;
+				if (carriesGatedStartFields(params)) {
+					startCaps = await this.readStartCapabilities(client);
+					assertStreamLaunchOwnership();
+				}
+				let startParams = params;
+				let startMixInputs: CerastreamBackend["audioMixInputs"];
 				const result = await launchTransaction.runPhase(
 					"start-rpc",
 					async () => {
@@ -1084,23 +1114,56 @@ export class CerastreamBackend implements StreamingBackend {
 										input.input_id,
 								)?.id ?? input.input_id,
 						}));
+						// Assembly already leaves out what the shared snapshot says the
+						// engine lacks (a saved mix after boot or a downgrade); that is a
+						// loss too. "No audio" leaves a saved mix out on purpose.
+						const audioOff = opts.audioOff ?? launchConfig.asrc === NO_AUDIO_ID;
+						droppedFeatures = featuresLeftOutAtAssembly(
+							audioOff
+								? { ...launchConfig, audio_inputs: undefined }
+								: launchConfig,
+							params,
+						);
+						startParams = params;
+						startMixInputs = audioMixInputs;
+						if (carriesGatedStartFields(params)) {
+							const singleAudio = this.singleInputAudio(
+								launchConfig,
+								config.pipeline ?? opts.pipeline,
+							);
+							const authorized = authorizeStartFeatures(
+								params,
+								startCaps,
+								Object.keys(singleAudio).length > 0 ? singleAudio : undefined,
+								this.deps.logger,
+							);
+							startParams = authorized.params;
+							if (startParams.audio?.inputs === undefined)
+								startMixInputs = undefined;
+							const omittedAtAssembly = droppedFeatures.length > 0;
+							droppedFeatures = [
+								...new Set([...droppedFeatures, ...authorized.dropped]),
+							];
+							capabilitiesAnswered =
+								startCaps !== undefined && !omittedAtAssembly;
+						}
 						if (attempt !== undefined) {
 							dispatched = true;
 							return client.start({
-								...params,
+								...startParams,
 								attempt_id: attempt.attempt_id,
 							});
 						}
 						dispatched = true;
 						registerLaunchRollback({ kind: "legacy-dispatched" });
-						return this.dispatchStart(client, params);
+						return this.dispatchStart(client, startParams);
 					},
 					(error) => {
 						// runPhase only classifies the error that wins the phase deadline.
 						refusedBeforeAdmission =
 							startRefusedBeforeAdmission(
 								error,
-								params,
+								startParams,
 								client.hello.schema_version,
 							) ||
 							(scoped && scopedStartRefused(error));
@@ -1117,7 +1180,8 @@ export class CerastreamBackend implements StreamingBackend {
 				}
 				// Subscription replay predates this Start acknowledgement.
 				if (this.client === client && this.clientEpoch === clientEpoch) {
-					this.audioMixInputs = audioMixInputs;
+					this.noteDroppedStartFeatures(droppedFeatures, capabilitiesAnswered);
+					this.audioMixInputs = startMixInputs;
 					this.launchedSessionCurrent = () =>
 						this.client === client && this.clientEpoch === clientEpoch;
 					this.runtimeEvidence = undefined;
@@ -1147,6 +1211,51 @@ export class CerastreamBackend implements StreamingBackend {
 				negotiatingCapabilities || scoped || refusedBeforeAdmission,
 			);
 		}
+	}
+
+	/**
+	 * The receiving engine's capabilities for authorizing a start, read on the
+	 * start's own connection and kept local: nothing is published to the shared
+	 * snapshot. Bounded well below the bindings' request timeout; no answer in
+	 * time, or a failed read, is `undefined`, and the start goes out without the
+	 * gated fields.
+	 */
+	private async readStartCapabilities(
+		client: CerastreamClient,
+	): Promise<GetCapabilitiesResult | undefined> {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const deadline = new Promise<undefined>((resolve) => {
+			timer = this.deps.scheduleTimeout(() => {
+				this.deps.logger.warn(
+					"start: the engine did not answer get-capabilities within the bound",
+					{
+						module: "streaming",
+						deadlineMs: START_CAPABILITY_PREFLIGHT_DEADLINE_MS,
+					},
+				);
+				resolve(undefined);
+			}, START_CAPABILITY_PREFLIGHT_DEADLINE_MS);
+		});
+		const read = readSessionCapabilities(client).catch((error: unknown) => {
+			this.deps.logger.warn("start: get-capabilities failed", {
+				module: "streaming",
+				error,
+			});
+			return undefined;
+		});
+		try {
+			return await Promise.race([read, deadline]);
+		} finally {
+			if (timer !== undefined) this.deps.cancelTimeout(timer);
+		}
+	}
+
+	/** Tell the operator which configured start features the engine did not get. */
+	private noteDroppedStartFeatures(
+		dropped: readonly DroppedStartFeature[],
+		answered: boolean,
+	): void {
+		postStartFeatureNotice(this.deps.bridge, dropped, answered);
 	}
 
 	// Send `start` so `audio.mode` / `video_passthrough` survive: an engine that
@@ -1338,6 +1447,8 @@ export class CerastreamBackend implements StreamingBackend {
 	// stream that is no longer running.
 	private clearSessionScopedTelemetry(): void {
 		this.audioMixInputs = undefined;
+		// Which configured features the session went without is session news too.
+		clearStartFeatureNotice(this.deps.bridge);
 		this.runtimeEvidence = undefined;
 		const previous = this.telemetry;
 		if (previous === null) return;
@@ -2045,6 +2156,43 @@ export class CerastreamBackend implements StreamingBackend {
 		if (this.deps.onEngineUnreachable !== undefined)
 			this.deps.onEngineUnreachable(site);
 		else reportEngineControlLoss(error, { site });
+	}
+
+	/**
+	 * The single-input `audio` section: the operator's pick, backend, codec and
+	 * delay, without mixer inputs. Also the fallback a start sends when the
+	 * receiving engine turns out not to take a configured mix.
+	 */
+	private singleInputAudio(
+		config: RuntimeConfig,
+		pipelineId: string | undefined,
+	) {
+		// The operator's audio pick maps onto the engine's `audio.mode`
+		// discriminator (never a pseudo-source string leaked into `audio.device`):
+		// "No audio" ⇒ none, "Pipeline default" / a network-embedded source ⇒
+		// default, a real device ⇒ device + its ALSA id. An absent `asrc` omits the
+		// section entirely (the engine's legacy inference, compat-preserved).
+		const selection =
+			config.asrc !== undefined
+				? resolveAudioMode(
+						config.asrc,
+						this.deps.isEmbeddedAudioActive(pipelineId),
+					)
+				: undefined;
+		const audio = {
+			// Absent means the operator stated no backend, so NO key is serialized
+			// and the engine's own persisted default governs. Substituting a value
+			// here would silently move every unconfigured device onto whichever arm
+			// this file names.
+			...(config.audio_backend !== undefined
+				? { backend: config.audio_backend }
+				: {}),
+			...(selection !== undefined ? { mode: selection.mode } : {}),
+			...(selection?.device !== undefined ? { device: selection.device } : {}),
+			...(config.acodec !== undefined ? { codec: config.acodec } : {}),
+			...(config.delay !== undefined ? { delay_ms: config.delay } : {}),
+		};
+		return audio;
 	}
 
 	/**
