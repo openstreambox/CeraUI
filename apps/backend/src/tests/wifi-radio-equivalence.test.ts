@@ -4,6 +4,7 @@ import {
 	getWifiInterfacesByMacAddress,
 } from "../modules/wifi/wifi-connections.ts";
 import { getWifiIdToMacAddress } from "../modules/wifi/wifi-interfaces.ts";
+import { PROVISIONING_AP_IFNAME } from "../modules/wifi/wifi-provisioning-ap.ts";
 import { wifiRadioIdentity } from "../modules/wifi/wifi-radio-identity.ts";
 import { radioEquivalenceCases } from "./fixtures/wifi/radio-equivalence-cases.ts";
 import golden from "./fixtures/wifi/radio-equivalence-main.json";
@@ -36,9 +37,29 @@ const verifiedTranscript = {
 		index === 9 ? [call[0], call[1], bindingFields] : call,
 	),
 };
-const transcripts: Readonly<
-	Record<string, { readonly calls: readonly (readonly unknown[])[] }>
-> = {
+type Transcript = { readonly calls: readonly (readonly unknown[])[] };
+/**
+ * The recorded main oracle arms autoconnect after Start on every radio. The
+ * device image's setup radio is now never armed; every other radio, including
+ * a rename away from it, keeps the recorded arming.
+ */
+function disarmSetupRadio(transcript: Transcript): Transcript {
+	let radio: unknown;
+	return {
+		...transcript,
+		calls: transcript.calls.map((call) => {
+			if (call[0] === "setDupIpSuppression" && call[2] === true)
+				radio = call[1];
+			const fields = call[2] as Record<string, string> | undefined;
+			return call[0] === "nmConnSetFields" &&
+				radio === PROVISIONING_AP_IFNAME &&
+				fields?.["connection.autoconnect"] === "yes"
+				? [call[0], call[1], { ...fields, "connection.autoconnect": "no" }]
+				: call;
+		}),
+	};
+}
+const recordedTranscripts: Readonly<Record<string, Transcript>> = {
 	...golden.transcripts,
 	"verified fresh": verifiedTranscript,
 	rename: {
@@ -60,6 +81,12 @@ const transcripts: Readonly<
 		),
 	},
 };
+const transcripts: Readonly<Record<string, Transcript>> = Object.fromEntries(
+	Object.entries(recordedTranscripts).map(([name, transcript]) => [
+		name,
+		disarmSetupRadio(transcript),
+	]),
+);
 const broadcastTranscripts: Readonly<Record<string, unknown>> =
 	golden.broadcasts;
 
@@ -201,7 +228,7 @@ for (const fixture of radioEquivalenceCases) {
 		if (fixture.limitedFrames) {
 			const verified = verifiedTranscript;
 			const expectedCalls: unknown[][] =
-				fixture.frames.length > 1 ? [...verified.calls] : [];
+				fixture.frames.length > 1 ? [...disarmSetupRadio(verified).calls] : [];
 			const expectedBroadcasts: typeof broadcasts =
 				fixture.frames.length > 1
 					? [...golden.broadcasts["verified fresh"]]

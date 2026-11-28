@@ -44,7 +44,10 @@ import {
 } from "./helpers/wifi-autoconnect-fixture.ts";
 import { wifiProtocolContext } from "./helpers/wifi-protocol-context.ts";
 
-const f = autoconnectFixture();
+// Arming cases run on a radio other than the image's setup radio (wlan0),
+// which CeraUI never arms. "wl0" keeps the setup name out while sorting where
+// upstream's f.ifname did, beside the wlan1 radio these cases add.
+const f = autoconnectFixture("wl0");
 const profile = () => {
 	const value = f.profiles.get(PROFILE);
 	if (!value) throw new Error("Missing fixture profile");
@@ -169,7 +172,7 @@ test("Station refuses if pin readback fails only at Modify dispatch", async () =
 test("a rejected station policy write keeps Station intent and still downs the AP", async () => {
 	profile()["match.path"] = PORT;
 	f.persistMode(MAC, "hotspot");
-	f.list([`wlan0:wifi:connected:${PROFILE}`]);
+	f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 	await f.discover();
 	const write = spyOn(
 		defaultHotspotStopDeps,
@@ -186,7 +189,7 @@ test("a rejected station policy write keeps Station intent and still downs the A
 		}),
 	).toEqual({ success: true, applied: "station" });
 	expect(getConfig().wifi_modes).toEqual({ [MAC]: "station" });
-	expect(down.mock.calls).toEqual([[PROFILE, ACTIVE_PATH, RUN_ID, "wlan0"]]);
+	expect(down.mock.calls).toEqual([[PROFILE, ACTIVE_PATH, RUN_ID, f.ifname]]);
 	expect(write).toHaveBeenCalledWith(PROFILE, {
 		"connection.autoconnect": "no",
 	});
@@ -196,7 +199,7 @@ test.each(["stop", "station"] as const)(
 	"%s takes the AP down even when the mode config cannot be written",
 	async (action) => {
 		f.persistMode(MAC, "hotspot");
-		f.list([`wlan0:wifi:connected:${PROFILE}`]);
+		f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 		await f.discover();
 		const configPath = getConfigFilePath();
 		f.failIntent();
@@ -204,7 +207,7 @@ test.each(["stop", "station"] as const)(
 			defaultHotspotStopDeps,
 			"nmDisconnect",
 		).mockImplementation(async () => {
-			f.list(["wlan0:wifi:disconnected:"]);
+			f.list([`${f.ifname}:wifi:disconnected:`]);
 			return true;
 		});
 
@@ -213,7 +216,7 @@ test.each(["stop", "station"] as const)(
 				? await wifiHotspotStop({ device: 0 })
 				: await setWifiAdapterMode(0, "station");
 		expect(result.success).toBe(true);
-		expect(down.mock.calls).toEqual([[PROFILE, ACTIVE_PATH, RUN_ID, "wlan0"]]);
+		expect(down.mock.calls).toEqual([[PROFILE, ACTIVE_PATH, RUN_ID, f.ifname]]);
 		expect(getConfig().wifi_modes).toEqual({ [MAC]: "hotspot" });
 
 		await f.restore();
@@ -230,7 +233,7 @@ test.each(["unreadable history", "pending teardown"] as const)(
 	"Station downs the live AP despite %s",
 	async (failure) => {
 		f.persistMode(MAC, "hotspot");
-		f.list([`wlan0:wifi:connected:${PROFILE}`]);
+		f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 		await f.discover();
 		if (failure === "pending teardown") {
 			registerWifiAdapterTeardownLocked(MAC, async () => ({
@@ -260,7 +263,7 @@ test.each(["unreadable history", "pending teardown"] as const)(
 			success: true,
 			applied: "station",
 		});
-		expect(down.mock.calls).toEqual([[PROFILE, ACTIVE_PATH, RUN_ID, "wlan0"]]);
+		expect(down.mock.calls).toEqual([[PROFILE, ACTIVE_PATH, RUN_ID, f.ifname]]);
 		expect(getConfig().wifi_modes).toEqual({ [MAC]: "station" });
 	},
 );
@@ -269,7 +272,7 @@ test.each(["stop", "station"] as const)(
 	"%s does not save Station if Down refuses after the config path recovers",
 	async (action) => {
 		f.persistMode(MAC, "hotspot");
-		f.list([`wlan0:wifi:connected:${PROFILE}`]);
+		f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 		await f.discover();
 		const configPath = getConfigFilePath();
 		f.failIntent();
@@ -286,7 +289,7 @@ test.each(["stop", "station"] as const)(
 				? await wifiHotspotStop({ device: 0 })
 				: await setWifiAdapterMode(0, "station");
 		expect(result).toEqual({ success: false, error: "deactivation-failed" });
-		expect(down.mock.calls).toEqual([[PROFILE, ACTIVE_PATH, RUN_ID, "wlan0"]]);
+		expect(down.mock.calls).toEqual([[PROFILE, ACTIVE_PATH, RUN_ID, f.ifname]]);
 		expect(await Bun.file(configPath).json()).toMatchObject({
 			wifi_modes: { [MAC]: "hotspot" },
 		});
@@ -300,10 +303,14 @@ test.each([undefined, "station", "hotspot", "hybrid"] as const)(
 		await f.sample();
 		expect(
 			(
-				await hotspotAutoconnectPolicy(MAC, {
-					"802-11-wireless.mac-address": MAC,
-					"match.path": PORT,
-				})
+				await hotspotAutoconnectPolicy(
+					MAC,
+					{
+						"802-11-wireless.mac-address": MAC,
+						"match.path": PORT,
+					},
+					f.ifname,
+				)
 			)?.fields["connection.autoconnect"],
 		).toBe(intent === "hotspot" || intent === "hybrid" ? "yes" : "no");
 	},
@@ -332,7 +339,7 @@ test.each(["hotspot", "station"] as const)(
 			concurrent,
 			"ensureConcurrentApInterface",
 		).mockResolvedValue({
-			ifname: "clap-wlan0",
+			ifname: `clap-${f.ifname}`,
 			created: false,
 			type: "managed",
 		});
@@ -401,7 +408,7 @@ test("a first profile gets both pins before its explicit reconnect is allowed to
 test("a port read across replacement cannot publish the predecessor path", async () => {
 	spyOn(nm, "nmDeviceProp").mockImplementation(async (_ifname, fields) => {
 		if (fields !== "GENERAL.PATH") return undefined;
-		f.witnesses.set("wlan0", {
+		f.witnesses.set(f.ifname, {
 			ifindex: 99,
 			phy: "/sys/devices/policy/phy0",
 			mac: MAC,
@@ -410,7 +417,7 @@ test("a port read across replacement cannot publish the predecessor path", async
 		return [PORT];
 	});
 	await f.sample();
-	expect(wifiRadioIdentity.state.rows.get("wlan0")?.lifetime).toBeUndefined();
+	expect(wifiRadioIdentity.state.rows.get(f.ifname)?.lifetime).toBeUndefined();
 });
 
 test.each(["stop", "station"] as const)(
@@ -424,7 +431,7 @@ test.each(["stop", "station"] as const)(
 			path: "usb-foreign:1.0",
 		});
 		const foreignList = [
-			"wlan0:wifi:disconnected:",
+			`${f.ifname}:wifi:disconnected:`,
 			`wlan1:wifi:connected:${PROFILE}`,
 		];
 		f.list(foreignList);
@@ -432,11 +439,11 @@ test.each(["stop", "station"] as const)(
 			defaultHotspotStopDeps,
 			"nmDisconnect",
 		).mockImplementation(async () => {
-			f.list(["wlan0:wifi:disconnected:", "wlan1:wifi:disconnected:"]);
+			f.list([`${f.ifname}:wifi:disconnected:`, "wlan1:wifi:disconnected:"]);
 			return true;
 		});
 		const during = spyOn(nm, "nmDisconnect").mockImplementation(async () => {
-			f.list(["wlan0:wifi:disconnected:", "wlan1:wifi:disconnected:"]);
+			f.list([`${f.ifname}:wifi:disconnected:`, "wlan1:wifi:disconnected:"]);
 			return true;
 		});
 
@@ -461,12 +468,12 @@ test.each(["stop", "station"] as const)(
 
 test("Stop cannot use cached AP state to Down after the roster becomes unreadable", async () => {
 	f.persistMode(MAC, "hotspot");
-	f.list([`wlan0:wifi:connected:${PROFILE}`]);
+	f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 	await f.discover();
 	const down = spyOn(defaultHotspotStopDeps, "nmDisconnect").mockResolvedValue(
 		true,
 	);
-	f.list(["wlan0:wifi:disconnected:", `wlan1:wifi:connected:${PROFILE}`]);
+	f.list([`${f.ifname}:wifi:disconnected:`, `wlan1:wifi:connected:${PROFILE}`]);
 	spyOn(nm, "nmDevices").mockResolvedValue(undefined);
 	spyOn(nm, "nmDeviceProp").mockResolvedValue(undefined);
 	expect(await wifiHotspotStop({ device: f.row().id })).toEqual({
@@ -478,10 +485,10 @@ test("Stop cannot use cached AP state to Down after the roster becomes unreadabl
 
 test("Station checks for a local AP that came up after the last discovery", async () => {
 	await f.discover();
-	f.list([`wlan0:wifi:connected:${PROFILE}`]);
+	f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 	const down = spyOn(defaultHotspotStopDeps, "nmDisconnect").mockImplementation(
 		async () => {
-			f.list(["wlan0:wifi:disconnected:"]);
+			f.list([`${f.ifname}:wifi:disconnected:`]);
 			return true;
 		},
 	);
@@ -490,7 +497,7 @@ test("Station checks for a local AP that came up after the last discovery", asyn
 		applied: "station",
 	});
 	expect(await nm.nmDevices("device,type,state,con-uuid")).toEqual([
-		"wlan0:wifi:disconnected:",
+		`${f.ifname}:wifi:disconnected:`,
 	]);
 	expect(down).toHaveBeenCalledTimes(1);
 });
@@ -511,15 +518,17 @@ test("Station does not report applied when the fresh device roster cannot be rea
 test("station Disconnect changes only the selected device when its UUID is also active elsewhere", async () => {
 	const uuid = "station-link";
 	f.profiles.set(uuid, { "802-11-wireless.mode": "infrastructure" });
-	f.list([`wlan0:wifi:connected:${uuid}`]);
+	f.list([`${f.ifname}:wifi:connected:${uuid}`]);
 	await f.discover();
 	f.row().saved.Station = uuid;
 	f.row().conn = uuid;
 	const foreign = `wlan1:wifi:connected:${uuid}`;
-	f.list([`wlan0:wifi:connected:${uuid}`, foreign]);
+	f.list([`${f.ifname}:wifi:connected:${uuid}`, foreign]);
 	const down = spyOn(nm, "nmDisconnect").mockImplementation(
 		async (_id, path) => {
-			f.list(path === ACTIVE_PATH ? ["wlan0:wifi:disconnected:", foreign] : []);
+			f.list(
+				path === ACTIVE_PATH ? [`${f.ifname}:wifi:disconnected:`, foreign] : [],
+			);
 			return true;
 		},
 	);
@@ -530,7 +539,7 @@ test("station Disconnect changes only the selected device when its UUID is also 
 	);
 	expect(result).toEqual({ success: true });
 	expect(await nm.nmDevices("device,type,state,con-uuid")).toEqual([
-		"wlan0:wifi:disconnected:",
+		`${f.ifname}:wifi:disconnected:`,
 		foreign,
 	]);
 	expect(down).toHaveBeenCalledTimes(1);
@@ -538,18 +547,18 @@ test("station Disconnect changes only the selected device when its UUID is also 
 
 test("discovery Station Down cannot hit an activation that moves after the device read", async () => {
 	f.persistMode(MAC, "hotspot");
-	f.list([`wlan0:wifi:connected:${PROFILE}`]);
+	f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 	await f.discover();
 	profile()["connection.autoconnect"] = "no";
 	f.persistMode(MAC, "station");
 	const oldPath = "/org/freedesktop/NetworkManager/ActiveConnection/1";
 	const foreign = [
-		"wlan0:wifi:disconnected:",
+		`${f.ifname}:wifi:disconnected:`,
 		`wlan1:wifi:connected:${PROFILE}`,
 	];
 	spyOn(nm, "nmDeviceProp").mockImplementation(async (ifname, fields) => {
 		if (fields === "GENERAL.PATH") return [PORT];
-		if (ifname === "wlan0" && fields.startsWith("GENERAL.STATE")) {
+		if (ifname === f.ifname && fields.startsWith("GENERAL.STATE")) {
 			f.list(foreign);
 			return ["100", PROFILE, oldPath];
 		}
@@ -558,21 +567,21 @@ test("discovery Station Down cannot hit an activation that moves after the devic
 	const down = spyOn(nm, "nmDisconnect").mockImplementation(
 		async (_uuid, path) => {
 			if (path === oldPath) return false;
-			f.list(["wlan0:wifi:disconnected:", "wlan1:wifi:disconnected:"]);
+			f.list([`${f.ifname}:wifi:disconnected:`, "wlan1:wifi:disconnected:"]);
 			return true;
 		},
 	);
 	await reconcileWifiAdapterPolicies({
 		identities: wifiRadioIdentity.state.rows,
-		active: new Map([["wlan0", PROFILE]]),
+		active: new Map([[f.ifname, PROFILE]]),
 	});
 	expect(await nm.nmDevices("device,type,state,con-uuid")).toEqual(foreign);
-	expect(down.mock.calls).toEqual([[PROFILE, oldPath, RUN_ID, "wlan0"]]);
+	expect(down.mock.calls).toEqual([[PROFILE, oldPath, RUN_ID, f.ifname]]);
 });
 
 test("credential-only Prepare preserves a deferred Station choice and its persistence retry", async () => {
 	f.persistMode(MAC, "hotspot");
-	f.list([`wlan0:wifi:connected:${PROFILE}`]);
+	f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 	await f.discover();
 	const row = f.row();
 	const alias = `${MAC}@${PORT}`;
@@ -588,7 +597,7 @@ test("credential-only Prepare preserves a deferred Station choice and its persis
 	const configPath = getConfigFilePath();
 	f.failIntent();
 	spyOn(defaultHotspotStopDeps, "nmDisconnect").mockImplementation(async () => {
-		f.list(["wlan0:wifi:disconnected:"]);
+		f.list([`${f.ifname}:wifi:disconnected:`]);
 		return true;
 	});
 	expect(await wifiHotspotStop({ device: row.id })).toEqual({ success: true });

@@ -25,12 +25,12 @@ import {
 	cancelWifiAdapterReconciliation,
 	reconcileWifiAdapterTeardownLocked,
 } from "../modules/wifi/wifi-adapter-reconcile-retry.ts";
-import { firstAp, MAC } from "./helpers/wifi-first-ap-fixture.ts";
+import { firstAp, MAC, OTHER_RADIO } from "./helpers/wifi-first-ap-fixture.ts";
 import { replayFirstApState } from "./helpers/wifi-first-ap-instances.ts";
 
 for (const attack of ["stale-receipt", "inplace-restore"] as const) {
 	test(`startup preserves passive same-run ${attack} without an owned write`, async () => {
-		const f = await firstAp();
+		const f = await firstAp(undefined, false, OTHER_RADIO);
 		const modes = config.getConfig().wifi_modes;
 		const dir = await mkdtemp(join(tmpdir(), "first-ap-passive-"));
 		const path = join(dir, "hotspot_credentials.json");
@@ -87,6 +87,7 @@ for (const attack of ["stale-receipt", "inplace-restore"] as const) {
 					store,
 					nmRun: f.nm.run(),
 					reportAuthority: true,
+					radioIfname: OTHER_RADIO,
 				}),
 			).toEqual({
 				result: true,
