@@ -8,7 +8,7 @@
 import { expect, test } from "bun:test";
 import { getConfig } from "../modules/config.ts";
 import { observedWifiAdapterMode } from "../modules/wifi/wifi-adapter-mode.ts";
-import { hotspotAutoconnectFields } from "../modules/wifi/wifi-autoconnect-policy.ts";
+import { hotspotAutoconnectPolicy } from "../modules/wifi/wifi-autoconnect-policy.ts";
 import { PROVISIONING_AP_IFNAME } from "../modules/wifi/wifi-provisioning-ap.ts";
 import {
 	autoconnectFixture,
@@ -33,12 +33,13 @@ test("the arming decision differs only by the radio's name", async () => {
 	};
 
 	expect(
-		hotspotAutoconnectFields(MAC, binding, PROVISIONING_AP_IFNAME)[
-			"connection.autoconnect"
-		],
+		(await hotspotAutoconnectPolicy(MAC, binding, PROVISIONING_AP_IFNAME))
+			?.fields["connection.autoconnect"],
 	).toBe("no");
 	expect(
-		hotspotAutoconnectFields(MAC, binding, "wlan1")["connection.autoconnect"],
+		(await hotspotAutoconnectPolicy(MAC, binding, "wlan1"))?.fields[
+			"connection.autoconnect"
+		],
 	).toBe("yes");
 });
 
@@ -65,7 +66,11 @@ test("saved hotspot intent on the setup radio is disarmed at discovery and resto
 	expect(profile()["connection.autoconnect"]).toBe("no");
 	expect(f.activations).toEqual([PROFILE]);
 	expect(observedWifiAdapterMode(f.row())).toBe("hotspot");
-	expect(getConfig().wifi_modes).toEqual({ [MAC]: "hotspot" });
+	// Upstream restore (#681) also seeds the proven radio's port intent.
+	expect(getConfig().wifi_modes).toEqual({
+		[MAC]: "hotspot",
+		[`${MAC}@${PORT}`]: "hotspot",
+	});
 });
 
 test("a legacy armed profile on the setup radio records hotspot intent before it is disarmed", async () => {
