@@ -2,7 +2,9 @@ import { chown, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { readBoardUpdates } from "../board-updates.ts";
 import { readUpdateCapabilityFile } from "../update-capabilities.ts";
+import { updateChannelUrl } from "../update-channel-url.ts";
 import { selectUpdateTransport } from "../update-transport/executor.ts";
 import { updatePinController } from "../update-transport/pin.ts";
 import { kernelVersionGreater, readBootedKernel } from "./kernel-packages.ts";
@@ -52,6 +54,12 @@ export async function verifyKernelSidecar(
 		parseAuthorityJson(decodeAuthorityUtf8(data)),
 	);
 	if (parsed.board !== manifest.board || parsed.os_version !== manifest.version)
+		throw new KernelUpdateError("os_kernel_identity_unknown");
+	const policy = await readBoardUpdates();
+	if (
+		policy === null ||
+		!parsed.kernel.package.endsWith(`-ceralive-${policy?.family ?? "rk3588"}`)
+	)
 		throw new KernelUpdateError("os_kernel_identity_unknown");
 	return parsed.kernel;
 }
@@ -104,7 +112,7 @@ export async function checkPinnedOsKernelAdmission(
 		await chown(directory, file.ota_uid, -1);
 		const json = join(directory, "kernel.json");
 		const sig = join(directory, "kernel.json.sig");
-		const url = `https://images.ceralive.tv/releases/${manifest.board}/${manifest.version}/kernel.json`;
+		const url = `${await updateChannelUrl()}/releases/${manifest.board}/${manifest.version}/kernel.json`;
 		if (
 			(await deps.fetch(url, json, file.ota_uid)) &&
 			(await deps.fetch(`${url}.sig`, sig, file.ota_uid))
