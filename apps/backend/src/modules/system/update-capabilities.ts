@@ -3,6 +3,7 @@ import {
 	updateCapabilityFileSchema,
 } from "@ceraui/rpc/schemas";
 import type { z } from "zod";
+import { imageAptSourceInUse } from "./image-apt-source.ts";
 import {
 	readStoredStateJson,
 	STORED_STATE_LIMITS,
@@ -48,6 +49,20 @@ export async function readUpdateCapabilities(
 		return legacy;
 	}
 	return { mode: "capable", features: parsed.features };
+}
+
+/**
+ * What the Updates dialog is told: the image's regime, plus whether package
+ * installs are manual-only. They are on an image that ships its own apt source
+ * (valid or not), where the backend never installs packages on its own.
+ */
+export async function readUpdateCapabilitiesReply(
+	filePath = capabilityPath,
+): Promise<UpdateCapabilities> {
+	return {
+		...(await readUpdateCapabilities(filePath)),
+		packageInstallsManual: imageAptSourceInUse(),
+	};
 }
 
 export function hasKernelAptStage(caps: UpdateCapabilities): boolean {

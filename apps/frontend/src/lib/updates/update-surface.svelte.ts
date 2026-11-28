@@ -67,9 +67,20 @@ export {
 	UPDATE_SETTINGS_OP,
 } from "./update-settings-owner.svelte";
 
+/** What the automatic package switch turns on; see `UpdateSurface.packagesMode`. */
+export type PackagesAutomationMode = "unknown" | "install" | "check";
+
 export interface UpdateSurface {
 	readonly capabilities: UpdateCapabilities | undefined;
 	readonly packagesReady: boolean;
+	/**
+	 * What the package switch controls, from the current link's capabilities
+	 * reply: `check` when it says package updates are installed only by hand,
+	 * `install` when it says otherwise or omits the field, and `unknown` while
+	 * no successful reply on this link has landed (pending, failed, or one
+	 * from an earlier link).
+	 */
+	readonly packagesMode: PackagesAutomationMode;
 	readonly kernelReady: boolean;
 	readonly settings: UpdateSettings | undefined;
 	readonly details: UpdateDetails | undefined;
@@ -225,6 +236,14 @@ export function createUpdateSurface(): UpdateSurface {
 		);
 	}
 
+	// Either mode is claimed only from a successful reply asked of the CURRENT
+	// link. A pending, failed or previous link's read is not knowledge.
+	function packagesMode(): PackagesAutomationMode {
+		if (capabilities === undefined || capsLink !== getLinkEpoch())
+			return "unknown";
+		return capabilities.packageInstallsManual === true ? "check" : "install";
+	}
+
 	function kernelReady(): boolean {
 		return (
 			capsLink === getLinkEpoch() && updateCapabilityView(capabilities).kernel
@@ -240,6 +259,9 @@ export function createUpdateSurface(): UpdateSurface {
 		},
 		get packagesReady() {
 			return packagesReady();
+		},
+		get packagesMode() {
+			return packagesMode();
 		},
 		get settings() {
 			return owner.settings;

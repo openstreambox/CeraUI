@@ -1449,6 +1449,17 @@ strictly. With a valid record:
   from an earlier process is not a request: at startup it goes back to `idle`
   with the package check due. In this mode the unit is never launched without
   the source pair, and the legacy roster upgrade is refused.
+- `system.getUpdateCapabilities` answers `packageInstallsManual: true` on
+  such an image (also when its record is there but does not validate, where
+  package checks are refused). `packagesAuto` still turns the scheduled
+  package check and its notice on or off there, so the Updates dialog keeps
+  the switch and saves it as everywhere else, but names it "Check for package
+  updates automatically", with the hint "Package updates on this device are
+  installed by hand." Either name needs a successful reply on the current
+  connection: while that reply is pending, failed or from before a reconnect,
+  the switch reads "Automatic package updates", still saving `packagesAuto`.
+  Everywhere else the field is `false` (older backends omit it, which means
+  the same) and the switch keeps "Install package updates automatically".
 - An install that ends before its apt unit launched (clock, dpkg, refresh,
   unreachable or captive repository, discovery, nothing installable, pinned
   recheck, space preflight, failed download, any stream before launch, a start
