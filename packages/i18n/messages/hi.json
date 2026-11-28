@@ -208,6 +208,7 @@
 	"auth.passwordTooShort": "कम से कम 8 अक्षर उपयोग करें",
 	"auth.passwordsDoNotMatch": "पासवर्ड मेल नहीं खाते",
 	"auth.placeholderConfirmPassword": "अपना पासवर्ड फिर से दर्ज करें",
+	"auth.placeholderCreatePassword": "पासवर्ड बनाएं",
 	"auth.placeholderNewPassword": "सुरक्षित पासवर्ड बनाएं (न्यूनतम 8 अक्षर)",
 	"auth.placeholderPassword": "अपना पासवर्ड दर्ज करें",
 	"auth.rememberMe": "मुझे याद रखें",
