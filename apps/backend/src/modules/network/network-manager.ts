@@ -691,6 +691,43 @@ export async function nmRescan(device?: string) {
 	return false;
 }
 
+/**
+ * Scan on ONE radio and return what that radio itself sees, as SSID -> best
+ * signal (0-100). `--rescan yes` makes nmcli wait for the scan to finish, so
+ * the answer is fresh, unlike the merged cached list `nmScanResults` reads.
+ * `undefined` is a failed scan, never an empty one.
+ */
+export async function nmScanDevice(
+	ifname: string,
+): Promise<Map<string, number> | undefined> {
+	try {
+		const stdout = await run("nmcli", [
+			"--terse",
+			"--fields",
+			"SSID,SIGNAL",
+			"device",
+			"wifi",
+			"list",
+			"ifname",
+			argMatch(ID_RE, ifname),
+			"--rescan",
+			"yes",
+		]);
+		const seen = new Map<string, number>();
+		for (const row of stdout.split("\n")) {
+			if (!row) continue;
+			const [ssid, signalRaw] = nmcliParseSep(row) as [string, string];
+			const signal = Number.parseInt(signalRaw ?? "", 10);
+			if (!ssid || Number.isNaN(signal)) continue;
+			seen.set(ssid, Math.max(seen.get(ssid) ?? 0, signal));
+		}
+		return seen;
+	} catch (err) {
+		logger.warn(`nmScanDevice failed: ${describePrivateCliError(err)}`);
+	}
+	return undefined;
+}
+
 export async function nmScanResults(fields: string, ifname?: string) {
 	try {
 		const args = [
