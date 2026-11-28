@@ -149,6 +149,9 @@ const UNGATED = [
 	"getMockHardware",
 	"getPipelines",
 	"listDevices",
+	// The train's stale-link "Restart connection" relaunches the session the
+	// device holds; like Stop, an older page may always ask for it.
+	"restartConnection",
 	"setBitrate",
 	"setMockDeviceAttached",
 	"setMockHardware",
