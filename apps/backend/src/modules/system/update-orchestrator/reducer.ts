@@ -24,10 +24,11 @@ import {
 	isRecordedSyncFailure,
 	isRecordedSyncRefusal,
 } from "./sync-failure-recovery.ts";
-import type {
-	OrchestratorEvent,
-	OrchestratorScheduleClock,
-	OrchestratorState,
+import {
+	type OrchestratorEvent,
+	type OrchestratorScheduleClock,
+	type OrchestratorState,
+	PACKAGE_INSTALL_REFUSED,
 } from "./types.ts";
 
 function withoutOsStageRecovery(state: OrchestratorState): OrchestratorState {
@@ -383,6 +384,12 @@ function reduceDownloading(
 				phase: "failed",
 				progress: null,
 				failureReason: event.reason,
+				// Nothing reached dpkg: the next package check is due now.
+				...(event.reason === PACKAGE_INSTALL_REFUSED
+					? {
+							packageCheck: { ...state.packageCheck, nextAttemptAt: event.now },
+						}
+					: {}),
 			});
 		case "DOWNLOAD_ABORTED_FOR_STREAM":
 			return enter(state, event.now, { phase: "available", progress: null });
@@ -755,6 +762,15 @@ function reduceFailed(
 	event: OrchestratorEvent,
 ): OrchestratorState {
 	switch (event.type) {
+		// An install that never launched: a fresh check (package or image)
+		// leaves it exactly as one leaves `idle`.
+		case "PACKAGE_CHECK_STARTED":
+		case "OS_CHECK_STARTED":
+			if (state.failureReason !== PACKAGE_INSTALL_REFUSED) return state;
+			return reduceIdle(
+				{ ...state, phase: "idle", progress: null, failureReason: null },
+				event,
+			);
 		case "SYNC_REFUSAL_RELEASED": {
 			if (!isRecordedSyncRefusal(state.failureReason)) return state;
 			const { recoveredNotice: _notice, ...rest } = state;

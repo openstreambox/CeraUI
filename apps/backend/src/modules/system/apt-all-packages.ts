@@ -13,6 +13,7 @@ import {
 	parseAptSimulationRow,
 	APT_SIMULATION_VERSION_RE as VERSION_RE,
 } from "./apt-simulation-row.ts";
+import { type ImageAptSource, imageAptSourceArgs } from "./image-apt-source.ts";
 import { isImageOwned } from "./image-owned-packages.ts";
 
 export type PinnedAptPackage = {
@@ -150,6 +151,9 @@ export async function discoverAptAllPackages(
 	sourcePolicy: string,
 	// Names the system image ships itself (image-owned-packages.ts): never offered.
 	imageOwned: ReadonlySet<string> = new Set(),
+	// An image's own apt source (image-apt-source.ts): the only origin, and one
+	// that carries only what the image's maker put there, image-owned names included.
+	imageSource?: ImageAptSource,
 ): Promise<{
 	readonly packages: UpdatePackage[];
 	readonly actionable: PinnedAptPackage[];
@@ -161,12 +165,13 @@ export async function discoverAptAllPackages(
 			detail: "first-party package held",
 		});
 	const simulated = parseAptSimulation(simulation);
-	const sources = policySources(sourcePolicy);
+	const sources = policySources(sourcePolicy, imageSource);
 	const packages: UpdatePackage[] = [];
 	const actionable: PinnedAptPackage[] = [];
 	const withheld: PinnedAptPackage[] = [];
 	for (const pair of simulated) {
-		if (isImageOwned(pair.name, imageOwned)) {
+		const owned = isImageOwned(pair.name, imageOwned);
+		if (owned && imageSource === undefined) {
 			withheld.push(pair);
 			continue;
 		}
@@ -175,6 +180,11 @@ export async function discoverAptAllPackages(
 			pair.version,
 			sources,
 		);
+		// From anywhere but the image's own source, an image-owned name stays withheld.
+		if (owned && origin === null) {
+			withheld.push(pair);
+			continue;
+		}
 		const allowed = origin !== null && !held.has(pair.name);
 		const layer = origin === null ? "platform" : "app";
 		packages.push({
@@ -205,6 +215,7 @@ export function buildAptAllDiscoveryArgs(family: readonly string[]): string[] {
 		"upgrade",
 		"--with-new-pkgs",
 		...family,
+		...imageAptSourceArgs(),
 	];
 }
 
@@ -217,6 +228,7 @@ export function buildAptAllDownloadArgs(family: readonly string[]): string[] {
 		"upgrade",
 		"--with-new-pkgs",
 		...family,
+		...imageAptSourceArgs(),
 	];
 }
 
@@ -247,6 +259,7 @@ export function buildAptAllInstallArgs(
 		"-o",
 		"Dpkg::Options::=--force-confold",
 		...family,
+		...imageAptSourceArgs(),
 		"install",
 		...pairs.map(({ name, version }) => `${name}=${version}`),
 	];

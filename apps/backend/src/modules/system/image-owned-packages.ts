@@ -15,6 +15,10 @@
  * A system image update is what moves them.
  */
 
+import {
+	assertOwnerMayRead,
+	type EffectOwner,
+} from "../../helpers/effect-owner.ts";
 import { logger } from "../../helpers/logger.ts";
 import { APT_PACKAGE_NAME_RE } from "./apt-package-name.ts";
 import {
@@ -166,18 +170,27 @@ function fallback(problem: string | null): ImageOwnedPackages {
  * What the booted image ships itself: the names in its local-override pin when
  * the file is there and complete, else the built-in list.
  */
-export async function readImageOwnedPackages(): Promise<ImageOwnedPackages> {
+export async function readImageOwnedPackages(
+	// Whom the list is read for. Once that owner has ended it is not read, and
+	// a record found unusable meanwhile is left for the next reader to report.
+	owner?: EffectOwner,
+): Promise<ImageOwnedPackages> {
+	assertOwnerMayRead(owner, "the image's package list");
 	let text: string | null;
 	try {
 		text = await reader(pinPath);
 	} catch (error) {
+		assertOwnerMayRead(owner, "the image's package list");
 		return fallback(
 			error instanceof StoredStateReadError ? error.reason : "read_failed",
 		);
 	}
 	if (text === null) return fallback(null);
 	const names = parseLocalOverridePin(text);
-	if (names === null) return fallback("malformed");
+	if (names === null) {
+		assertOwnerMayRead(owner, "the image's package list");
+		return fallback("malformed");
+	}
 	reported = undefined;
 	return { names: new Set(names), source: "image-record" };
 }

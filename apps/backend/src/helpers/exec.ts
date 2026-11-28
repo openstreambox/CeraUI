@@ -1,11 +1,15 @@
 import fs from "node:fs";
-
 import {
 	type BoundedSpawnOptions,
 	collectBoundedChild,
 	SpawnAbortError,
 	SpawnTimeoutError,
 } from "./bounded-spawn.ts";
+import {
+	activeSpawnOverride,
+	assertOwnerMayRun,
+	type EffectOwner,
+} from "./effect-owner.ts";
 import { logger } from "./logger.ts";
 import { DEFAULT_SPAWN_TIMEOUT_MS } from "./spawn-policy.ts";
 
@@ -176,10 +180,13 @@ export const execFileP = async (
 		maxBuffer?: number;
 		timeout?: number;
 		signal?: AbortSignal;
+		/** Refused before it starts once this owner has ended (effect-owner.ts). */
+		owner?: EffectOwner | undefined;
 		/** Fail unless both pipes reached EOF before the result returns. */
 		requireCompleteOutput?: boolean;
 	} & ChildExitObserver,
 ): Promise<ExecResult> => {
+	assertOwnerMayRun(opts?.owner, [file, ...args]);
 	const maxBuffer = opts?.maxBuffer ?? 1024 * 1024;
 	const timeout = opts?.timeout ?? DEFAULT_SPAWN_TIMEOUT_MS;
 	const signal = opts?.signal;
@@ -193,6 +200,20 @@ export const execFileP = async (
 			stderr: "",
 			code: 1,
 		});
+	}
+	const override = activeSpawnOverride();
+	if (override) {
+		const answered = await override([file, ...args]);
+		if (answered.exitCode !== 0)
+			throw withFailureClass(
+				file,
+				Object.assign(new Error(`Command failed: ${command}`), {
+					stdout: answered.stdout,
+					stderr: answered.stderr,
+					code: answered.exitCode,
+				}),
+			);
+		return { stdout: answered.stdout, stderr: answered.stderr };
 	}
 	let proc: ReturnType<typeof Bun.spawn<"ignore", "pipe", "pipe">>;
 	try {
