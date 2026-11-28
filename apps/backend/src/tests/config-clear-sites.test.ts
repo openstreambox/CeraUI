@@ -278,13 +278,6 @@ describe("through the streaming writers", () => {
 			cleared("srtla_addr", "srtla_port", "selected_ingest_endpoint"),
 		],
 		[
-			"srt_streamid: a relay account",
-			{ srt_streamid: "s" },
-			setConfig({ relay_account: "a" }),
-			// The train sends the stream id as its flag, which every frame carries.
-			["config"],
-		],
-		[
 			"relay_account: a manual stream id",
 			{ relay_account: "a" },
 			setConfig({ srt_streamid: "s" }),
@@ -335,6 +328,21 @@ describe("through the streaming writers", () => {
 			expect(await heardFrom(write)).toEqual(expected);
 			expect(told()).toEqual(stored());
 		});
+
+	test("srt_streamid: a relay account", async () => {
+		Object.assign(getConfig(), { srt_streamid: "fixture-stream-id" });
+		broadcastConfig(getConfig());
+		expect(told()).toMatchObject({ srt_streamid_configured: true });
+
+		// The train sends the stream id as its flag, which every frame carries.
+		expect(await heardFrom(setConfig({ relay_account: "a" }))).toEqual([
+			"config",
+		]);
+		expect(told()).toMatchObject({ srt_streamid_configured: false });
+		expect(told()).toEqual(stored());
+		expect(JSON.stringify(frames())).not.toContain("fixture-stream-id");
+		expect(told()).not.toHaveProperty("srt_streamid");
+	});
 
 	const START = {
 		pipeline: "hdmi",
