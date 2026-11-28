@@ -188,9 +188,34 @@ describe("PowerDialog — streaming block is preserved", () => {
 
 		expect(rebootButton.disabled).toBe(true);
 		expect(
-			screen.getByText(m["settings.dialogs.blockedStreaming"]()),
+			screen.getByText(m["settings.dialogs.blockedStreamingPower"]()),
 		).toBeTruthy();
 		// No countdown is reachable while blocked.
 		expect(phase("counting")).toBeNull();
+	});
+
+	it("names both blocked actions, because power off is held too while live", () => {
+		state.streaming = true;
+		render(PowerDialog, { props: { open: true } });
+
+		const powerDialog = screen.getByRole("dialog", { name: POWER_TITLE });
+		const powerOffButton = within(powerDialog).getByRole("button", {
+			name: m["advanced.powerOff"](),
+			exact: true,
+		}) as HTMLButtonElement;
+		expect(powerOffButton.disabled).toBe(true);
+		// The old reason named only the reboot, so the disabled Power Off button
+		// had no reason of its own on screen.
+		expect(m["settings.dialogs.blockedStreamingPower"]()).toBe(
+			"You're live. Stop the stream to restart or power off.",
+		);
+		expect(
+			within(powerDialog).getByText(
+				m["settings.dialogs.blockedStreamingPower"](),
+			),
+		).toBeTruthy();
+		expect(
+			within(powerDialog).queryByText(m["settings.dialogs.blockedStreaming"]()),
+		).toBeNull();
 	});
 });
