@@ -2666,6 +2666,7 @@
 	"settings.deviceHealth.nowStrip.load": "متوسط الحِمل",
 	"settings.deviceHealth.nowStrip.temperature": "حرارة المعالج",
 	"settings.deviceHealth.peak": "الذروة {value}",
+	"settings.deviceHealth.power.inputTitle": "جهد الدخل",
 	"settings.deviceHealth.power.noReading": "لا توجد قراءة",
 	"settings.deviceHealth.power.notInstrumented": "لا تُبلِّغ هذه اللوحة CeraUI بالجهد أو التيار.",
 	"settings.deviceHealth.power.title": "خطوط الطاقة",

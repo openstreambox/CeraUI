@@ -39,6 +39,7 @@ vi.mock("$lib/stores/hud.svelte", async () => {
 		temperature: null,
 		voltage: null,
 		current: null,
+		inputVoltage: null,
 		isSensorsStale: false,
 		isConnected: true,
 		isFullyStale: false,

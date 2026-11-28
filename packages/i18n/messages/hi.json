@@ -2610,6 +2610,7 @@
 	"settings.deviceHealth.nowStrip.load": "लोड औसत",
 	"settings.deviceHealth.nowStrip.temperature": "SoC तापमान",
 	"settings.deviceHealth.peak": "शिखर {value}",
+	"settings.deviceHealth.power.inputTitle": "इनपुट वोल्टेज",
 	"settings.deviceHealth.power.noReading": "कोई रीडिंग नहीं",
 	"settings.deviceHealth.power.notInstrumented": "यह बोर्ड CeraUI को वोल्टेज या करंट नहीं बताता।",
 	"settings.deviceHealth.power.title": "पावर रेल",

@@ -26,11 +26,14 @@
      core count, which the frontend does not have — `navigator.hardwareConcurrency`
      describes the OPERATOR'S BROWSER. The lane plots the raw figure against a
      printed, self-scaling maximum, so the normalisation is disclosed.
-  3. **Power rails are absent on shipping boards, and it says so.** An em-dash
+  3. **Power rails are absent on most boards, and it says so.** An em-dash
      would read as "still loading". Board detection is fail-soft: only `rk3588`
      and `n100` assert not-instrumented; `generic` and an absent snapshot fall
      back to the weaker "No reading", because absence of evidence is never
-     evidence.
+     evidence. The one exception is a board that publishes its DC-in voltage
+     (ROCK 5B+, `Input voltage`): that reading replaces the statement, as a
+     plain number. No judgement of it (what a "good" input is depends on the
+     setup), and voltage only, never a PD contract or watts.
 
   Per-core encoder load has its own three-state model — see
   `lib/streaming/encoder-load.ts`.
@@ -232,6 +235,11 @@ const framesVerdict = $derived.by(() => {
 const hardware = $derived(getSources()?.hardware);
 const soc = $derived(getSocTelemetry());
 const powerRails = $derived.by(() => {
+	// A measured board input wins over every board-kind statement below: the
+	// backend publishes it only where the channel is known to be the DC-in.
+	if (soc.inputVoltage !== null) {
+		return { kind: 'input' as const, text: `${soc.inputVoltage.toFixed(1)} V` };
+	}
 	if (hardware === 'rk3588' || hardware === 'n100') {
 		return { kind: 'not-instrumented' as const, text: m["settings.deviceHealth.power.notInstrumented"]() };
 	}
@@ -519,13 +527,18 @@ $effect(() => {
 				isCompact.current ? 'flex flex-wrap items-baseline gap-x-2' : 'space-y-0.5',
 			)}
 		>
-			<span class="block text-xs font-medium">{m["settings.deviceHealth.power.title"]()}</span>
+			<span class="block text-xs font-medium">
+				{powerRails.kind === 'input'
+					? m["settings.deviceHealth.power.inputTitle"]()
+					: m["settings.deviceHealth.power.title"]()}
+			</span>
 			<span
 				class={cn(
 					'block text-xs leading-relaxed',
-					powerRails.kind === 'live'
+					powerRails.kind === 'live' || powerRails.kind === 'input'
 						? 'text-foreground font-mono tabular-nums'
 						: 'text-muted-foreground',
+					powerRails.kind === 'input' && soc.isStale && 'opacity-60',
 				)}
 				data-testid="device-health-power-value"
 			>
