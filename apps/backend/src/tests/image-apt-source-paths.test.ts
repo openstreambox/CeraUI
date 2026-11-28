@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { UpdateState } from "@ceraui/rpc/schemas";
 import { logger } from "../helpers/logger.ts";
+import { SpawnTimeoutError } from "../helpers/spawn-policy.ts";
 import * as events from "../modules/events/emit.ts";
 import { setup } from "../modules/setup.ts";
 import { defaultAptSpaceDeps } from "../modules/system/apt-space-admission.ts";
@@ -39,6 +40,7 @@ import {
 	setAptReachabilityProbeForTest,
 	startSoftwareUpdate,
 	takePackageAttemptEnd,
+	takePackageLaunchRefusal,
 	triggerManualUpdateCheck,
 } from "../modules/system/software-updates.ts";
 import { setStreamLivenessSourceForTest } from "../modules/system/stream-liveness-source.ts";
@@ -161,6 +163,8 @@ type Path =
 	| "preflight-admission"
 	| "start-rejected"
 	| "launcher-setup"
+	| "launcher-probe-timeout"
+	| "launcher-pinned"
 	| "unit-refused"
 	| "throw"
 	| "launched"
@@ -346,10 +350,23 @@ async function box(failing: Path) {
 		spyOn(transaction, "runDetachedAptAll").mockImplementation(
 			async (args, verdict, handlers) => {
 				// These paths run the real launcher over a unit of this file.
-				if (failing === "launcher-setup" || failing === "unit-refused")
+				if (
+					failing === "launcher-setup" ||
+					failing === "unit-refused" ||
+					failing === "launcher-probe-timeout" ||
+					failing === "launcher-pinned"
+				)
 					return launcher(args, verdict, handlers, {
 						outputPaths: softwareUpdateOutputPaths(),
-						inspect: async () => ({ kind: "absent" }),
+						// The unit-name probe before the submission: it times out,
+						// or it finds the last install's stopped unit still loaded.
+						inspect: async () => {
+							if (failing === "launcher-probe-timeout")
+								throw new SpawnTimeoutError("systemctl show");
+							return failing === "launcher-pinned"
+								? { kind: "absent", loaded: true }
+								: { kind: "absent" };
+						},
 						prepareOutput: async () => {
 							if (failing !== "launcher-setup") return;
 							downloading.resolve();
@@ -402,6 +419,10 @@ function orchestrator(
 		readonly streamLive?: () => boolean;
 		/** Runs when the orchestrator reads the capabilities (it may throw). */
 		readonly onCapabilityRead?: () => void;
+		/** Start installs as the default runtime does: with a launch ticket. */
+		readonly ticketed?: boolean;
+		/** The up-front proof that the install unit's name is free. */
+		readonly installUnitFree?: () => Promise<boolean>;
 	} = {},
 ) {
 	const counts = { osChecks: 0, pendingCleared: 0 };
@@ -432,7 +453,14 @@ function orchestrator(
 			onlyMeteredCandidateExists: async () => options.onlyMetered?.() ?? false,
 			isStreamLive: () => options.streamLive?.() ?? false,
 			runPackageCheck: runSoftwareUpdateCheck,
-			startPackageInstall: () => startSoftwareUpdate(),
+			startPackageInstall: (ticket) =>
+				options.ticketed
+					? startSoftwareUpdate(undefined, ticket)
+					: startSoftwareUpdate(),
+			takePackageLaunchRefusal,
+			...(options.installUnitFree
+				? { installUnitFree: options.installUnitFree }
+				: {}),
 			getPackageInstallWireState: getUpdateState,
 			takePackageAttemptEnd,
 			stopPackageInstallUnit: async () => {
@@ -996,6 +1024,54 @@ describe("each way an install ends before its unit launches", () => {
 			setup.apt_update_enabled = previous;
 		}
 		await expectRefused(counts, { reason: "discovery_failed" });
+	});
+
+	it.each(["launcher-probe-timeout", "launcher-pinned"] as const)(
+		"the launcher refuses before systemd-run (%s): the image's own end, never a requeue",
+		async (path) => {
+			// Given an install the orchestrator starts with a launch ticket, as
+			// the default runtime does.
+			await box(path);
+			const { counts } = orchestrator({ ticketed: true });
+			// When its unit-name probe refuses the launch before systemd-run.
+			await attempt();
+			// Then nothing was submitted, and the image keeps its own end for it
+			// (`failed`, PACKAGE_INSTALL_REFUSED), not a queued retry: installs
+			// on this image start only on request.
+			expect(launches()).toBe(0);
+			expect(getUpdateState()).not.toHaveProperty("retryable");
+			await expectRefused(counts, {});
+			// And the next check's offer is not installed on its own.
+			await runOrchestratorTick();
+			expect(getOrchestratorState().phase).toBe("available");
+			expect(launches()).toBe(0);
+		},
+	);
+
+	it("an install the up-front unit proof refuses keeps its manual admission and launches once the name is free", async () => {
+		// Given an install unit name that is not free yet.
+		await box("launched-running");
+		let free = false;
+		orchestrator({ ticketed: true, installUnitFree: async () => free });
+		expect(await checkUpdatesNow()).toEqual({ started: true });
+		expect(getOrchestratorState().phase).toBe("available");
+		// When the owner installs, the proof refuses it before any launch.
+		expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+			started: false,
+			reason: "not_available",
+		});
+		expect(getOrchestratorState().phase).toBe("awaiting-idle");
+		expect(launches()).toBe(0);
+		// A tick while the name is still held launches nothing.
+		await runOrchestratorTick();
+		expect(launches()).toBe(0);
+		// Then, once the name is free, the queued request launches on the next
+		// idle tick without another click: it is still the owner's request.
+		free = true;
+		await runOrchestratorTick();
+		await settle(() => launches() === 1);
+		expect(launches()).toBe(1);
+		expect(getOrchestratorState().phase).toBe("downloading");
 	});
 
 	it("preparation throws", async () => {
