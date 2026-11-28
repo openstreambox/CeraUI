@@ -30,12 +30,12 @@ import {
 } from "@ceraui/rpc/schemas";
 import { call } from "@orpc/server";
 import * as udev from "../modules/modems/modem-id-path-source.ts";
-
 import {
 	acknowledgeMutation,
 	decommissionMutation,
 	rebaselineMutation,
 } from "../modules/modems/mutation-acknowledge.ts";
+import { operatorMutationBlocks } from "../modules/modems/mutation-block-list.ts";
 import {
 	refreshMutationBlocks as refreshBlocks,
 	resetMutationBlockDeps,
@@ -52,11 +52,13 @@ import {
 } from "../modules/modems/mutation-journal.ts";
 import { initMutationRecovery } from "../modules/modems/mutation-replay.ts";
 import {
+	captureModemUnitLinkId,
 	clearMutationRollbacks,
 	resetMutationCaptureDeps,
 	setMutationCaptureDeps,
 } from "../modules/modems/mutation-rollback.ts";
 import { routerUsbSysfs } from "../modules/modems/router-subnet-recovery-device.ts";
+import * as subnetVerify from "../modules/network/router-subnet-verify.ts";
 import {
 	resetLifecycleInterlock,
 	streamingBlockingMutation,
@@ -423,4 +425,186 @@ test("eSIM recovery cannot be verified through unchanged USB descriptors", async
 		error: "state_mismatch",
 	});
 	expect((await listMutationEntries()).length).toBe(1);
+});
+
+describe("a journaled unit link and the state come from one observation", () => {
+	const unit = (serialNumber: string) => ({
+		vendorId: "2c7c",
+		productId: "0801",
+		model: "RM520N-GL",
+		firmwareRevision: "RM520NGLAAR01A07M4G",
+		bDeviceClass: 0,
+		ifname: "wwan0",
+		physicalUid: KEY,
+		serialNumber,
+		interfaces: QMI,
+	});
+
+	/** Each enumeration answers the next unit; the last one repeats. */
+	function units(...serials: string[]): () => number {
+		let calls = 0;
+		setMutationCaptureDeps({
+			enumerate: () =>
+				Promise.resolve([
+					unit(serials[Math.min(calls++, serials.length - 1)] ?? ""),
+				] as never),
+		});
+		return () => calls;
+	}
+
+	async function seedWithUnit(serial: string): Promise<void> {
+		useDevice("qmi");
+		units(serial);
+		const unitLinkId = await captureModemUnitLinkId(KEY);
+		expect(unitLinkId).toBeDefined();
+		await commitMutationEntry({ ...(await seed("failed")), unitLinkId });
+		await initMutationRecovery();
+	}
+
+	test("the original unit is verified and archived", async () => {
+		await seedWithUnit("UNIT-ORIGINAL-0001");
+		const enumerations = units("UNIT-ORIGINAL-0001");
+		expect(await acknowledgeMutation(KEY, "verified-rollback")).toEqual({
+			success: true,
+			state: "acknowledged",
+		});
+		expect(enumerations()).toBe(1);
+	});
+
+	test("a replacement with the original's descriptors quarantines", async () => {
+		await seedWithUnit("UNIT-ORIGINAL-0001");
+		units("UNIT-REPLACEMENT-0002");
+		expect(await acknowledgeMutation(KEY, "verified-rollback")).toEqual({
+			success: false,
+			error: "device_absent",
+		});
+		expect((await readMutationEntry(KEY))?.state).toBe(
+			"device-absent-quarantine",
+		);
+	});
+
+	test("a unit swap between two reads cannot pair one unit's state with the other's link", async () => {
+		await seedWithUnit("UNIT-ORIGINAL-0001");
+		// The replacement is seen first; the original returns right after.
+		units("UNIT-REPLACEMENT-0002", "UNIT-ORIGINAL-0001");
+		expect(await acknowledgeMutation(KEY, "verified-rollback")).toEqual({
+			success: false,
+			error: "device_absent",
+		});
+		expect(await readMutationEntry(KEY)).toBeDefined();
+	});
+
+	test("a serial read after a replug at the same port is not the enumerated unit's", async () => {
+		await seedWithUnit("UNIT-ORIGINAL-0001");
+		// The snapshot holds a replacement without a udev serial (device 7);
+		// the original is back at the same sysfs path by the time the serial
+		// is read, as device 8.
+		const replacement = {
+			...unit("UNIT-REPLACEMENT-0002"),
+			serialNumber: undefined,
+			sysfsPath: "/sys/devices/platform/xhci-hcd.0.auto/usb1/1-1/1-1.4/1-1.4.1",
+			udevProperties: { DEVNUM: "007" },
+		};
+		let devnum = "8";
+		setMutationCaptureDeps({
+			enumerate: () => Promise.resolve([replacement] as never),
+			readSerial: () => Promise.resolve("UNIT-ORIGINAL-0001"),
+			readDevnum: () => Promise.resolve(devnum),
+		});
+		expect((await operatorMutationBlocks()).map((b) => b.checkable)).toEqual([
+			false,
+		]);
+		expect(await acknowledgeMutation(KEY, "verified-rollback")).toEqual({
+			success: false,
+			error: "device_absent",
+		});
+		expect(await readMutationEntry(KEY)).toBeDefined();
+
+		// Control: the same read while device 7 still holds is that unit's.
+		devnum = "7";
+		expect(await captureModemUnitLinkId(KEY)).toBeDefined();
+	});
+
+	test("a sysfs serial without the enumerated device number is no unit evidence", async () => {
+		await seedWithUnit("UNIT-ORIGINAL-0001");
+		// A partial udev record: no DEVNUM to bind the later sysfs read to.
+		const partial = {
+			...unit("UNIT-REPLACEMENT-0002"),
+			serialNumber: undefined,
+			sysfsPath: "/sys/devices/platform/xhci-hcd.0.auto/usb1/1-1/1-1.4/1-1.4.1",
+			udevProperties: {},
+		};
+		let devnumReads = 0;
+		setMutationCaptureDeps({
+			enumerate: () => Promise.resolve([partial] as never),
+			readSerial: () => Promise.resolve("UNIT-ORIGINAL-0001"),
+			readDevnum: () => {
+				devnumReads += 1;
+				return Promise.resolve("7");
+			},
+		});
+		expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+		expect((await operatorMutationBlocks()).map((b) => b.checkable)).toEqual([
+			false,
+		]);
+		expect(await acknowledgeMutation(KEY, "verified-rollback")).toEqual({
+			success: false,
+			error: "device_absent",
+		});
+		expect(devnumReads).toBe(0);
+	});
+
+	test("a peer's serial counts against a duplicate even without its device number", async () => {
+		useDevice("qmi");
+		const bound = (uid: string, udevProperties: object) => ({
+			...unit("UNIT-SHARED-0003"),
+			physicalUid: uid,
+			serialNumber: undefined,
+			sysfsPath: `/sys/devices/platform/xhci-hcd.0.auto/usb1/${uid}`,
+			udevProperties,
+		});
+		setMutationCaptureDeps({
+			enumerate: () =>
+				Promise.resolve([
+					bound(KEY, { DEVNUM: "7" }),
+					// Same vendor on another port, same serial, partial record.
+					bound("platform-xhci-hcd.0.auto-usb-0:1.3", {}),
+				] as never),
+			readSerial: () => Promise.resolve("UNIT-SHARED-0003"),
+			readDevnum: () => Promise.resolve("7"),
+		});
+		expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+	});
+
+	test("a router-subnet row offers Check again only with the journaled unit", async () => {
+		await seedWithUnit("UNIT-ORIGINAL-0001");
+		const entry = await readMutationEntry(KEY);
+		if (!entry) throw new Error("seeded entry missing");
+		await commitMutationEntry({ ...entry, kind: "router-subnet" });
+		await initMutationRecovery();
+		// The netdev witness holds; only the unit tells the two dongles apart.
+		spyOn(subnetVerify, "routerSubnetCheckProof").mockReturnValue({
+			isCurrent: () => true,
+		} as never);
+		units("UNIT-REPLACEMENT-0002");
+		expect((await operatorMutationBlocks()).map((b) => b.checkable)).toEqual([
+			false,
+		]);
+		units("UNIT-ORIGINAL-0001");
+		expect((await operatorMutationBlocks()).map((b) => b.checkable)).toEqual([
+			true,
+		]);
+	});
+
+	test("Check again is offered only for the journaled unit", async () => {
+		await seedWithUnit("UNIT-ORIGINAL-0001");
+		units("UNIT-REPLACEMENT-0002");
+		expect((await operatorMutationBlocks()).map((b) => b.checkable)).toEqual([
+			false,
+		]);
+		units("UNIT-ORIGINAL-0001");
+		expect((await operatorMutationBlocks()).map((b) => b.checkable)).toEqual([
+			true,
+		]);
+	});
 });

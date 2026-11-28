@@ -17,6 +17,7 @@ import {
 	captureUsbDescriptor,
 	enumerateMutationUsb,
 	isCoherentState,
+	observedUnitLinkId,
 } from "./mutation-rollback.ts";
 
 type MutationDevicePresence =
@@ -26,6 +27,8 @@ type MutationDevicePresence =
 			readonly identity: "usb-descriptor" | "id-path";
 			readonly ifname: string | undefined;
 			readonly state: Readonly<Record<string, unknown>>;
+			/** The unit seen in the same enumeration, when the journal recorded one. */
+			readonly unitLinkId?: string;
 	  };
 
 const USB_SYSFS = "/sys/bus/usb/devices";
@@ -185,11 +188,18 @@ async function observeMutationDevice(
 			)
 				ifname = candidate;
 		}
+		// The unit comes from the same enumeration as the state, so a hotplug
+		// between two reads cannot pair one device's state with another's unit.
+		const unitLinkId =
+			entry.unitLinkId === undefined
+				? undefined
+				: await observedUnitLinkId(device, devices);
 		return {
 			status: "present",
 			identity: "usb-descriptor",
 			state,
 			ifname,
+			...(unitLinkId === undefined ? {} : { unitLinkId }),
 		};
 	}
 
