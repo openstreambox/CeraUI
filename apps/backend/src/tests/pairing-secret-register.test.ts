@@ -55,7 +55,7 @@ function recordingFetch(responder: () => Response | Promise<Response>): {
 
 const noDelay = async () => {};
 
-describe("registerPairingSecret — isRealDevice gate", () => {
+describe("registerPairingSecret — device-control capability gate", () => {
 	test("fires once on a real device and posts {serial, pairingSecret}", async () => {
 		const { fetchImpl, calls } = recordingFetch(
 			() => new Response("{}", { status: 200 }),
@@ -65,7 +65,7 @@ describe("registerPairingSecret — isRealDevice gate", () => {
 			serial: SERIAL,
 			secret: SECRET,
 			fetchImpl,
-			isRealDeviceImpl: async () => true,
+			canControlDevice: async () => true,
 			delayImpl: noDelay,
 		});
 
@@ -76,7 +76,7 @@ describe("registerPairingSecret — isRealDevice gate", () => {
 		expect(calls[0]?.redirect).toBe("error");
 	});
 
-	test("is a no-op in mock/emulated mode (isRealDevice false) — no request", async () => {
+	test("is a no-op in mock/emulated mode (device control unavailable) — no request", async () => {
 		const { fetchImpl, calls } = recordingFetch(
 			() => new Response("{}", { status: 200 }),
 		);
@@ -85,7 +85,7 @@ describe("registerPairingSecret — isRealDevice gate", () => {
 			serial: SERIAL,
 			secret: SECRET,
 			fetchImpl,
-			isRealDeviceImpl: async () => false,
+			canControlDevice: async () => false,
 			delayImpl: noDelay,
 		});
 
@@ -103,7 +103,7 @@ describe("registerPairingSecret — isRealDevice gate", () => {
 			serial: SERIAL,
 			secret: SECRET,
 			fetchImpl,
-			isRealDeviceImpl: async () => true,
+			canControlDevice: async () => true,
 			delayImpl: noDelay,
 		});
 
@@ -125,7 +125,7 @@ describe("registerPairingSecret — resilience", () => {
 			serial: SERIAL,
 			secret: SECRET,
 			fetchImpl,
-			isRealDeviceImpl: async () => true,
+			canControlDevice: async () => true,
 			delayImpl: noDelay,
 		});
 
@@ -145,7 +145,7 @@ describe("registerPairingSecret — resilience", () => {
 			serial: SERIAL,
 			secret: SECRET,
 			fetchImpl,
-			isRealDeviceImpl: async () => true,
+			canControlDevice: async () => true,
 			delayImpl: noDelay,
 		});
 
@@ -166,7 +166,7 @@ describe("registerPairingSecret — resilience", () => {
 			serial: SERIAL,
 			secret: SECRET,
 			fetchImpl,
-			isRealDeviceImpl: async () => true,
+			canControlDevice: async () => true,
 			delayImpl: noDelay,
 		});
 
@@ -184,7 +184,7 @@ describe("registerPairingSecret — resilience", () => {
 			serial: SERIAL,
 			secret: SECRET,
 			fetchImpl,
-			isRealDeviceImpl: async () => true,
+			canControlDevice: async () => true,
 			delayImpl: noDelay,
 		});
 
