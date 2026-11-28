@@ -185,6 +185,7 @@ function persist(): void {
 		writeFileAtomicSync(
 			filePath,
 			JSON.stringify({ version: STORE_VERSION, adapters: entries }),
+			{ mode: 0o600 },
 		);
 	} catch (err) {
 		// Setup must not acknowledge credentials it could not durably save.
@@ -377,6 +378,7 @@ export function forgetHotspotCredentials(macAddress: string): void {
 		writeFileAtomicSync(
 			filePath,
 			JSON.stringify({ version: STORE_VERSION, adapters: next }),
+			{ mode: 0o600 },
 		);
 	entries = next;
 }
