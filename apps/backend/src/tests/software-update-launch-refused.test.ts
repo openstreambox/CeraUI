@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { statusResponseSchema } from "@ceraui/rpc";
 import type { UpdateState } from "@ceraui/rpc/schemas";
+import * as spawnPolicy from "../helpers/spawn-policy.ts";
 import { SpawnTimeoutError } from "../helpers/spawn-policy.ts";
 import * as events from "../modules/events/emit.ts";
 import { buildAptAllInstallArgs } from "../modules/system/apt-all-packages.ts";
@@ -714,6 +715,20 @@ test("a second start while one waits for discovery joins it, and a refusal stays
 			fire = undefined;
 		},
 	});
+	// The discovery reads apt through the spawn primitive: answered here, as
+	// the harness answers its own, so nothing reaches the host.
+	const spawned: string[][] = [];
+	const spawn = spyOn(spawnPolicy, "spawnWithTimeout").mockImplementation(
+		async (argv) => {
+			spawned.push([...argv]);
+			return {
+				exitCode: 1,
+				stdout:
+					"The following packages will be upgraded:\n  cerastream\n1 upgraded, 0 newly installed, 0 to remove.\nNeed to get 4 kB of archives.\n",
+				stderr: "",
+			};
+		},
+	);
 	const discovery = Promise.withResolvers<AptReachability>();
 	setAptReachabilityProbeForTest(() => discovery.promise);
 	const discovered = runUpdateDiscoveryAndReport();
@@ -740,7 +755,10 @@ test("a second start while one waits for discovery joins it, and a refusal stays
 		expect(getUpdateState()).toMatchObject({ kind: "failed" });
 		expect(getUpdateState()).not.toHaveProperty("retryable");
 		expect(systemd.submitted).toEqual([]);
+		// Every command the discovery ran was this test's answer.
+		expect(spawned.every((argv) => argv[0] !== undefined)).toBe(true);
 	} finally {
+		spawn.mockRestore();
 		setDelayedStartTimerForTest(null);
 	}
 });
