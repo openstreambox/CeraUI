@@ -58,12 +58,15 @@ import {
 	setConfigFilePath,
 } from "../modules/config.ts";
 import { setup } from "../modules/setup.ts";
+import { pinLaunchedCapture } from "../modules/streaming/armed-stream-marker.ts";
 import type { Pipeline } from "../modules/streaming/pipelines.ts";
 import {
 	PreviewEncodeRejectedError,
 	setPreviewEncodeReplayTransport,
 } from "../modules/streaming/preview-encode-replay.ts";
+import { noteStreamedSourceCommitted } from "../modules/streaming/sources.ts";
 import { acceptStartAudio } from "../modules/streaming/start-audio.ts";
+import { captureArmedStreamConfig } from "../modules/streaming/stream-restoration.ts";
 import type { StreamingProcess } from "../modules/streaming/streamloop/process-runner.ts";
 import {
 	PREVIEW_ENCODE_REPLAY_FAILED,
@@ -210,6 +213,7 @@ afterEach(() => {
 	Object.assign(config, savedConfig);
 	setPreviewEncodeReplayTransport(null);
 	setStartStreamDepsForTest(null);
+	pinLaunchedCapture(undefined);
 });
 
 describe("the replay fence — every start waits for the mode", () => {
@@ -336,6 +340,46 @@ describe("the replay fence — every start waits for the mode", () => {
 			launchedConfigs.map((config) => config.selected_video_input),
 		).toEqual(["/dev/video-usb-capture"]);
 		expect(launchedConfigs.map((config) => config.max_br)).toEqual([4000]);
+	});
+
+	test("a Start's commit records the capture it dispatched, not a switch saved during the replay", async () => {
+		getConfig().previewEncode = "hardware";
+		getConfig().max_br = 5000;
+		Object.assign(getConfig(), {
+			pipeline: "usb_capture",
+			source: "usb-capture",
+			source_stable_id: "usb-stable-1",
+			selected_video_input: "/dev/video-usb-capture",
+			resolution: "1080p",
+		});
+		delete getConfig().last_streamed_source;
+		setPreviewEncodeReplayTransport(async (mode) => {
+			// The save lands after the signal check skipped the USB capture card.
+			Object.assign(getConfig(), {
+				pipeline: "hdmi",
+				source: "hdmi-onboard",
+				source_stable_id: "hdmi-stable-1",
+				selected_video_input: "/dev/hdmirx",
+				resolution: "720p",
+				max_br: 4000,
+			});
+			dispatches.push({ kind: "reload-config", mode });
+		});
+
+		expect(await runStart()).toEqual({ success: true });
+		const dispatched = {
+			pipeline: "usb_capture",
+			source: "usb-capture",
+			source_stable_id: "usb-stable-1",
+			selected_video_input: "/dev/video-usb-capture",
+			resolution: "1080p",
+			max_br: 4000,
+		};
+		expect(launchedConfigs).toEqual([expect.objectContaining(dispatched)]);
+		// The two commit paths: the restoration snapshot and the last-streamed slot.
+		expect(captureArmedStreamConfig()).toMatchObject(dispatched);
+		noteStreamedSourceCommitted();
+		expect(getConfig().last_streamed_source).toBe("usb-capture");
 	});
 
 	test("an idle engine restart does not latch the replay off — the next start asserts it again", async () => {

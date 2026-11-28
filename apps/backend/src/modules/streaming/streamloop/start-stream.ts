@@ -31,7 +31,11 @@ import {
 	resetActiveEncodeLiveness,
 	resetActivePassthrough,
 } from "../active-passthrough.ts";
-import { pinLaunchedAudio } from "../armed-stream-marker.ts";
+import {
+	LAUNCHED_CAPTURE_KEYS,
+	pinLaunchedAudio,
+	pinLaunchedCapture,
+} from "../armed-stream-marker.ts";
 import {
 	type AudioIdentityEvidence,
 	asrcProbe,
@@ -390,6 +394,12 @@ export async function startStream(
 		});
 		assertStreamLaunchOwnership();
 
+		// Its commit records this capture, whatever is saved by then.
+		pinLaunchedCapture(
+			Object.fromEntries(
+				LAUNCHED_CAPTURE_KEYS.map((key) => [key, launchConfig[key]]),
+			),
+		);
 		await startStreamDeps.getStreamingBackend().start(
 			// The bitrate is live: a change made while starting still applies.
 			configOverride === undefined
