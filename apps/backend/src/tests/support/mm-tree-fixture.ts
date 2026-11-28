@@ -66,6 +66,8 @@ export interface ModemFixture {
 	readonly unlockRequired?: number;
 	readonly unlockRetries?: readonly (readonly [number, number])[];
 	readonly revision?: string;
+	readonly carrierConfiguration?: string;
+	readonly carrierConfigurationRevision?: string;
 	readonly ownNumbers?: readonly string[];
 	readonly simPath?: string;
 	/** `Sim.SimIdentifier`. An empty string is MM's "the card withheld it". */
@@ -175,6 +177,15 @@ function modemProps(fixture: ModemFixture): [string, ReturnType<typeof v>][] {
 	}
 	if (fixture.revision !== undefined) {
 		props.push(["Revision", v("s", fixture.revision)]);
+	}
+	if (fixture.carrierConfiguration !== undefined) {
+		props.push(["CarrierConfiguration", v("s", fixture.carrierConfiguration)]);
+	}
+	if (fixture.carrierConfigurationRevision !== undefined) {
+		props.push([
+			"CarrierConfigurationRevision",
+			v("s", fixture.carrierConfigurationRevision),
+		]);
 	}
 	if (fixture.ownNumbers !== undefined) {
 		props.push(["OwnNumbers", v("as", [...fixture.ownNumbers])]);

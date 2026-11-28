@@ -240,6 +240,7 @@ describe("field-absent matrix — every card vanishes on its own", () => {
 		expect(screen.queryByTestId("modem-cell-info")).toBeNull();
 		expect(screen.queryByTestId("modem-esim")).toBeNull();
 		expect(screen.queryByTestId("modem-firmware")).toBeNull();
+		expect(screen.queryByTestId("modem-carrier-config")).toBeNull();
 
 		expect(screen.getByRole("switch", { name: /Allow Roaming/i })).toBeTruthy();
 		expect(screen.getAllByText("Legacy Modem").length).toBeGreaterThan(0);
@@ -312,6 +313,27 @@ describe("cell detail", () => {
 		expect((await screen.findByTestId("modem-firmware")).textContent).toContain(
 			"RM520NGLAAR01A08M4G",
 		);
+	});
+
+	it("renders the firmware's carrier configuration, read-only, apart from the APN", async () => {
+		mount(fullModem({ carrier_config: { name: "GCF", revision: "08E0000A" } }));
+		const block = await screen.findByTestId("modem-carrier-config");
+		expect(screen.getByTestId("modem-carrier-config-name").textContent).toBe(
+			"GCF",
+		);
+		expect(
+			screen.getByTestId("modem-carrier-config-revision").textContent,
+		).toContain("08E0000A");
+		expect(block.textContent).toContain("APN");
+		expect(
+			block.querySelector("button, input, select, [role='switch']"),
+		).toBeNull();
+	});
+
+	it("a configuration without a revision shows the name alone", async () => {
+		mount(fullModem({ carrier_config: { name: "ROW_Commercial" } }));
+		await screen.findByTestId("modem-carrier-config");
+		expect(screen.queryByTestId("modem-carrier-config-revision")).toBeNull();
 	});
 });
 

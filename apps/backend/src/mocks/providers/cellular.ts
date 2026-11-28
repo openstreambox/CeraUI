@@ -183,6 +183,11 @@ export function getMockDbusModemViews(): readonly DbusModemView[] {
 			usbMode: "mbim",
 			recommendedUsbMode: "mbim",
 			firmwareRevision: `${modem.model}-MOCK01`,
+			// Synthetic PDC/MBN names in the shape MM reports them.
+			carrierConfig:
+				modem.id === 0
+					? { name: "ROW_Commercial", revision: "0501081F" }
+					: { name: "GCF", revision: "08E0000A" },
 			...(modem.ownNumber === undefined
 				? {}
 				: { ownNumbers: [modem.ownNumber] }),

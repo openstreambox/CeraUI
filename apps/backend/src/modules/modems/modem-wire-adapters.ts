@@ -64,6 +64,7 @@
  */
 
 import type {
+	ModemCarrierConfig,
 	ModemCellInfo,
 	ModemDataUsage,
 	ModemDeviceClass,
@@ -378,6 +379,8 @@ export interface DbusModemView {
 	readonly recommendedUsbMode?: UsbCompositionMode;
 	readonly dataUsage?: ModemDataUsage;
 	readonly firmwareRevision?: string;
+	/** The modem firmware's active carrier configuration (MM), not the APN profile. */
+	readonly carrierConfig?: ModemCarrierConfig;
 	/** Composition-root enrichment from the existing activation result and netif cache. */
 	readonly dataConnectionFailed?: boolean;
 	readonly hasAddress?: boolean;
@@ -510,6 +513,10 @@ function buildDbusAdditive(
 	}
 	if (view.firmwareRevision !== undefined) {
 		additive.firmware_revision = view.firmwareRevision;
+		observed = true;
+	}
+	if (view.carrierConfig !== undefined) {
+		additive.carrier_config = { ...view.carrierConfig };
 		observed = true;
 	}
 	if (view.ownNumbers !== undefined && view.ownNumbers.length > 0) {
