@@ -67,6 +67,7 @@ describe("SRTLA IP-list launch preparation", () => {
 
 	test("the local-subnet variant is interface-aware too", async () => {
 		let published: readonly BondEntry[] = [];
+		let receiver: string | undefined;
 		await prepareSrtlaIpAddresses("192.168.8.5", {
 			isLocal: () => true,
 			localList: () => [
@@ -74,13 +75,15 @@ describe("SRTLA IP-list launch preparation", () => {
 				entry("192.168.8.100", "eth1"),
 			],
 			bondedList: () => [],
-			writeList: async (entries) => {
+			writeList: async (entries, localReceiver) => {
 				published = entries;
+				receiver = localReceiver;
 				return PUBLISHED;
 			},
 		});
 
 		expect(published.map((e) => e.iface)).toEqual(["enx0c5b8f279a64", "eth1"]);
+		expect(receiver).toBe("192.168.8.5");
 		expect(published.map((e) => e.ip)).toEqual([
 			"192.168.8.100",
 			"192.168.8.100",
