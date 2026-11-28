@@ -443,7 +443,10 @@ export function projectRemoteLegacyFrame(
 			if (!baseNotification) projectionDrops++;
 		}
 	}
+	// A frame whose every type was withheld carries nothing, so it stays empty
+	// and is not sent; a bare sequence number would still leak per-type timing.
 	if (
+		Object.keys(out).length > 0 &&
 		typeof src.seq === "number" &&
 		Number.isSafeInteger(src.seq) &&
 		src.seq >= 0
