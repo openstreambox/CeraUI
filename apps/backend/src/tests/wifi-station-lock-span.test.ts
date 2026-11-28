@@ -520,6 +520,35 @@ describe("the adapter lock covers the station's nmcli work", () => {
 		await until(hasFrame({ new: { success: true, device: 0 } }));
 	});
 
+	test("a join whose saved-list refresh throws is reported, but its choice is not recorded against a stale list", async () => {
+		const NEW = "7f8091a2-b3c4-4d5e-8f60-718293a4b5c6";
+		setWifiJoinNmcliRunner(async () => ({
+			stdout: `Device 'wlan0' successfully activated with '${NEW}'.`,
+			stderr: "",
+			exitCode: 0,
+		}));
+		spy(networkManager, "nmConnGetFields", async () => undefined);
+		spy(networkManager, "nmConnSetWifiMacAddress", async () => true);
+		spy(networkManager, "nmConnsGet", async () => {
+			throw new Error("profile list unavailable");
+		});
+		const recorded: string[] = [];
+		spy(diversity, "beginWifiOperatorChoice", () => ({
+			release: () => {},
+			record: async (uuid: string) => {
+				recorded.push(uuid);
+			},
+		}));
+
+		await call(
+			wifiConnectNewProcedure,
+			{ device: DEVICE_ID, ssid: "OtherNet", password: "supersecret" },
+			{ context: makeContext() },
+		);
+		await until(hasFrame({ new: { success: true, device: 0 } }));
+		expect(recorded).toEqual([]);
+	});
+
 	test("a slow refresh cannot let an older choice outrank a newer one on the radio", async () => {
 		const SECOND = "5d6e7f80-91a2-4b3c-8d4e-5f60718293a4";
 		const a = makeInterface(0, IFNAME, { [SSID]: UUID, Other: SECOND });

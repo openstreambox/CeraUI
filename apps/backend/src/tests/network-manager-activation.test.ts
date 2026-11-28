@@ -198,7 +198,10 @@ test("a pending-only Down leaves an activation that has completed", async () => 
 
 test("a pending-only Down reads the state again before it asks, so a completion during the lookup is kept", async () => {
 	const calls: MethodCall[] = [];
-	let stateReads = 0;
+	// Every property read goes through this callback: Uuid, Devices and State
+	// together, then the device's Interface. The activation completes after
+	// that lookup, so only a State read right before Down can see it.
+	let reads = 0;
 	mockActivationBus(
 		() => RUN_ID.split("/")[0] ?? "",
 		(call) => {
@@ -208,8 +211,7 @@ test("a pending-only Down reads the state again before it asks, so a completion 
 			uuid: "station",
 			ifname: "wlan0",
 			path: ACTIVE_PATH,
-			// Activating at the first read, activated by the time Down would go out.
-			state: stateReads++ === 0 ? 1 : 2,
+			state: reads++ < 4 ? 1 : 2,
 		}),
 	);
 	expect(

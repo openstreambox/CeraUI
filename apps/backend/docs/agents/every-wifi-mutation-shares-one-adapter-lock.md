@@ -43,7 +43,10 @@ compounded it by taking no lock at all — the one mutating procedure that skipp
   resolves when the radio no longer needs the lock: after the nmcli join or
   activation, a timed-out activation's settlement, and for a successful join
   the new profile's MAC binding and the saved-list refresh the recorded choice
-  reads; or after Forget's deletes, whose target set is read in the same tick
+  reads (a slow profile sweep therefore keeps the radio busy a little longer
+  after a successful join; when the refresh does not commit a complete list,
+  the join is still reported but its choice is not recorded against a stale
+  one); or after Forget's deletes, whose target set is read in the same tick
   the locks were taken. The reply is sent as soon as the lock is
   taken; awaiting the work first would hold it past the client's 30 s call
   timeout, since a saved Connect's nmcli runs up to the process deadline. The

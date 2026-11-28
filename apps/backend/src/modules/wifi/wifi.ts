@@ -977,6 +977,8 @@ type WifiJoinOutcome = {
 	readonly authFailed: boolean;
 	/** nmcli gave up on the activation; NetworkManager may still complete it. */
 	readonly abandoned?: boolean;
+	/** The saved list was refreshed after the join, so the choice can be recorded. */
+	readonly listed?: boolean;
 };
 
 const wantedSecrets = (output: string) =>
@@ -1285,7 +1287,7 @@ async function runWifiNew(
 		// Recorded at release, before any later request can take this radio, so
 		// an older join that is slow to refresh cannot outrank a newer choice.
 		const recorded =
-			joined?.ok && joined.uuid !== undefined
+			joined?.ok && joined.uuid !== undefined && joined.listed
 				? choice.record(joined.uuid)
 				: undefined;
 		void (async () => {
@@ -1416,9 +1418,15 @@ async function joinStationUnderLock(
 	}
 	// The choice recorded at release reads this radio's saved profiles, which
 	// the join just changed: they are refreshed first, under the lock (as the
-	// open join always did). A failed refresh does not undo the join.
+	// open join always did). A refresh that does not commit a complete list
+	// does not undo the join, but the choice is then not recorded against a
+	// stale one.
 	try {
-		await wifiUpdateSavedConns();
+		let listed = false;
+		await wifiUpdateSavedConns(undefined, () => {
+			listed = true;
+		});
+		return listed ? { ...outcome, listed } : outcome;
 	} catch (err) {
 		logger.warn(
 			`wifiNew: saved-list refresh after the join failed: ${errorText(err)}`,
