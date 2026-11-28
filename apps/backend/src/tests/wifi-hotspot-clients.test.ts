@@ -122,6 +122,42 @@ describe("parseIwStationDump — the named, fail-loud parser (S2)", () => {
 		expect(parsed.value[0]).not.toHaveProperty("tx_bitrate_mbps");
 	});
 
+	// The kernel lists a station from association on, before the WPA handshake
+	// proves the password. A wrong-password phone must never count as joined.
+	test("skips a station still in the handshake (`authorized: no`)", () => {
+		const parsed = parseIwStationDump(
+			"Station aa:bb:cc:dd:ee:01 (on wlan0)\n" +
+				"\tsignal:  \t-50 dBm\n" +
+				"\tauthorized:\tno\n" +
+				"\tauthenticated:\tyes\n" +
+				"Station aa:bb:cc:dd:ee:02 (on wlan0)\n" +
+				"\tsignal:  \t-60 dBm\n" +
+				"\tauthorized:\tyes\n",
+		);
+		expect(parsed.ok).toBe(true);
+		if (!parsed.ok) return;
+		expect(parsed.value).toEqual([
+			{ mac: "aa:bb:cc:dd:ee:02", signal_dbm: -60 },
+		]);
+	});
+
+	test("a dump of only handshaking stations is an empty roster, not drift", () => {
+		const parsed = parseIwStationDump(
+			"Station aa:bb:cc:dd:ee:01 (on wlan0)\n\tauthorized:\tno\n",
+		);
+		expect(parsed.ok).toBe(true);
+		if (parsed.ok) expect(parsed.value).toEqual([]);
+	});
+
+	test("a station whose dump has no `authorized:` line is kept, as before", () => {
+		const parsed = parseIwStationDump(
+			"Station aa:bb:cc:dd:ee:03 (on wlan0)\n\tsignal:  \t-40 dBm\n",
+		);
+		expect(parsed.ok).toBe(true);
+		if (parsed.ok)
+			expect(parsed.value.map((s) => s.mac)).toEqual(["aa:bb:cc:dd:ee:03"]);
+	});
+
 	test("a MAC is lowercased so two reads of one device cannot differ by case", () => {
 		const parsed = parseIwStationDump("Station AA:BB:CC:DD:EE:FF (on wlan0)\n");
 		expect(parsed.ok).toBe(true);

@@ -36,7 +36,7 @@
   The caller passes the AP interface (`clap-<parent>` in Hybrid mode), and
   nothing here guesses one.
 
-  Four things about the shape of this data, each with its own guard:
+  Five things about the shape of this data, each with its own guard:
 
   1. ZERO CLIENTS IS A READING, NOT A GAP. An AP nobody has joined prints
      nothing at all, so empty output is a first-class SUCCESS — the same rule
@@ -50,7 +50,13 @@
   3. EVERY FIELD EXCEPT THE MAC IS OPTIONAL, and absence renders as absence. A
      station that has not yet reported a bitrate has no rate, not a zero — a
      zero would read as a stalled client.
-  4. THE ROSTER IS CAPPED. `stations` is a bounded window
+  4. A STATION STILL IN THE HANDSHAKE IS NOT JOINED. The kernel adds a station
+     on association, before the WPA 4-way handshake proves it knows the
+     password, and prints `authorized: no` until then. A phone typing a wrong
+     password therefore sits in the dump for a moment and leaves again. Such a
+     station is skipped; one whose dump carries no `authorized:` line at all
+     (an older `iw` or driver) is kept, as it always was.
+  5. THE ROSTER IS CAPPED. `stations` is a bounded window
      ({@link HOTSPOT_CLIENTS_ROW_CAP}) while `count` stays the TRUE total, so a
      pathological AP cannot put an unbounded array on a 5 s broadcast. Same
      shape, same reason, as the SMS inbox's `SMS_INBOX_CAP`.
@@ -119,6 +125,8 @@ const SIGNAL_RE = /^signal:\s*(-?\d+)/;
 /** `tx bitrate:\t72.2 MBit/s MCS 7 short GI` — the decimal is optional. */
 const TX_BITRATE_RE = /^tx bitrate:\s*(\d+(?:\.\d+)?)\s*MBit\/s/;
 const RX_BITRATE_RE = /^rx bitrate:\s*(\d+(?:\.\d+)?)\s*MBit\/s/;
+/** `authorized:\tno` — the WPA handshake has not finished (see point 4 above). */
+const UNAUTHORIZED_RE = /^authorized:\s*no\b/;
 
 /**
  * Parse an `iw dev <ifname> station dump` into the joined-client roster.
@@ -134,12 +142,15 @@ export function parseIwStationDump(
 	const stations: HotspotClient[] = [];
 	if (output.trim() === "") return parseOk(stations);
 
-	let current: { mac: string; fields: Partial<HotspotClient> } | undefined;
+	let current:
+		| { mac: string; fields: Partial<HotspotClient>; unauthorized: boolean }
+		| undefined;
 	let sawStation = false;
 
 	const commit = () => {
 		if (current === undefined) return;
-		stations.push({ mac: current.mac, ...current.fields });
+		if (!current.unauthorized)
+			stations.push({ mac: current.mac, ...current.fields });
 		current = undefined;
 	};
 
@@ -160,11 +171,20 @@ export function parseIwStationDump(
 			sawStation = true;
 			// Lowercased so two reads of one device can never differ by case; the
 			// kernel already prints lowercase, so this changes nothing it emits.
-			current = { mac: header[1].toLowerCase(), fields: {} };
+			current = {
+				mac: header[1].toLowerCase(),
+				fields: {},
+				unauthorized: false,
+			};
 			continue;
 		}
 
 		if (current === undefined) continue;
+
+		if (UNAUTHORIZED_RE.test(line)) {
+			current.unauthorized = true;
+			continue;
+		}
 
 		const signal = SIGNAL_RE.exec(line);
 		if (signal?.[1]) {
