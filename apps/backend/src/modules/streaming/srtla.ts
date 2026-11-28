@@ -21,7 +21,11 @@ import { isSameSubnet } from "../../helpers/ip-addresses.ts";
 
 import { logger } from "../../helpers/logger.ts";
 
-import { readClatTranslations } from "../network/clat-translation.ts";
+import {
+	clatTranslationFor,
+	isClatTunName,
+	readClatTranslations,
+} from "../network/clat-translation.ts";
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
 import { queueUpdateGw } from "../network/gateways.ts";
 import {
@@ -29,8 +33,10 @@ import {
 	isBondCandidate,
 	isBondIdentityPending,
 	isDupIpOnly,
+	isHeldOutByModemBlock,
 	type NetworkInterface,
 } from "../network/network-interfaces.ts";
+import { isUsbReplacementPending } from "../network/router-cellular-scan.ts";
 import { setup } from "../setup.ts";
 import type { BondEntry } from "./bind-map.ts";
 import {
@@ -156,20 +162,36 @@ function collectBondEntries(
 ): BondEntry[] {
 	const entries: BondEntry[] = [];
 	const networkInterfaces = getNetworkInterfaces();
+	const preferIpv6 = receiverIpv6Only && !requireMappableDuplicate;
 	for (const name in networkInterfaces) {
 		const networkInterface = networkInterfaces[name];
-		const ip = receiverIpv6Only
-			? (networkInterface?.ipv6 ?? networkInterface?.ip)
-			: (networkInterface?.ip ?? networkInterface?.ipv6);
+		const ip = requireMappableDuplicate
+			? networkInterface?.ip
+			: preferIpv6
+				? (networkInterface?.ipv6 ?? networkInterface?.ip)
+				: (networkInterface?.ip ?? networkInterface?.ipv6);
 		if (!networkInterface || !ip) continue;
 		if (isBondIdentityPending(name, networkInterface)) continue;
 		if (!accept(name, networkInterface)) continue;
 		const entry = describeBondEntry(name, ip);
-		if (requireMappableDuplicate && !admitEntry(networkInterface, entry))
-			continue;
+		if (requireMappableDuplicate) {
+			let owner = name;
+			if (isClatTunName(name)) {
+				const translation = clatTranslationFor(name, ip);
+				if (!translation) continue;
+				owner = translation.parent;
+			}
+			const parent = networkInterfaces[owner];
+			if (
+				isUsbReplacementPending(owner) ||
+				isHeldOutByModemBlock(owner, parent) ||
+				!admitEntry(networkInterface, entry)
+			)
+				continue;
+		}
 		entries.push(entry);
 	}
-	return oneEntryPerTranslatedModem(entries);
+	return oneEntryPerTranslatedModem(entries, preferIpv6);
 }
 
 /*
@@ -189,7 +211,10 @@ function collectBondEntries(
   A TUN entry carries `parentIface` only while its translation is usable, so a
   withdrawn or expired translation leaves the parent as it was.
 */
-function oneEntryPerTranslatedModem(entries: BondEntry[]): BondEntry[] {
+function oneEntryPerTranslatedModem(
+	entries: BondEntry[],
+	preferIpv6: boolean,
+): BondEntry[] {
 	const parents = new Set(
 		entries.flatMap((entry) =>
 			entry.parentIface === undefined ? [] : [entry.parentIface],
@@ -203,9 +228,9 @@ function oneEntryPerTranslatedModem(entries: BondEntry[]): BondEntry[] {
 	);
 	return entries.filter((entry) => {
 		if (entry.parentIface !== undefined)
-			return !receiverIpv6Only && !nativeIpv4.has(entry.parentIface);
+			return !preferIpv6 && !nativeIpv4.has(entry.parentIface);
 		if (!parents.has(entry.iface)) return true;
-		return receiverIpv6Only || nativeIpv4.has(entry.iface);
+		return preferIpv6 || nativeIpv4.has(entry.iface);
 	});
 }
 

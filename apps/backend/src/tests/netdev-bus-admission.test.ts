@@ -373,6 +373,107 @@ for (const kind of ["C8", "C2b", "C8b"] as const) {
 	});
 }
 
+test("an earlier unreadable bus does not hold Ethernet on its first indexed return", async () => {
+	const f = fixture(firstSightIfconfig("eth9", "192.0.2.2"), []);
+	f.setIpUnavailable();
+	f.set("eth9", err("EIO"));
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+
+	processIfconfigOutput("");
+	f.setIndex("eth9", 29);
+	await updateNetif();
+	await f.settle();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+});
+
+test("an unrelated USB scan cannot publish an indexed predecessor", async () => {
+	const output = firstSightIfconfig(MODEM, IP);
+	const f = fixture(output, []);
+	f.set(MODEM, ok("usb"));
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toContain(MODEM);
+
+	f.setIndex(MODEM, 29);
+	f.setOutput(`${output}\n\n${firstSightIfconfig("eth9", "192.0.2.2")}`);
+	const seen: string[][] = [];
+	const off = scanModule.onUsbNetScanCommitted(() => {
+		seen.push(genSrtlaBondEntries().map((entry) => entry.iface));
+	});
+	try {
+		await updateNetif();
+		expect(seen).toHaveLength(1);
+		expect(seen[0]).not.toContain(MODEM);
+		expect(genSrtlaBondEntries().map((entry) => entry.iface)).not.toContain(
+			MODEM,
+		);
+		await f.settle();
+		expect(genSrtlaBondEntries().map((entry) => entry.iface)).toContain(MODEM);
+	} finally {
+		off();
+	}
+});
+
+test("a periodic scan cannot publish the predecessor while ifconfig is pending", async () => {
+	const output = firstSightIfconfig(MODEM, IP);
+	const f = fixture(output, []);
+	f.set(MODEM, ok("usb"));
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toContain(MODEM);
+
+	const ifconfig = Promise.withResolvers<void>();
+	f.holdIfconfig(ifconfig.promise);
+	f.setIndex(MODEM, 29);
+	const refresh = updateNetif();
+	const seen: string[][] = [];
+	const off = scanModule.onUsbNetScanCommitted(() => {
+		seen.push(genSrtlaBondEntries().map((entry) => entry.iface));
+	});
+	try {
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await f.settle();
+		expect(seen).toHaveLength(1);
+		expect(seen[0]).not.toContain(MODEM);
+	} finally {
+		off();
+		ifconfig.resolve();
+		await refresh;
+	}
+});
+
+test("a late USB descriptor is remembered even after a scan drops the disconnected name", async () => {
+	const f = fixture(firstSightIfconfig(MODEM, IP), [MODEM]);
+	f.setIpUnavailable();
+	f.set(MODEM, err("EIO"));
+	const first = updateNetif();
+	try {
+		await bound(f, first);
+		f.release();
+		await f.settle();
+		expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual([MODEM]);
+		processIfconfigOutput("");
+		await scanModule.refreshUsbNetMarkers([]);
+		expect(scanModule.getUsbPhysicalDescriptor(MODEM)).toBeUndefined();
+
+		f.setIndex(MODEM, 29);
+		f.block(MODEM);
+		const returned = updateNetif();
+		try {
+			await f.enteredFor(MODEM);
+			jest.advanceTimersByTime(2000);
+			await returned;
+			expect(scanModule.isUsbReplacementPending(MODEM)).toBe(true);
+		} finally {
+			f.release();
+			await returned;
+			await f.settle();
+		}
+	} finally {
+		f.release();
+		await first;
+	}
+});
+
 test("an unreadable bus that becomes platform releases on the wire with unchanged raw state", async () => {
 	const output = firstSightIfconfig("eth9", "192.0.2.2");
 	const f = fixture(output, ["eth9"]);
