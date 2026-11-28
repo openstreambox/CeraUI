@@ -117,8 +117,12 @@ import {
 	switchAudioProcedure,
 } from "../rpc/procedures/streaming.procedure.ts";
 import { makeRpcContext } from "./helpers/bond-toggle-fixture.ts";
+import { recordFsyncsPerTest } from "./helpers/recorded-fsync.ts";
 import { scopedStartPeer } from "./helpers/scoped-start-peer.ts";
 import { evidenceHarness } from "./helpers/stream-engine-evidence.ts";
+
+// Real files, recorded fsyncs: no test waits on another process's writeback.
+recordFsyncsPerTest();
 
 const CAPS: GetCapabilitiesResult = {
 	platform: {
