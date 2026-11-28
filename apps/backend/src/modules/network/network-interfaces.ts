@@ -156,6 +156,7 @@ import {
 	getUnclaimedAdapters,
 	refreshUnclaimedAdapters,
 } from "./unclaimed-adapters.ts";
+import { onWifiCarrierLostChange } from "./wifi-carrier-lost.ts";
 
 export { getNetifTopologyGeneration } from "./netif-topology-generation.ts";
 
@@ -968,6 +969,9 @@ function syncNetifState(): void {
 onMutationBlocksChange(() => triggerNetworkInterfacesChange());
 
 onLinkTeardownPendingChange(() => triggerNetworkInterfacesChange());
+
+// A Wi-Fi link marked or cleared by the carrier watch republishes the bond.
+onWifiCarrierLostChange(() => triggerNetworkInterfacesChange());
 
 export function triggerNetworkInterfacesChange() {
 	// Reconcile + broadcast on any state mutation (poll, UI toggle, hotspot

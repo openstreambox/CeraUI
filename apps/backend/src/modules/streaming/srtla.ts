@@ -52,6 +52,7 @@ import {
 	isBondLinkMappable,
 	setBondIdentityResolverForTest,
 } from "./bond-entry.ts";
+import { noteBondRowsInDoubt, noteBondRowsWritten } from "./bond-row-age.ts";
 import { registerSrtlaBond } from "./link-telemetry.ts";
 import { signalSenders } from "./streamloop/process-runner.ts";
 
@@ -355,7 +356,7 @@ export async function publishSrtlaBond(
 	),
 	options: SrtlaPublishOptions = {},
 ): Promise<BindMapPublication> {
-	return publishBondMapping(entries, {
+	const publication = await publishBondMapping(entries, {
 		...writerDeps,
 		prepareEntries: async (submitted) => {
 			const prepared =
@@ -375,6 +376,9 @@ export async function publishSrtlaBond(
 			// write the sender still reads the previous list.
 			if (wroteIpList(publication)) {
 				(options.registerBond ?? registerSrtlaBond)(published);
+				noteBondRowsWritten(published, { restart: origin.republished });
+			} else {
+				noteBondRowsInDoubt();
 			}
 			lastBond = { entries: [...published], publication };
 			if (wroteIpList(publication) && publication.changed)
@@ -388,6 +392,11 @@ export async function publishSrtlaBond(
 			}
 		},
 	});
+	// A timed-out caller is answered before its abandoned attempt settles (if it
+	// ever does), so the writer's observer never sees it: the list it leaves
+	// behind may still land, and the next written list restarts every row age.
+	if (!wroteIpList(publication)) noteBondRowsInDoubt();
+	return publication;
 }
 
 const wroteIpList = (publication: BindMapPublication) =>

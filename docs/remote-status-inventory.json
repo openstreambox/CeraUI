@@ -20035,7 +20035,7 @@
 	],
 	"dependencies": {
 		"apps/backend/src/helpers/config-schemas.ts": "9fbc23665164d9af7404be5a0537910c72f38347c455f221b1b7954691ab9fc9",
-		"apps/backend/src/main.ts": "d4c1672afc99fb31937cb2f04f60c5ba9ba14cb6d03b0cbddc04c354740208fa",
+		"apps/backend/src/main.ts": "91438245eaf74970eb726366d208681dcd245fb48b1c0589e065d87d4aea3adb",
 		"apps/backend/src/mocks/mock-service.ts": "a63bd3928b5eb26f0532d574ddf45b1930b6608267f659c16f05b389fe4ce7f4",
 		"apps/backend/src/mocks/providers/streaming.ts": "75b66fd2f9522b848218dba5f0338473434c0837c5878bab5d3747c12177c925",
 		"apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -20049,7 +20049,7 @@
 		"apps/backend/src/modules/modems/modems-state.ts": "7ef2fcd41c74345fd0d0c4e9c1cfe8940594b4799de31683851cddbc56bfa695",
 		"apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
 		"apps/backend/src/modules/network/network-ingest.ts": "04753a910fc6443947813f8396ee72053d663b3948f1e0ea35a8c973a0fee9dc",
-		"apps/backend/src/modules/network/network-interfaces.ts": "40d32fb0812ac305da0492d8438f4b422a1cceac334955f62d40f44b2d4a18f1",
+		"apps/backend/src/modules/network/network-interfaces.ts": "9f0dfd90674230d2a262ad4c6514c44b3b4c01d12c299adbca70312d70eb1055",
 		"apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
 		"apps/backend/src/modules/network/uplink-health/model.ts": "2221782a8312e2ffddc545a6f4434e62cf53d0f82948d49987a5a9263fe60d26",
 		"apps/backend/src/modules/network/uplink-health/runtime.ts": "59e35c76047fe4bfa5484cbbeaae996507cc0f1f778641eb83dc6248f72b6395",

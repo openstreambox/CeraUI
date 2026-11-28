@@ -26,6 +26,7 @@
 	"network.nftRead",
 	"network.sysctl",
 	"network.tc",
+	"network.wifiCarrierWatch",
 	"osManifest.activate",
 	"osManifest.cmsAndMetadata",
 	"osManifest.compare",

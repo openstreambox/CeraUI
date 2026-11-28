@@ -15,12 +15,30 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { isIP } from "node:net";
+
 // Resolving the bonded link set for a launch and publishing it, IP list plus
 // bind-map sidecar, before anything is spawned.
 
 import { isLocalIp } from "../../../helpers/ip-addresses.ts";
+import { logger } from "../../../helpers/logger.ts";
+import { netdevPresence } from "../../network/netdev-lifetime.ts";
+import {
+	wifiCarrierDownState,
+	wifiCarrierLostMark,
+} from "../../network/wifi-carrier-lost.ts";
 import type { BondEntry } from "../bind-map.ts";
-import type { BindMapPublication } from "../bind-map-writer.ts";
+import {
+	type BindMapPublication,
+	isBindMapWriterSettled,
+} from "../bind-map-writer.ts";
+import { bondRowClock, bondRowHeldSince } from "../bond-row-age.ts";
+import {
+	LINK_CARRYING_EVIDENCE_MS,
+	LINK_CARRYING_SHOW_MS,
+} from "../link-progress.ts";
+import { buildLinkTelemetry } from "../link-telemetry.ts";
+import type { LinkTelemetryMessage } from "../link-telemetry-rows.ts";
 import {
 	genSrtlaBondEntries,
 	genSrtlaBondEntriesForLocalIpAddress,
@@ -35,6 +53,16 @@ export type SrtlaIpPreparationDeps = {
 		entries: readonly BondEntry[],
 		localReceiver?: string,
 	) => Promise<BindMapPublication>;
+	/** A Wi-Fi link whose radio has lost its access point (the carrier watch). */
+	readonly carrierLost?: (ifname: string) => boolean;
+	/** A Wi-Fi link whose carrier is down right now, marked or not. */
+	readonly carrierDown?: (ifname: string) => boolean;
+	/** Interfaces the sender's telemetry shows carrying the stream right now. */
+	readonly carryingIfaces?: () => ReadonlySet<string>;
+	/** The clock row ages are measured on (`bondRowClock`, monotonic). */
+	readonly now?: () => number;
+	/** The writer has nothing in flight, waiting or stale (`isBindMapWriterSettled`). */
+	readonly writerSettled?: () => boolean;
 };
 
 const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
@@ -49,6 +77,136 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
 		),
 };
 
+/*
+  A WI-FI LINK WITHOUT CARRIER CARRIES NOTHING, UNLESS NOTHING ELSE CAN.
+
+  A radio that lost its access point keeps its netif row until the next poll,
+  and the sender would keep assigning packets to it. The carrier watch marks it
+  (`network/wifi-carrier-lost.ts`), and a live refresh leaves it out of the
+  list for whichever receiver this bond serves (a LAN receiver's subnet subset
+  included). It is left out only while another entry of the same address
+  family is carrying: one that is not marked, whose carrier is not down right
+  now, that the sender's own telemetry shows carrying the stream (a fresh row
+  with `carrying: true`, so a link that is up but cannot reach the receiver is
+  no backup), whose interface and address have been in every applied
+  publication for longer than that flag's window (so its progress was made on
+  the socket for this address, not on one an address change replaced), and
+  that is not a CLAT translator row
+  (write-time revalidation may still drop those). Without that evidence nothing
+  counts as a backup. The telemetry's `carrying` is transmit progress over a
+  short dwell, not a receiver acknowledgement: a backup that stops delivering
+  inside that dwell while a radio loses its AP can still let the radio go, at
+  the cost of one re-registration when it returns. Otherwise the list keeps those entries: an empty list, or one
+  with only links the receiver cannot be reached over, would make the sender
+  drop its last usable connection, and radios that lost one access point
+  together usually re-associate within a second or two with their sockets
+  intact. (A working CLAT backup therefore does not displace a marked radio:
+  the conservative choice, as before this rule.)
+
+  Each entry's state is read once per publication, so one refresh cannot judge
+  an entry two ways.
+
+  The rule applies only to the stream session's own live refresh
+  (`carrierRule`), whose sender is reloaded right after the write settles. A
+  launch (manual start, restoration) ignores marks, because nothing would bring
+  a link left out there back, and so does the ingest forwarder's refresh,
+  whose sender is reloaded on its own schedule. While the writer is retrying
+  or has a publication in flight, nothing counts as a backup: settlement order
+  can still change which rows the sender holds.
+*/
+function liveFor(
+	ifname: string,
+	read: (
+		ifname: string,
+	) => { readonly ifindex: number | undefined } | undefined,
+): boolean {
+	const state = read(ifname);
+	if (state === undefined) return false;
+	// State binds the netdev it was set on; an unreadable index fails open.
+	return (
+		state.ifindex === undefined ||
+		netdevPresence.ifindex(ifname) === state.ifindex
+	);
+}
+
+const liveCarrierLost = (ifname: string) =>
+	liveFor(ifname, wifiCarrierLostMark);
+const liveCarrierDown = (ifname: string) =>
+	liveFor(ifname, wifiCarrierDownState);
+
+/** The fresh telemetry rows that are carrying. Stale or missing: none. */
+export function carryingIfacesFrom(
+	telemetry: LinkTelemetryMessage | null,
+): ReadonlySet<string> {
+	if (!telemetry || telemetry.stale) return new Set();
+	return new Set(
+		telemetry.links
+			.filter((row) => !row.stale && row.carrying === true)
+			.map((row) => row.iface),
+	);
+}
+
+/*
+  A survivor's `iface ip` row must have been in every IP list the sender read
+  (`bond-row-age.ts`, stamped when the writer settles) for longer than the
+  telemetry's carrying window plus its largest snapshot gap: `carrying` means
+  progress within LINK_CARRYING_SHOW_MS over snapshots at most
+  LINK_CARRYING_EVIDENCE_MS apart, so that progress was made while the sender
+  held this address. (It assumes the sender's reload follows the settled write
+  within the snapshot gap, which the session's refresh does at once.)
+*/
+export const SURVIVOR_ROW_AGE_MS =
+	LINK_CARRYING_SHOW_MS + LINK_CARRYING_EVIDENCE_MS;
+
+function withoutDeafWifi(
+	entries: BondEntry[],
+	carrierLost: (ifname: string) => boolean,
+	carrierDown: (ifname: string) => boolean,
+	carryingIfaces: () => ReadonlySet<string>,
+	now: number,
+	writerSettled: () => boolean,
+): BondEntry[] {
+	const state = new Map(
+		entries.map((entry) => [
+			entry,
+			{ lost: carrierLost(entry.iface), down: carrierDown(entry.iface) },
+		]),
+	);
+	const deaf = entries.filter((entry) => state.get(entry)?.lost);
+	if (deaf.length === 0) return entries;
+	const family = (entry: BondEntry) => isIP(entry.ip);
+	const settled = writerSettled();
+	const carrying = carryingIfaces();
+	const heldLongEnough = (entry: BondEntry) => {
+		const since = bondRowHeldSince(entry);
+		return since !== undefined && now - since >= SURVIVOR_ROW_AGE_MS;
+	};
+	const carriers = new Set(
+		entries
+			.filter((entry) => {
+				const s = state.get(entry);
+				return (
+					settled &&
+					entry.parentIface === undefined &&
+					!s?.lost &&
+					!s?.down &&
+					carrying.has(entry.iface) &&
+					heldLongEnough(entry)
+				);
+			})
+			.map(family),
+	);
+	const kept = deaf.filter((entry) => !carriers.has(family(entry)));
+	if (kept.length > 0) {
+		logger.info("Wi-Fi links without carrier kept: no other bond link", {
+			ifnames: kept.map((entry) => entry.iface),
+		});
+	}
+	return entries.filter(
+		(entry) => !state.get(entry)?.lost || kept.includes(entry),
+	);
+}
+
 /**
  * Publish the launch or live bond. A launch requires at least one link.
  *
@@ -60,9 +218,23 @@ export async function prepareSrtlaIpAddresses(
 	srtlaAddr: string,
 	deps: SrtlaIpPreparationDeps = defaultSrtlaIpPreparationDeps,
 	purpose: "launch" | "refresh" = "launch",
+	options: { readonly carrierRule?: boolean } = {},
 ): Promise<BindMapPublication> {
+	const at = (deps.now ?? bondRowClock)();
 	const local = deps.isLocal(srtlaAddr);
-	const entries = local ? deps.localList(srtlaAddr) : deps.bondedList();
+	const collected = local ? deps.localList(srtlaAddr) : deps.bondedList();
+	const entries =
+		purpose === "refresh" && options.carrierRule === true
+			? withoutDeafWifi(
+					collected,
+					deps.carrierLost ?? liveCarrierLost,
+					deps.carrierDown ?? liveCarrierDown,
+					deps.carryingIfaces ??
+						(() => carryingIfacesFrom(buildLinkTelemetry())),
+					at,
+					deps.writerSettled ?? isBindMapWriterSettled,
+				)
+			: collected;
 	if (purpose === "launch" && entries.length === 0) {
 		throw new Error("no_available_network_connections");
 	}
