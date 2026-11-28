@@ -34,6 +34,7 @@ import {
 import { rpc } from "$lib/rpc/client";
 import { noteLinkState } from "$lib/rpc/session-epoch.svelte";
 import { initSubscriptions, resetState } from "$lib/rpc/subscriptions.svelte";
+import { resetHotspotJoinsForTest } from "$lib/stores/hotspot-joins.svelte";
 import { wifiHotspotConfigOpKey } from "$main/network/wifi-station-lock";
 import HotspotDialog from "./HotspotDialog.svelte";
 
@@ -180,6 +181,9 @@ beforeEach(() => {
 	resetState();
 	initAsyncOperations();
 	initSubscriptions();
+	resetHotspotJoinsForTest();
+	// A fresh link, so no earlier test's dispatch can own this test's terminal.
+	noteLinkState("disconnected");
 	noteLinkState("connected");
 	generated.next = "renewed-pass-1";
 	configure.mockResolvedValue({ success: true });
@@ -374,6 +378,12 @@ describe("a renewal never writes into a form it no longer owns", () => {
 		await flush();
 		// The reopened form loaded from the device, not from the old renewal.
 		expect(passwordField().value).toBe("revoked-password");
+		// The closed dialog's dispatch was retired, so it keeps its late terminal
+		// (as a closed Save does) and its op ends on its own valve. Neither the
+		// terminal nor that timeout is the reopened form's to apply.
+		timeoutOperation(wifiHotspotConfigOpKey("0", "radio-A"));
+		await flush();
+		expect(passwordField().value).toBe("revoked-password");
 
 		await fireEvent.input(passwordField(), {
 			target: { value: "typed-password" },
@@ -412,5 +422,179 @@ describe("a renewal never writes into a form it no longer owns", () => {
 		confirmFrame("radio-B");
 		await flush();
 		expect(passwordField().value).toBe("typed-for-b");
+	});
+});
+
+describe("a renewal is Save's own bound write", () => {
+	it("sends the live setup with the new password, bound to the radio, under Save's key and receipt", async () => {
+		const ack = deferred<ConfigureResult>();
+		configure.mockReturnValueOnce(ack.promise);
+		open();
+		await renew();
+		expect(configure).toHaveBeenCalledTimes(1);
+		expect(configure).toHaveBeenCalledWith({
+			device: "0",
+			incarnation: "radio-A",
+			name: "radio-A-box",
+			password: "renewed-pass-1",
+			channel: "auto",
+			security: "wpa2",
+		});
+		const key = wifiHotspotConfigOpKey("0", "radio-A");
+		expect(getOperationPhase(key)).toBe("pending");
+		// Save shares the keyed op: it waits while the renewal does.
+		expect(screen.queryByRole("button", { name: /^Save$/ })).toBeNull();
+		ack.resolve({ success: true });
+		await flush();
+		// The receipt waits for the device: the ack alone settles nothing.
+		expect(getOperationPhase(key)).toBe("pending");
+		expect(passwordField().value).toBe("revoked-password");
+		confirmFrame();
+		await flush();
+		expect(getOperationPhase(key)).toBe("confirmed");
+		expect(passwordField().value).toBe("renewed-pass-1");
+	});
+
+	it("a radio-changed terminal after the ack refuses the renewal and leaves the password alone", async () => {
+		open();
+		await renew();
+		await flush();
+		wire.message("wifi", {
+			hotspot: {
+				config: {
+					device: "0",
+					incarnation: "radio-A",
+					success: false,
+					error: "radio-changed",
+				},
+			},
+		});
+		await flush();
+		expect(getOperationPhase(wifiHotspotConfigOpKey("0", "radio-A"))).toBe(
+			"failed",
+		);
+		expect(passwordField().value).toBe("revoked-password");
+		expect(configure).toHaveBeenCalledTimes(1);
+	});
+
+	it("is not offered while the AP is stopped", async () => {
+		const off: WifiInterface = {
+			...row(),
+			hotspot: undefined,
+			mode: "station",
+			conn: "",
+		};
+		wire.message("status", { wifi: { "0": off } });
+		render(HotspotDialog, { open: true, deviceId: "0", iface: off });
+		await flush();
+		expect(
+			screen.queryByRole("button", { name: "New Wi-Fi password" }),
+		).toBeNull();
+		expect(configure).not.toHaveBeenCalled();
+	});
+});
+
+describe("a renewal belongs to its own AP lifetime", () => {
+	async function show(view: ReturnType<typeof open>, iface: WifiInterface) {
+		wire.message("status", { wifi: { "0": iface } });
+		await view.rerender({ open: true, deviceId: "0", iface });
+		await flush();
+	}
+
+	it("Stop and Start while it waits: its late confirmation never writes the restarted AP's form", async () => {
+		const ack = deferred<ConfigureResult>();
+		configure.mockReturnValueOnce(ack.promise);
+		const view = open();
+		await renew();
+		await show(view, {
+			...row(),
+			hotspot: undefined,
+			mode: "station",
+			conn: "",
+		});
+		await show(view, row());
+		confirmFrame();
+		ack.resolve({ success: true });
+		await flush();
+		expect(passwordField().value).toBe("revoked-password");
+		// A timeout of that write is not the new lifetime's either.
+		timeoutOperation(wifiHotspotConfigOpKey("0", "radio-A"));
+		await flush();
+		expect(passwordField().value).toBe("revoked-password");
+	});
+
+	it("an AP recreated on the same radio from another profile drops it, and the form loads that AP", async () => {
+		const view = open();
+		await renew();
+		const recreated = row("radio-A", "other-ap-password");
+		await show(view, { ...recreated, conn: "other-ap-uuid" });
+		confirmFrame();
+		await flush();
+		// The form holds the AP that is up now, not the renewal's password.
+		expect(passwordField().value).toBe("other-ap-password");
+	});
+
+	it("a renamed interface under the same radio token is the same AP: the renewal completes", async () => {
+		const view = open();
+		await renew();
+		await show(view, { ...row(), ifname: "wlx00c0ca000001" });
+		confirmFrame();
+		await flush();
+		expect(passwordField().value).toBe("renewed-pass-1");
+	});
+});
+
+describe("another radio's frames", () => {
+	function otherRadio(macs: string[]): WifiInterface {
+		return {
+			...row("radio-B"),
+			ifname: "wlan1",
+			conn: "ap-uuid-b",
+			hotspot: {
+				...row("radio-B").hotspot,
+				available_channels: { auto: { name: "Automatic" } },
+				clients: { count: macs.length, stations: macs.map((mac) => ({ mac })) },
+			},
+		};
+	}
+
+	function both(a: WifiInterface, b: WifiInterface) {
+		wire.message("status", { wifi: { "0": a, "1": b } });
+	}
+
+	it("cannot announce a join on this card, reveal its code, or write its credentials", async () => {
+		const ack = deferred<ConfigureResult>();
+		configure.mockReturnValueOnce(ack.promise);
+		const view = render(HotspotDialog, {
+			open: true,
+			deviceId: "0",
+			iface: row(),
+		});
+		both(row(), otherRadio([]));
+		await view.rerender({ open: true, deviceId: "0", iface: row() });
+		await flush();
+		await renew();
+		// Radio B gains a phone and its own config terminal arrives.
+		both(row(), otherRadio(["bb:bb:bb:bb:bb:01"]));
+		wire.message("wifi", {
+			hotspot: {
+				config: { device: "1", incarnation: "radio-B", success: true },
+			},
+		});
+		await view.rerender({ open: true, deviceId: "0", iface: row() });
+		await flush();
+		expect(screen.queryByTestId("wifi-code-joined")).toBeNull();
+		expect(
+			screen.getByTestId("wifi-code-frame").getAttribute("data-shown"),
+		).toBe("false");
+		expect(getOperationPhase(wifiHotspotConfigOpKey("0", "radio-A"))).toBe(
+			"pending",
+		);
+		expect(passwordField().value).toBe("revoked-password");
+		// Only radio A's own terminal completes radio A's renewal.
+		ack.resolve({ success: true });
+		confirmFrame();
+		await flush();
+		expect(passwordField().value).toBe("renewed-pass-1");
 	});
 });
