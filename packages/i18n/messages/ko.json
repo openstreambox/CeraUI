@@ -2112,7 +2112,7 @@
 	"network.sharing.band.sharingOffTitle": "공유가 꺼져 있음",
 	"network.sharing.band.sharingOffBody": "이 장치의 인터넷을 공유하려면 핫스팟을 켜거나 유선 포트를 공유 LAN으로 설정하세요.",
 	"network.sharing.band.noHealthyUplinkTitle": "정상인 업링크 없음",
-	"network.sharing.band.noHealthyUplinkBody": "모든 업링크가 중단되어 연결된 기기가 밖으로 나갈 수 없습니다. 스트림 자체는 영향받지 않습니다.",
+	"network.sharing.band.noHealthyUplinkBody": "사용 가능한 업링크가 없습니다. 이 기기는 연결된 기기의 새 IPv4 인터넷 연결을 차단합니다. 자체 스트리밍 경로는 그대로 유지합니다.",
 	"network.sharing.band.steeringUnavailableTitle": "회선 분배를 사용할 수 없음",
 	"network.sharing.band.steeringUnavailableBody": "CeraUI가 기기를 업링크에 분배하는 최신 설정을 적용하지 못했습니다. 이전 설정이 계속 적용될 수 있으며, 이전 설정이 없으면 기기는 기본 경로를 사용합니다.",
 	"network.sharing.band.uplinksUnreportedTitle": "업링크 상태 미보고",

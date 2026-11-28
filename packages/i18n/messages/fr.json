@@ -2299,7 +2299,7 @@
 	"network.sharing.band.sharingOffTitle": "Le partage est désactivé",
 	"network.sharing.band.sharingOffBody": "Activez le point d'accès, ou passez un port filaire en LAN partagé, pour partager la connexion de cet appareil.",
 	"network.sharing.band.noHealthyUplinkTitle": "Aucune liaison opérationnelle",
-	"network.sharing.band.noHealthyUplinkBody": "Toutes les liaisons sont hors service, les appareils connectés n'ont donc aucune sortie. Le flux lui-même n'est pas affecté.",
+	"network.sharing.band.noHealthyUplinkBody": "Aucune liaison montante n’est disponible. Le boîtier bloque les nouvelles connexions Internet en IPv4 des appareils connectés. Il ne modifie pas ses propres routes de diffusion.",
 	"network.sharing.band.steeringUnavailableTitle": "Répartition entre liaisons indisponible",
 	"network.sharing.band.steeringUnavailableBody": "CeraUI n'a pas pu appliquer la dernière répartition des appareils entre les liaisons. La configuration précédente peut rester active ; sans configuration précédente, les appareils utilisent la route par défaut.",
 	"network.sharing.band.uplinksUnreportedTitle": "État des liaisons non signalé",

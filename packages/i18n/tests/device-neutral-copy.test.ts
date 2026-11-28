@@ -98,6 +98,7 @@ const REWORDED_KEYS: readonly string[] = [
 	"network.hotspot.newPasswordStreaming",
 	"carrying.active",
 	"carrying.idle",
+	"network.sharing.band.noHealthyUplinkBody",
 	"live.phone.checkingBody",
 	"live.phone.remoteChecking",
 	"live.phone.update-orchestrator-maintenance",
@@ -123,7 +124,7 @@ const JA_CELLULAR_KEYS: readonly string[] = [
 // paths, which the box cannot know. Home and hotel sign-in describe what the box
 // does instead. Like the term lists, this catches wording, not every claim.
 const REASSURANCE =
-	/\b(?:isn't|is not|not) affected\b|doesn't change (?:your|the) stream|nothing change[sd]? for your stream|stream is unchanged|still works?\b|works with (?:any|every)/i;
+	/\b(?:isn't|is not|not) affected\b|\bunaffected\b|doesn't change (?:your|the) stream|nothing change[sd]? for your stream|stream is unchanged|still works?\b|works with (?:any|every)/i;
 
 describe("the term lists themselves", () => {
 	const hits: [Locale, string][] = [
@@ -258,7 +259,7 @@ describe("Japanese cellular labels", () => {
 
 describe("English Home and sign-in copy makes no promise about the stream", () => {
 	it("flags the phrasings it is meant to catch", () => {
-		for (const text of ["Your stream isn't affected.", "Wi-Fi and Ethernet links still work.", "Works with any app"]) {
+		for (const text of ["Your stream isn't affected.", "The stream itself is unaffected.", "Wi-Fi and Ethernet links still work.", "Works with any app"]) {
 			expect(REASSURANCE.test(text)).toBe(true);
 		}
 		expect(REASSURANCE.test("Restarting the box usually fixes it.")).toBe(false);
@@ -272,5 +273,11 @@ describe("English Home and sign-in copy makes no promise about the stream", () =
 			.filter(([, value]) => REASSURANCE.test(value))
 			.map(([key]) => key);
 		expect(offenders).toEqual([]);
+	});
+
+	it("has none in the Internet Sharing no-healthy-uplink line", () => {
+		const catalog = readCatalog("en");
+		const body = normalize(catalog["network.sharing.band.noHealthyUplinkBody"] as string);
+		expect(REASSURANCE.test(body)).toBe(false);
 	});
 });
