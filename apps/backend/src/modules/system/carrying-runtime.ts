@@ -64,7 +64,7 @@ function publishCarrying(): void {
 		state === "streaming"
 			? "The box is carrying client traffic. Updates, restarts, power-off and idle link changes will wait."
 			: setup.engine === "none" && startup
-				? "The box is checking whether your phone uses it. Updates and restarts wait; you can power off after confirming the interruption."
+				? "The box is checking whether a device is sending through it. Updates and restarts wait; you can power off after confirming the interruption."
 				: "The box is checking client activity. Updates, restarts, power-off and idle link changes will wait.";
 	notificationBroadcast(
 		"client-carrying",

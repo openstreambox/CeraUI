@@ -72,7 +72,7 @@ for (const width of [390, 1280]) {
 			fixture.emitFixtureRoster(['02:00:5e:10:00:01']);
 		});
 		const home = page.getByTestId('phone-home-fixture');
-		await home.getByRole('button', { name: 'Connect your phone', exact: true }).click();
+		await home.getByRole('button', { name: 'Connect a device', exact: true }).click();
 		const card = home.getByTestId('wifi-code');
 
 		if (width === 1280) {
@@ -100,7 +100,7 @@ for (const width of [390, 1280]) {
 		await joined.getByRole('button', { name: 'Not mine?', exact: true }).click();
 		const confirm = card.getByRole('group', { name: 'Make a new Wi-Fi password?' });
 		await expect(confirm).toContainText(
-			'If your phone is streaming through the box, that stream drops',
+			'If a device is streaming through the box, that stream drops',
 		);
 		await confirm.evaluate((el) => el.scrollIntoView({ block: 'center' }));
 		await page.screenshot({ path: evidencePath(`wifi-code-not-mine-${width}.png`) });
