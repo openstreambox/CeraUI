@@ -16,13 +16,17 @@ import { getNetworkIngestInfo } from "../../modules/network/network-ingest.ts";
 import { netIfBuildMsg } from "../../modules/network/network-interfaces.ts";
 import { getSharingDiag } from "../../modules/network/sharing-diag/status.ts";
 import { getUnclaimedAdapters } from "../../modules/network/unclaimed-adapters.ts";
-import { getUplinksMessage } from "../../modules/network/uplink-health/state.ts";
+import {
+	getPhoneLinkCounts,
+	getUplinksMessage,
+} from "../../modules/network/uplink-health/state.ts";
 import { getUplinkShaperStatus } from "../../modules/network/uplink-shaper/status.ts";
 import { getUplinkSteeringStatus } from "../../modules/network/uplink-steering/status.ts";
 import {
 	buildRelaysMsg,
 	getRelays,
 } from "../../modules/remote/remote-relays.ts";
+import { setup } from "../../modules/setup";
 import { getActiveEncodeStatus } from "../../modules/streaming/active-encode-status.ts";
 import {
 	deriveAudioSources,
@@ -50,8 +54,10 @@ import { getPreviewEncoderRealizedStatus } from "../../modules/streaming/preview
 import { getSourcesMessage } from "../../modules/streaming/sources.ts";
 import { getStreamLifecycleState } from "../../modules/streaming/stream-lifecycle-status.ts";
 import { getIsStreaming } from "../../modules/streaming/streaming.ts";
+import { getCarryingStatus } from "../../modules/system/carrying";
 import { getCpuInfo } from "../../modules/system/cpu.ts";
 import { getEncoderLoad } from "../../modules/system/encoder-load.ts";
+import { getPhoneBoxHealth } from "../../modules/system/readiness";
 import { getRevisions } from "../../modules/system/revisions.ts";
 import { getSensors } from "../../modules/system/sensors.ts";
 import {
@@ -90,6 +96,10 @@ export const getStatusProcedure = authedProcedure
 			is_streaming: getIsStreaming(),
 			audio_mix_active: getAudioMixActive(),
 			audio_mix_excluded: excludedAudioInputs(getConfig()),
+			carrying: getCarryingStatus(),
+			phone_box: setup.engine === "none",
+			box_health: getPhoneBoxHealth(),
+			phone_links: getPhoneLinkCounts(),
 			audio_off_active: getAudioOffActive(),
 			stream_lifecycle: getStreamLifecycleState(),
 			available_updates: getAvailableUpdates(),
@@ -143,6 +153,10 @@ export function buildInitialStatus() {
 			is_streaming: getIsStreaming(),
 			audio_mix_active: getAudioMixActive(),
 			audio_mix_excluded: excludedAudioInputs(config),
+			carrying: getCarryingStatus(),
+			phone_box: setup.engine === "none",
+			box_health: getPhoneBoxHealth(),
+			phone_links: getPhoneLinkCounts(),
 			audio_off_active: getAudioOffActive(),
 			stream_lifecycle: getStreamLifecycleState(),
 			available_updates: getAvailableUpdates(),
