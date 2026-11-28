@@ -2924,7 +2924,7 @@
 	"hotspotConfirm.activate": "ホットスポットをオンにする",
 	"hotspotConfirm.saveFailed": "新しい名前とパスワードを保存できませんでした。何も変更されず、ホットスポットはオフのままです。",
 	"hotspotConfirm.passwordCharacters": "標準の英字・数字・記号のみを使用してください（アクセント記号や絵文字は不可）。",
-	"hotspotConfirm.inactiveHint": "ホットスポットはオフです。名前とパスワードは今変更できます。保存してもオンにはなりません。",
+	"hotspotConfirm.inactiveHint": "ホットスポットがオフのときに名前、パスワード、チャンネルを変更し、保存をタップします。「ホットスポットを有効化」で名前とパスワードの確認画面が開き、「ホットスポットをオンにする」で開始します。",
 	"network.wifiMode.confirm.switchTo": "{mode} に切り替える",
 	"hotspotConfirm.firstTimeTitle": "ホットスポットを設定",
 	"hotspotConfirm.firstTimeBody": "この無線ではまだホットスポットを使ったことがありません。提案された名前とパスワードをそのまま使うか、独自に設定してください。",

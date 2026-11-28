@@ -3184,7 +3184,7 @@
 	"hotspotConfirm.activate": "Turn on hotspot",
 	"hotspotConfirm.saveFailed": "Couldn't confirm the new name and password. They may already be saved. Reopen this confirmation to check the reported details before trying again.",
 	"hotspotConfirm.passwordCharacters": "Use only standard letters, numbers and symbols (no accents or emoji).",
-	"hotspotConfirm.inactiveHint": "The hotspot is off. You can change its name and password now; saving doesn't turn it on.",
+	"hotspotConfirm.inactiveHint": "Edit the name, password or channel while the hotspot is off, then tap Save. Enable Hotspot then shows the name and password to confirm, and Turn on hotspot starts it.",
 	"network.wifiMode.confirm.switchTo": "Switch to {mode}",
 	"hotspotConfirm.firstTimeTitle": "Set up your hotspot",
 	"hotspotConfirm.firstTimeBody": "This radio hasn't run a hotspot before. Keep the suggested name and password or choose your own.",
