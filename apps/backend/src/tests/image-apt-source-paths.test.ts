@@ -423,6 +423,10 @@ function orchestrator(
 		readonly ticketed?: boolean;
 		/** The up-front proof that the install unit's name is free. */
 		readonly installUnitFree?: () => Promise<boolean>;
+		/** Whether the schedule's idle window is open (a tick waits on it). */
+		readonly isIdle?: () => Promise<boolean>;
+		/** Starts refused as busy before the real start runs. */
+		readonly busyStarts?: () => number;
 	} = {},
 ) {
 	const counts = { osChecks: 0, pendingCleared: 0 };
@@ -453,10 +457,14 @@ function orchestrator(
 			onlyMeteredCandidateExists: async () => options.onlyMetered?.() ?? false,
 			isStreamLive: () => options.streamLive?.() ?? false,
 			runPackageCheck: runSoftwareUpdateCheck,
-			startPackageInstall: (ticket) =>
-				options.ticketed
+			startPackageInstall: (ticket) => {
+				if ((options.busyStarts?.() ?? 0) > 0)
+					return { started: false, reason: "already_updating" };
+				return options.ticketed
 					? startSoftwareUpdate(undefined, ticket)
-					: startSoftwareUpdate(),
+					: startSoftwareUpdate();
+			},
+			...(options.isIdle ? { isIdle: options.isIdle } : {}),
 			takePackageLaunchRefusal,
 			...(options.installUnitFree
 				? { installUnitFree: options.installUnitFree }
@@ -1087,6 +1095,53 @@ describe("each way an install ends before its unit launches", () => {
 		});
 		await settle(() => launches() === 1);
 		expect(launches()).toBe(1);
+	});
+
+	it("a tick that waited while Install now's unit proof used the request up does not launch on its behalf", async () => {
+		// Given a manual request that could not start yet (the updater busy),
+		// so it stands, as the image's own rules keep it.
+		await box("launched-running");
+		let busy = 1;
+		let free = true;
+		let idle = Promise.withResolvers<boolean>();
+		let idleAsked = 0;
+		orchestrator({
+			ticketed: true,
+			installUnitFree: async () => free,
+			isIdle: () => {
+				idleAsked++;
+				return idle.promise;
+			},
+			busyStarts: () => busy--,
+		});
+		expect(await checkUpdatesNow()).toEqual({ started: true });
+		expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+			started: false,
+			reason: "busy",
+		});
+		expect(getOrchestratorState().phase).toBe("awaiting-idle");
+		// When a tick passes the request check and waits on the idle window,
+		const tick = runOrchestratorTick();
+		await settle(() => idleAsked > 0);
+		expect(idleAsked).toBe(1);
+		// a new Install now meets a held install unit and is turned down,
+		free = false;
+		expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+			started: false,
+			reason: "not_available",
+		});
+		// and the name is free again by the time the tick resumes.
+		free = true;
+		idle.resolve(true);
+		await tick;
+		// Then the tick starts nothing: the request was used up.
+		expect(getOrchestratorState().phase).toBe("awaiting-idle");
+		await settle(() => launches() > 0);
+		expect(launches()).toBe(0);
+		idle = Promise.withResolvers<boolean>();
+		idle.resolve(true);
+		await runOrchestratorTick();
+		expect(launches()).toBe(0);
 	});
 
 	it("preparation throws", async () => {

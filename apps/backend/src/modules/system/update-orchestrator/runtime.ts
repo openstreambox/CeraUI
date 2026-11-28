@@ -1622,6 +1622,11 @@ async function maybeStartPackageInstall(opts: {
 		if (!idle) return;
 	}
 	if (state.phase !== "awaiting-idle" || packageInstallStarting) return;
+	// Image apt source: asked again now that the waits above are over. A
+	// request used up meanwhile (Install now's unit proof turned it down while
+	// this tick waited) is not this tick's to act on.
+	if (imageAptSourceInUse() && !manualPackageAdmission)
+		return { started: false, reason: "check_unavailable" };
 	packageInstallStarting = true;
 	try {
 		const available = deps.getPackageInstallWireState();
