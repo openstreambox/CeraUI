@@ -30,10 +30,14 @@ import {
 } from "../helpers/config-schemas.ts";
 import { setCredentialStoreState } from "../helpers/credential-store-state.ts";
 import { readMutationUdevExportDb } from "../modules/modems/modem-id-path-source.ts";
+import { continuityObserverIo } from "../modules/streaming/continuity-observer.ts";
 import { setStreamReconciliationCompletedForTest } from "../modules/system/stream-reconciliation-latch.ts";
 
 // Isolated globals still share /run; seed ownership only from this file's sentinel.
 const runtimeRoot = mkdtempSync(join(tmpdir(), "ceraui-backend-test-"));
+const previousContinuityDir = process.env.CERALIVE_CONTINUITY_DIR;
+process.env.CERALIVE_CONTINUITY_DIR = join(runtimeRoot, "continuity");
+continuityObserverIo.directory = process.env.CERALIVE_CONTINUITY_DIR;
 const previousStreamingMarker = process.env.CERALIVE_STREAMING_MARKER;
 process.env.CERALIVE_STREAMING_MARKER = join(runtimeRoot, "streaming");
 // Modem registration creates the mode-choice key on first use; never under /data.
@@ -95,6 +99,9 @@ afterAll(async () => {
 	if (previousModeChoiceDir === undefined)
 		delete process.env.CERALIVE_MODE_CHOICE_DIR;
 	else process.env.CERALIVE_MODE_CHOICE_DIR = previousModeChoiceDir;
+	if (previousContinuityDir === undefined)
+		delete process.env.CERALIVE_CONTINUITY_DIR;
+	else process.env.CERALIVE_CONTINUITY_DIR = previousContinuityDir;
 	if (previousEventsDir === undefined) delete process.env.CERALIVE_EVENTS_DIR;
 	else process.env.CERALIVE_EVENTS_DIR = previousEventsDir;
 	await rm(runtimeRoot, { recursive: true, force: true });
