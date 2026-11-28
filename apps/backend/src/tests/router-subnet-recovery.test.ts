@@ -272,7 +272,7 @@ afterEach(() => {
 
 test("preflight records the kernel witness alongside the original DHCP read", async () => {
 	await recovery({ witness: "legacy" });
-	spyOn(defaultSubnetRewriteDeps, "isRealDevice").mockResolvedValue(true);
+	spyOn(defaultSubnetRewriteDeps, "canManageModems").mockResolvedValue(true);
 	spyOn(defaultSubnetRewriteDeps, "runIpRouteShowDefault").mockResolvedValue(
 		`default via ${ORIGINAL.address} dev ${IFNAME}`,
 	);
@@ -304,7 +304,7 @@ for (const [tag, field, fallback] of [
 		await recovery({
 			body: (body) => body.replace(new RegExp(`<${tag}>[^<]*</${tag}>`), ""),
 		});
-		spyOn(defaultSubnetRewriteDeps, "isRealDevice").mockResolvedValue(true);
+		spyOn(defaultSubnetRewriteDeps, "canManageModems").mockResolvedValue(true);
 		spyOn(defaultSubnetRewriteDeps, "runIpRouteShowDefault").mockResolvedValue(
 			`default via ${ORIGINAL.address} dev ${IFNAME}`,
 		);
@@ -695,7 +695,7 @@ test("a journaled preflight with DHCP defaults cannot become checkable on the sa
 		record: { ...ORIGINAL, secondaryDns: ORIGINAL.address },
 		body: (body) => body.replace(/<SecondaryDns>[^<]*<\/SecondaryDns>/, ""),
 	});
-	spyOn(defaultSubnetRewriteDeps, "isRealDevice").mockResolvedValue(true);
+	spyOn(defaultSubnetRewriteDeps, "canManageModems").mockResolvedValue(true);
 	spyOn(defaultSubnetRewriteDeps, "runIpRouteShowDefault").mockResolvedValue(
 		`default via ${ORIGINAL.address} dev ${IFNAME}`,
 	);
@@ -824,7 +824,7 @@ test("a swapped preflight cannot journal the original witness alongside the succ
 		if (urls[0]?.endsWith(HILINK_DHCP_SETTINGS_PATH)) unit.replace();
 		return (await fetch?.(name, urls)) ?? [];
 	});
-	spyOn(defaultSubnetRewriteDeps, "isRealDevice").mockResolvedValue(true);
+	spyOn(defaultSubnetRewriteDeps, "canManageModems").mockResolvedValue(true);
 	spyOn(defaultSubnetRewriteDeps, "runIpRouteShowDefault").mockResolvedValue(
 		`default via ${ORIGINAL.address} dev ${IFNAME}`,
 	);

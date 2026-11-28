@@ -75,7 +75,7 @@ test("a partial issuing read cannot forget the known node when the ifindex is re
 	});
 	let written = false;
 	const deps: RouterAdminProbeDeps = {
-		isRealDevice: async () => true,
+		canManageModems: async () => true,
 		runIpRouteShowDefault: async () =>
 			`default via ${FACTORY.address} dev ${IFNAME}`,
 		fetchViaInterface: async (_name, urls) => {
@@ -129,7 +129,7 @@ for (const path of [
 			let written = false;
 			let sessions = 0;
 			const deps: RouterAdminProbeDeps = {
-				isRealDevice: async () => true,
+				canManageModems: async () => true,
 				runIpRouteShowDefault: async () =>
 					`default via ${FACTORY.address} dev ${IFNAME}`,
 				fetchViaInterface: async (_name, urls) => {
@@ -196,7 +196,7 @@ for (const swapAt of [
 		});
 		const deps = {
 			...defaultSubnetRewriteDeps,
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () =>
 				`default via ${FACTORY.address} dev ${IFNAME}`,
 			runIpAddrShow: async () => "",
