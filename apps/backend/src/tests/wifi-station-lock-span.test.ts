@@ -32,6 +32,7 @@ import type { MacAddress } from "../modules/network/network-manager.ts";
 import * as networkManager from "../modules/network/network-manager.ts";
 import { withDeviceLock } from "../modules/network/state/device-lock.ts";
 import {
+	getWifiState,
 	onWifiChange,
 	setWifiState,
 } from "../modules/wifi/state/wifi-state.ts";
@@ -41,6 +42,7 @@ import { addWifiInterface } from "../modules/wifi/wifi-connections.ts";
 import * as hotspotActivity from "../modules/wifi/wifi-hotspot-activity.ts";
 import type { WifiInterfaceWithHotspot } from "../modules/wifi/wifi-hotspot-types.ts";
 import { getWifiIdToMacAddress } from "../modules/wifi/wifi-interfaces.ts";
+import * as diversity from "../modules/wifi/wifi-network-diversity.ts";
 import {
 	hotspotStartProcedure,
 	wifiConnectNewProcedure,
@@ -86,12 +88,21 @@ function gate<T>(value: T) {
 
 /** Every `wifi` frame the handlers sent to the requesting socket. */
 let frames: Record<string, unknown>[] = [];
+/** For each station result frame: was the radio's lock held when it was sent? */
+let sentLocked: Promise<boolean>[] = [];
 
 function makeContext(): RPCContext {
 	const ws = {
 		send: (raw: string) => {
 			const message = JSON.parse(raw) as { wifi?: Record<string, unknown> };
-			if (message.wifi) frames.push(message.wifi);
+			if (!message.wifi) return;
+			frames.push(message.wifi);
+			// A station result (not another request's busy refusal): was the
+			// radio still held when it was sent? The busy check is synchronous.
+			if (!("connect" in message.wifi || "new" in message.wifi)) return;
+			sentLocked.push(
+				withDeviceLock(MAC, async () => true).then((r) => !r.success),
+			);
 		},
 		data: { isAuthenticated: true, lastActive: Date.now() },
 	} as unknown as AppWebSocket;
@@ -146,6 +157,8 @@ const hasFrame = (frame: Record<string, unknown>) => () =>
 
 let inherited: ReturnType<typeof isolateWifiRegistry> = [];
 let idMap: [string, MacAddress][] = [];
+let state: ReturnType<typeof getWifiState> = {};
+let scheduled: ReturnType<typeof spy>;
 let spies: Mock<(...args: never[]) => unknown>[] = [];
 function spy<T extends object, K extends keyof T>(
 	target: T,
@@ -182,8 +195,17 @@ function connectTimesOut() {
 }
 
 /** Records each teardown; asks the caller's re-check first, like the real one. */
-function teardowns() {
-	const downs: { uuid: string; path: string; locked: boolean }[] = [];
+/**
+ * Records each teardown. `refuse` plays a teardown that found the activation
+ * already completed (`pendingOnly`) and so did nothing.
+ */
+function teardowns(refuse = false) {
+	const downs: {
+		uuid: string;
+		path: string;
+		locked: boolean;
+		pendingOnly?: boolean;
+	}[] = [];
 	spy(
 		hotspotActivity,
 		"nmDisconnectActivation",
@@ -191,10 +213,17 @@ function teardowns() {
 			uuid: string,
 			receipt: { path: string },
 			_deps?: unknown,
-			permit?: () => Promise<boolean>,
+			_permit?: unknown,
+			_current?: unknown,
+			options?: { pendingOnly?: boolean },
 		) => {
-			if (permit && !(await permit())) return false;
-			downs.push({ uuid, path: receipt.path, locked: await locked() });
+			if (refuse) return false;
+			downs.push({
+				uuid,
+				path: receipt.path,
+				locked: await locked(),
+				pendingOnly: options?.pendingOnly,
+			});
 			return true;
 		},
 	);
@@ -213,30 +242,37 @@ function observed(path: string, connected: boolean) {
 beforeEach(() => {
 	inherited = isolateWifiRegistry();
 	idMap = Object.entries(getWifiIdToMacAddress()) as [string, MacAddress][];
+	state = getWifiState();
 	const iface = makeInterface(0, IFNAME);
 	addWifiInterface(MAC, iface);
 	getWifiIdToMacAddress()[0] = MAC;
 	setWifiState({ [MAC]: { ...iface, mode: "station" } });
 	onWifiChange(() => {});
 	frames = [];
+	sentLocked = [];
 	spies = [];
 	openGates = [];
 	spy(wifiConnections, "wifiUpdateScanResult", async () => true);
-	spy(wifiConnections, "wifiScheduleScanRefresh", () => {});
+	scheduled = spy(wifiConnections, "wifiScheduleScanRefresh", () => {});
 	spy(networkManager, "nmConnsGet", async () => []);
 	spy(networkManager, "readNmDeviceActivation", async () => IDLE);
 });
 
 afterEach(async () => {
-	for (const release of openGates) release();
-	await until(async () => !(await locked()) && !(await locked(MAC_B)));
-	for (const s of spies) s.mockRestore();
-	setWifiJoinNmcliRunner(null);
-	const ids = getWifiIdToMacAddress();
-	for (const id of Object.keys(ids)) delete ids[Number(id)];
-	for (const [id, mac] of idMap) ids[Number(id)] = mac;
-	setWifiState({});
-	restoreWifiRegistry(inherited);
+	try {
+		for (const release of openGates) release();
+		await until(async () => !(await locked()) && !(await locked(MAC_B)));
+		// No station result of any test may leave while its radio is held.
+		expect(await Promise.all(sentLocked)).not.toContain(true);
+	} finally {
+		for (const s of spies) s.mockRestore();
+		setWifiJoinNmcliRunner(null);
+		const ids = getWifiIdToMacAddress();
+		for (const id of Object.keys(ids)) delete ids[Number(id)];
+		for (const [id, mac] of idMap) ids[Number(id)] = mac;
+		setWifiState(state);
+		restoreWifiRegistry(inherited);
+	}
 });
 
 describe("the adapter lock covers the station's nmcli work", () => {
@@ -414,7 +450,61 @@ describe("the adapter lock covers the station's nmcli work", () => {
 		deleted.resolve(true);
 		// The saved-list refresh is still waiting, and neither radio is held.
 		await until(async () => !(await locked(MAC)) && !(await locked(MAC_B)));
+		expect(scheduled).not.toHaveBeenCalled();
 		refreshed.resolve([]);
+		await until(() => scheduled.mock.calls.length > 0);
+	});
+
+	test("Forget also locks a radio that holds a deleted sibling only behind its own profile", async () => {
+		const OWN = "0c1d2e3f-4a5b-4c6d-8e7f-8091a2b3c4d5";
+		const b = makeInterface(1, IFNAME_B, { [SSID]: OWN });
+		b.savedAll = { [SSID]: [OWN, UUID] };
+		addWifiInterface(MAC_B, b);
+		getWifiIdToMacAddress()[1] = MAC_B;
+		const deleted = gate(false);
+		spy(networkManager, "nmConnGetFields", async () => ["infrastructure"]);
+		spy(networkManager, "nmConnDelete", () => deleted.promise);
+
+		await call(wifiForgetProcedure, { uuid: UUID }, { context: makeContext() });
+		await until(async () => await locked(MAC_B));
+		expect(await locked(MAC)).toBe(true);
+		deleted.resolve(false);
+	});
+
+	test("a slow refresh cannot let an older choice outrank a newer one on the radio", async () => {
+		const SECOND = "5d6e7f80-91a2-4b3c-8d4e-5f60718293a4";
+		const a = makeInterface(0, IFNAME, { [SSID]: UUID, Other: SECOND });
+		addWifiInterface(MAC, a);
+		const recorded: string[] = [];
+		spy(diversity, "beginWifiOperatorChoice", () => ({
+			release: () => {},
+			record: async (uuid: string) => {
+				recorded.push(uuid);
+			},
+		}));
+		spy(networkManager, "nmConnect", async () => true);
+		const firstRefresh = gate(true);
+		let refreshes = 0;
+		spy(wifiConnections, "wifiUpdateScanResult", () =>
+			refreshes++ === 0 ? firstRefresh.promise : Promise.resolve(true),
+		);
+
+		await call(
+			wifiConnectProcedure,
+			{ uuid: UUID },
+			{ context: makeContext() },
+		);
+		await until(async () => !(await locked()));
+		await call(
+			wifiConnectProcedure,
+			{ uuid: SECOND },
+			{ context: makeContext() },
+		);
+		await until(() => frames.length === 1);
+		// The first Connect's refresh is still stalled, yet its choice came first.
+		expect(recorded).toEqual([UUID, SECOND]);
+		firstRefresh.resolve(true);
+		await until(() => frames.length === 2);
 	});
 });
 
@@ -432,7 +522,9 @@ describe("a request nmcli gave up on cannot come back later", () => {
 		);
 		await until(hasFrame({ connect: false, device: DEVICE_ID }));
 
-		expect(downs).toEqual([{ uuid: UUID, path: ACTIVE_PATH, locked: true }]);
+		expect(downs).toEqual([
+			{ uuid: UUID, path: ACTIVE_PATH, locked: true, pendingOnly: true },
+		]);
 		expect(await locked()).toBe(false);
 	});
 
@@ -459,7 +551,7 @@ describe("a request nmcli gave up on cannot come back later", () => {
 			return { uuid: UUID, path: ACTIVE_PATH, connected: reads > 1 };
 		});
 		observed(ACTIVE_PATH, false);
-		const downs = teardowns();
+		const downs = teardowns(true);
 
 		await call(
 			wifiConnectProcedure,
@@ -516,7 +608,7 @@ describe("a request nmcli gave up on cannot come back later", () => {
 			);
 			await until(hasFrame({ new: { error: "generic", device: 0 } }));
 			expect(downs).toEqual([
-				{ uuid: PENDING, path: ACTIVE_PATH, locked: true },
+				{ uuid: PENDING, path: ACTIVE_PATH, locked: true, pendingOnly: true },
 			]);
 		});
 	}

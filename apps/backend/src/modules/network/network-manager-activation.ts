@@ -60,6 +60,7 @@ export async function deactivateNmActivation(
 	uuid: string,
 	ifname: string,
 	current?: () => boolean,
+	options?: { readonly pendingOnly?: boolean },
 ): Promise<boolean> {
 	const bus = nmActivationBus.open();
 	try {
@@ -131,6 +132,8 @@ export async function deactivateNmActivation(
 			return false;
 		if (state === DEACTIVATED) return true;
 		if (state !== 1 && state !== 2 && state !== 3) return false;
+		// An activation that completed is not "pending" any more; leave it.
+		if (options?.pendingOnly && state !== 1) return false;
 		const completedAfterReply = async () => {
 			if (await absent()) return true;
 			return (await property(path, ACTIVE, "State")) === DEACTIVATED;

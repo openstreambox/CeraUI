@@ -459,6 +459,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Wi-Fi profile ", " is the device image's setup AP; CeraUI leaves it alone"],
 	["Wi-Fi profile authority retired"],
 	["Wi-Fi refresh after Forget failed: ", ""],
+	["Wi-Fi work after an adapter lock release failed: ", ""],
 	["Wi-Fi: settling the abandoned activation on ", " failed: ", ""],
 	["Wi-Fi: the abandoned activation on ", " could not be cancelled"],
 	["Wi-Fi: the abandoned activation on ", " could not be read; leaving it"],
