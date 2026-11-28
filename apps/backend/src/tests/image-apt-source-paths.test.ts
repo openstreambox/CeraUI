@@ -1048,7 +1048,7 @@ describe("each way an install ends before its unit launches", () => {
 		},
 	);
 
-	it("an install the up-front unit proof refuses keeps its manual admission and launches once the name is free", async () => {
+	it("a manual install the up-front unit proof refuses uses up its request: no tick installs on its behalf", async () => {
 		// Given an install unit name that is not free yet.
 		await box("launched-running");
 		let free = false;
@@ -1060,18 +1060,33 @@ describe("each way an install ends before its unit launches", () => {
 			started: false,
 			reason: "not_available",
 		});
-		expect(getOrchestratorState().phase).toBe("awaiting-idle");
 		expect(launches()).toBe(0);
-		// A tick while the name is still held launches nothing.
-		await runOrchestratorTick();
-		expect(launches()).toBe(0);
-		// Then, once the name is free, the queued request launches on the next
-		// idle tick without another click: it is still the owner's request.
+		// Then the request is used up: once the name is free, no idle tick
+		// installs on its behalf,
 		free = true;
 		await runOrchestratorTick();
+		expect(launches()).toBe(0);
+		// not after the Packages card's recheck finds the offer again,
+		expect(triggerManualUpdateCheck()).toBe(true);
+		await settle(() => getUpdateState().kind === "available");
+		await runOrchestratorTick();
+		expect(launches()).toBe(0);
+		// and not after updates are turned off and on again.
+		const previous = setup.apt_update_enabled;
+		setup.apt_update_enabled = false;
+		try {
+			await runOrchestratorTick();
+		} finally {
+			setup.apt_update_enabled = previous;
+		}
+		await runOrchestratorTick();
+		expect(launches()).toBe(0);
+		// A new request does launch.
+		expect(await installUpdatesNow({ scope: "packages" })).toEqual({
+			started: true,
+		});
 		await settle(() => launches() === 1);
 		expect(launches()).toBe(1);
-		expect(getOrchestratorState().phase).toBe("downloading");
 	});
 
 	it("preparation throws", async () => {

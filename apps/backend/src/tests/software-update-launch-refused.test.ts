@@ -697,26 +697,12 @@ test("a commit stage under the name still refuses the stream after a settled ref
 	expect(admission.allowed).toBe(false);
 });
 
-test("a second start while one waits for discovery joins it, and a refusal stays the first caller's", async () => {
-	// Given a Packages card start that waits for a discovery in flight.
-	await using h = await updateHarness();
-	const systemd = fakeSystemd();
-	systemd.failInspect(showTimeout);
+// A Packages card start that waits for a discovery in flight, its commands
+// answered here (nothing reaches the host), its timer held by the test.
+async function waitingCardStart(systemd: FakeSystemd) {
 	spyOn(transaction, "runDetachedAptUpgrade").mockImplementation(
 		(args, watched) => realRunUpgrade(args, watched, systemd.deps),
 	);
-	let fire: (() => void) | undefined;
-	setDelayedStartTimerForTest({
-		set: (run) => {
-			fire = run;
-			return 1;
-		},
-		clear: () => {
-			fire = undefined;
-		},
-	});
-	// The discovery reads apt through the spawn primitive: answered here, as
-	// the harness answers its own, so nothing reaches the host.
 	const spawned: string[][] = [];
 	const spawn = spyOn(spawnPolicy, "spawnWithTimeout").mockImplementation(
 		async (argv) => {
@@ -729,37 +715,118 @@ test("a second start while one waits for discovery joins it, and a refusal stays
 			};
 		},
 	);
+	let fire: (() => void) | undefined;
+	setDelayedStartTimerForTest({
+		set: (run) => {
+			fire = run;
+			return 1;
+		},
+		clear: () => {
+			fire = undefined;
+		},
+	});
 	const discovery = Promise.withResolvers<AptReachability>();
 	setAptReachabilityProbeForTest(() => discovery.promise);
 	const discovered = runUpdateDiscoveryAndReport();
+	expect(startSoftwareUpdate()).toEqual({ started: true });
+	return {
+		spawned,
+		async discover() {
+			discovery.resolve({
+				ipv4: "ok",
+				ipv6: "ok",
+				used: "any",
+				verdict: "any",
+				detail: [],
+			});
+			await discovered;
+		},
+		fire: () => fire?.(),
+		restore() {
+			spawn.mockRestore();
+			setDelayedStartTimerForTest(null);
+		},
+	};
+}
+
+test("on an image without its own apt source, a ticketed start never joins a start waiting for discovery", async () => {
+	// Given a Packages card start that waits for a discovery in flight.
+	await using h = await updateHarness();
+	const systemd = fakeSystemd();
+	systemd.failInspect(showTimeout);
+	const card = await waitingCardStart(systemd);
 	try {
-		expect(startSoftwareUpdate()).toEqual({ started: true });
-		// When the orchestrator starts its own install meanwhile.
+		// When the orchestrator starts its own install meanwhile, it is refused
+		// (it would hold a ticket the joined launch never records),
 		const ticket = {};
-		// Then it joins that same install (one install, never two).
-		expect(startSoftwareUpdate(undefined, ticket)).toEqual({ started: true });
-		discovery.resolve({
-			ipv4: "ok",
-			ipv6: "ok",
-			used: "any",
-			verdict: "any",
-			detail: [],
+		expect(startSoftwareUpdate(undefined, ticket)).toEqual({
+			started: false,
+			reason: "already_updating",
 		});
-		await discovered;
-		// And when the joined launch is refused before systemd-run,
-		fire?.();
+		// while another ticketless start still joins that same install.
+		expect(startSoftwareUpdate()).toEqual({ started: true });
+		await card.discover();
+		// And when that launch is refused before systemd-run, the refusal is
+		// the card's plain failure, and no ticket holds one.
+		card.fire();
 		await h.check();
-		// the refusal is the first caller's: the joining ticket holds none, and
-		// the Packages card's start keeps its plain failure.
 		expect(takePackageLaunchRefusal(ticket)).toBe(false);
 		expect(getUpdateState()).toMatchObject({ kind: "failed" });
 		expect(getUpdateState()).not.toHaveProperty("retryable");
 		expect(systemd.submitted).toEqual([]);
 		// Every command the discovery ran was this test's answer.
-		expect(spawned.every((argv) => argv[0] !== undefined)).toBe(true);
+		expect(card.spawned.length).toBeGreaterThan(0);
 	} finally {
-		spawn.mockRestore();
-		setDelayedStartTimerForTest(null);
+		card.restore();
+	}
+});
+
+test("the orchestrator beside a waiting Packages card start retries later, never stranded in downloading", async () => {
+	// Given a Packages card start that waits for a discovery in flight.
+	await using h = await updateHarness();
+	const systemd = fakeSystemd();
+	systemd.failInspect(showTimeout);
+	const card = await waitingCardStart(systemd);
+	const quarantine = testQuarantine();
+	setOrchestratorRuntimeDepsForTest(
+		fakeDeps({
+			quarantine,
+			startPackageInstall: (ticket) => startSoftwareUpdate(undefined, ticket),
+			getPackageInstallWireState: getUpdateState,
+			// Outside the idle window: only Install now launches.
+			isIdle: async () => false,
+		}),
+	);
+	setOrchestratorStateForTest({
+		...initialOrchestratorState(0),
+		phase: "available",
+	});
+	try {
+		// When the owner installs through the orchestrator meanwhile, it does
+		// not launch: the install stays queued.
+		expect(await installUpdatesNow()).toEqual({
+			started: false,
+			reason: "busy",
+		});
+		expect(getOrchestratorState().phase).toBe("awaiting-idle");
+		// The card's launch is refused before systemd-run, and its recheck
+		// clears that plain failure before the orchestrator looks.
+		await card.discover();
+		card.fire();
+		await h.check();
+		expect(triggerManualUpdateCheck()).toBe(true);
+		await runOrchestratorTick();
+		// Then the orchestrator is not left in `downloading` for a launch that
+		// was never its own.
+		expect(getOrchestratorState().phase).toBe("awaiting-idle");
+		// And once systemd answers, its retry launches the unit.
+		systemd.failInspect(null);
+		h.next();
+		expect(await installUpdatesNow()).toEqual({ started: true });
+		await h.check();
+		expect(systemd.submitted).toHaveLength(1);
+	} finally {
+		card.restore();
 	}
 });
 

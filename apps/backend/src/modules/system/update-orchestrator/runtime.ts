@@ -1653,6 +1653,12 @@ async function maybeStartPackageInstall(opts: {
 		// A name systemd still holds (a stopped unit an image's drain keeps
 		// loaded) refuses the launch; it must never become DOWNLOAD_FAILED.
 		if (deps.installUnitFree && !(await deps.installUnitFree())) {
+			// Image apt source: a request the install unit's name turns down is
+			// used up. The name can stay held until a restart, so no later tick
+			// installs on its behalf, whatever the offer has become by then; the
+			// owner asks again. (A request that only could not start yet, the
+			// updater busy or the clock gate shut, still stands.)
+			if (imageAptSourceInUse()) manualPackageAdmission = false;
 			await deps.quarantine.clearPending();
 			return { started: false, reason: "check_unavailable" };
 		}

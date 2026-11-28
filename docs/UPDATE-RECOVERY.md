@@ -1903,11 +1903,14 @@ a refusal already recorded at that check: whatever holds the name is not this
 install's. A refusal the monitor records only after that check (its own
 continuation had not run yet) still meets the stop of the fixed name, as on the
 base. A second start
-while one waits for discovery joins that same install, as it always did (on an
-image with its own apt source the launch fence makes it the same attempt); it
-keeps the first caller's ticket, so a refusal is only ever recorded for the
-launch that runs, and an orchestrator start that joined a Packages card start
-gets that start's plain failure. Settling
+while one waits for discovery joins that same install when it carries no
+ticket, as it always did, and always on an image with its own apt source, where
+the launch fence makes it the same attempt. An orchestrator start (it carries a
+ticket) on any other image is refused there (`already_updating`) and stays
+queued for its next try: the joined launch would keep the first caller's hooks
+and ticket, so a refusal of it could never settle the orchestrator's, and a
+recheck clearing that plain failure would leave the orchestrator in
+`downloading`. Settling
 clears `pending-packages.json`, as a start refused up front does (if that
 fails, a retry in the same process clears it before it launches, or does not
 launch; the mark does not survive a restart, so after one a retry from a wire
@@ -1932,7 +1935,11 @@ refused before submission keeps that image's own end (the attempt's terminal
 `failed`, `PACKAGE_INSTALL_REFUSED`, left by the next check): its installs start
 only on request, so nothing would queue it again; the refusal is not recorded
 for the ticket there. An install the launch fence already ended raises its own
-"owner ended" error, which passes through unwrapped. Everything from the `systemd-run` call
+"owner ended" error, which passes through unwrapped. There, a manual request that the install
+unit's name turns down before launch (the up-front proof) is used up: the name
+can stay held until a restart, so no later tick installs on its behalf,
+whatever the offer has become; the owner asks again. A request that only could
+not start yet (the updater busy, the clock gate shut) still stands, as before. Everything from the `systemd-run` call
 on is unchanged: a refused or timed-out submission may still have created the
 unit, so it stays a failed download, and a failure seen once the phase is
 `committing` goes through the commit-failure path as before. Command validation

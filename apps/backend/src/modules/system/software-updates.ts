@@ -2319,6 +2319,18 @@ export function startSoftwareUpdate(
 	// Image apt source: an install that ended still has a wait in flight (a
 	// command, its spool setup). The updater is its until that has returned.
 	if (launchFence.draining()) return refuseUpdateStart("already_updating");
+	// An orchestrator start (it carries a ticket) never joins a start that
+	// already waits for discovery on an image without its own apt source: the
+	// joined launch keeps that start's hooks and ticket, so a refusal of it
+	// could never settle the orchestrator's. It is refused and retried instead.
+	// On an image with its own apt source the launch fence makes a second
+	// start that same attempt, and each refusal is that attempt's own end.
+	if (
+		delayedSoftwareUpdateStart &&
+		ticket !== undefined &&
+		!imageAptSourceInUse()
+	)
+		return refuseUpdateStart("already_updating");
 	if (isSoftwareUpdateRecoveryInconclusive()) {
 		return refuseUpdateStart("check_unavailable");
 	}
