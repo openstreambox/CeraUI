@@ -1273,5 +1273,25 @@
 		"value": "Hotspot",
 		"locales": ["de"],
 		"reason": "de hotspotConfigurator.dialog.configHotspot reads \"Hotspot konfigurieren\"."
+	},
+	"network.radio.band": {
+		"value": "Band",
+		"locales": ["de"],
+		"reason": "\"Band\" is the German term for a radio band; de network.modem.bands.any reads \"Beliebiges Band\"."
+	},
+	"network.radio.neighbour": {
+		"value": "Modem {id}",
+		"locales": ["de", "fr", "pt-BR"],
+		"reason": "\"Modem\" is the German, French and Portuguese word (see networking.types.modem); the rest is the modem id placeholder."
+	},
+	"network.radio.reg.roaming": {
+		"value": "Roaming",
+		"locales": ["de", "pt-BR"],
+		"reason": "de network.cellular.rejection.roamingNotAllowed reads \"Roaming ist hier für diese SIM nicht erlaubt.\"; pt-BR network.modem.enableRoaming reads \"Permitir Roaming\", keeping the term untranslated."
+	},
+	"network.radio.signal": {
+		"value": "Signal",
+		"locales": ["de", "fr"],
+		"reason": "\"Signal\" is the French word; fr hud.noSignal reads \"Aucun signal\". de hud.noSignal reads \"Kein Signal\"."
 	}
 }
