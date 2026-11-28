@@ -48,6 +48,7 @@ import { withModemUpdateLock } from "../modules/network/state/device-lock.ts";
 import {
 	isModemMutationHeld,
 	resetLifecycleInterlock,
+	tryAcquireLifecycle,
 } from "../modules/streaming/lifecycle-admission.ts";
 import {
 	completeRecoveryBarrier,
@@ -685,5 +686,266 @@ test("a modem just reset is skipped for the rest of the poll", async () => {
 	await runModemReadyActivations(getModemIds());
 	expect(activations()).toEqual([]);
 	await runModemReadyActivations();
+	expect(activations()).toHaveLength(1);
+});
+
+// Prepared automatic carrier profiles carry autoconnect=no, so NetworkManager
+// never brings them back; the redial path does, spaced out per physical modem.
+async function connectAutomaticProfile(): Promise<void> {
+	autoconnect = "no";
+	setModemReadyActivationDepsForTest({
+		now: () => now,
+		automaticReady: async () => automaticGrant,
+	});
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(1);
+	nmState = "100 (connected)";
+	await runModemStatusPoll();
+}
+
+let automaticGrant = true;
+beforeEach(() => {
+	automaticGrant = true;
+});
+
+/** Polls 15 s apart until `until`, starting at the current `now`. */
+async function pollUntil(until: number): Promise<void> {
+	while (now < until) {
+		now += 15_000;
+		await runModemStatusPoll();
+	}
+}
+
+test("a dropped automatic profile is dialled again after two disconnected polls", async () => {
+	await connectAutomaticProfile();
+	now = 60_000;
+	nmState = "30 (disconnected)";
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(1);
+	now = 75_000;
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(1);
+	now = 80_000;
+	await runModemStatusPoll();
+	expect(activations()).toEqual([
+		["nmcli", "-w", "45", "conn", "up", UUID],
+		["nmcli", "-w", "45", "conn", "up", UUID],
+	]);
+});
+
+test("redials that keep failing are spaced 30, 60, 120, 240, 300 s, then 30 min apart", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	activationFails = true;
+	const dialTimes: number[] = [];
+	onConnect = async () => {
+		dialTimes.push(now);
+	};
+	now = 0;
+	await pollUntil(4 * 3_600_000);
+	const gaps = dialTimes.slice(1).map((time, index) => time - dialTimes[index]);
+	expect(dialTimes[0]).toBeGreaterThanOrEqual(30_000);
+	expect(gaps.slice(0, 4)).toEqual([60_000, 120_000, 240_000, 300_000]);
+	expect(gaps.length).toBeGreaterThan(5);
+	for (const gap of gaps.slice(4)) expect(gap).toBe(1_800_000);
+	expect(getModem(2)?.data_connection_failed).toBe(true);
+}, 60_000);
+
+test("five connected minutes reset the redial spacing", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	activationFails = true;
+	await pollUntil(240_000);
+	const failedDials = activations().length;
+	expect(failedDials).toBeGreaterThan(2);
+	activationFails = false;
+	nmState = "100 (connected)";
+	await pollUntil(now + 300_000);
+	nmState = "30 (disconnected)";
+	const dropAt = now;
+	const before = activations().length;
+	// First disconnected poll, the dwell poll, then the dial: well inside the
+	// 240 s spacing the failed dials had reached before the stable spell.
+	await pollUntil(dropAt + 45_000);
+	expect(activations().length).toBe(before + 1);
+});
+
+test("a short connected spell keeps the redial spacing growing", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	activationFails = true;
+	await pollUntil(240_000);
+	activationFails = false;
+	nmState = "100 (connected)";
+	await pollUntil(now + 60_000);
+	nmState = "30 (disconnected)";
+	const before = activations().length;
+	await pollUntil(now + 60_000);
+	expect(activations().length).toBe(before);
+});
+
+for (const guard of [
+	"manual profile",
+	"no preparation grant",
+	"not registered",
+	"inhibit",
+	"scanning",
+	"lease",
+] as const) {
+	test(`a dropped automatic profile is not redialled under ${guard}`, async () => {
+		await connectAutomaticProfile();
+		const lease = guard === "lease" ? holdLease() : undefined;
+		if (guard === "manual profile") autoconnect = "yes";
+		if (guard === "no preparation grant") automaticGrant = false;
+		if (guard === "not registered") mmState = "searching";
+		const row = getModem(2);
+		if (!row) throw new Error("Modem not registered");
+		if (guard === "inhibit") row.inhibit = true;
+		if (guard === "scanning") row.is_scanning = true;
+		nmState = "30 (disconnected)";
+		await pollUntil(600_000);
+		expect(activations()).toHaveLength(1);
+		lease?.release();
+		autoconnect = "no";
+		automaticGrant = true;
+		mmState = "registered";
+		const current = getModem(2);
+		if (current) {
+			delete current.inhibit;
+			delete current.is_scanning;
+		}
+		await pollUntil(now + 45_000);
+		expect(activations()).toHaveLength(2);
+	});
+}
+
+test("activating, unavailable or unreadable device states never count as a drop", async () => {
+	await connectAutomaticProfile();
+	for (const state of ["40 (connecting (prepare))", "20 (unavailable)", ""]) {
+		nmState = state;
+		await pollUntil(now + 600_000);
+	}
+	expect(activations()).toHaveLength(1);
+});
+
+test("a registration loss between the two disconnected polls restarts the dwell", async () => {
+	await connectAutomaticProfile();
+	now = 60_000;
+	nmState = "30 (disconnected)";
+	await runModemStatusPoll();
+	now = 75_000;
+	mmState = "searching";
+	await runModemStatusPoll();
+	now = 90_000;
+	mmState = "registered";
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(1);
+	now = 110_000;
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(2);
+});
+
+test("overlapping polls dial a dropped automatic profile once", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	now = 60_000;
+	await runModemStatusPoll();
+	now = 90_000;
+	const started = Promise.withResolvers<void>();
+	const release = Promise.withResolvers<void>();
+	onConnect = async () => {
+		started.resolve();
+		await release.promise;
+	};
+	const first = runModemStatusPoll();
+	await started.promise;
+	await Promise.all([runModemStatusPoll(), runModemStatusPoll()]);
+	release.resolve();
+	await first;
+	expect(activations()).toHaveLength(2);
+});
+
+test("a failing redial raises the data-call warning once, not on every dial", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	activationFails = true;
+	const reported: number[][] = [];
+	while (now < 1_200_000) {
+		now += 15_000;
+		reported.push([...(await runModemReadyActivations())]);
+	}
+	expect(activations().length).toBeGreaterThan(3);
+	expect(reported.filter((ids) => ids.includes(2))).toHaveLength(1);
+	expect(getModem(2)?.data_connection_failed).toBe(true);
+});
+
+test("a redial in flight never refuses a Stream Start", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	now = 60_000;
+	await runModemStatusPoll();
+	now = 90_000;
+	let admitted: boolean | undefined;
+	onConnect = async () => {
+		const admission = tryAcquireLifecycle("streaming");
+		admitted = admission.admitted;
+		if (admission.admitted) admission.lease.release();
+	};
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(2);
+	expect(admitted).toBe(true);
+});
+
+test("no redial starts while a stream is being launched", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	const launch = tryAcquireLifecycle("streaming");
+	if (!launch.admitted) throw new Error("stream admission refused");
+	await pollUntil(600_000);
+	expect(activations()).toHaveLength(1);
+	launch.lease.release();
+	await pollUntil(now + 45_000);
+	expect(activations()).toHaveLength(2);
+});
+
+test("a stale connected bearer in ModemManager with the device disconnected is redialled", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	mmState = "connected";
+	now = 60_000;
+	await runModemStatusPoll();
+	now = 90_000;
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(2);
+});
+
+test("real nmcli output, newline-terminated, still dispatches the first activation", async () => {
+	nmState = "30 (disconnected)\n";
+	await runModemStatusPoll();
+	expect(activations()).toEqual([["nmcli", "-w", "45", "conn", "up", UUID]]);
+});
+
+test("real nmcli output, newline-terminated, still redials a dropped automatic profile", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)\n";
+	now = 60_000;
+	await runModemStatusPoll();
+	now = 90_000;
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(2);
+});
+
+test("two device values are still ambiguous", async () => {
+	nmState = "30 (disconnected)\n100 (connected)\n";
+	await runModemStatusPoll();
+	expect(activations()).toEqual([]);
+});
+
+test("a terminated state record is accepted only when it is the sole record", async () => {
+	nmState = "30 (disconnected)\n\n";
+	await runModemStatusPoll();
+	expect(activations()).toEqual([]);
+	nmState = "30 (disconnected)\n";
+	await runModemStatusPoll();
 	expect(activations()).toHaveLength(1);
 });
