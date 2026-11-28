@@ -1,5 +1,6 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import { radioHealthListSchema } from "@ceraui/rpc/schemas";
+import * as modemMocks from "../mocks/providers/modems.ts";
 import {
 	commitRadioRoster,
 	getRadioHealth,
@@ -163,12 +164,19 @@ test("registration retains its successful owner-read time and expires without an
 });
 
 test("the serving cell is read only on the released AT port, and a refusal says why", async () => {
-	const { QENG_LTE_REPLY } = await import("./helpers/fake-at-modem.ts");
+	// A03M4G reply shape with test-network identifiers and signal levels.
+	const reply = [
+		'AT+QENG="servingcell"',
+		'+QENG: "servingcell","NOCONN"',
+		'+QENG: "LTE","FDD",001,01,AAAA,10,100,1,5,5,001,-101,-20,-60,3,0,0,0',
+		'+QENG: "NR5G-NSA",001,01,12,-95,1,-18,12345,78,10,30',
+		"OK",
+	].join("\n");
 	const served: number[] = [];
 	const base = {
 		enabled: async () => true,
 		registration: () => undefined,
-		readNas: async () => ({ signal: "", band: "", listed: true }),
+		readNas: async () => ({ signal: "", band: "" }),
 		readText: async () => "100",
 		realpath: async () => "/sys/1-1/1-1:1.4",
 		run: async () => "",
@@ -182,13 +190,14 @@ test("the serving cell is read only on the released AT port, and a refusal says 
 		...base,
 		readServing: async (id: number) => {
 			served.push(id);
-			return { ok: true as const, raw: QENG_LTE_REPLY.replace(/\r\n?/g, "\n") };
+			return { ok: true as const, raw: reply };
 		},
 	});
 	expect(served).toEqual([1]);
-	expect(getRadioHealth(rows, 1000)["1"]?.layer.source).toBe(
-		"QENG servingcell",
-	);
+	expect(getRadioHealth(rows, 1000)["1"]?.band).toMatchObject({
+		value: "LTE B1 + NR n78",
+		source: "QENG servingcell",
+	});
 	expect(getRadioHealth(rows, 1000)["1"]?.metrics.servingCell).toBeUndefined();
 
 	await sample(rows, 31000, {
@@ -222,15 +231,30 @@ test("the serving cell is read only on the released AT port, and a refusal says 
 		source: "QENG servingcell · no reading: timeout",
 	});
 
-	// Unlisted firmware: no serving-cell read at all.
-	await sample(rows, 91000, {
+	// Other modem models never reach the RM520 serving-cell reader.
+	const otherModel = { "1": { ...rows["1"], model: "DW5821e" } };
+	await sample(otherModel, 91000, {
 		...base,
 		readNas: async () => ({ signal: "", band: "" }),
 		readServing: async () => {
-			throw new Error("unlisted firmware reached the AT port");
+			throw new Error("another model reached the RM520 AT reader");
 		},
 	});
-	expect(getRadioHealth(rows, 91000)["1"]?.metrics.servingCell).toBeUndefined();
+	expect(
+		getRadioHealth(otherModel, 91000)["1"]?.metrics.servingCell,
+	).toBeUndefined();
+
+	const isMocked = spyOn(modemMocks, "shouldMockModems").mockReturnValue(true);
+	const readServing = mock(async () => ({ ok: true as const, raw: reply }));
+	try {
+		await sample(rows, 121000, { ...base, readServing });
+		expect(readServing).not.toHaveBeenCalled();
+		expect(
+			getRadioHealth(rows, 121000)["1"]?.metrics.servingCell,
+		).toBeUndefined();
+	} finally {
+		isMocked.mockRestore();
+	}
 });
 
 test("binary journal messages cannot stall later USB diagnostics", async () => {
