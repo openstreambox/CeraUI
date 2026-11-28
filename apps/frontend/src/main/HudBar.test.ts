@@ -91,6 +91,7 @@ function makeHud(overrides: Partial<HudState> = {}): HudState {
 		temperature: null,
 		voltage: null,
 		current: null,
+		inputVoltage: null,
 		isSensorsStale: false,
 		isConnected: true,
 		isFullyStale: false,

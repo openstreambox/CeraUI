@@ -2655,6 +2655,7 @@
 	"settings.deviceHealth.nowStrip.load": "Carga media",
 	"settings.deviceHealth.nowStrip.temperature": "Temperatura del SoC",
 	"settings.deviceHealth.peak": "máx. {value}",
+	"settings.deviceHealth.power.inputTitle": "Voltaje de entrada",
 	"settings.deviceHealth.power.noReading": "Sin lectura",
 	"settings.deviceHealth.power.notInstrumented": "Esta placa no informa a CeraUI del voltaje ni de la corriente.",
 	"settings.deviceHealth.power.title": "Raíles de alimentación",

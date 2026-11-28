@@ -139,6 +139,8 @@ export interface HudState {
 	voltage: number | null;
 	/** A (mA inputs are converted to A) */
 	current: number | null;
+	/** V at the board's DC input (ROCK 5B+ only; null elsewhere). */
+	inputVoltage: number | null;
 	isSensorsStale: boolean;
 
 	// Connection --------------------------------------------------------------

@@ -50,6 +50,10 @@ import {
 	provesSelectionIsNotHdmi,
 } from "./hdmi-signal-notification.ts";
 
+import {
+	applyInputVoltage,
+	createInputVoltageReader,
+} from "./input-voltage.ts";
 import { getPowerSensors, initPowerMonitoring } from "./power-monitor.ts";
 
 const bootconfigService = "ceralive-firstboot-bootconfig";
@@ -104,8 +108,14 @@ async function updateSensorsJetson() {
 	await updateSensorThermal(0, "SoC temperature");
 }
 
+const readInputVoltage = createInputVoltageReader();
+
 async function updateSensorsRk3588() {
 	await updateSensorThermal(0, "SoC temperature");
+	// Only boards whose profile wires an ADC channel to the power input (the
+	// ROCK 5B+ today; see input-voltage.ts). A failed read drops the key rather
+	// than keeping an old number on screen.
+	applyInputVoltage(sensors, await readInputVoltage());
 }
 
 async function isServiceEnabled(service: string) {

@@ -2405,6 +2405,7 @@
 	"settings.deviceHealth.nowStrip.load": "ロードアベレージ",
 	"settings.deviceHealth.nowStrip.temperature": "SoC 温度",
 	"settings.deviceHealth.peak": "ピーク {value}",
+	"settings.deviceHealth.power.inputTitle": "入力電圧",
 	"settings.deviceHealth.power.noReading": "測定値なし",
 	"settings.deviceHealth.power.notInstrumented": "このボードは電圧や電流を CeraUI に報告しません。",
 	"settings.deviceHealth.power.title": "電源レール",
