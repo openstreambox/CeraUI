@@ -135,6 +135,8 @@ import PowerStatus from '$main/live/PowerStatus.svelte';
 import type { ConfigRow } from '$main/live/StreamSettingsCard.svelte';
 import UnconfirmedStreamBand from '$main/live/UnconfirmedStreamBand.svelte';
 import UpdateRefusalBand from '$main/live/UpdateRefusalBand.svelte';
+import DeviceCalmLine from '$main/network/DeviceCalmLine.svelte';
+import { requestDevicesOpen } from '$main/network/devices-open.svelte';
 import StartRefusalActions from './live/StartRefusalActions.svelte';
 
 // Reactive state — non-deprecated subscriptions getters only.
@@ -651,6 +653,12 @@ async function validateSavedDestination() {
 // idle (`getLinkTelemetry()` is null) so SRTLA degrades to label-only — never a
 // stale count.
 const linkCount = $derived(linkTelemetry ? linkTelemetry.links.length : null);
+
+async function openDevices() {
+	requestDevicesOpen();
+	const { navigateToDestination } = await import('$lib/stores/navigation-lazy');
+	navigateToDestination('network');
+}
 
 async function handleManageLinks() {
 	const { navigateToDestination } = await import('$lib/stores/navigation-lazy');
@@ -1276,6 +1284,8 @@ const configRows = $derived<ConfigRow[]>([
 <div bind:this={liveRoot} class="mx-auto w-full max-w-3xl space-y-6 p-4 sm:p-6 lg:max-w-6xl" class:short-live={isStreaming}>
 	<LiveHeader {isStreaming} unconfirmed={streamOutcomeUnknown} restarting={connectionRestarting} />
 	<PowerStatus {sensors} connected={getConnectionState() === "connected"} />
+
+	<DeviceCalmLine calm={getStatus()?.device_calm} onOpen={openDevices} />
 
 	<!-- Capability-tier state: calm banner when the engine is offline/starting or
 	     reports a schema mismatch. Renders nothing in the normal tier. -->

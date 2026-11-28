@@ -479,6 +479,11 @@
 		"locales": ["de"],
 		"reason": "de network.cellular.rejection.roamingNotAllowed reads \"Roaming ist hier für diese SIM nicht erlaubt.\""
 	},
+	"network.devices.details": {
+		"value": "Details",
+		"locales": ["de"],
+		"reason": "de hud.expandDetails reads \"Details anzeigen\"."
+	},
 	"network.deviceCount.modem": {
 		"value": "modem",
 		"locales": ["fr", "pt-BR"],

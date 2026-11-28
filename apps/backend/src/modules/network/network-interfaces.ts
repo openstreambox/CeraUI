@@ -45,6 +45,10 @@ import {
 	shouldMockNetwork,
 } from "../../mocks/providers/network.ts";
 import { isRuntimeConfigAvailable } from "../config.ts";
+import {
+	publishUsbDevices,
+	USB_DEVICE_POLL_INTERVAL_MS,
+} from "../devices/usb-devices-wire.ts";
 import { resolvePhysicalDevice } from "../modems/physical-identity.ts";
 import { isMappableEntry } from "../streaming/bind-map.ts";
 import { isBondLinkMappable, peekBondKeys } from "../streaming/bond-entry.ts";
@@ -1134,6 +1138,10 @@ export function initNetworkInterfaceMonitoring() {
 	// The CLAT snapshot has its own poll, off the publication path; a change in
 	// the translated links the bond may use republishes it.
 	startClatTranslationPolling(triggerNetworkInterfacesChange);
+	void publishUsbDevices();
+	setInterval(() => {
+		void publishUsbDevices();
+	}, USB_DEVICE_POLL_INTERVAL_MS);
 }
 
 /**
