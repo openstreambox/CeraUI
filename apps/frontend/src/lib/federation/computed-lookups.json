@@ -64,7 +64,7 @@
 		{
 			"site": "apps/frontend/src/lib/streaming/compositionWrites.svelte.ts passes m: return configChangeReport(change, m);",
 			"families": [],
-			"why": "configChangeReport(change, msg) only reads key literals."
+			"why": "configChangeReport(change, msg) reads key literals, plus msg[key] where key comes from reasonKey(), which only returns key literals from the same module. The hosted dialogs reach it through the shared composition write queue."
 		},
 		{
 			"site": "apps/frontend/src/lib/streaming/sourceSummary.ts t(entry.labelKey)",
