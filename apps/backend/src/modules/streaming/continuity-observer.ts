@@ -142,6 +142,30 @@ export async function recordSenderIntent(
 let activeLifetime: Lifetime | null = null;
 let intendedLifetime: string | null = null;
 let telemetryEpoch = 0;
+/** The sender this backend launched and confirmed running, as read-only observers see it. */
+export type OwnedSender = Readonly<{
+	lifetime: string;
+	pid: number;
+	startTime: string;
+	controlSocket: string;
+}>;
+
+/**
+ * The sender this backend launched and confirmed (pid and start time read back
+ * after the launch), or `null`. For read-only observers that must not talk to
+ * a control socket nobody here owns.
+ */
+export function ownedSenderLifetime(): OwnedSender | null {
+	const l = activeLifetime;
+	if (!l || l.pid === null || l.startTime === null) return null;
+	return {
+		lifetime: l.lifetime,
+		pid: l.pid,
+		startTime: l.startTime,
+		controlSocket: l.controlSocket,
+	};
+}
+
 export function clearContinuityTelemetry(): void {
 	telemetryEpoch++;
 	intendedLifetime = null;
