@@ -288,17 +288,15 @@ function exportCsv(): void {
 		</h2>
 		{#if showSummary && rollup}
 			<span
-				class="bg-secondary/60 text-muted-foreground ms-auto rounded-full px-2 py-0.5 font-mono text-xs tabular-nums whitespace-nowrap"
-				data-testid="ingest-sample-count"
+				class="bg-secondary/60 text-muted-foreground ms-auto rounded-full px-2 py-0.5 font-mono text-xs tabular-nums"
 			>
-				{m["live.ingest.sampleCount"]({ count: rollup.sampleCount })}
+				{rollup.sampleCount}&nbsp;{m["live.ingest.samples"]()}
 			</span>
 		{:else if hasLinks}
 			<span
-				class="bg-secondary/60 text-muted-foreground ms-auto rounded-full px-2 py-0.5 font-mono text-xs tabular-nums whitespace-nowrap"
-				data-testid="ingest-link-count"
+				class="bg-secondary/60 text-muted-foreground ms-auto rounded-full px-2 py-0.5 font-mono text-xs tabular-nums"
 			>
-				{m["live.ingest.linkCount"]({ count: links.length })}
+				{links.length}&nbsp;{m["live.ingest.links"]()}
 			</span>
 		{/if}
 	</div>
