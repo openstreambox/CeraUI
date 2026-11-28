@@ -102,11 +102,40 @@ async function readPreferences<T>(
 	}
 	const parsed = schema.safeParse(value);
 	if (!parsed.success) {
+		reportInvalidPreferences(filePath, parsed.error.issues);
 		throw new UpdateSettingsValidationError(
 			"Invalid persisted update settings",
 		);
 	}
+	reportedInvalid.delete(filePath);
 	return parsed.data;
+}
+
+// Every orchestrator tick re-reads these files, so a file another CeraUI wrote in
+// a shape this one rejects fails each tick. Name the file and the failing keys
+// once per distinct problem, for the support download.
+const reportedInvalid = new Map<string, string>();
+
+function reportInvalidPreferences(
+	filePath: string,
+	issues: z.ZodError["issues"],
+): void {
+	const problems = issues.map((issue) => {
+		const at = issue.path.map(String).join(".") || "(root)";
+		return issue.code === "unrecognized_keys"
+			? `${at}: unrecognized ${issue.keys.join(",")}`
+			: `${at}: ${issue.code}`;
+	});
+	const signature = problems.join("; ");
+	if (reportedInvalid.get(filePath) === signature) return;
+	reportedInvalid.set(filePath, signature);
+	logger.warn(
+		"Persisted update settings rejected; update checks stop until the file is fixed",
+		{
+			path: filePath,
+			problems,
+		},
+	);
 }
 
 /** Read the effective image channel without migrating or saving preferences. */

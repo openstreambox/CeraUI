@@ -2911,6 +2911,7 @@
 	"live.source.degradedCause.source-changed": "视频输入的信号在使用中发生了变化。设备会自动重新读取；如果反复出现，请检查摄像机的输出设置。",
 	"settings.updates.packages.title": "软件包",
 	"settings.updates.packages.notChecked": "设备尚未报告已完成的检查。",
+	"settings.updates.packages.systemFirst": "请先安装系统更新。它自带所需的软件包，更新的软件包会在之后提供。",
 	"settings.updates.nextCheck": "下次自动检查：{time}",
 	"settings.updates.nextCheckSoon": "下次自动检查：尽快",
 	"settings.updates.checkDeferredMetered": "正在等待非蜂窝网络连接，因为蜂窝网络上的软件包更新已关闭。",
