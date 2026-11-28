@@ -85,7 +85,13 @@ describe("config_clear", () => {
 			"config",
 			"config",
 		]);
-		expect(frames()[1]?.config).toEqual({ max_br: 8000, video_codec: "h264" });
+		expect(frames()[1]?.config).toEqual({
+			max_br: 8000,
+			video_codec: "h264",
+			// The train sends stream ids as flags, in every frame.
+			relay_streamid_override_configured: false,
+			srt_streamid_configured: false,
+		});
 	});
 
 	test("a cleared key is named once: the next broadcast does not name it again", () => {
@@ -124,7 +130,9 @@ describe("config_clear", () => {
 		expect(frames()[1]?.config).toEqual({
 			bitrate_overlay: false,
 			srt_latency: 0,
-			srt_streamid: "",
+			// The train sends an empty stream id as its flag.
+			srt_streamid_configured: false,
+			relay_streamid_override_configured: false,
 			custom_provider: null,
 		});
 	});
