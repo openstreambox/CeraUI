@@ -36,7 +36,6 @@ describe("hotspotIsActive", () => {
 		expect(hotspotIsActive({ hotspot: undefined })).toBe(false);
 		expect(hotspotIsActive({ hotspot: null })).toBe(false);
 	});
-
 });
 
 describe("hotspotToggleConfirmed", () => {
