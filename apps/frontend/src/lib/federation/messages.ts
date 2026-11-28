@@ -19,6 +19,8 @@ import { setLocale } from "@ceraui/i18n/svelte";
 
 // Only the namespaces the three dialogs render; the rest stay out of the bundle.
 // tests/federation/federation-namespaces.test.ts fails if a bundle references another.
+// Within them, the federation build keeps only the keys in catalog-keys.json
+// (vite.federation-catalog.ts), so registering a namespace no longer ships all of it.
 const FEDERATION_CATALOG = {
 	advanced,
 	audio,

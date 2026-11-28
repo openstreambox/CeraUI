@@ -239,10 +239,10 @@ export function devOnlyI18nNamespacePlugin(isProduction: boolean): {
 /**
  * Namespaces no federated dialog (encoder, audio, server) reads.
  *
- * The federation build inlines its whole catalog (debt id
- * `TD-federation-i18n-catalog-size`), so every key added to the SPA would also
- * ship in each signed bundle. These namespaces belong to the device-only System
- * Logs view; emptying their barrels keeps that copy out of the federation graph.
+ * The federation build carries its catalog statically. These namespaces belong
+ * to the device-only System Logs view; emptying their barrels keeps that copy out
+ * of the federation graph. Every other barrel is narrowed key by key in
+ * `vite.federation-catalog.ts`.
  */
 export const FEDERATION_EXCLUDED_NAMESPACES: readonly string[] = [
 	"systemLogs",
