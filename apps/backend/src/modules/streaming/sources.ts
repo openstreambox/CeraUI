@@ -71,6 +71,7 @@ import { broadcastConfig } from "../../rpc/config-broadcast.ts";
 import { getConfig, saveConfig } from "../config.ts";
 import { getNetworkIngestInfo } from "../network/network-ingest.ts";
 import { clearHdmiSignalErrorOnRecovery } from "../system/hdmi-signal-notification.ts";
+import { pinnedLaunchedCapture } from "./armed-stream-marker.ts";
 import type { EngineAudioDevice } from "./audio-naming.ts";
 import {
 	defaultFetchEngineDevices,
@@ -1095,7 +1096,9 @@ export function configuredSelectionAnchor(
  */
 export function noteStreamedSourceCommitted(): boolean {
 	const config = getConfig();
-	const configured = config.source;
+	// The source the Start dispatched, not one saved while it launched.
+	const launched = pinnedLaunchedCapture();
+	const configured = launched === undefined ? config.source : launched.source;
 	if (configured === undefined) return false;
 
 	const sources = getSourcesMessage().sources;
@@ -1106,7 +1109,9 @@ export function noteStreamedSourceCommitted(): boolean {
 		configured,
 		sources,
 		config.last_seen_devices,
-		configuredSelectionAnchor(configured),
+		launched === undefined
+			? configuredSelectionAnchor(configured)
+			: launched.source_stable_id,
 	);
 	const stableId = resolveSelectionAnchor(sourceId, sources);
 	if (
