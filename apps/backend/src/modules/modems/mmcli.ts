@@ -46,6 +46,8 @@ export type NetworkType = {
 export type ModemInfo = {
 	"modem.generic.sim": string;
 	"modem.generic.device"?: string;
+	/** The modem's sysfs path (ModemManager 1.22+), unlike the overridable UID. */
+	"modem.generic.physdev"?: string;
 	/**
 	 * The multi-SIM slot list. Optional because most single-slot firmware omits
 	 * it entirely, and because an EMPTY slot is published as the bare root path
@@ -535,6 +537,7 @@ export function parseModemInfo(parsed: MmcliRecord): ParseResult<ModemInfo> {
 	const powerState = readOptionalString(parsed, "modem.generic.power-state");
 	const operatorName = readOptionalString(parsed, "modem.3gpp.operator-name");
 	const deviceUid = readOptionalString(parsed, "modem.generic.device");
+	const physdev = readOptionalString(parsed, "modem.generic.physdev");
 	const attachApn = readOptionalString(
 		parsed,
 		"modem.3gpp.eps.initial-bearer.settings.apn",
@@ -599,6 +602,7 @@ export function parseModemInfo(parsed: MmcliRecord): ParseResult<ModemInfo> {
 			? { "modem.3gpp.operator-name": operatorName }
 			: {}),
 		...(deviceUid !== undefined ? { "modem.generic.device": deviceUid } : {}),
+		...(physdev !== undefined ? { "modem.generic.physdev": physdev } : {}),
 		...(attachApn !== undefined
 			? { "modem.3gpp.eps.initial-bearer.settings.apn": attachApn }
 			: {}),
