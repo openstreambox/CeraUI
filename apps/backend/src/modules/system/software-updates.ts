@@ -160,6 +160,7 @@ import {
 	pendingPackageSuccess,
 } from "./update-orchestrator/pending-success-fence.ts";
 import { getRecoveredUpdateExitHook } from "./update-orchestrator/recovery-exit-gate.ts";
+import { readPackageCellularConsent } from "./update-settings.ts";
 import {
 	deriveUpdateIdentity,
 	deriveUpdateState,
@@ -168,6 +169,7 @@ import {
 	type UpdateIdentity,
 	type UpdateState,
 } from "./update-state.ts";
+import { onlyMeteredUplinksRemain } from "./update-transport/executor.ts";
 
 let availableUpdates:
 	| {
@@ -1376,7 +1378,42 @@ export async function runUpdateDiscoveryAndReport(
 let nextCheckForSoftwareUpdates = getms();
 let nextCheckForSoftwareUpdatesTimer: ReturnType<typeof setTimeout> | undefined;
 
+/*
+ * The hourly check is the one package refresh nobody asked for, and the first
+ * one after each boot downloads every index again (the lists live in tmpfs).
+ * Unless packages may use cellular, it runs only when NetworkManager confirms
+ * an unmetered uplink. Waiting reads only local state, so it costs no traffic;
+ * a manual check still runs.
+ */
+export const METERED_RECHECK_DELAY_MS = 10 * oneMinute;
+type PeriodicUplinkGate = () => Promise<boolean>;
+
+export async function packageCheckMayUseUplinks(
+	onlyMetered: () => Promise<boolean> = onlyMeteredUplinksRemain,
+): Promise<boolean> {
+	// Unreadable or invalid consent (null) counts as no consent.
+	if ((await readPackageCellularConsent()) === true) return true;
+	return !(await onlyMetered());
+}
+
+const defaultPeriodicUplinkGate: PeriodicUplinkGate = () =>
+	packageCheckMayUseUplinks();
+let periodicUplinkGate: PeriodicUplinkGate = defaultPeriodicUplinkGate;
+// One automatic cycle at a time, from the gate until its runner reports back.
+let periodicCycleRunning = false;
+let periodicCheckWaitingForUplink = false;
+
+export function setPeriodicUplinkGateForTest(
+	gate: PeriodicUplinkGate | null,
+): void {
+	periodicUplinkGate = gate ?? defaultPeriodicUplinkGate;
+	periodicCycleRunning = false;
+	periodicCheckWaitingForUplink = false;
+}
+
 function scheduleNextSoftwareUpdateCheck(delay: number): void {
+	if (nextCheckForSoftwareUpdatesTimer)
+		clearTimeout(nextCheckForSoftwareUpdatesTimer);
 	nextCheckForSoftwareUpdates = getms() + delay;
 	nextCheckForSoftwareUpdatesTimer = setTimeout(
 		periodicCheckForSoftwareUpdates,
@@ -1384,40 +1421,100 @@ function scheduleNextSoftwareUpdateCheck(delay: number): void {
 	);
 }
 
-export function periodicCheckForSoftwareUpdates() {
+/**
+ * Entry guards shared by the loop's entry and the moment after the uplink
+ * gate settles: "run" only when the check is due and nothing blocks it.
+ */
+function periodicCheckReadiness(): "run" | "stop" | "armed" {
 	if (pendingPackageSuccess.pending) {
-		if (nextCheckForSoftwareUpdatesTimer)
-			clearTimeout(nextCheckForSoftwareUpdatesTimer);
 		scheduleNextSoftwareUpdateCheck(SKIP_RETRY_DELAY_MS);
-		return;
+		return "armed";
 	}
-	if (!aptUpdatesEnabled()) return;
+	if (!aptUpdatesEnabled()) return "stop";
 	// Protect the dev host from background APT effects.
-	if (shouldUseMocks()) return;
-	if (isSoftwareUpdateRecoveryInconclusive()) return;
+	if (shouldUseMocks()) return "stop";
+	if (isSoftwareUpdateRecoveryInconclusive()) return "stop";
 	if (nextCheckForSoftwareUpdatesTimer) {
 		clearTimeout(nextCheckForSoftwareUpdatesTimer);
 		nextCheckForSoftwareUpdatesTimer = undefined;
 	}
-
 	const ms = getms();
 	if (ms < nextCheckForSoftwareUpdates) {
 		nextCheckForSoftwareUpdatesTimer = setTimeout(
 			periodicCheckForSoftwareUpdates,
 			nextCheckForSoftwareUpdates - ms,
 		);
-		return;
+		return "armed";
 	}
+	return "run";
+}
 
+export function periodicCheckForSoftwareUpdates() {
+	// The running cycle schedules the next one when it ends.
+	if (periodicCycleRunning) return;
+	if (periodicCheckReadiness() !== "run") return;
+	periodicCycleRunning = true;
+	void periodicUplinkGate()
+		.catch((error: unknown) => {
+			if (!periodicCheckWaitingForUplink) {
+				logger.warn("Package check uplink gate failed; waiting", {
+					error: error instanceof Error ? error : String(error),
+				});
+			}
+			return false;
+		})
+		.then((allowed) => {
+			// Anything may have changed during the gate; decide afresh.
+			if (periodicCheckReadiness() !== "run") {
+				periodicCycleRunning = false;
+				return;
+			}
+			if (!allowed) {
+				if (!periodicCheckWaitingForUplink) {
+					logger.info(
+						"Automatic package check waits: no unmetered uplink confirmed and packages may not use cellular",
+					);
+				}
+				periodicCheckWaitingForUplink = true;
+				periodicCycleRunning = false;
+				scheduleNextSoftwareUpdateCheck(METERED_RECHECK_DELAY_MS);
+				return;
+			}
+			periodicCheckWaitingForUplink = false;
+			runPeriodicSoftwareUpdateCheck();
+		})
+		.catch((error: unknown) => {
+			// Never leave the loop owned by a cycle that can no longer finish.
+			logger.warn("Automatic package check failed to start; retrying", {
+				error: error instanceof Error ? error : String(error),
+			});
+			periodicCycleRunning = false;
+			scheduleNextSoftwareUpdateCheck(SKIP_RETRY_DELAY_MS);
+		});
+}
+
+function runPeriodicSoftwareUpdateCheck(): void {
 	const started = softwareUpdateCheckRunner(async (err_, failures, refresh) => {
-		const discovery = await runUpdateDiscoveryAndReport(refresh);
-		const err = err_ === null ? discovery : err_;
-		scheduleNextSoftwareUpdateCheck(computeNextCheckDelay(err, failures));
+		try {
+			const discovery = await runUpdateDiscoveryAndReport(refresh);
+			const err = err_ === null ? discovery : err_;
+			scheduleNextSoftwareUpdateCheck(computeNextCheckDelay(err, failures));
+		} catch (error) {
+			logger.warn("Automatic package discovery failed; retrying", {
+				error: error instanceof Error ? error : String(error),
+			});
+			scheduleNextSoftwareUpdateCheck(
+				computeNextCheckDelay("discovery_failed", failures),
+			);
+		} finally {
+			periodicCycleRunning = false;
+		}
 	});
 
 	// Skip path runs no callback; reschedule here so the loop survives a
 	// stream/update window instead of dying until the next backend restart.
 	if (!started) {
+		periodicCycleRunning = false;
 		scheduleNextSoftwareUpdateCheck(SKIP_RETRY_DELAY_MS);
 	}
 }
