@@ -130,5 +130,36 @@ it("keeps an open dialog on the radio it was opened for", async () => {
 	expect(picker().value).toBe("");
 	const still = screen.getByTestId("hotspot-dialog-stub");
 	expect(still.dataset.device).toBe("1");
-	expect(still.dataset.incarnation).toBe("b-2");
+	// It is never handed the replacement row; the dialog then closes itself.
+	expect(still.dataset.incarnation).toBe("");
+});
+
+it("expires the only radio's pick when its incarnation changes under the same id", async () => {
+	reactiveWifi.value = { "0": radio("wlan0", "old") };
+	await mount();
+	// A single radio is preselected; opening Setup confirms it as the target.
+	expect(picker().value).toBe("0");
+	await fireEvent.click(setup());
+	await vi.waitFor(() => screen.getByTestId("hotspot-dialog-stub"));
+
+	reactiveWifi.value = { "0": radio("wlan0", "new") };
+	flushSync();
+	await tick();
+	expect(picker().value).toBe("");
+	expect(setup().disabled).toBe(true);
+	expect(screen.getByTestId("hotspot-radio-lost")).toBeTruthy();
+	expect(screen.getByTestId("hotspot-dialog-stub").dataset.incarnation).toBe(
+		"",
+	);
+
+	await fireEvent.change(picker(), { target: { value: "0" } });
+	expect(setup().disabled).toBe(false);
+});
+
+it("does not offer a radio without an incarnation as the target", async () => {
+	reactiveWifi.value = {
+		"0": { ...radio("wlan0", "x"), incarnation: undefined },
+	};
+	await mount();
+	expect(setup().disabled).toBe(true);
 });
