@@ -61,6 +61,8 @@ export function fakeDeps(
 		onlyMeteredCandidateExists: async () => false,
 		runPackageCheck: async () => null,
 		startPackageInstall: () => ({ started: true }),
+		// The fake launch has no systemd unit to keep a name.
+		installUnitFree: async () => true,
 		getPackageInstallWireState: () => ({ kind: "idle" }) as UpdateState,
 		isCommitStageRunning: async () => false,
 		checkOsManifest: async () => ({

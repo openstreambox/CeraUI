@@ -375,6 +375,12 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Software update restart withheld; success persistence failed"],
 	["Software update settle: broadcast failed"],
 	["Software update: reattached to the detached apt transaction"],
+	[
+		"Software update: the install unit could not be read; installs wait until it can",
+	],
+	[
+		"Software update: the stopped install unit stays loaded until the next boot; installs wait for a restart",
+	],
 	["Static file error: ", ""],
 	["Support bundle preparation refused"],
 	["System power submission failed"],
@@ -2101,6 +2107,9 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["terminal unit probe failed"],
 	["the install's unit"],
 	["the mock BT mic seed is missing"],
+	[
+		"the previous software update's stopped unit is still loaded; restart the device before installing again",
+	],
 	["the uplink's cooldown"],
 	["timeout"],
 	["tls-error"],

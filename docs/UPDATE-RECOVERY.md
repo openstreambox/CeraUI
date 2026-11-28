@@ -1936,6 +1936,38 @@ keeps the shutdown ordering without pinning the stopped unit. A unit still
 pinned from an older boot cannot be started again in that boot (`systemd-run`
 refuses an already loaded unit); acquisition reports `os_update_lock_held`.
 
+**A stopped package-install unit that systemd keeps loaded is settled.** The
+same pin applies to `ceralive-software-update.service`: an image's shutdown
+drain with it in `After=` keeps the stopped transient unit loaded after the
+cleanup `systemctl stop`, so it reads loaded and `inactive/dead` instead of
+`not-found`. CeraUI exits after a finished package install, and the next
+start's recovery probe used to throw on that state and retry every 3 s until
+the next boot, which kept update checks off and power actions busy with
+`update-recovery`. The probe now reads a loaded `inactive/dead` unit (its own
+`ActiveState` and `SubState` rows) with an empty `Job` row as absent
+(`loaded: true`), after the same identity check as any loaded unit; with a
+queued job, or without those rows, it still fails closed and retries. On such
+an image the next install needs a restart. Recovery, and the observer after
+its cleanup (three reads, a failed install stays in the same process), report
+the pin (an unreadable unit after cleanup counts too); from then on
+`startSoftwareUpdate` refuses with `check_unavailable` and asks systemd again in
+the background. The orchestrator also proves the name free
+(`proveInstallUnitFree`: `not-found`, nothing else) right before every package
+launch, so a pinned or unreadable unit leaves it in `awaiting-idle` for the next
+tick instead of a recorded `DOWNLOAD_FAILED`, whose `failed` phase would outlive
+the reboot that clears the pin. A proof that finds the unit gone clears the pin
+(a temporary reference, such as a D-Bus client's, can hold a stopped unit for a
+moment). A start that still finds the unit pinned throws
+`DetachedAptServicePinnedError` instead of running a `systemd-run` that systemd
+would refuse ("already loaded or has a fragment file"). The unit also orders
+itself `Before=ceralive-write-drain.service`, so an image can drop the name from
+the drain and keep the shutdown waiting for a running transaction. That
+property is sent first: systemd writes the transient file one property at a
+time and starts a new section header on each change, so a `[Unit]` property
+after the output paths gives the file two `[Service]` sections, which the
+fragment check refuses (seen on a board: the observer then never adopted its
+own unit).
+
 **A consumed staged receipt is retired [PARTIAL — host-proven, board re-drill owed].**
 `os-staged.json` records version, channel, `stagedAt` and the producer boot.
 New writes optionally record strict `installedImage` evidence read after successful

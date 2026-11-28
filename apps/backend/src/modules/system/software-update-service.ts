@@ -49,6 +49,19 @@ import {
 } from "./update-orchestrator/stored-state-file.ts";
 
 const SYSTEMD_COMMAND_TIMEOUT_MS = 10_000;
+/**
+ * A shutdown waits for a running transaction: the image's write drain
+ * (ceralive-write-drain.service) stops first. Ordering from this side never
+ * keeps the stopped unit loaded; the drain naming this unit in After= would.
+ *
+ * It is the first --property on purpose. systemd writes the transient file one
+ * property at a time, in the order systemd-run sends them (Description, each
+ * --property, then the service settings), and starts a new section header
+ * whenever the section changes. A [Unit] property between the output paths and
+ * the rest would give the file two [Service] sections, which
+ * validateDetachedAptServiceFragment refuses as foreign.
+ */
+const DRAIN_ORDER = ["--property=Before=ceralive-write-drain.service"] as const;
 
 export type {
 	SoftwareUpdateOutputPaths,
@@ -121,6 +134,7 @@ export function buildDetachedAptUpgradeCommand(
 		"systemd-run",
 		`--unit=${SOFTWARE_UPDATE_UNIT}`,
 		`--description=${SOFTWARE_UPDATE_DESCRIPTION}`,
+		...DRAIN_ORDER,
 		"--remain-after-exit",
 		"--quiet",
 		"--service-type=exec",
@@ -166,6 +180,7 @@ export function buildDetachedAptAllCommand(
 		"systemd-run",
 		`--unit=${SOFTWARE_UPDATE_UNIT}`,
 		`--description=${SOFTWARE_UPDATE_DESCRIPTION}`,
+		...DRAIN_ORDER,
 		"--remain-after-exit",
 		"--quiet",
 		"--service-type=exec",
@@ -209,7 +224,7 @@ async function inspectService(
 		"systemctl",
 		"show",
 		SOFTWARE_UPDATE_UNIT,
-		"--property=Id,FragmentPath,Description,LoadState,ActiveState,SubState,Transient,Type,RemainAfterExit,User,ExecMainCode,ExecMainStatus,ExecStart,ExecStartPre,ExecStartPost,StandardOutput,StandardError",
+		"--property=Id,FragmentPath,Description,LoadState,ActiveState,SubState,Job,Transient,Type,RemainAfterExit,User,ExecMainCode,ExecMainStatus,ExecStart,ExecStartPre,ExecStartPost,StandardOutput,StandardError",
 		"--no-pager",
 	];
 	const result = await spawnWithTimeout(command, {
@@ -217,7 +232,7 @@ async function inspectService(
 		owner,
 	});
 	const state = parseDetachedAptServiceProbe(result, command);
-	if (state.kind !== "absent") {
+	if (state.kind !== "absent" || state.loaded) {
 		// A look done for the install like the command before it: not made once
 		// the install has ended. (The second look after an uncertain
 		// `systemd-run` is never refused: the launch fence holds the decision.)
