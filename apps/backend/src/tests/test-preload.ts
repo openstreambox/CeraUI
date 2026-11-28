@@ -61,6 +61,13 @@ const previousModeChoiceDir = process.env.CERALIVE_MODE_CHOICE_DIR;
 process.env.CERALIVE_MODE_CHOICE_DIR = join(runtimeRoot, "mode-choice");
 const previousEventsDir = process.env.CERALIVE_EVENTS_DIR;
 process.env.CERALIVE_EVENTS_DIR = join(runtimeRoot, "events");
+// The device image's setup marker never resolves to the host's /data.
+const previousProvisionMarker = process.env.CERALIVE_PROVISION_ACTIVE_FLAG;
+process.env.CERALIVE_PROVISION_ACTIVE_FLAG = join(
+	runtimeRoot,
+	"provision",
+	"portal-active",
+);
 
 const setup = await loadJsonConfigSync(
 	"setup.json",
@@ -140,5 +147,8 @@ afterAll(async () => {
 			previousPreparationDir;
 	if (previousEventsDir === undefined) delete process.env.CERALIVE_EVENTS_DIR;
 	else process.env.CERALIVE_EVENTS_DIR = previousEventsDir;
+	if (previousProvisionMarker === undefined)
+		delete process.env.CERALIVE_PROVISION_ACTIVE_FLAG;
+	else process.env.CERALIVE_PROVISION_ACTIVE_FLAG = previousProvisionMarker;
 	await rm(runtimeRoot, { recursive: true, force: true });
 });

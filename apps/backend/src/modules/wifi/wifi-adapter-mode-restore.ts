@@ -49,6 +49,8 @@ import {
 	verifiedWifiPortKey,
 } from "./wifi-operation-binding.ts";
 import { wifiAdapterKeyMac } from "./wifi-permanent-mac.ts";
+import { isProvisioningSetupHeld } from "./wifi-provisioning-ap.ts";
+import { settleProvisioningHandoff } from "./wifi-provisioning-handoff.ts";
 import { wifiRadioIdentity } from "./wifi-radio-identity.ts";
 
 type Preferences = typeof getPersistedWifiAdapterModes;
@@ -89,6 +91,19 @@ async function applyWifiAdapterModes(
 				async () => {
 					if (cycle?.stopped() || deps.resolveInterfaces()[registryKey] !== row)
 						return;
+					// The image's setup join wins over a saved intent on its radio.
+					const handoff = await settleProvisioningHandoff(row, registryKey, [
+						observedOwner,
+						...(key === undefined ? [] : [key]),
+					]);
+					// Unknown never restores: the bounded discovery retry decides later.
+					if (handoff === "hold") {
+						retryWifiAdapterReconcile(owner, undefined, "restore");
+						return;
+					}
+					if (cycle?.stopped() || deps.resolveInterfaces()[registryKey] !== row)
+						return;
+					const held = isProvisioningSetupHeld(row.ifname);
 					const desiredMode = () => {
 						const modes = readPreferences();
 						const alias = verifiedWifiPortKey(bindingForRow(registryKey, row));
@@ -143,6 +158,7 @@ async function applyWifiAdapterModes(
 						capability.staApComboSupported,
 						getWifiCapabilityEvidenceRevision(row.ifname),
 						getIsStreaming() || isStreamSessionUnconfirmed(),
+						held,
 						...(!verified ? Object.keys(deps.resolveInterfaces()) : []),
 					]);
 					await reconcileWifiAdapterRestoreLocked(owner, {
@@ -157,6 +173,13 @@ async function applyWifiAdapterModes(
 							admitWifiRequest(
 								row,
 								async () => {
+									// Deferred, not failed: the marker's removal is a new edge.
+									if (isProvisioningSetupHeld(row.ifname)) {
+										logger.info(
+											`wifi mode restore: the device image's setup is in progress on ${row.ifname}; restore waits for it`,
+										);
+										return undefined;
+									}
 									if (!verified)
 										return restoreLimitedHotspot(
 											row,
