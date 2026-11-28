@@ -317,7 +317,11 @@ export async function runAutomaticCarrierProfiles(
 			if (result === "updated") {
 				const modem = getModem(id);
 				if (modem?.config === config) {
-					setModem(id, { ...modem, config: { ...config, apn: policy.apn } });
+					// The carrier table's APN now: no note about another source.
+					setModem(id, {
+						...modem,
+						config: { ...config, apn: policy.apn, apn_hint: undefined },
+					});
 					changed.push(id);
 				}
 				resetGsmConnections();

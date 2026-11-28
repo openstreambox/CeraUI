@@ -281,7 +281,7 @@ function withScanResults(view: DbusModemView): DbusModemView {
  * Activation failure and address evidence join from the existing CeraUI owners
  * here too; neither fact is a ModemManager observation.
  */
-function withConnectionConfig(view: DbusModemView): DbusModemView {
+export function withConnectionConfig(view: DbusModemView): DbusModemView {
 	const modem = getModem(view.runtimeId);
 	const source = {
 		...view,
@@ -300,6 +300,7 @@ function withConnectionConfig(view: DbusModemView): DbusModemView {
 			roaming: config.roaming,
 			network: config.network,
 			autoconfig: config.autoconfig,
+			...(config.apn_hint !== undefined ? { apn_hint: config.apn_hint } : {}),
 		},
 	};
 }

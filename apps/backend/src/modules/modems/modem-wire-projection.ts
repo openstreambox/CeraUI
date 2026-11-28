@@ -74,6 +74,11 @@ import type { ResolvedModemLock } from "./modem-lock-state.ts";
 // to use this one is that `getAvailableNetworksForModem` and the live builder are
 // typed with it — swapping in the schema type just relocates the cast.
 import type { AvailableNetwork, Modem } from "./modems-state.ts";
+import {
+	type ApnHint,
+	type ApnSource,
+	deriveApnSource,
+} from "./provider-apn.ts";
 import { claimsNoSim, type SimPresence } from "./sim-presence.ts";
 
 /** Wire status block — identical shape to `modem-status.ts`'s internal type. */
@@ -99,6 +104,8 @@ export interface ProjectedModemConfig {
 	readonly roaming: boolean;
 	readonly network: string;
 	readonly autoconfig: boolean;
+	/** Internal: where CeraUI chose the APN from (`provider-apn.ts`). */
+	readonly apn_hint?: ApnHint;
 }
 
 /**
@@ -235,6 +242,7 @@ export interface WireModemConfig {
 	readonly network: string;
 	readonly autoconfig: boolean;
 	readonly autoconfig_supported: boolean;
+	readonly apn_source?: ApnSource;
 }
 
 /** One projected wire entry — same field set + key ORDER as `buildModemMessage`. */
@@ -398,14 +406,17 @@ export function resolveWireConfig(
 	config: ProjectedModemConfig,
 	hasGsmAutoconfig: boolean,
 ): WireModemConfig {
+	const autoconfig = hasGsmAutoconfig && config.autoconfig;
+	const apnSource = deriveApnSource(config.apn_hint, { ...config, autoconfig });
 	return {
 		apn: config.apn,
 		username: config.username,
 		password: config.password,
 		roaming: config.roaming,
 		network: config.network,
-		autoconfig: hasGsmAutoconfig && config.autoconfig,
+		autoconfig,
 		autoconfig_supported: hasGsmAutoconfig,
+		...(apnSource !== undefined ? { apn_source: apnSource } : {}),
 	};
 }
 
