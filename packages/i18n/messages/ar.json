@@ -3476,6 +3476,7 @@
 	"live.phone.moblinCleared": "لا توجد كلمة مرور Moblin محفوظة على هذا الجهاز.",
 	"live.phone.moblinFailed": "تعذّر تطبيق كلمة مرور Moblin. تحقّق من الجهاز وحاول مرة أخرى. ربما تكون محفوظة بالفعل.",
 	"live.phone.moblinBusy": "انتظر حتى يؤكد الجهاز أنه لا يوجد بث يستخدمه قبل تغيير كلمة مرور Moblin.",
+	"network.sharing.ipv6Only": "لا تستطيع الأجهزة المتصلة بشبكة Wi-Fi الخاصة بالجهاز الوصول إلى مواقع IPv4 عبر هذا الرابط بعد.",
 	"systemLogs.tabs.label": "طرق عرض السجلات",
 	"systemLogs.tabs.events": "الأحداث",
 	"systemLogs.tabs.raw": "السجلات الخام",

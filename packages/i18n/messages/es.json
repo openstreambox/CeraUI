@@ -3431,6 +3431,7 @@
 	"live.phone.moblinCleared": "No hay ninguna contraseña de Moblin guardada en esta caja.",
 	"live.phone.moblinFailed": "No se pudo aplicar la contraseña de Moblin. Revisa la caja e inténtalo de nuevo. Puede que ya esté guardada.",
 	"live.phone.moblinBusy": "Espera a que la caja confirme que ninguna emisión la usa antes de cambiar la contraseña de Moblin.",
+	"network.sharing.ipv6Only": "Los dispositivos conectados al Wi-Fi del equipo todavía no pueden acceder a sitios IPv4 a través de este enlace.",
 	"systemLogs.tabs.label": "Vistas de logs",
 	"systemLogs.tabs.events": "Eventos",
 	"systemLogs.tabs.raw": "Logs",

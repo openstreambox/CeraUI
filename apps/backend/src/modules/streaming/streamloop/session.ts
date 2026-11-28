@@ -22,7 +22,7 @@
 
 import type WebSocket from "ws";
 import { logger } from "../../../helpers/logger.ts";
-import { onNetworkInterfacesChange } from "../../network/network-interfaces.ts";
+import { onNetworkInterfaceSourcesChange } from "../../network/network-interfaces.ts";
 import { onUsbNetScanCommitted } from "../../network/router-cellular-scan.ts";
 import { isUpdating } from "../../system/software-updates.ts";
 import { sendStatus } from "../../ui/status.ts";
@@ -347,7 +347,7 @@ export async function start(
 			logger.warn("Failed to refresh SRTLA IP addresses", { error });
 		}
 	};
-	const removeNetifListener = onNetworkInterfacesChange(
+	const removeNetifListener = onNetworkInterfaceSourcesChange(
 		refreshSrtlaIpAddresses,
 	);
 	const removeScanListener = onUsbNetScanCommitted(refreshSrtlaIpAddresses);

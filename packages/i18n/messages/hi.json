@@ -3416,6 +3416,7 @@
 	"live.phone.moblinCleared": "इस बॉक्स पर कोई Moblin पासवर्ड सहेजा नहीं है।",
 	"live.phone.moblinFailed": "Moblin पासवर्ड लागू नहीं हो सका। बॉक्स जाँचें और फिर कोशिश करें। हो सकता है वह पहले से सहेजा हो।",
 	"live.phone.moblinBusy": "Moblin पासवर्ड बदलने से पहले, बॉक्स के यह पुष्टि करने तक रुकें कि कोई स्ट्रीम उसे इस्तेमाल नहीं कर रही।",
+	"network.sharing.ipv6Only": "बॉक्स के Wi-Fi से जुड़े डिवाइस अभी इस लिंक से IPv4 साइटों तक नहीं पहुँच सकते।",
 	"systemLogs.tabs.label": "लॉग दृश्य",
 	"systemLogs.tabs.events": "इवेंट",
 	"systemLogs.tabs.raw": "रॉ लॉग",

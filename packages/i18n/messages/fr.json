@@ -3431,6 +3431,7 @@
 	"live.phone.moblinCleared": "Aucun mot de passe Moblin n'est enregistré sur ce boîtier.",
 	"live.phone.moblinFailed": "Le mot de passe Moblin n'a pas pu être appliqué. Vérifiez le boîtier et réessayez. Il est peut-être déjà enregistré.",
 	"live.phone.moblinBusy": "Attendez que le boîtier confirme qu'aucun flux ne l'utilise avant de changer le mot de passe Moblin.",
+	"network.sharing.ipv6Only": "Les appareils connectés au Wi-Fi du boîtier ne peuvent pas encore accéder aux sites IPv4 par cette liaison.",
 	"systemLogs.tabs.label": "Vues des journaux",
 	"systemLogs.tabs.events": "Événements",
 	"systemLogs.tabs.raw": "Journaux bruts",

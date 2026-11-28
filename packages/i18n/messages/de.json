@@ -3416,6 +3416,7 @@
 	"live.phone.moblinCleared": "Auf dieser Box ist kein Moblin-Passwort gespeichert.",
 	"live.phone.moblinFailed": "Das Moblin-Passwort konnte nicht übernommen werden. Prüfe die Box und versuche es erneut. Vielleicht ist es schon gespeichert.",
 	"live.phone.moblinBusy": "Warte, bis die Box bestätigt, dass kein Stream sie nutzt, bevor du das Moblin-Passwort änderst.",
+	"network.sharing.ipv6Only": "Geräte im WLAN der Box können über diese Verbindung noch keine IPv4-Seiten erreichen.",
 	"systemLogs.tabs.label": "Protokollansichten",
 	"systemLogs.tabs.events": "Ereignisse",
 	"systemLogs.tabs.raw": "Rohprotokolle",
