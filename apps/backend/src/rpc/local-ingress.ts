@@ -220,7 +220,7 @@ export function serveLocalIngress(
 			if (
 				server.upgrade(request, {
 					data: {
-						...initSocketData(),
+						...initSocketData(new URL(request.url)),
 						ingressPath,
 						ingressLifetime,
 						ingressPathValid,
