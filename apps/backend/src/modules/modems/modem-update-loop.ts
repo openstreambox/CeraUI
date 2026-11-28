@@ -63,7 +63,10 @@ import type {
 import { applyJitter } from "../streaming/constants.ts";
 import { runAutomaticCarrierProfiles } from "./automatic-carrier-profile.ts";
 import { runCellularPreparation } from "./cellular-preparation.ts";
-import { runDeadBearerRecovery } from "./dead-bearer-recovery.ts";
+import {
+	runDeadBearerRecovery,
+	seedPendingTeardowns,
+} from "./dead-bearer-recovery.ts";
 import { resetGsmConnections } from "./gsm-connections.ts";
 import type { ModemId } from "./mmcli.ts";
 import { forgetModemIdentity } from "./mode-choice-identity.ts";
@@ -496,6 +499,13 @@ export async function initModemUpdateLoop(
 
 	if (autoDiscover) {
 		await discoverModems();
+		// A backend that restarted mid-teardown keeps a still-deactivating link
+		// out of the bond from here, not only from the first 30 s poll.
+		try {
+			await seedPendingTeardowns();
+		} catch (error) {
+			logger.warn("modem link teardown seed did not complete", { error });
+		}
 	}
 
 	if (autoUnlock) {
