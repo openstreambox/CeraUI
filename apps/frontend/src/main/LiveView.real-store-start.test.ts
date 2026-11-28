@@ -32,6 +32,7 @@ import {
 } from "../tests/fixtures/real-cockpit-harness";
 import {
 	dropLink,
+	endSession,
 	firstLink,
 	push,
 	restoreLink,
@@ -167,7 +168,6 @@ beforeAll(() => {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	localStorage.setItem("auth", "token-abc");
 	resetState();
 	initSubscriptions();
 	initAsyncOperations();
@@ -181,6 +181,7 @@ afterEach(() => {
 	destroyAsyncOperations();
 	destroyStreamingOptimism();
 	dropLink(transport);
+	endSession();
 	localStorage.clear();
 	document.body.innerHTML = "";
 });
