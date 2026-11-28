@@ -1,3 +1,4 @@
+import '../../../../../scripts/dev-safety.ts';
 // The private child channel proves listener ownership without a product endpoint.
 if (!process.send) throw new Error('worker backend requires an IPC parent');
 process.once('disconnect', () => process.kill(process.pid, 'SIGTERM'));

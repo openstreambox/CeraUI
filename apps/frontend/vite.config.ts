@@ -240,7 +240,7 @@ export default defineConfig(({ mode }) => {
 		},
 		// Enhanced development server configuration
 		server: {
-			port: 6173,
+			port: Number(process.env.E2E_PORT ?? 6173),
 			// An explicit device enables the WebSocket proxy and remote HMR setup.
 			...deviceServer,
 			// Configure source map ignore list for better debugging
