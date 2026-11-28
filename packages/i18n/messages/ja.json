@@ -208,6 +208,7 @@
 	"auth.passwordTooShort": "8文字以上を使用してください",
 	"auth.passwordsDoNotMatch": "パスワードが一致しません",
 	"auth.placeholderConfirmPassword": "パスワードを再入力してください",
+	"auth.placeholderCreatePassword": "パスワードを作成",
 	"auth.placeholderNewPassword": "安全なパスワードを作成（最低8文字）",
 	"auth.placeholderPassword": "パスワードを入力",
 	"auth.rememberMe": "ログイン情報を保存",
