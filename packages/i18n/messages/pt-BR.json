@@ -2624,6 +2624,7 @@
 	"settings.deviceHealth.nowStrip.load": "Carga média",
 	"settings.deviceHealth.nowStrip.temperature": "Temperatura do SoC",
 	"settings.deviceHealth.peak": "pico {value}",
+	"settings.deviceHealth.power.inputTitle": "Tensão de entrada",
 	"settings.deviceHealth.power.noReading": "Sem leitura",
 	"settings.deviceHealth.power.notInstrumented": "Esta placa não informa tensão nem corrente ao CeraUI.",
 	"settings.deviceHealth.power.title": "Trilhos de alimentação",

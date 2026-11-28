@@ -13,6 +13,8 @@ export const sensorsStatusSchema = z.object({
 	'SoC temperature': z.string(),
 	'SoC current': z.string().optional(),
 	'SoC voltage': z.string().optional(),
+	// Board DC-in from the SoC ADC, e.g. "12.2 V". ROCK 5B+ only; absent elsewhere.
+	'Input voltage': z.string().optional(),
 	'SRT ingest': z.string().nullable().optional(),
 	rtmpIngestStats: z.record(z.string(), z.string()).optional(),
 });
