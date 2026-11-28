@@ -35,6 +35,7 @@ import {
 } from "../modules/system/software-update-output.ts";
 import {
 	buildDetachedAptUpgradeCommand,
+	DetachedAptLaunchRefusedError,
 	DetachedAptOutputUnavailableError,
 	DetachedAptServiceAlreadyExistsError,
 	DetachedAptServiceCleanupError,
@@ -572,7 +573,10 @@ describe("buildDetachedAptUpgradeCommand() — service-cgroup isolation", () => 
 			},
 		);
 
-		await expect(completion).rejects.toBeInstanceOf(
+		// Nothing was submitted, so it is a refusal before launch, naming why.
+		const refusal = await completion.catch((error: unknown) => error);
+		expect(refusal).toBeInstanceOf(DetachedAptLaunchRefusedError);
+		expect((refusal as DetachedAptLaunchRefusedError).cause).toBeInstanceOf(
 			DetachedAptServiceAlreadyExistsError,
 		);
 		expect({ prepared, started }).toEqual({ prepared: 0, started: 0 });

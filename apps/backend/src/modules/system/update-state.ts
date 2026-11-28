@@ -28,6 +28,12 @@ export interface UpdateFailure {
 	reason: string;
 	identity?: UpdateIdentity;
 	failure_id?: string;
+	/**
+	 * An install the update orchestrator started ended before its unit was
+	 * submitted: the install transaction never ran, and the orchestrator
+	 * queues it again.
+	 */
+	retryable?: true;
 }
 
 // The raw backend signals the reducer folds into ONE state. `available === false`

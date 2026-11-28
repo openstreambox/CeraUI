@@ -281,9 +281,11 @@ test("a second install in that boot is refused by name, without a systemd-run", 
 	await runDetachedAptAll(install, "any", handlers, systemd.deps);
 	// When a second install starts.
 	const second = runDetachedAptAll(install, "any", handlers, systemd.deps);
-	// Then it is refused as pinned, and no second transient unit is requested.
+	// Then it is refused as pinned before any submission (a refusal the
+	// orchestrator retries), and no second transient unit is requested.
 	await expect(second).rejects.toMatchObject({
-		name: "DetachedAptServicePinnedError",
+		name: "DetachedAptLaunchRefusedError",
+		cause: { name: "DetachedAptServicePinnedError" },
 	});
 	expect(systemd.attempts).toHaveLength(1);
 });

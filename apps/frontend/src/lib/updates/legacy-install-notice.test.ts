@@ -7,7 +7,10 @@ import { VIEW_LOGS_TOAST_CLASS } from "../device-logs/view-logs";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("svelte-sonner", () => ({ toast }));
 
-import { announceLegacyInstallOutcome } from "./legacy-install-notice";
+import {
+	announceLegacyInstallOutcome,
+	announceMissedInstallOutcome,
+} from "./legacy-install-notice";
 
 type Updating = StatusMessage["updating"];
 
@@ -56,5 +59,26 @@ describe("announceLegacyInstallOutcome: View logs on a failure", () => {
 			{ description: en.updatingOverlay.installedDescription },
 		);
 		expect(toast.error).not.toHaveBeenCalled();
+	});
+});
+
+describe("announceMissedInstallOutcome: a launch the device queued again", () => {
+	it("announces nothing for a retryable failure", () => {
+		announceMissedInstallOutcome({
+			kind: "failed",
+			reason: "The software update did not start: Spawn timed out",
+			retryable: true,
+		});
+
+		expect(toast.error).not.toHaveBeenCalled();
+		expect(toast.success).not.toHaveBeenCalled();
+	});
+
+	it("still announces a plain failure", () => {
+		announceMissedInstallOutcome({ kind: "failed", reason: "E: broken" });
+
+		expect(toast.error).toHaveBeenCalledWith(en.updatingOverlay.failedMessage, {
+			description: "E: broken",
+		});
 	});
 });

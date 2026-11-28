@@ -159,6 +159,7 @@ import {
 	runLegacyPackageEffects,
 } from "./software-update-pending-effects.ts";
 import {
+	DetachedAptLaunchRefusedError,
 	DetachedAptServiceCleanupError,
 	recoverDetachedAptUpgrade,
 	runDetachedAptAll,
@@ -451,6 +452,8 @@ export function resetSoftwareUpdateState(): void {
 	installUnitPinned = false;
 	installUnitProof = undefined;
 	installUnitProofFailing = false;
+	launchTicket = null;
+	refusedLaunches = new WeakMap();
 	aptDiscoveryRunning = false;
 	softUpdateStatus = null;
 	currentUpdateIdentity = null;
@@ -2272,8 +2275,40 @@ async function simulateMockSoftwareUpdate(): Promise<void> {
 	broadcastUpdateState();
 }
 
+/**
+ * The orchestrator's handle on one install it started. A launch refused before
+ * its unit was submitted is recorded against it, and only the orchestrator
+ * that holds it takes that refusal (takePackageLaunchRefusal), whatever the
+ * wire shows by then.
+ */
+export type PackageLaunchTicket = object;
+
+// The ticket of the install accepted last; null for a start of its own.
+let launchTicket: PackageLaunchTicket | null = null;
+// Refused launches by ticket, with the failure id the wire showed for each.
+let refusedLaunches = new WeakMap<PackageLaunchTicket, string>();
+
+/**
+ * True once, if the install started with `ticket` was refused before its unit
+ * was submitted. The refusal is recorded as soon as the launcher rejects,
+ * before the cache cleanup. Taking it also withdraws that refusal from the
+ * wire when the wire already shows it, so the offer is back and a retry saves
+ * the offer's plan as any launch does.
+ */
+export function takePackageLaunchRefusal(ticket: PackageLaunchTicket): boolean {
+	const failureId = refusedLaunches.get(ticket);
+	if (failureId === undefined) return false;
+	refusedLaunches.delete(ticket);
+	if (lastUpdateFailure?.failure_id === failureId) {
+		lastUpdateFailure = null;
+		broadcastUpdateState();
+	}
+	return true;
+}
+
 export function startSoftwareUpdate(
 	onCommitSucceeded?: () => void,
+	ticket?: PackageLaunchTicket,
 ): UpdateStartOutcome {
 	if (isDisruptiveActionPending()) return refuseUpdateStart("already_updating");
 	if (pendingPackageSuccess.pending)
@@ -2307,6 +2342,10 @@ export function startSoftwareUpdate(
 	lastUpdateSucceeded = false;
 	lastPreflightFailure = null;
 	lastCleanupWarning = undefined;
+	// A start that joins one already waiting for discovery is that install:
+	// the first caller's ticket stays, so a refusal is only ever recorded for
+	// the launch that runs.
+	if (!delayedSoftwareUpdateStart) launchTicket = ticket ?? null;
 
 	if (aptGetUpdating || aptDiscoveryRunning) {
 		// Image apt source: the delayed start is the attempt already. A second
@@ -2327,7 +2366,7 @@ export function startSoftwareUpdate(
 					failBeforeLaunch(attempt, "check_unavailable");
 					return;
 				}
-				const outcome = startSoftwareUpdate(onCommitSucceeded);
+				const outcome = startSoftwareUpdate(onCommitSucceeded, ticket);
 				if (!outcome.started) {
 					const failure = {
 						reason: `Software update could not start after waiting for package discovery: ${outcome.reason}`,
@@ -2399,6 +2438,8 @@ export function createSoftwareUpdateProcessMonitor(
 	launched: Pick<SoftUpdateStatus, "run" | "targets"> = {},
 	// Image apt source: the attempt whose transaction this monitor settles.
 	attempt: InstallAttempt | null = null,
+	// The orchestrator's handle on this install, when it started it.
+	ticket: PackageLaunchTicket | null = null,
 ): SoftwareUpdateProcessMonitor {
 	// The CeraLive offer this update was taken against, fixed when it is taken.
 	const offer = standingCeraliveOffer();
@@ -2488,6 +2529,12 @@ export function createSoftwareUpdateProcessMonitor(
 		owned: boolean,
 	): Promise<number> => {
 		let code: number;
+		// Ended before its unit was submitted, for an install the orchestrator
+		// started: the install transaction never ran, so the orchestrator
+		// queues it again instead of recording a failed download. A start of
+		// its own (the Packages card's) keeps the plain failure.
+		let refused = false;
+		const failureId = randomUUID();
 		try {
 			code = await completion;
 			flush();
@@ -2497,6 +2544,17 @@ export function createSoftwareUpdateProcessMonitor(
 			// anything. That end was published where it happened; it is no error
 			// of the transaction.
 			if (isOwnerEnded(err)) return 1;
+			// An image with its own apt source keeps its own end for a launch
+			// that never submitted (failBeforeLaunch below, PACKAGE_INSTALL_REFUSED):
+			// its installs start only on request, so nothing queues them again.
+			refused =
+				ticket !== null &&
+				attempt === null &&
+				err instanceof DetachedAptLaunchRefusedError;
+			// Recorded at once, before the cache cleanup below waits: the
+			// orchestrator (a stream start's admission included) must know
+			// there is no unit of this install's to stop.
+			if (refused && ticket !== null) refusedLaunches.set(ticket, failureId);
 			const message = redactImageAptSecret(
 				err instanceof Error ? err.message : String(err),
 			);
@@ -2542,7 +2600,17 @@ export function createSoftwareUpdateProcessMonitor(
 			await withdrawCeraliveOfferIfInstalled(offer);
 
 		if (softUpdateStatus) {
-			const failure = code === 0 ? null : failed();
+			// The orchestrator took the refusal during the cleanup and queued
+			// the install again already: the offer stays on the wire.
+			const taken = refused && ticket !== null && !refusedLaunches.has(ticket);
+			const failure =
+				code === 0 || taken
+					? null
+					: {
+							...failed(),
+							failure_id: failureId,
+							...(refused ? { retryable: true as const } : {}),
+						};
 			// getUpdateState()-relevant assignments happen FIRST and
 			// unconditionally, before any broadcast/notification call below —
 			// a caller awaiting settle() must observe the real outcome even if
@@ -2554,7 +2622,12 @@ export function createSoftwareUpdateProcessMonitor(
 			const settledStatus = softUpdateStatus;
 			softUpdateStatus = null;
 			try {
-				if (failure) {
+				if (refused) {
+					logger.warn(
+						"Software update did not start; nothing was installed and the install is retried",
+						{ reason: aptErr.trim() },
+					);
+				} else if (failure) {
 					notificationBroadcast(
 						"ceralive_update_failed",
 						"error",
@@ -2575,8 +2648,11 @@ export function createSoftwareUpdateProcessMonitor(
 						},
 					);
 				}
+				// A refusal the orchestrator retries is not a finished install:
+				// the overlay clears without a result, so no tab announces a
+				// failure for it.
 				broadcastMsg("status", {
-					updating: settledStatus,
+					updating: refused ? null : settledStatus,
 					update_state: getUpdateState(),
 				});
 				broadcastUpdateState();
@@ -2949,6 +3025,7 @@ async function prepareSoftwareUpdate(
 			...(targets ? { targets } : {}),
 		},
 		attempt,
+		launchTicket,
 	);
 	const finalFamily = installFamily(network.reachability.verdict);
 	const detachedArgs =
