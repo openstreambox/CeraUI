@@ -35,6 +35,7 @@ import {
 	parseIpAddrShow,
 	processIfconfigOutput,
 	resetNetifSnapshotForTest,
+	setBondOptOut,
 } from "../modules/network/network-interfaces.ts";
 import {
 	type RouterCellularScanDeps,
@@ -47,6 +48,7 @@ import {
 } from "../modules/streaming/bind-map-writer.ts";
 import {
 	genSrtlaBondEntries,
+	genSrtlaBondEntriesForLocalIpAddress,
 	resolveSrtla,
 	revalidateClatBondEntries,
 } from "../modules/streaming/srtla.ts";
@@ -268,6 +270,23 @@ test("the published sidecar has one row per link id, so the sender keeps the map
 	const ids = sidecar.links.map((row) => row.link_id);
 	expect(new Set(ids).size).toBe(ids.length);
 	expect(sidecar.links.map((row) => row.iface)).toEqual(["clat2"]);
+});
+
+test("the local sender keeps a translated subnet route through write-time revalidation", async () => {
+	await scanBox();
+	const receiver = "10.254.0.2";
+	setBondOptOut("wwan0", true);
+	try {
+		expect(genSrtlaBondEntries()).toEqual([]);
+		const entries = genSrtlaBondEntriesForLocalIpAddress(receiver);
+		expect(entries.map((entry) => entry.iface)).toEqual(["clat2"]);
+		const read = () => readClatTranslations(clatDeps(OBSERVED_AT + 5));
+		expect(await revalidateClatBondEntries(entries, read, receiver)).toEqual(
+			entries,
+		);
+	} finally {
+		setBondOptOut("wwan0", false);
+	}
 });
 
 test("an IPv6 receiver gets the native parent only, never the IPv4 translator", async () => {
