@@ -26,10 +26,12 @@ table are owned. Sharing and physical source-routing tables remain separate.
 
 A kernel timed set binds the selected source IP and MAC to the AP. Only TCP
 80/443 and TCP/UDP 53 match; DNS is sent to the selected Wi-Fi's resolver. Local
-web control stays local. QUIC, IPv6, VPNs and encrypted DNS are outside this
-window. Disable VPN, Private Relay or Private DNS temporarily if the page fails,
-and restore it afterwards. The temporary path never changes a station MAC,
-automates acceptance, or copies another device's MAC.
+web control stays local. During the window, the selected phone’s alternative
+web/DNS protocols receive TCP resets or kernel-rate-limited ICMP errors for UDP,
+as detailed below.
+VPNs, Private Relay and strict Private DNS / secure DNS may still require a temporary pause
+on this phone if the page fails; restore them afterwards. The temporary path
+never changes a station MAC, automates acceptance, or copies another device's MAC.
 
 Expiry is enforced in nftables even if the backend dies. Portal-marked stale
 connections are dropped after expiry; exact phone/port conntracks are retired on
@@ -133,3 +135,61 @@ Las sesiones remotas autenticadas pueden guardar el ajuste experimental; abrir o
 If the setting is disabled while the local card is open, an active window keeps its Check, Cancel or retry-close controls until closure. New starts remain hidden. Reloading with the setting already disabled hides the card; automatic expiry and cleanup still apply. The selector label is **Venue Wi-Fi**; its placeholder remains **Choose Wi-Fi**. Failed saves say “The setting could not be saved.” above **Try again**.
 
 Si se desactiva el ajuste con la tarjeta local abierta, la ventana activa conserva los controles para comprobar, cancelar o reintentar el cierre. No se pueden abrir ventanas nuevas. Al recargar con el ajuste desactivado, se oculta la tarjeta; la caducidad y la limpieza automáticas siguen activas. La etiqueta es **Wi-Fi del lugar**; el selector muestra **Elige un Wi-Fi**. Un guardado fallido indica “No se pudo guardar el ajuste.” sobre el botón para reintentar.
+## Protocol fallback during the window
+
+Only the selected station's forwarded IPv6 TCP 53/80/443/853 and UDP 53/443/853
+are rejected for the window's remaining lifetime. IPv6 is never routed to the
+venue: IPv4 is the default for sign-in. The MAC match covers changing IPv6 privacy
+addresses without opening access for other stations. Local control and unrelated
+UDP relay ports retain their existing paths. No IPv6 routes or global settings
+are changed.
+
+The selected IPv4 address/MAC pair gets ICMP port-unreachable for UDP 443 (QUIC)
+and UDP 853 (DNS over QUIC), and TCP resets for TCP 853 (DNS over TLS).
+TCP 443 to the six public resolver addresses below also gets a reset.
+IPv6 DNS to the box itself (TCP/UDP 53/853) is also rejected in input; local web
+and relay control remain available. Forwarding-chain rejects precede sharing's all-down guard, including
+established connections, with the same kernel timeout as the window. Close and
+startup sweep flush the timed station set; recovery also accepts older tables
+without that set.
+
+Six public resolver addresses: Cloudflare 1.1.1.1 / 1.0.0.1, Google 8.8.8.8 / 8.8.4.4,
+and Quad9 9.9.9.9 / 149.112.112.112. This finite list is not a complete DNS or
+relay classifier. Other DoH endpoints and VPN/Private Relay tunnels can still
+hide the portal; no HTTPS content is inspected. Strict encrypted-DNS clients
+may refuse fallback and require the on-screen hint. Rejection encourages fallback;
+it cannot guarantee a browser's policy. Restore privacy settings after sign-in.
+
+TCP resets give an immediate transport failure. UDP ICMP port-unreachable errors
+are kernel-rate-limited per peer/route and globally: a burst can exhaust the
+available errors, leaving later packets to time out. Even a delivered error may
+be ignored by a QUIC client. The isolated kernel fixture records fast errors and
+silent sockets for 50-packet QUIC, DoQ and IPv6 DNS bursts; it does not assert
+that every UDP attempt fails promptly.
+
+There is no nftables per-rule exemption for the kernel ICMP limiter. Changing
+ICMP sysctls would affect unrelated clients and box traffic; adding a userspace
+responder would add lifecycle and packet-spoofing complexity. Neither is used.
+The timed phone-only rules retain TCP resets wherever applicable and leave the
+kernel limits intact. Browser TCP racing can help, but strict Private DNS /
+secure DNS may still require the temporary settings change shown only while
+signing in.
+
+Sources: [Cloudflare](https://developers.cloudflare.com/1.1.1.1/),
+[Google](https://developers.google.com/speed/public-dns/docs/doh/),
+[Quad9](https://docs.quad9.net/services/).
+
+### Alternativas de protocolo durante el inicio de sesión
+
+La ventana rechaza el tráfico web y DNS IPv6 reenviado únicamente de ese teléfono
+para permitir que use IPv4. No agrega rutas IPv6 ni cambia otros clientes.
+Rechaza QUIC (UDP 443), DNS por TLS (TCP 853), DNS por QUIC (UDP 853) y HTTPS a
+las seis direcciones de resolutores públicos indicadas arriba. Las reglas caducan con la ventana.
+Algunos clientes con DNS cifrado estricto no permiten volver a DNS normal.
+Si la página no aparece, pausa temporalmente la VPN, Private Relay o Private DNS / secure DNS
+solo en este teléfono y vuelve a abrir la página. Reactívalos al terminar.
+Esta sugerencia aparece solo durante el inicio de sesión. Los intentos TCP
+reciben un reset; los errores ICMP de UDP tienen límites de frecuencia del
+kernel, por lo que una ráfaga puede dejar paquetes esperando hasta agotar
+el tiempo de espera. No se cambian esos límites globales.
+La transmisión y el control local conservan sus rutas.

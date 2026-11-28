@@ -2925,6 +2925,7 @@
 	"settings.portal.experimentalDescription": "기본값은 꺼짐입니다. 휴대폰에서 호텔 Wi-Fi에 로그인합니다. 실제 네트워크에서의 테스트가 아직 필요합니다. 끄면 새 로그인 허용 시간이 열리지 않으며, 진행 중인 것은 10분 안에 끝납니다.",
 	"network.portal.experimentalDisabled": "이 기능을 사용하려면 설정에서 실험적 Wi-Fi 로그인을 켜세요.",
 	"settings.portal.experimentalSaveError": "설정을 저장하지 못했습니다.",
+	"network.portal.privacyHint": "페이지가 나타나지 않으면 이 휴대폰에서 VPN, 비공개 릴레이 또는 비공개 DNS / 보안 DNS를 잠시 멈춘 뒤 다시 여세요. 끝나면 다시 켜세요. 스트림은 그대로입니다.",
 	"live.audioMixer.label": "오디오 입력",
 	"live.audioMixer.primary": "기본 입력 · 항상 믹스에 포함",
 	"live.audioMixer.enable": "{name}을(를) 믹스에 포함",

@@ -3160,6 +3160,7 @@
 	"settings.portal.experimentalDescription": "Desativado por padrão. Faça login no Wi-Fi do hotel pelo celular. Ainda precisa de testes em redes reais. Desativar impede novas janelas; as que já estão abertas fecham em até dez minutos.",
 	"network.portal.experimentalDisabled": "Ative o login experimental no Wi-Fi nas Configurações para usar este recurso.",
 	"settings.portal.experimentalSaveError": "Não foi possível salvar a configuração.",
+	"network.portal.privacyHint": "Se a página não aparecer, pause temporariamente a VPN, a Retransmissão Privada ou o DNS privado / DNS seguro neste celular e abra-a de novo. Reative-os ao terminar. Sua transmissão não muda.",
 	"live.audioMixer.label": "Entradas de áudio",
 	"live.audioMixer.primary": "Entrada principal · sempre no mix",
 	"live.audioMixer.enable": "Incluir {name} no mix",
