@@ -290,16 +290,6 @@ beforeEach(async () => {
 			: undefined,
 	);
 	spyOn(hotspotCredentialsStore, "remember").mockImplementation(() => {});
-	spyOn(defaultHotspotDeps, "ownedProfile").mockResolvedValue(PROFILE);
-	spyOn(defaultHotspotDeps, "findHotspotConn").mockImplementation(async () => ({
-		uuid: PROFILE,
-		macAddress: MAC,
-		ssid: row.hotspot.name ?? "Fixture AP",
-		password: row.hotspot.password ?? "fixture-password",
-		channel: "auto",
-	}));
-	spyOn(defaultHotspotDeps, "confirmSteering").mockResolvedValue(true);
-	spyOn(defaultHotspotDeps, "stationChannel").mockResolvedValue({});
 	spyOn(defaultHotspotDeps, "nmConnSetFields").mockImplementation(async () => {
 		effect("fields");
 		return true;
