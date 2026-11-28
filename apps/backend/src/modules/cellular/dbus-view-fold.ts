@@ -47,6 +47,7 @@ import {
 } from "@ceralive/modem-control";
 import type { DbusValue } from "@ceralive/modem-control/transport";
 import type {
+	ModemCarrierConfig,
 	ModemFlagMetric,
 	ModemMetricUnknownReason,
 	ModemNumberMetric,
@@ -321,6 +322,28 @@ function readOwnNumbers(
 	return numbers.length > 0 ? numbers : undefined;
 }
 
+/**
+ * `Modem.CarrierConfiguration` and `Modem.CarrierConfigurationRevision` (both
+ * `s`): the carrier settings package the modem firmware has active (Qualcomm
+ * PDC/MBN, e.g. `GCF`, `ATT`, `VZW`), not the APN profile. MM leaves both
+ * empty on modems whose plugin cannot read it; an empty or `--` name is
+ * silence, and a revision never rides without a name.
+ */
+function readCarrierConfig(
+	modem: ReturnType<typeof findInterface>,
+): ModemCarrierConfig | undefined {
+	const word = (key: string) => {
+		const value = stringProp(modem, key)?.trim();
+		return value === undefined || value.length === 0 || value === "--"
+			? undefined
+			: value;
+	};
+	const name = word("CarrierConfiguration");
+	if (name === undefined) return undefined;
+	const revision = word("CarrierConfigurationRevision");
+	return revision === undefined ? { name } : { name, revision };
+}
+
 /** `Modem.UnlockRetries` is `a{uu}`; the retries for the CURRENTLY required lock. */
 function readUnlockRetries(
 	value: DbusValue | undefined,
@@ -568,6 +591,7 @@ function foldOne(
 	const equipmentId = stringProp(modem, "EquipmentIdentifier");
 	const operatorName = stringProp(modem3gpp, "OperatorName");
 	const firmwareRevision = stringProp(modem, "Revision");
+	const carrierConfig = readCarrierConfig(modem);
 	const esim = readEsim(tree, modem);
 	const simPresence = readSimPresence(modem);
 	const ownNumbers = readOwnNumbers(modem);
@@ -610,6 +634,7 @@ function foldOne(
 		...(firmwareRevision !== undefined && firmwareRevision.length > 0
 			? { firmwareRevision }
 			: {}),
+		...(carrierConfig !== undefined ? { carrierConfig } : {}),
 		...(simPresence.presence !== "unknown"
 			? { simPresence: simPresence.presence }
 			: {}),
