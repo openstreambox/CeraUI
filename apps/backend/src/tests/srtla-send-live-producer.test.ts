@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 import {
 	createControlClient,
@@ -45,9 +46,9 @@ const EMPTY_IPS = "";
 // run, with a real device sender, or with anything already holding 6000.
 const RUN_ID = `${process.pid}-${Date.now() % 100_000}`;
 const LISTEN_PORT = 40_000 + (process.pid % 20_000);
-const STATS_FILE = `/tmp/ceraui-live-producer-stats-${RUN_ID}.json`;
-const CONTROL_SOCKET = `/tmp/ceraui-live-producer-${RUN_ID}.sock`;
-const IPS_FILE = `/tmp/ceraui-live-producer-ips-${RUN_ID}.txt`;
+const STATS_FILE = `${tmpdir()}/sender-stats-${RUN_ID}.json`;
+const CONTROL_SOCKET = `${tmpdir()}/sender-${RUN_ID}.sock`;
+const IPS_FILE = `${tmpdir()}/sender-ips-${RUN_ID}.txt`;
 
 const STATS_INTERVAL_MS = 200;
 const READY_TIMEOUT_MS = 10_000;

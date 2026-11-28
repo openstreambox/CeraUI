@@ -34,7 +34,10 @@ import type {
 	HotspotActivationDeps,
 	WifiInterfaceWithHotspot,
 } from "../modules/wifi/wifi-hotspot-types.ts";
-import { runTestCommand } from "./helpers/run-test-command.ts";
+import {
+	backendTestRunner,
+	runTestCommand,
+} from "./helpers/run-test-command.ts";
 
 async function run(command: string, args: string[]): Promise<string> {
 	const result = await runTestCommand([command, ...args]);
@@ -49,7 +52,7 @@ test.skipIf(process.env.CERALIVE_NETNS_ISOLATED !== "1" || child)(
 	"isolates the hotspot lifecycle kernel regression",
 	async () => {
 		const result = await runTestCommand(
-			["unshare", "-rn", "bun", "test", import.meta.path],
+			["unshare", "-rn", "bun", backendTestRunner, import.meta.path],
 			{ env: { CERALIVE_HOTSPOT_NETNS_CHILD: "1" } },
 		);
 		if (result.code !== 0) throw new Error(result.stdout + result.stderr);

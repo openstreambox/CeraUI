@@ -3,6 +3,7 @@ import {
 	nmConnsGet,
 	nmcliParseSep,
 } from "../../modules/network/network-manager.ts";
+import { backendTestRunner } from "./run-test-command.ts";
 import { encodeProfile } from "./wifi-first-ap-keyfile-codec.ts";
 import { firstApKeyfiles } from "./wifi-first-ap-keyfiles.ts";
 
@@ -224,7 +225,7 @@ export async function replayFirstApState(input: object): Promise<unknown> {
 	const child = Bun.spawn(
 		[
 			process.execPath,
-			"test",
+			backendTestRunner,
 			"--timeout",
 			"15000",
 			"./apps/backend/src/tests/helpers/wifi-first-ap-restart.ts",
