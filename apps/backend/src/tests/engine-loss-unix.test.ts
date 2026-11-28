@@ -37,9 +37,22 @@ import {
 	stopProcessAndWait,
 } from "../modules/streaming/streamloop/process-runner.ts";
 
-test.each(["replacement", "same engine", "armed and idle"] as const)(
+// The train keeps #124's rule that an engine session is adopted only with an
+// owned sender and the client that acknowledged its Start. The retirement has
+// just ended both, so a session this process launched is Stopped as its own
+// and, with an armed marker, relaunched ("recovered", as before the retirement
+// existed). Without a marker it ends idle instead of being adopted.
+test.each([
+	"replacement",
+	"same engine",
+	"armed and idle",
+	"armed and still streaming",
+] as const)(
 	"control-loss retirement at the Unix RPC boundary: %s",
 	async (kind) => {
+		const armed =
+			kind === "armed and idle" || kind === "armed and still streaming";
+		const relaunched = armed;
 		const dir = await mkdtemp(join(tmpdir(), "el"));
 		const socketPath = join(dir, "s");
 		const previousConfig = getConfigFilePath();
@@ -184,7 +197,7 @@ test.each(["replacement", "same engine", "armed and idle"] as const)(
 				marker: {
 					...defaultArmedStreamMarkerDeps,
 					readMarker: () =>
-						kind === "armed and idle"
+						armed
 							? JSON.stringify({
 									bootId: "test",
 									armedAt: 1,
@@ -251,7 +264,7 @@ test.each(["replacement", "same engine", "armed and idle"] as const)(
 		).toMatchObject({ result: "started" });
 		noteWriterBindMapReport("bind-map-passed", []);
 		setPendingAudioFollowAsrc("USB audio");
-		if (kind === "replacement") {
+		if (kind === "replacement" || kind === "armed and still streaming") {
 			const ready = Promise.withResolvers<void>();
 			sender = spawnStreamingLoop(
 				{ command: "/usr/bin/nice", role: "srtla_send" },
@@ -268,7 +281,7 @@ test.each(["replacement", "same engine", "armed and idle"] as const)(
 			expect(getStreamingProcesses()).toContain(sender);
 		}
 		if (breakControl === undefined) throw new Error("Expected a control peer");
-		if (kind !== "same engine") {
+		if (kind === "replacement" || kind === "armed and idle") {
 			first.streaming = false;
 			engine = { streaming: kind === "replacement" };
 		}
@@ -276,17 +289,28 @@ test.each(["replacement", "same engine", "armed and idle"] as const)(
 		expect(await backend.listDevicesIfActive()).toBeNull();
 		const outcome = await observed.promise;
 
-		const starts = kind === "armed and idle" ? ["start", "start"] : ["start"];
+		const starts =
+			kind === "armed and idle"
+				? ["start", "start"]
+				: relaunched
+					? ["start", "stop", "start"]
+					: ["start", "stop"];
 		expect(mutations).toEqual(starts);
 		expect(localResourcesBeforeObservation).toEqual([
 			{ bindMap: undefined, pendingAudio: null },
 		]);
-		if (kind === "replacement")
+		if (kind === "replacement" || kind === "armed and still streaming")
 			expect(senderRetiredBeforeObservation).toBe(true);
 		expect(seenBeforeObservation).toEqual(["unknown"]);
-		expect(outcome.result).toBe(
-			kind === "armed and idle" ? "recovered" : "adopted",
-		);
+		if (!relaunched) {
+			// Not adopted: the session that lost its sender is Stopped as ours.
+			expect(outcome).toEqual({ result: "blocked", reason: "no_marker" });
+			expect(engine.streaming).toBe(false);
+			expect(getStreamSessionSnapshot().state).toBe("idle");
+			expect(streamLiveness()).toBe("idle");
+			return;
+		}
+		expect(outcome.result).toBe("recovered");
 		expect(engine.streaming).toBe(true);
 		expect(getStreamSessionSnapshot().state).toBe("streaming");
 		expect(streamLiveness()).toBe("streaming");
