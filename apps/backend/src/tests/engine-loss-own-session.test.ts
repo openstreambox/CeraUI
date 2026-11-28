@@ -7,6 +7,7 @@ import { createStreamSessionOrchestrator } from "../modules/streaming/stream-ses
 function harness(opts: {
 	readonly unownedSenderPresent?: boolean;
 	readonly launched: boolean;
+	readonly retirement?: Promise<void>;
 }) {
 	let runtime: "idle" | "streaming" = "streaming";
 	let ownedEvidence = false;
@@ -26,7 +27,9 @@ function harness(opts: {
 			stops.push(generation);
 			runtime = "idle";
 		},
-		retireRuntime: async () => {},
+		retireRuntime: async () => {
+			await opts.retirement;
+		},
 		onStreamStopped: (cause) => {
 			stopCauses.push(cause);
 		},
@@ -159,4 +162,20 @@ test("the heal and heartbeat reconciliation Stops the lost own session within th
 	// The settled loss is not reconciled again.
 	await h.session.reconcileLostSession(() => true);
 	expect(h.stops).toHaveLength(1);
+});
+
+test("a sender that takes the full kill timeout to exit does not use up the window", async () => {
+	const exited = Promise.withResolvers<void>();
+	const h = harness({ launched: true, retirement: exited.promise });
+	await h.session.start({ origin: "ui", launch });
+	const retiring = h.session.retireLostSession();
+	// The sender ignores SIGTERM and is killed only at the shutdown timeout.
+	h.advance(10_000);
+	exited.resolve();
+	await retiring;
+	h.advance(500);
+
+	await h.session.reconcileLostSession(() => true);
+	expect(h.stops).toHaveLength(1);
+	expect(h.session.snapshot().state).toBe("idle");
 });
