@@ -70,6 +70,8 @@ export type OsStageGuardObservation =
 			readonly cleanExit: boolean;
 			readonly invocationId: string;
 			readonly exitStatus: number;
+			/** ActiveState=inactive: stopped, but systemd still has it loaded. */
+			readonly stopped?: true;
 	  };
 
 /** Reads the guardian through the exact property set the parser below expects. */
@@ -156,6 +158,7 @@ export function parseOsStageGuardObservation(
 			cleanExit,
 			invocationId,
 			exitStatus: Number(status),
+			...(active === "inactive" ? { stopped: true as const } : {}),
 		};
 	}
 	throw new OsStageError("rauc_recovery_unproven");

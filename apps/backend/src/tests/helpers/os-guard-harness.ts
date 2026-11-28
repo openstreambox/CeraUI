@@ -73,10 +73,25 @@ afterEach(async () => {
 	scopes.clear();
 });
 
+export type GuardHarnessOptions = {
+	/**
+	 * systemd keeps a stopped transient unit loaded while another loaded unit
+	 * orders against it (an image's drain with After= the guard): after stop it
+	 * reads inactive with the same invocation instead of absent. A different
+	 * invocation models a guard that is not the one this owner released.
+	 */
+	readonly stopLeavesUnitLoaded?: {
+		readonly invocationId: string;
+		/** The stopped unit's job queue still holds a job. */
+		readonly jobQueued?: true;
+	};
+};
+
 export function guardTest(
 	name: string,
 	record: OsStageJobRecord,
 	run: (h: Awaited<ReturnType<typeof harness>>) => Promise<void>,
+	options: GuardHarnessOptions = {},
 ): void {
 	test(name, () => {
 		const scope: Scope = {
@@ -87,7 +102,7 @@ export function guardTest(
 			body: Promise.resolve(),
 		};
 		scopes.add(scope);
-		scope.body = harness(record, scope)
+		scope.body = harness(record, scope, options)
 			.then(run)
 			.catch((error: unknown) => {
 				// Teardown cancellation belongs to the already failed test, not the next one.
@@ -104,7 +119,11 @@ export function guardTest(
 	});
 }
 
-async function harness(record: OsStageJobRecord, scope: Scope) {
+async function harness(
+	record: OsStageJobRecord,
+	scope: Scope,
+	options: GuardHarnessOptions = {},
+) {
 	const { signal } = scope.cancel;
 	const root = await mkdtemp(join(tmpdir(), "ceraui-os-guard-"));
 	scope.roots.push(root);
@@ -136,20 +155,28 @@ async function harness(record: OsStageJobRecord, scope: Scope) {
 	const owner = createOsStageJobOwner(record, {
 		cliGone: async () => true,
 		inspect: async () =>
-			stopped
-				? { kind: "absent" }
-				: child?.exitCode === null
-					? {
-							kind: "live",
-							pid: String(child.pid),
-							invocationId: "a".repeat(32),
-						}
-					: {
-							kind: "terminal",
-							cleanExit: child?.exitCode === 0,
-							invocationId: "a".repeat(32),
-							exitStatus: child?.exitCode ?? 0,
-						},
+			stopped && options.stopLeavesUnitLoaded
+				? {
+						kind: "terminal",
+						cleanExit: child?.exitCode === 0,
+						invocationId: options.stopLeavesUnitLoaded.invocationId,
+						exitStatus: child?.exitCode ?? 0,
+						stopped: true,
+					}
+				: stopped
+					? { kind: "absent" }
+					: child?.exitCode === null
+						? {
+								kind: "live",
+								pid: String(child.pid),
+								invocationId: "a".repeat(32),
+							}
+						: {
+								kind: "terminal",
+								cleanExit: child?.exitCode === 0,
+								invocationId: "a".repeat(32),
+								exitStatus: child?.exitCode ?? 0,
+							},
 		kernel: async ({ pid }) => {
 			// A contention probe before the helper owns the lock could win the race itself.
 			if (pid !== null && !(await Bun.file(join(directory, "ready")).exists()))
@@ -158,7 +185,7 @@ async function harness(record: OsStageJobRecord, scope: Scope) {
 			scope.drains.push(new Response(probe.stderr).text());
 			return (await probe.exited) === (pid === null ? 0 : 75);
 		},
-		jobIdle: async () => true,
+		jobIdle: async () => !(stopped && options.stopLeavesUnitLoaded?.jobQueued),
 		directory,
 		uid: process.getuid?.() ?? -1,
 		now: () => performance.now(),
