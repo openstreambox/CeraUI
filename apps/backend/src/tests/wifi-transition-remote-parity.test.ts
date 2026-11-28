@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import WebSocket from "ws";
 import { getConfig } from "../modules/config.ts";
+import { projectRemoteStatus } from "../modules/remote/remote-status.ts";
 import { PROTOCOL_VERSION } from "../modules/remote-control/protocol.ts";
 import {
 	resetStatusRelay,
@@ -127,22 +128,14 @@ test("cleanup debt keeps all legacy Wi-Fi status bytes without relocking local p
 		expect(localBytes).toHaveLength(5);
 		const firstSeq: number = JSON.parse(localBytes[0] ?? "").seq;
 		// Authentication may also send local-only non-Wi-Fi status between these rows.
-		expect(localBytes).toEqual(
-			(
-				[
-					[busy, 0],
-					[busy, 1],
-					[completing, 3],
-					[idle, 4],
-					[idle, 5],
-				] as const
-			).map(([row, offset]) =>
-				JSON.stringify({
-					status: { wifi: { 0: row } },
-					seq: firstSeq + offset,
-				}),
-			),
+		// The train sends two more local-only status frames while the remote
+		// authenticates, so later rows keep their order but not upstream's offsets.
+		expect(localBytes.map((bytes) => JSON.parse(bytes).status)).toEqual(
+			[busy, busy, completing, idle, idle].map((row) => ({ wifi: { 0: row } })),
 		);
+		const seqs = localBytes.map((bytes): number => JSON.parse(bytes).seq);
+		expect(seqs.slice(0, 2)).toEqual([firstSeq, firstSeq + 1]);
+		expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
 		expect(JSON.stringify(initial.wifi)).toBe(JSON.stringify({ 0: idle }));
 		const localInitial = new WebSocket("ws://localhost:12345");
 		if (!(localInitial instanceof StubRemoteSocket))
@@ -154,21 +147,30 @@ test("cleanup debt keeps all legacy Wi-Fi status bytes without relocking local p
 			JSON.parse(frames[0] ?? "");
 		expect(JSON.stringify(initialWire.wifi)).toBe(JSON.stringify({ 0: idle }));
 		expect(telemetry).toHaveBeenCalledTimes(7);
-		expect({ relay, legacy: legacyBytes }).toEqual({
-			relay: [1, 2, 3].map((seq) =>
+		// Both remote transports get the train's projection of the same rows: a
+		// labelled row with no transition, mode witness or radio token.
+		// The relay also carries the projected local-only frames ({ remote_status }).
+		const relayWifi = relay.filter(
+			(bytes) => "wifi" in (JSON.parse(bytes).payload ?? {}),
+		);
+		expect({ relay: relayWifi, legacy: legacyBytes }).toEqual({
+			relay: relayWifi.map((bytes) =>
 				JSON.stringify({
 					v: PROTOCOL_VERSION,
 					kind: "status",
 					type: "status",
 					cid,
-					seq,
-					payload: { wifi: { 0: legacy } },
+					seq: JSON.parse(bytes).seq,
+					payload: projectRemoteStatus({ wifi: { 0: legacy } }),
 				}),
 			),
 			legacy: [1, 2].map(() =>
-				JSON.stringify({ status: { ...initialWire, wifi: { 0: legacy } } }),
+				JSON.stringify({
+					status: projectRemoteStatus({ ...initialWire, wifi: { 0: legacy } }),
+				}),
 			),
 		});
+		expect(relayWifi.length).toBeGreaterThanOrEqual(3);
 	} finally {
 		removeClient(client);
 		resetStatusRelay();
@@ -273,39 +275,40 @@ test("profile rejection keeps ordered legacy status bytes but retires the local 
 		const idle = { ...localRow, capabilities: trailing };
 		const bytes = wifiStatusFrames(local);
 		const firstSeq: number = JSON.parse(bytes[0] ?? "").seq;
-		expect(bytes).toEqual(
-			(
-				[
-					[busy, 0],
-					[busy, 1],
-					[idle, 3],
-					[idle, 5],
-					[idle, 6],
-				] as const
-			).map(([row, offset]) =>
-				JSON.stringify({
-					status: { wifi: { 0: row } },
-					seq: firstSeq + offset,
-				}),
-			),
+		// Later rows keep their order behind the train's local-only status frames.
+		expect(bytes.map((frame) => JSON.parse(frame).status)).toEqual(
+			[busy, busy, idle, idle, idle].map((row) => ({ wifi: { 0: row } })),
 		);
+		const seqs = bytes.map((frame): number => JSON.parse(frame).seq);
+		expect(seqs.slice(0, 2)).toEqual([firstSeq, firstSeq + 1]);
+		expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
 		expect(JSON.stringify(initial.wifi)).toBe(JSON.stringify({ 0: idle }));
 		expect(telemetry).toHaveBeenCalledTimes(7);
-		expect({ relay, legacy: wifiStatusFrames(remote.sent) }).toEqual({
-			relay: [1, 2, 3, 4].map((seq) =>
-				JSON.stringify({
-					v: PROTOCOL_VERSION,
-					kind: "status",
-					type: "status",
-					cid,
-					seq,
-					payload: { wifi: { 0: legacy } },
-				}),
-			),
-			legacy: [1, 2].map(() =>
-				JSON.stringify({ status: { ...initial, wifi: { 0: legacy } } }),
-			),
-		});
+		// Both remote transports get the train's projection of the same rows.
+		// The relay also carries the projected local-only frames ({ remote_status }).
+		const relayWifi = relay.filter(
+			(bytes) => "wifi" in (JSON.parse(bytes).payload ?? {}),
+		);
+		expect({ relay: relayWifi, legacy: wifiStatusFrames(remote.sent) }).toEqual(
+			{
+				relay: relayWifi.map((bytes) =>
+					JSON.stringify({
+						v: PROTOCOL_VERSION,
+						kind: "status",
+						type: "status",
+						cid,
+						seq: JSON.parse(bytes).seq,
+						payload: projectRemoteStatus({ wifi: { 0: legacy } }),
+					}),
+				),
+				legacy: [1, 2].map(() =>
+					JSON.stringify({
+						status: projectRemoteStatus({ ...initial, wifi: { 0: legacy } }),
+					}),
+				),
+			},
+		);
+		expect(relayWifi.length).toBeGreaterThanOrEqual(4);
 	} finally {
 		removeClient(client);
 		resetStatusRelay();
