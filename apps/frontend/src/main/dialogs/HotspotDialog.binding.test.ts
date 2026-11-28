@@ -1297,6 +1297,13 @@ describe("live editor binding and safe Stop", () => {
 		await view.rerender({ open: true, deviceId: "0", iface: active });
 		await closedWithNotice();
 		expect(start).toHaveBeenCalledTimes(0);
+		// Reopened on the replacement, Stop stays available for its live AP.
+		await view.rerender({ open: false, deviceId: "0", iface: active });
+		await view.rerender({ open: true, deviceId: "0", iface: active });
+		expect(screen.queryByTestId("hotspot-activation-confirm")).toBeNull();
+		expect(input("hotspot-name").readOnly).toBe(true);
+		await fireEvent.click(screen.getByRole("button", { name: "Turn Off" }));
+		expect(rpc.wifi.hotspotStop).toHaveBeenCalledWith({ device: "0" });
 	});
 	it("keeps Stop available on an otherwise healthy tokenless live AP", async () => {
 		const iface = row("radio-A", true);
