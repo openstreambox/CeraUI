@@ -15,12 +15,13 @@ import {
 import * as notifications from "../modules/ui/notifications.ts";
 import * as websocket from "../modules/ui/websocket-server.ts";
 
-test("production startup stays protected and repeated reports do not rewrite the marker", async () => {
+test("a backend restart stays protected and repeated reports do not rewrite the marker", async () => {
 	const status = spyOn(websocket, "broadcastMsg");
 	const write = spyOn(fs, "writeFileSync");
 	const broadcast = spyOn(notifications, "notificationBroadcast");
 	try {
-		initCarrying();
+		// An earlier process ran in this boot: its client evidence is lost.
+		initCarrying(false);
 		expect(status.mock.calls).toContainEqual([
 			"status",
 			{ carrying: { state: "unknown", startup: true } },
