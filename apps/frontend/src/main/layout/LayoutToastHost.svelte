@@ -104,7 +104,8 @@ const stopStreaming = (prepareDispatch?: () => boolean) => {
 	toast.dismiss();
 	clearNotifications();
 	renderedAt.clear();
-	void stopStreamingFn(prepareDispatch);
+	// A Stop that could not be sent has already posted its own notice.
+	void stopStreamingFn(prepareDispatch).catch(() => undefined);
 };
 
 window.stopStreamingWithNotificationClear = stopStreaming;

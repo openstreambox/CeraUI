@@ -33,6 +33,7 @@ import {
 import { rpc, rpcClient } from "$lib/rpc/client";
 import { NotSentError } from "$lib/rpc/rpc-error";
 import { stopOnceSignedIn } from "$lib/rpc/stop-intent";
+import { stopStreamingOptimism } from "$lib/rpc/streaming-optimism.svelte";
 import { initSubscriptions, resetState } from "$lib/rpc/subscriptions.svelte";
 import {
 	type AuthAttempt,
@@ -642,6 +643,50 @@ describe("a Stop requested while the new socket is being signed in", () => {
 				(notification) => notification.name === "stop-not-sent",
 			),
 		).toBe(true);
+	});
+
+	it("says it was not sent when a later reconnect withdrew it before the session came back", async () => {
+		await signInFromForm(false);
+		live();
+		await reconnect();
+		const stop = stopStreaming(stopStreamingOptimism()).catch(
+			(error: unknown) => error,
+		);
+		await flush();
+		expect(sentCount("streaming.stop")).toBe(0);
+
+		// The sign-in stalls and the socket is replaced: the Stop's claim ends.
+		await reconnect();
+		answer("auth.login", { success: true });
+		await flush();
+		answer("status.getStatus", { is_streaming: true });
+		await flush();
+
+		expect(sentCount("streaming.stop")).toBe(0);
+		const error = await stop;
+		expect(error).toBeInstanceOf(NotSentError);
+		expect(
+			getActiveNotifications().some(
+				(notification) => notification.name === "stop-not-sent",
+			),
+		).toBe(true);
+	});
+
+	it("still sends a held Stop whose claim survived until the session came back", async () => {
+		await signInFromForm(false);
+		live();
+		await reconnect();
+		const stop = stopStreaming(stopStreamingOptimism());
+		await flush();
+
+		answer("auth.login", { success: true });
+		await flush();
+		answer("status.getStatus", { is_streaming: true });
+		await flush();
+
+		expect(sentCount("streaming.stop")).toBe(1);
+		answer("streaming.stop", { success: true, result: "stopped" });
+		await expect(stop).resolves.toBeUndefined();
 	});
 
 	it("is dropped with the session: a later sign-in never sends it", async () => {

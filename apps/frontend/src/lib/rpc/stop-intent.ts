@@ -44,7 +44,7 @@ interface StopIntent {
 let stopIntent: StopIntent | undefined;
 
 /** Tell the operator a Stop they pressed was not sent. */
-function noticeStopNotSent(): void {
+export function noticeStopNotSent(): void {
 	pushNotification({
 		name: "stop-not-sent",
 		type: "error",
