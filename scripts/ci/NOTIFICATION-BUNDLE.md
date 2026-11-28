@@ -19,6 +19,11 @@ interpolation fail. It never imports the generated source registry, eager test
 registration or sourcemaps. An empty scan or missing/ambiguous namespace chunk
 also fails rather than passing vacuously.
 
+Namespace discovery matches the complete `namespace-[hash].js` name using
+Vite's default eight-character hash (including `-` and `_`). A helper such as
+`network-speed-[hash].js` is not a second `network` namespace. Missing or duplicate
+exact namespace chunks still fail.
+
 The chunk naming/export contract is intentional: a bundler-layout change must
 update the guard, not silently fall back to source translations. Notification
 patterns are currently strings; a future plural/select pattern needs explicit
