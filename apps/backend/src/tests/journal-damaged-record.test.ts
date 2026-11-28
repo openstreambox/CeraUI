@@ -15,6 +15,7 @@ import {
 	readMutationEntry,
 	setMutationJournalDeps,
 } from "../modules/modems/mutation-journal.ts";
+import { noteMutationJournalReadFault } from "../modules/modems/mutation-journal-revision.ts";
 import { initMutationRecovery } from "../modules/modems/mutation-replay.ts";
 import { tryAcquireModemJournalKey } from "../modules/streaming/lifecycle-admission.ts";
 import {
@@ -219,8 +220,11 @@ test("runtime verification withdraws a repaired offer without replaying an activ
 		fs: {
 			...defaultMutationJournalFs,
 			readText: async (file) => {
-				if (unreadable && file === slot)
+				// A real read fault moves the journal revision, as the default fs does.
+				if (unreadable && file === slot) {
+					noteMutationJournalReadFault();
 					throw new Error("temporary read error");
+				}
 				return defaultMutationJournalFs.readText(file);
 			},
 		},
