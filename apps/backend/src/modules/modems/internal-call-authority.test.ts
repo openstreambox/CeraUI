@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	readPrivateJson,
 	writePrivateJson,
@@ -27,7 +27,8 @@ import {
 } from "./internal-context-authority.ts";
 
 // Real files, recorded fsyncs: no test waits on another process's writeback.
-const fsyncs = recordFsyncsPerTest();
+let observeSync: ((path: string) => void) | undefined;
+const fsyncs = recordFsyncsPerTest((path) => observeSync?.(path));
 const unit = "a".repeat(64),
 	owner = "b".repeat(64),
 	epoch = "c".repeat(64),
@@ -178,6 +179,15 @@ test("whole-owner storage and startup census require its witnessed context basel
 		);
 	Object.assign(process.env, settings);
 	resetRecoveryBarrier();
+	const ownerDir = join(realpathSync(root), "owners"),
+		committed = join(ownerDir, `${key}.json`),
+		syncs: string[] = [];
+	observeSync = (path) => {
+		const state = existsSync(committed) ? "after rename" : "before rename";
+		if (path === ownerDir) syncs.push(`directory ${state}`);
+		else if (dirname(path) === ownerDir && path.endsWith(".tmp"))
+			syncs.push(`temporary ${state}`);
+	};
 	try {
 		await accessInternalCallAuthority(unit, async (value, write) => {
 			expect(value).toBeUndefined();
@@ -190,8 +200,12 @@ test("whole-owner storage and startup census require its witnessed context basel
 		});
 		const meta = await stat(join(dir, `${key}.json`));
 		expect(meta.mode & 0o777).toBe(0o600);
-		// The committed record's directory and its new ancestry were acknowledged.
-		expect(fsyncs.synced).toContain(realpathSync(dir));
+		// The record's bytes were synced before the rename, its directory after
+		// it, and the new directory's ancestry was acknowledged.
+		expect(syncs).toEqual([
+			"temporary before rename",
+			"directory after rename",
+		]);
 		expect(fsyncs.synced).toContain(realpathSync(root));
 		expect((await listInternalCallAuthorities())[0]?.contextExpected).toBe(
 			false,
@@ -228,6 +242,7 @@ test("whole-owner storage and startup census require its witnessed context basel
 		await expect(listInternalCallAuthorities()).rejects.toThrow("another unit");
 		expect(await readPrivateJson({ dir }, "e".repeat(64))).toEqual(record());
 	} finally {
+		observeSync = undefined;
 		for (const [name, value] of saved) {
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;

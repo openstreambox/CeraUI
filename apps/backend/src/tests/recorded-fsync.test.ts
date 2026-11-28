@@ -5,13 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { recordFsyncsPerTest } from "./helpers/recorded-fsync.ts";
 
-const fsyncs = recordFsyncsPerTest();
+const observed: string[] = [];
+const fsyncs = recordFsyncsPerTest((path) => observed.push(path));
 
 test("every fsync form records the synced path in call order", async () => {
 	const root = fs.realpathSync(
 		await mkdtemp(join(tmpdir(), "recorded-fsync-")),
 	);
 	const file = join(root, "record.json");
+	observed.length = 0;
 	try {
 		const fd = fs.openSync(file, "w");
 		fs.fsyncSync(fd);
@@ -28,6 +30,7 @@ test("every fsync form records the synced path in call order", async () => {
 		fsDefault.fsyncSync(parent);
 		fs.closeSync(parent);
 		expect(fsyncs.synced).toEqual([file, file, file, file, file, root]);
+		expect(observed).toEqual(fsyncs.synced);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

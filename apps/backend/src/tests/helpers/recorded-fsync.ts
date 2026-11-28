@@ -7,26 +7,33 @@ type Spy = { mockRestore(): void };
 /**
  * For durable-store tests whose subject is authority, not the kernel flush.
  *
- * On ext4 every directory fsync forces a commit of the whole filesystem's
- * running journal transaction, and in data=ordered mode that commit first
- * writes back other processes' dirty data. The private state writers fsync
- * each new directory's ancestry up to `/`, so under a parallel gate one test
- * can wait seconds on writeback it does not own and hit its timeout.
+ * On ext4 a directory fsync forces a commit of the running journal
+ * transaction, if there is one, and waits for it. In data=ordered mode that
+ * commit first writes out the data the transaction tracks, which in a parallel
+ * run includes other processes' new files. The private state writers fsync
+ * each new directory's ancestry up to `/`, so under a parallel gate those
+ * commits were the main wait in tests that otherwise take milliseconds.
  *
- * Within each test of the calling file, every fsync and fdatasync form still
- * validates its descriptor (a closed or bad fd fails as it would in the
- * kernel) and records the synced path in call order, but forces no journal
- * commit. Spies are restored after each test. Directory-ancestry and
- * fsync-failure behaviour stays covered by the tests that observe or inject
- * those calls directly.
+ * Within each test of the calling file, every fsync and fdatasync form records
+ * the synced path in call order (and passes it to `observe`, if given) but
+ * forces no journal commit. Spies are restored after each test.
+ *
+ * Limits: a closed or invalid descriptor still fails, but a live descriptor the
+ * kernel would refuse to sync (a pipe or socket, EINVAL) is accepted, and
+ * writeback errors (EIO) cannot occur. Tests of fsync failure inject it through
+ * their store's own seams or spy on the real call instead.
  */
-export function recordFsyncsPerTest(): { readonly synced: string[] } {
+export function recordFsyncsPerTest(observe?: (path: string) => void): {
+	readonly synced: string[];
+} {
 	const synced: string[] = [];
 	let spies: Spy[] = [];
 	let handlePrototype: { sync(): Promise<void>; datasync(): Promise<void> };
 	const record = (fd: number) => {
 		fs.fstatSync(fd);
-		synced.push(fs.readlinkSync(`/proc/self/fd/${fd}`));
+		const path = fs.readlinkSync(`/proc/self/fd/${fd}`);
+		synced.push(path);
+		observe?.(path);
 	};
 	beforeAll(async () => {
 		const handle = await fsp.open("/dev/null", "r");
