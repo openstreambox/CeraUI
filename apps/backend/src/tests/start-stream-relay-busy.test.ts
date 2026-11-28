@@ -22,6 +22,7 @@ import { getConfig } from "../modules/config.ts";
 import { setup } from "../modules/setup.ts";
 import type { Pipeline } from "../modules/streaming/pipelines.ts";
 import { setPreviewEncodeReplayTransport } from "../modules/streaming/preview-encode-replay.ts";
+import { acceptStartAudio } from "../modules/streaming/start-audio.ts";
 import { StreamStartFailure } from "../modules/streaming/start-failure-taxonomy.ts";
 import type { StreamingProcess } from "../modules/streaming/streamloop/process-runner.ts";
 import {
@@ -109,7 +110,16 @@ const rejectWith = (liveness: "idle" | "unknown") => async () => {
 
 async function failure(streamid: string, port = 5000) {
 	try {
-		await startStream(pipeline, "192.0.2.10", port, streamid, {}, "att");
+		await startStream(
+			pipeline,
+			"192.0.2.10",
+			port,
+			streamid,
+			{},
+			"att",
+			undefined,
+			acceptStartAudio(),
+		);
 	} catch (error) {
 		if (error instanceof StreamStartFailure) return error;
 		throw error;
@@ -120,7 +130,16 @@ async function failure(streamid: string, port = 5000) {
 async function succeed(streamid: string) {
 	engine = async () => {};
 	expect(
-		await startStream(pipeline, "192.0.2.10", 5000, streamid, {}, "att"),
+		await startStream(
+			pipeline,
+			"192.0.2.10",
+			5000,
+			streamid,
+			{},
+			"att",
+			undefined,
+			acceptStartAudio(),
+		),
 	).toEqual({ success: true });
 }
 
