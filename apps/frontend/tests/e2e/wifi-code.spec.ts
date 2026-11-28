@@ -100,7 +100,7 @@ for (const width of [390, 1280]) {
 		await joined.getByRole('button', { name: 'Not mine?', exact: true }).click();
 		const confirm = card.getByRole('group', { name: 'Make a new Wi-Fi password?' });
 		await expect(confirm).toContainText(
-			'If a device is streaming through the box, that stream drops',
+			'Traffic through the box from those devices stops until they join again.',
 		);
 		await confirm.evaluate((el) => el.scrollIntoView({ block: 'center' }));
 		await page.screenshot({ path: evidencePath(`wifi-code-not-mine-${width}.png`) });
