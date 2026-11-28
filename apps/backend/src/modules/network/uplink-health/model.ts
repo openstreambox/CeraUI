@@ -23,6 +23,7 @@ export const UPLINK_HEALTH_CONFIG = {
 	degradedWeight: 25,
 	passiveRttDegradedMs: 1_000,
 	passiveNakDegradedCount: 25,
+	passiveNakWindowMs: 10_000,
 } as const;
 
 export type UplinkHealthOutcome =
