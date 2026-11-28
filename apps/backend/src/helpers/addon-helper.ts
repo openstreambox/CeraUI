@@ -26,7 +26,7 @@
  * Design rules (deliberate):
  *  - argv-only, checked process-group establishment for mutations; read-only
  *    status retains execFileP and the existing sudoers path.
- *  - isRealDevice() gates EVERY op (G6). The helper itself runs as root; the
+ *  - hasCapability("addons") gates EVERY op (G6). The helper itself runs as root; the
  *    backend must never invoke it in dev/emulated mode where there is no real
  *    sysext/systemd to drive. The gate fires BEFORE sudo is ever spawned.
  *  - The id is re-validated against the same charset the helper enforces, as
@@ -41,7 +41,7 @@ import {
 	getSysextActionDecision,
 	runDisruptiveSysextStep,
 } from "../modules/addons/disruptive-sysext-step.ts";
-import { isRealDevice } from "../modules/system/device-detection.ts";
+import { hasCapability } from "../modules/system/board-capabilities.ts";
 import { DisruptiveActionRefusedError } from "../modules/system/disruptive-action-error.ts";
 import {
 	type AddonHelperStep,
@@ -73,7 +73,7 @@ export const ADDON_UNAVAILABLE_ERROR = "addon_unavailable_in_emulated_mode";
  */
 export type AddonHelperDeps = {
 	/** Whether we are on a real RK3588 device (G6 gate). */
-	isRealDevice: () => Promise<boolean>;
+	canManageAddons: () => Promise<boolean>;
 	/** Run a binary argv-only (NO shell); rejects on non-zero exit. */
 	exec: (file: string, args: readonly string[]) => Promise<ExecResult>;
 	readDescriptor?: (id: string) => Promise<AddonDescriptor>;
@@ -81,7 +81,7 @@ export type AddonHelperDeps = {
 };
 
 const defaultDeps: AddonHelperDeps = {
-	isRealDevice: () => isRealDevice(),
+	canManageAddons: () => hasCapability("addons"),
 	exec: (file, args) => execFileP(file, args),
 };
 
@@ -103,7 +103,7 @@ async function invokeHelper(
 	args: string[],
 	deps: AddonHelperDeps,
 ): Promise<string> {
-	if (!(await deps.isRealDevice())) {
+	if (!(await deps.canManageAddons())) {
 		throw new Error(ADDON_UNAVAILABLE_ERROR);
 	}
 	if (args[0] !== "status") {

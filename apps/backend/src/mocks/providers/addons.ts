@@ -90,7 +90,7 @@ export const MockAddonState = {
 
 /** Controllable inputs the manager reads through its injected deps. */
 export type MockAddonManagerSignals = {
-	isRealDevice: boolean;
+	canManageAddons: boolean;
 	hardware: AddonHardware;
 	freeBytes: number;
 	osVersion: string;
@@ -137,7 +137,7 @@ export function createMockAddonManagerDeps(
 	over: Partial<AddonManagerDeps> = {},
 ): MockAddonManagerHarness {
 	const signals: MockAddonManagerSignals = {
-		isRealDevice: true,
+		canManageAddons: true,
 		hardware: "rk3588",
 		freeBytes: HUGE_FREE_BYTES,
 		osVersion: "12",
@@ -162,7 +162,7 @@ export function createMockAddonManagerDeps(
 	};
 
 	const deps: AddonManagerDeps = {
-		isRealDevice: () => Promise.resolve(signals.isRealDevice),
+		canManageAddons: () => Promise.resolve(signals.canManageAddons),
 		getEffectiveHardware: () => signals.hardware,
 		getDataFreeBytes: () => Promise.resolve(signals.freeBytes),
 		getOsVersion: () => Promise.resolve(signals.osVersion),
@@ -228,7 +228,7 @@ export function createMockAddonManagerDeps(
 
 /** Controllable inputs the reconciler reads through its injected deps. */
 export type MockReconcilerSignals = {
-	isRealDevice: boolean;
+	canManageAddons: boolean;
 	isStreaming: boolean;
 	osVersion: string;
 	board: string;
@@ -255,7 +255,7 @@ export type MockReconcilerHarness = {
  * single enabled + materialised add-on for the live OS — i.e. the idempotent
  * no-op path (no fetch / refresh / write). Override to drive re-materialise
  * (`rawExists: false`), the pending/defer negatives (`isStreaming`, a throwing
- * `fetchAndStage`), or the emulated-mode no-op (`isRealDevice: false`). No real
+ * `fetchAndStage`), or the emulated-mode no-op (`canManageAddons: false`). No real
  * network / sudo / fs is touched.
  */
 export function createMockReconcilerDeps(
@@ -263,7 +263,7 @@ export function createMockReconcilerDeps(
 	over: Partial<ReconcilerDeps> = {},
 ): MockReconcilerHarness {
 	const signals: MockReconcilerSignals = {
-		isRealDevice: true,
+		canManageAddons: true,
 		isStreaming: false,
 		osVersion: "12",
 		board: "rk3588",
@@ -281,7 +281,7 @@ export function createMockReconcilerDeps(
 	};
 
 	const deps: ReconcilerDeps = {
-		isRealDevice: () => Promise.resolve(signals.isRealDevice),
+		canManageAddons: () => Promise.resolve(signals.canManageAddons),
 		getIsStreaming: () => signals.isStreaming,
 		getOsVersionId: () => Promise.resolve(signals.osVersion),
 		getBoard: () => signals.board,

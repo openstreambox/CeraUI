@@ -158,11 +158,11 @@ import {
 	checkAutoStartStream,
 	srtlaSendExec,
 } from "./modules/streaming/streamloop.ts";
+import { hasCapability } from "./modules/system/board-capabilities.ts";
 import { initCeraliveUpdateNotice } from "./modules/system/ceralive-update-notice.ts";
 import { initCpu } from "./modules/system/cpu.ts";
 import {
 	detectHardwareKindFromDeviceTree,
-	isRealDevice,
 	observeRealDeviceAtBoot,
 	warnOnHardwareIdentityDrift,
 } from "./modules/system/device-detection.ts";
@@ -339,7 +339,7 @@ if (!configAvailableAtBind) {
 
 // Recovery must finish before an update may install any new UID routing rule.
 const deviceAtBoot = observeRealDeviceAtBoot(bondDisableSimulationSelected());
-if (await deviceAtBoot.ready)
+if (await hasCapability("os-updates"))
 	void guardNonCritical("update-route-sweep", async () => {
 		await reconcileOsStageStartup();
 	});
@@ -352,7 +352,7 @@ await guardNonCritical("hotspot-credentials", initHotspotCredentials);
 // first hotspot channel derivation already reflects the operator's domain
 // rather than the world default the kernel boots with.
 await guardNonCritical("wifi-regdomain", async () => {
-	if (!(await isRealDevice())) return;
+	if (!(await hasCapability("wifi-country"))) return;
 	await applyPersistedCountry(getConfig().country);
 });
 
@@ -505,7 +505,7 @@ await guardNonCritical("hardware-identity-drift", async () => {
 	await warnOnHardwareIdentityDrift({
 		detectKind: () => detectHardwareKindFromDeviceTree(),
 		configuredHw: () => setup.hw,
-		isRealDevice: () => isRealDevice(),
+		canInspectSystem: () => hasCapability("system-control"),
 		warn: (message) => logger.warn(message),
 	});
 });
