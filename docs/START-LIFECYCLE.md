@@ -299,11 +299,18 @@ Stop on the ordinary, unscoped launch path without a concrete microphone keeps
 its one engine Stop.
 The shared Start lifecycle rejects an already unavailable audio plan before
 engine reconciliation, launch admission, or a replacement Stop. A profile push
-still saves the profile for the next Start; it does not interrupt a working
-stream for a replacement that has already failed preflight. This refusal is
-typed and non-retriable. Restoration first checks whether the engine is still
-live, and still resolves recorded local identities at dispatch: an absent or
-re-enumerated microphone is not treated as a permanent routing conflict.
+still saves the profile for the next Start. Before stopping a working stream,
+the shared replacement path resolves Auto and checks the actual mix against the
+current roster and, for concrete local routes, verifies the ordered engine
+proofs without preparing a Start. If the required route is unavailable, proof
+fails, or the plan changes during verification, the refusal is typed and
+non-retriable and the current stream and its marker are left alone. The same
+live generation and operator intent must still own the Stop. Dispatch verifies
+again; this does not reserve the microphone across the Stop.
+Ordinary Start and idle restoration use potential inputs for structural
+feasibility: they do not fix Auto at acceptance or treat an unplugged local
+input as permanently absent. Restoration first checks whether the engine is
+still live and resolves recorded local identities at dispatch.
 Contradictory/transitional current status is not silence: it retains UNKNOWN protection.
 Reboot clears the tmpfs sentinel and permits that empty admission baseline; it
 does not upgrade a silent probe to an affirmative engine-idle observation.

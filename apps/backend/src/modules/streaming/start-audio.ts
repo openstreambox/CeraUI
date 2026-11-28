@@ -13,7 +13,7 @@ import {
 import {
 	audioInputEngineId,
 	effectiveAudioInputs,
-	planLaunchAudio,
+	knownUnavailableLaunchAudio,
 	projectLaunchAudioInputs,
 } from "./audio-inputs.ts";
 import { getLastCapabilities } from "./capabilities.ts";
@@ -51,7 +51,7 @@ export interface StartAudio {
 	 */
 	readonly config: StartAudioConfig;
 	readonly audioEvidence: ReadonlyMap<string, AudioIdentityEvidence>;
-	readonly micChoices: NonNullable<ReturnType<typeof freezeMicChoices>>;
+	readonly micChoices: ReturnType<typeof freezeMicChoices>;
 	readonly routeUnavailable: boolean;
 	readonly autoMicChoices: (
 		config: RuntimeConfig,
@@ -126,22 +126,29 @@ export function acceptStartAudio(
 		...pressed,
 		pipeline: request.pipeline ?? saved.pipeline,
 		source: request.source ?? saved.source,
-		asrc: pressed.asrc === AUDIO_SOURCE_AUTO ? undefined : pressed.asrc,
 	};
+	const routeUnavailable = knownUnavailableLaunchAudio(pressedConfig);
 	const micChoices =
-		restoration === undefined
-			? freezeMicChoices(pressedConfig, savedProofs)
-			: new Map();
+		restoration !== undefined || routeUnavailable
+			? new Map()
+			: freezeMicChoices(
+					{
+						...pressedConfig,
+						asrc: pressed.asrc === AUDIO_SOURCE_AUTO ? undefined : pressed.asrc,
+					},
+					savedProofs,
+					// Keep proofs of saved legs that aren't present at the press.
+					new Map(
+						[...savedProofs].filter(([id]) =>
+							pressed.audio_inputs?.some((input) => input.id === id),
+						),
+					),
+				);
 	const startAudio: StartAudio = {
 		audioEvidence,
 		verifiedMicChoices: new Map(),
-		micChoices: micChoices ?? new Map(),
-		// Restore checks the route shape without observing new proofs at old addresses.
-		routeUnavailable:
-			micChoices === null ||
-			(restoration !== undefined &&
-				planLaunchAudio(pressedConfig, { assumeLocalInputsAvailable: true }) ===
-					null),
+		micChoices,
+		routeUnavailable,
 		originalMicChoice: (id) =>
 			startAudio.micChoices.has(id)
 				? id
@@ -204,6 +211,8 @@ export function restoredStartAudio(
 		audio_unverified_ids,
 		audio_silenced,
 		mic_route_proofs,
+		pipeline,
+		source,
 		balancer: _balancer,
 		failover_rate_policy: _failoverRatePolicy,
 		previewEncode: _previewEncode,
@@ -219,6 +228,8 @@ export function restoredStartAudio(
 				? saved
 				: { audio_inputs: audio_inputs ?? undefined }),
 			...recorded,
+			pipeline,
+			source,
 			...(audio_silenced ? { asrc: NO_AUDIO_ID } : {}),
 		},
 		// An older marker cannot attest to whoever now occupies its address.

@@ -795,6 +795,13 @@ function getAudioSrcName(id: string) {
 	return id;
 }
 
+/** The card's picker key before or after hardware-specific aliases are known. */
+export function possibleAlsaPickerKeys(id: string): readonly string[] {
+	const base = BASE_AUDIO_SRC_ALIASES[id] ?? id;
+	const hardwareAlias = RK3588_AUDIO_SRC_ALIASES[id];
+	return hardwareAlias === undefined ? [base] : [base, hardwareAlias];
+}
+
 export function getAudioSrcId(name: string) {
 	return getAudioSrcReverseAliases()[name] ?? name;
 }

@@ -878,6 +878,7 @@
 	"live.audioMixer.error.audio_delay_range": "يجب أن تكون قيمة Delay عددًا صحيحًا من 0 إلى {max} ms.",
 	"live.audioMixer.error.audio_mix_active": "هذا البث يمزج عدة مدخلات. أوقفه لتغيير المدخل الرئيسي.",
 	"live.audioMixer.error.refused": "رفض الجهاز هذا التغيير، ولم يتغير شيء.",
+	"live.source.audioPickUnverified": "تم حفظ اختيارك، لكن تعذّر التحقق من الميكروفون لبدء البث. حاول مجددًا لإعادة التحقق منه.",
 	"live.telemetryCard.title": "القياس عن بُعد",
 	"live.bar.beforeLive": "قبل بدء البث",
 	"live.bar.checking": "جارٍ التحقق من الجاهزية…",

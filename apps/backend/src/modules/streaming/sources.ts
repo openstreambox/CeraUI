@@ -1410,6 +1410,47 @@ interface EngineDeviceProbe {
 	selectionToken: number;
 }
 
+function mapEngineDeviceObservation({
+	devices,
+}: ListDevicesResult): Pick<EngineDeviceProbe, "devices" | "audio"> {
+	return {
+		devices: devices.map((d) =>
+			fromEngineDevice({
+				input_id: d.input_id,
+				device_path: d.device_path,
+				display_name: d.display_name,
+				media_class: d.media_class,
+				kind: d.kind,
+				caps: d.caps,
+				...(d.modes !== undefined ? { modes: d.modes } : {}),
+				stable_id: d.stable_id,
+				physical_group_id: d.physical_group_id,
+			}),
+		),
+		// The video projection deliberately drops the producer's audio join keys.
+		audio: devices
+			.filter((d) => d.media_class === "audio")
+			.map((d) => ({
+				input_id: d.input_id,
+				display_name: d.display_name,
+				...(d.alsa_card_id !== undefined
+					? { alsa_card_id: d.alsa_card_id }
+					: {}),
+				...(d.product_name !== undefined
+					? { product_name: d.product_name }
+					: {}),
+				...(d.transport !== undefined ? { transport: d.transport } : {}),
+				...(d.stable_id !== undefined ? { stable_id: d.stable_id } : {}),
+				...(d.device_address !== undefined
+					? { device_address: d.device_address }
+					: {}),
+				...(d.physical_group_id !== undefined
+					? { physical_group_id: d.physical_group_id }
+					: {}),
+			})),
+	};
+}
+
 /**
  * Run one `list-devices` probe and map its result, WITHOUT touching the caches.
  * Separating the round-trip from the commit lets a caller decide — after the
@@ -1429,51 +1470,13 @@ async function probeEngineDevices(
 		// A caller torn down while the probe was in flight keeps nothing, not
 		// even the identities a later failed probe would fall back to.
 		if (!current()) return undefined;
-		const devices = result.devices.map((d) => {
-			return fromEngineDevice({
-				input_id: d.input_id,
-				device_path: d.device_path,
-				display_name: d.display_name,
-				media_class: d.media_class,
-				kind: d.kind,
-				caps: d.caps,
-				...(d.modes !== undefined ? { modes: d.modes } : {}),
-				stable_id: d.stable_id,
-				physical_group_id: d.physical_group_id,
-			});
-		});
-		rememberEngineVideoDevices(devices);
+		const observation = mapEngineDeviceObservation(result);
+		rememberEngineVideoDevices(observation.devices);
 		return {
-			devices,
+			...observation,
 			selectionToken,
 			audioScan,
 			audioSequence,
-			// Parallel AUDIO cache (T4): an EXPLICIT field copy of the audio entries
-			// that preserves the producer-owned join keys verbatim. It is NOT routed
-			// through the video whitelist copy above or `fromEngineDevice()`, both of
-			// which intentionally drop the audio-only fields.
-			audio: result.devices
-				.filter((d) => d.media_class === "audio")
-				.map((d) => {
-					return {
-						input_id: d.input_id,
-						display_name: d.display_name,
-						...(d.alsa_card_id !== undefined
-							? { alsa_card_id: d.alsa_card_id }
-							: {}),
-						...(d.product_name !== undefined
-							? { product_name: d.product_name }
-							: {}),
-						...(d.transport !== undefined ? { transport: d.transport } : {}),
-						...(d.stable_id !== undefined ? { stable_id: d.stable_id } : {}),
-						...(d.device_address !== undefined
-							? { device_address: d.device_address }
-							: {}),
-						...(d.physical_group_id !== undefined
-							? { physical_group_id: d.physical_group_id }
-							: {}),
-					};
-				}),
 		};
 	} catch (err) {
 		logger.debug(
@@ -1699,6 +1702,24 @@ export function applyObservedDevicesAndBroadcast(
 	devices: readonly CaptureDevice[],
 ): void {
 	applyObservedEngineDevices(devices);
+	broadcastDeviceObservation(devices);
+}
+
+/** Commit a complete engine observation, including the audio selector join. */
+export function applyEngineDeviceObservationAndBroadcast(
+	result: ListDevicesResult,
+): void {
+	const { devices, audio } = mapEngineDeviceObservation(result);
+	rememberEngineVideoDevices(devices);
+	commitEngineDevices(devices, {
+		audio,
+		audioScan: audioCardScan?.complete ? audioCardScan : undefined,
+		audioSequence: ++audioProbeSequence,
+	});
+	broadcastDeviceObservation(devices);
+}
+
+function broadcastDeviceObservation(devices: readonly CaptureDevice[]): void {
 	const devicesMessage: DevicesMessage = {
 		engine: getConfiguredEngine(),
 		devices: [...devices],

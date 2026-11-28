@@ -54,7 +54,11 @@ import { AUDIO_SOURCE_AUTO } from "@ceraui/rpc/schemas";
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { getConfig } from "../config.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
-import { getAudioCaptureCardIds, getAudioDevices } from "./audio.ts";
+import {
+	getAudioCaptureCardIds,
+	getAudioDevices,
+	possibleAlsaPickerKeys,
+} from "./audio.ts";
 import type { EngineAudioDevice } from "./audio-naming.ts";
 import { getLastCapabilities } from "./capabilities.ts";
 import {
@@ -102,6 +106,10 @@ const HDMI_CARD_IDS: readonly string[] = ["rockchiphdmiin", "hdmirx", "HDMIIN"];
 
 /** The ALSA card id rule 4 keys off (the resolver's contract). */
 const CAMLINK_CARD_ID = "C4K";
+const AUTO_CAPTURE_CARD_IDS = {
+	hdmi: HDMI_CARD_IDS,
+	camlink: [CAMLINK_CARD_ID],
+} as const;
 
 /** The pipeline-default pseudo-source asrcKey — a sentinel, not a real ALSA card. */
 const PIPELINE_DEFAULT_ASRC = "Pipeline default";
@@ -120,6 +128,34 @@ const USB_VIDEO_KINDS = new Set<string>([
 	"uvc_h265",
 	"mjpeg",
 ]);
+
+function autoCaptureAudioKind(source: StreamSource | undefined) {
+	if (source?.origin !== "capture") return undefined;
+	if (source.kind === "hdmi" || source.kind === "camlink") return source.kind;
+	if (USB_VIDEO_KINDS.has(source.kind)) return "usb";
+	return undefined;
+}
+
+/** Null means a new picker key is possible; an empty list rules out local audio. */
+export function possibleAutoLocalAudioKeys(
+	sourceId: string | undefined,
+): readonly string[] | null {
+	if (!sourceId) return [];
+	// A missing selected row can reappear; don't sample the capture grace clock here.
+	const source = getSourcesMessage().sources.find(({ id }) => id === sourceId);
+	if (source === undefined || source.origin === "coarse" || source.lost)
+		return null;
+	const kind = autoCaptureAudioKind(source);
+	if (kind === undefined) return [];
+	if (kind === "usb") return null;
+	const cardIds: readonly string[] = AUTO_CAPTURE_CARD_IDS[kind];
+	return [
+		...cardIds.flatMap(possibleAlsaPickerKeys),
+		...Object.entries(getAudioDevices()).flatMap(([key, cardId]) =>
+			cardIds.includes(cardId) ? [key] : [],
+		),
+	];
+}
 
 export interface AutoAsrcResolution {
 	/** The wire string for `asrcProbe`/status/`getAudioSrcId`; null for embedded. */
@@ -332,12 +368,13 @@ export function resolveAutoAsrc(
 	}
 
 	// Rules 3-5 apply only to a concrete capture device.
+	const captureKind = autoCaptureAudioKind(source);
 	if (source?.origin === "capture") {
 		// Rule 3 — HDMI capture follows the HDMI audio card, when it can capture.
 		// The capture gate is asked about the spelling that actually MATCHED, so a
 		// listed-but-unrecordable card is refused under either kernel's name.
-		if (source.kind === "hdmi") {
-			const hdmi = findEnumeratedCard(audioDevices, HDMI_CARD_IDS);
+		if (captureKind === "hdmi") {
+			const hdmi = findEnumeratedCard(audioDevices, AUTO_CAPTURE_CARD_IDS.hdmi);
 			if (hdmi !== undefined) {
 				if (provenIncapableOfCapture(hdmi.cardId, captureCapableCardIds)) {
 					return noCaptureAudio();
@@ -347,18 +384,21 @@ export function resolveAutoAsrc(
 		}
 
 		// Rule 4 — Cam Link capture follows the C4K audio card, same gate.
-		if (source.kind === "camlink") {
-			const asrcKey = findAsrcKeyByCardId(audioDevices, CAMLINK_CARD_ID);
-			if (asrcKey !== undefined) {
-				if (provenIncapableOfCapture(CAMLINK_CARD_ID, captureCapableCardIds)) {
+		if (captureKind === "camlink") {
+			const card = findEnumeratedCard(
+				audioDevices,
+				AUTO_CAPTURE_CARD_IDS.camlink,
+			);
+			if (card !== undefined) {
+				if (provenIncapableOfCapture(card.cardId, captureCapableCardIds)) {
 					return noCaptureAudio();
 				}
-				return { asrcKey, cardId: CAMLINK_CARD_ID, reason: "camlink" };
+				return { ...card, reason: "camlink" };
 			}
 		}
 
 		// Rule 5 — the USB/UVC camera family: the camera's OWN audio, or nothing.
-		if (USB_VIDEO_KINDS.has(source.kind)) {
+		if (captureKind === "usb") {
 			const candidates = sameDeviceAudioCandidates(
 				source.physicalGroupId,
 				audioDevices,

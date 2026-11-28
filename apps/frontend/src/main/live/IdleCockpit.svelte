@@ -75,6 +75,7 @@ interface Props {
 	audioSources: string[];
 	audioSourceList: AudioSource[] | undefined;
 	selectedAudioSource: string | undefined;
+	audioPickUnverified?: boolean;
 	onSelectAudioSource: (id: string) => void;
 	onAudioSelectionApplied: (asrc: string) => void;
 	audioStatus: ResolvedAudioStatus | undefined;
@@ -107,6 +108,7 @@ const {
 	audioSources,
 	audioSourceList,
 	selectedAudioSource,
+	audioPickUnverified = false,
 	onSelectAudioSource,
 	onAudioSelectionApplied,
 	audioStatus,
@@ -196,6 +198,7 @@ const audioEmbeddedComingSoon = $derived(
 			{activeEncode}
 			{activeInput}
 			{audioSourceList}
+			{audioPickUnverified}
 			{audioSources}
 			{audioStatus}
 			{capabilities}

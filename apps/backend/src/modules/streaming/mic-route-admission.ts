@@ -15,7 +15,7 @@ import {
 import {
 	audioInputEngineId,
 	effectiveAudioInputs,
-	planLaunchAudio,
+	planMicObservationAudio,
 } from "./audio-inputs.ts";
 import { searchPipelines } from "./pipelines.ts";
 import { getStreamingBackend } from "./streaming-engine.ts";
@@ -154,12 +154,12 @@ export function freezeMicChoices(
 	saved: ReadonlyMap<string, Admission>,
 	prior: ReadonlyMap<string, Admission> = new Map(),
 	audioOff?: boolean,
-): ReadonlyMap<string, Admission> | null {
-	const plan = planLaunchAudio(config, { audioOff });
-	if (plan === null) return null;
-	const keys = micRouteKeys(plan);
+): ReadonlyMap<string, Admission> {
+	const plan = planMicObservationAudio(config, audioOff);
 	const accepted = new Map(prior);
-	if (plan === undefined || keys.length === 0) return accepted;
+	if (plan === undefined) return accepted;
+	const keys = micRouteKeys(plan);
+	if (keys.length === 0) return accepted;
 	const ids =
 		plan.inputs === undefined
 			? [config.asrc]

@@ -17,7 +17,7 @@ import {
 	NO_AUDIO_ID,
 	resolveAudioMode,
 } from "./audio.ts";
-import { resolveAutoAsrc } from "./auto-audio.ts";
+import { possibleAutoLocalAudioKeys, resolveAutoAsrc } from "./auto-audio.ts";
 import { getLastCapabilities } from "./capabilities.ts";
 import { isEmbeddedAudioPipeline } from "./embedded-audio.ts";
 import { isNetworkIngestPipeline } from "./pipelines.ts";
@@ -40,12 +40,15 @@ export function canPickAudioInput(config: RuntimeConfig, id: string): boolean {
 	return !requiresAudioInput(id) || availableAudioInputIds(config).has(id);
 }
 
-export function primaryAudioInputId(config: RuntimeConfig): string | undefined {
+export function primaryAudioInputId(
+	config: RuntimeConfig,
+	embedded = isEmbeddedAudioPipeline(config.pipeline),
+): string | undefined {
 	if (
-		isEmbeddedAudioPipeline(config.pipeline) &&
+		embedded &&
 		(config.asrc === undefined ||
 			config.asrc === AUDIO_SOURCE_AUTO ||
-			config.asrc === "Pipeline default")
+			config.asrc === DEFAULT_AUDIO_ID)
 	)
 		return config.source ?? config.pipeline;
 	if (config.asrc !== AUDIO_SOURCE_AUTO) return config.asrc;
@@ -65,12 +68,9 @@ export function primaryAudioInputId(config: RuntimeConfig): string | undefined {
 export function audioInputEngineId(
 	id: string,
 	config: RuntimeConfig,
+	embedded = isEmbeddedAudioPipeline(config.pipeline),
 ): string | undefined {
-	if (
-		isEmbeddedAudioPipeline(config.pipeline) &&
-		id === (config.source ?? config.pipeline)
-	)
-		return "embedded";
+	if (embedded && id === (config.source ?? config.pipeline)) return "embedded";
 	if (isNetworkIngestPipeline(id)) return undefined;
 	return resolveAudioMode(id, false, getAudioDevices()).device ?? id;
 }
@@ -231,28 +231,39 @@ export function effectiveAudioInputs(
 ): AudioInputSetting[] | undefined {
 	const capability = getLastCapabilities()?.audio_mix;
 	const primary = pinnedPrimary ?? primaryAudioInputId(config);
-	if (
-		!capability ||
-		primary === undefined ||
-		config.audio_inputs?.some(({ id }) => id === primary)
-	)
-		return config.audio_inputs;
+	if (!capability || primary === undefined) return config.audio_inputs;
 	const available = availableAudioInputIds(config);
 	if (pinnedPrimary !== undefined) available.add(pinnedPrimary);
-	if (!available.has(primary)) return config.audio_inputs;
-	return mixWithAvailablePrimary(
-		config.audio_inputs,
+	return composeLaunchMix(config.audio_inputs, {
 		primary,
-		capability.max_inputs,
+		maxInputs: capability.max_inputs,
 		available,
-	);
+	});
+}
+
+interface LaunchMixView {
+	readonly available: ReadonlySet<string>;
+	readonly primary: string | undefined;
+	readonly maxInputs: number;
+	readonly embedded?: boolean;
+}
+
+function composeLaunchMix(
+	saved: AudioInputSetting[] | undefined,
+	{ primary, maxInputs, available }: LaunchMixView,
+): AudioInputSetting[] | undefined {
+	return primary === undefined ||
+		saved?.some(({ id }) => id === primary) ||
+		!available.has(primary)
+		? saved
+		: mixWithAvailablePrimary(saved, primary, maxInputs, available);
 }
 
 function mixWithAvailablePrimary(
 	saved: AudioInputSetting[] | undefined,
 	primary: string,
 	maxInputs: number,
-	available: Set<string>,
+	available: ReadonlySet<string>,
 	previous?: string,
 ): AudioInputSetting[] | undefined {
 	if (!saved?.length) return undefined;
@@ -351,8 +362,8 @@ export function projectLaunchAudioInputs(
 	inputs: readonly AudioInputSetting[],
 	resolveId: (id: string) => string | undefined = (id) => id,
 	available: ReadonlySet<string> = availableAudioInputIds(config),
+	primary = primaryAudioInputId(config),
 ): AudioInputSetting[] | undefined {
-	const primary = primaryAudioInputId(config);
 	const resolved: AudioInputSetting[] = [];
 	const projected: AudioInputSetting[] = [];
 	let canOmit = true;
@@ -373,48 +384,86 @@ export function projectLaunchAudioInputs(
 	return resolved.length === inputs.length ? resolved : undefined;
 }
 
-function engineAudioInputs(
+function planEngineMix(
 	config: RuntimeConfig,
-	assumeLocalInputsAvailable: boolean,
+	view: LaunchMixView,
+	presentOnly = false,
 ): AudioInputConfig[] | undefined | null {
-	if (!getLastCapabilities()?.audio_mix || !config.audio_inputs?.length)
-		return undefined;
-	const available = availableAudioInputIds(config);
-	const primary = primaryAudioInputId(config);
-	let effective: AudioInputSetting[] | undefined;
-	if (assumeLocalInputsAvailable) {
-		// A saved local leg might return, or make room for a different leg at
-		// dispatch. Reject only a track no possible local leg could cover.
-		effective =
-			primary !== undefined &&
-			(available.has(primary) ||
-				(requiresAudioInput(primary) && !isNetworkIngestPipeline(primary))) &&
-			!config.audio_inputs.some(({ id }) => id === primary)
-				? [defaultAudioInput(primary), ...config.audio_inputs]
-				: config.audio_inputs;
-		for (const { id } of effective)
-			if (!isNetworkIngestPipeline(id)) available.add(id);
-	} else {
-		effective = effectiveAudioInputs(config);
-	}
+	const { available, primary, embedded } = view;
+	const effective = composeLaunchMix(config.audio_inputs, view);
 	if (!effective?.length) return undefined;
-	const inputs = projectLaunchAudioInputs(
-		config,
-		effective,
-		undefined,
-		available,
-	);
+	const inputs = presentOnly
+		? effective.filter(({ id }) => available.has(id))
+		: projectLaunchAudioInputs(
+				config,
+				effective,
+				undefined,
+				available,
+				primary,
+			);
 	const ordered = inputs && [
 		...inputs.filter((input) => input.id === primary),
 		...inputs.filter((input) => input.id !== primary),
 	];
 	const mapped = ordered?.flatMap(({ id, ...input }) => {
-		const input_id = audioInputEngineId(id, config);
+		const input_id = audioInputEngineId(id, config, embedded);
 		return input_id === undefined ? [] : [{ input_id, ...input }];
 	});
 	return mapped !== undefined && mapped.length === ordered?.length
 		? mapped
 		: null;
+}
+
+/** Only the structural refusal is final before launch resolution and admission. */
+export function knownUnavailableLaunchAudio(config: RuntimeConfig): boolean {
+	const saved = config.audio_inputs;
+	if (
+		config.asrc === NO_AUDIO_ID ||
+		!saved?.length ||
+		!getLastCapabilities()?.audio_mix
+	)
+		return false;
+
+	// Negotiation may enable the selected pipeline's own embedded leg, but
+	// cannot make the other network source's leg addressable.
+	const embedded = isNetworkIngestPipeline(config.pipeline ?? "");
+	const embeddedId = embedded ? (config.source ?? config.pipeline) : undefined;
+	const possibleSavedIds = saved
+		.map(({ id }) => id)
+		.filter((id) => audioInputEngineId(id, config, embedded) !== undefined);
+	const isAuto = config.asrc === AUDIO_SOURCE_AUTO;
+	const canRoute = (primary: string | undefined) => {
+		const available = new Set(possibleSavedIds);
+		if (
+			primary !== undefined &&
+			(primary === embeddedId ||
+				(requiresAudioInput(primary) && !isNetworkIngestPipeline(primary)))
+		)
+			available.add(primary);
+		// A returning leg can cover its saved tracks. A new primary can add
+		// the mixer's default tracks if there's room (available slots can
+		// change); replacement only inherits tracks already counted.
+		return (
+			planEngineMix(config, {
+				available,
+				primary,
+				maxInputs: saved.length + 1,
+				embedded,
+			}) !== null
+		);
+	};
+	const withoutAutoPick = isAuto ? { ...config, asrc: undefined } : config;
+	if (canRoute(primaryAudioInputId(withoutAutoPick, embedded))) return false;
+	if (!isAuto) return true;
+	const possibleKeys = possibleAutoLocalAudioKeys(config.source);
+	if (possibleKeys !== null) return !possibleKeys.some(canRoute);
+
+	// All saved local IDs were already counted. The only additional outcome
+	// that can extend coverage is a newly resolved local primary.
+	let newPrimary = "possible-local-primary";
+	while (newPrimary === embeddedId || saved.some(({ id }) => id === newPrimary))
+		newPrimary += "_";
+	return !canRoute(newPrimary);
 }
 
 export interface LaunchAudioPlan extends AudioModeSelection {
@@ -433,8 +482,6 @@ export interface LaunchAudioPlan extends AudioModeSelection {
 type LaunchAudioOptions = {
 	readonly audioOff?: boolean | undefined;
 	readonly embeddedAudioActive?: boolean;
-	/** Restore preflight must allow local legs to return or re-enumerate. */
-	readonly assumeLocalInputsAvailable?: boolean;
 };
 
 export function planLaunchAudio(
@@ -442,16 +489,40 @@ export function planLaunchAudio(
 	{
 		audioOff = config.asrc === NO_AUDIO_ID,
 		embeddedAudioActive = isEmbeddedAudioPipeline(config.pipeline),
-		assumeLocalInputsAvailable = false,
 	}: LaunchAudioOptions = {},
 ): LaunchAudioPlan | undefined | null {
 	if (audioOff) return { mode: "none" };
-	const inputs = engineAudioInputs(config, assumeLocalInputsAvailable);
+	const inputs = liveEngineMix(config);
 	if (inputs === null) return null;
 	if (inputs !== undefined) return { mode: "default", inputs };
 	return config.asrc === undefined
 		? undefined
 		: resolveAudioMode(config.asrc, embeddedAudioActive);
+}
+
+function liveEngineMix(config: RuntimeConfig, presentOnly = false) {
+	const mix = getLastCapabilities()?.audio_mix;
+	if (!mix || !config.audio_inputs?.length) return undefined;
+	return planEngineMix(
+		config,
+		{
+			available: availableAudioInputIds(config),
+			primary: primaryAudioInputId(config),
+			maxInputs: mix.max_inputs,
+		},
+		presentOnly,
+	);
+}
+
+/** Capture proof for present legs without authorizing an incomplete mix. */
+export function planMicObservationAudio(
+	config: RuntimeConfig,
+	audioOff?: boolean,
+): LaunchAudioPlan | undefined {
+	const plan = planLaunchAudio(config, { audioOff });
+	if (plan !== null) return plan;
+	const inputs = liveEngineMix(config, true);
+	return inputs?.length ? { mode: "default", inputs } : undefined;
 }
 
 export function unavailableAudioRoute(attemptId: string): StreamStartFailure {

@@ -7,13 +7,16 @@ import {
 } from "../auto-audio.ts";
 
 // "Auto" resolves at launch in a shallow copy; persisted config keeps its sentinel.
-export function resolveLaunchConfig(config: RuntimeConfig): RuntimeConfig {
-	if (config.asrc !== AUDIO_SOURCE_AUTO) return config;
+export function resolveLaunchConfig(config: RuntimeConfig) {
+	if (config.asrc !== AUDIO_SOURCE_AUTO) return { config, publish: undefined };
 	const resolution = resolveAutoAsrcFromLiveState(config.source ?? null);
-	setResolvedAsrcFromStart(
-		resolution.asrcKey,
-		resolution.reason,
-		resolution.candidates,
-	);
-	return buildAutoLaunchConfig(config, resolution);
+	return {
+		config: buildAutoLaunchConfig(config, resolution),
+		publish: () =>
+			setResolvedAsrcFromStart(
+				resolution.asrcKey,
+				resolution.reason,
+				resolution.candidates,
+			),
+	};
 }

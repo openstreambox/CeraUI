@@ -858,6 +858,7 @@
 	"live.audioMixer.error.audio_delay_range": "Delay 0 से {max} ms तक की पूर्ण संख्या होनी चाहिए।",
 	"live.audioMixer.error.audio_mix_active": "यह स्ट्रीम इनपुट मिक्स कर रही है। मुख्य इनपुट बदलने के लिए इसे रोकें।",
 	"live.audioMixer.error.refused": "डिवाइस ने यह बदलाव अस्वीकार कर दिया, इसलिए कुछ नहीं बदला।",
+	"live.source.audioPickUnverified": "आपका चयन सहेज लिया गया है, लेकिन स्ट्रीम शुरू करने के लिए माइक्रोफ़ोन की पुष्टि नहीं हो सकी। फिर से जाँचने के लिए दोबारा कोशिश करें।",
 	"live.telemetryCard.title": "टेलीमेट्री",
 	"live.bar.beforeLive": "लाइव होने से पहले",
 	"live.bar.checking": "तैयारी की जाँच हो रही है…",

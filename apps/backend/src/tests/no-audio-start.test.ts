@@ -2597,6 +2597,62 @@ async function embeddedStartPeer(extraPipeline?: string) {
 	return peer;
 }
 
+test.each([
+	"unplugged",
+	"engine refused",
+	"unplugged during verification",
+] as const)(
+	"a profile push saves the profile but keeps the original stream when the local microphone for Track 2 is %s",
+	async (failure) => {
+		let replacing = false;
+		const detach = () =>
+			audio.setMockAudioDevicesProvider(() => ({ Primary: "hw:CARD=primary" }));
+		const peer = await scopedStartPeer("legacy-success", (request) => {
+			if (replacing && request.operation.kind === "verify") {
+				if (failure !== "unplugged during verification")
+					return { status: "mismatch" };
+				detach();
+			}
+			return testMicRoutes(request);
+		});
+		useRoutePeer(peer);
+		keepMarker();
+		const mix = [entry("Primary", [1]), entry("Second", [2])];
+		getConfig().asrc = "Primary";
+		expect(
+			await call(setConfigProcedure, { audio_inputs: mix }, context()),
+		).toMatchObject({ success: true });
+		expect(await start()).toMatchObject({ success: true });
+		const live = getStreamSessionSnapshot();
+		const marker = readArmedStreamMarker();
+		const starts = peer.starts();
+		const checks = peer.checks.length;
+		const prepares = peer.prepares();
+		expect(starts).toHaveLength(1);
+		expect(marker).toBeDefined();
+
+		replacing = true;
+		if (failure === "unplugged") detach();
+		const configBefore = await disk();
+		await setProfile();
+
+		expect(await disk()).toMatchObject({
+			...configBefore,
+			stream_profile: "balanced",
+			srt_latency: 2000,
+		});
+		expect(peer.stops()).toEqual([]);
+		expect(peer.starts()).toEqual(starts);
+		expect(peer.physical()).toBe("ours");
+		expect(getStreamSessionSnapshot()).toEqual(live);
+		expect(readArmedStreamMarker()).toEqual(marker);
+		expect(peer.prepares()).toEqual(prepares);
+		expect(
+			peer.checks.slice(checks).map(({ params }) => params.operation.kind),
+		).toEqual(failure === "unplugged" ? ["admit"] : ["admit", "verify"]);
+	},
+);
+
 test("a profile push keeps the live RTMP stream when its saved USB replacement has no Track 2", async () => {
 	const usb: CaptureStreamSource = {
 		...HDMI,
@@ -2787,6 +2843,216 @@ test.each(["control-channel Start", "autostart", "restoration"] as const)(
 		expect(await Bun.file(getConfigFilePath()).text()).toBe(before);
 	},
 );
+
+async function hdmiAutoPeer() {
+	const peer = await embeddedStartPeer("hdmi");
+	spyOn(audio, "getAudioCaptureCardIds").mockReturnValue(
+		new Set(["rockchiphdmiin"]),
+	);
+	await refreshEngineDeviceCache({
+		fetchEngineDevices: async () => ({
+			devices: [
+				{
+					input_id: HDMI.id,
+					device_path: HDMI.devicePath,
+					display_name: HDMI.displayName,
+					media_class: "video",
+					kind: "hdmi",
+				},
+			],
+		}),
+	});
+	Object.assign(getConfig(), {
+		pipeline: "hdmi",
+		source: HDMI.id,
+		selected_video_input: HDMI.id,
+		asrc: "Auto",
+		audio_inputs: [entry("rtmp", [1]), entry("Second", [2])],
+	});
+	saveConfig();
+	return peer;
+}
+
+function hdmiAudioArrives() {
+	audio.setMockAudioDevicesProvider(() => ({
+		HDMI: "rockchiphdmiin",
+		Second: "hw:CARD=second",
+	}));
+}
+
+test("a profile reconnect can verify Auto HDMI to cover off-source RTMP Track 1 before Stop", async () => {
+	const peer = await hdmiAutoPeer();
+	hdmiAudioArrives();
+	const audio_inputs = structuredClone(getConfig().audio_inputs);
+	const autoRouting = {
+		asrc: "Auto",
+		pipeline: "hdmi",
+		source: HDMI.id,
+		selected_video_input: HDMI.id,
+	};
+	const route = mixed(wire("rockchiphdmiin", [1]), wire("Second", [2]));
+	Object.assign(getConfig(), { pipeline: "rtmp", source: "rtmp" });
+	delete getConfig().selected_video_input;
+	saveConfig();
+	expect(await start()).toMatchObject({ success: true });
+
+	Object.assign(getConfig(), autoRouting, { audio_inputs });
+	saveConfig();
+	const checks = peer.checks.length;
+	await setProfile();
+
+	expect(peer.stops().map(({ method }) => method)).toEqual(["stop"]);
+	expect(peer.starts().map(({ method }) => method)).toEqual([
+		"start-verified",
+		"start-verified",
+	]);
+	expect(peer.startAudio[1]).toMatchObject(route);
+	const verifies = peer.checks
+		.slice(checks)
+		.filter(({ params }) => params.operation.kind === "verify");
+	expect(verifies.map(({ params }) => params.audio.inputs)).toEqual([
+		route.inputs,
+		route.inputs,
+	]);
+	expect(verifies[0]?.peer).toBeLessThan(peer.stops()[0]?.peer ?? 0);
+	expect(verifies[1]?.peer).toBe(peer.starts()[1]?.peer);
+	expect(peer.physical()).toBe("ours");
+	expect(await disk()).toMatchObject({
+		...autoRouting,
+		audio_inputs,
+		stream_profile: "balanced",
+	});
+});
+
+test("legacy Auto restoration uses HDMI to cover the saved RTMP Track 1", async () => {
+	const peer = await hdmiAutoPeer();
+	hdmiAudioArrives();
+	keepMarker();
+	expect(armStreamRestoration()).toBe(true);
+	const marker = readArmedStreamMarker();
+	if (marker === undefined) throw new Error("Restore did not arm");
+	const {
+		audio_inputs: _mix,
+		mic_route_proofs: _proofs,
+		audio_physical_ids: _physical,
+		audio_unverified_ids: _unverified,
+		...legacyConfig
+	} = marker.config;
+	armed = JSON.stringify({ ...marker, config: legacyConfig });
+	const before = await Bun.file(getConfigFilePath()).text();
+
+	expect(await restore()).toMatchObject({ result: "recovered" });
+
+	expect(peer.starts().map(({ method }) => method)).toEqual(["start"]);
+	expect(peer.startAudio).toEqual([
+		mixed(wire("rockchiphdmiin", [1]), wire("Second", [2])),
+	]);
+	expect(peer.checks).toEqual([]);
+	expect(await Bun.file(getConfigFilePath()).text()).toBe(before);
+});
+
+test("legacy restore without a recorded source uses its RTMP pipeline, not the next-start source", async () => {
+	const peer = await embeddedStartPeer();
+	const mix = [entry("rtmp", [2]), entry("Second", [1])];
+	Object.assign(getConfig(), { pipeline: "rtmp", asrc: "Auto" });
+	keepMarker();
+	expect(armStreamRestoration()).toBe(true);
+	const marker = readArmedStreamMarker();
+	if (marker === undefined) throw new Error("Restore did not arm");
+	const {
+		source: _source,
+		audio_inputs: _mix,
+		mic_route_proofs: _proofs,
+		...legacyConfig
+	} = marker.config;
+	armed = JSON.stringify({ ...marker, config: legacyConfig });
+	Object.assign(getConfig(), {
+		pipeline: "test",
+		source: "test",
+		audio_inputs: mix,
+	});
+	saveConfig();
+	const before = await Bun.file(getConfigFilePath()).text();
+
+	expect(await restore()).toMatchObject({ result: "recovered" });
+
+	expect(peer.launchParams.map(({ pipeline }) => pipeline)).toEqual(["rtmp"]);
+	expect(peer.startAudio).toEqual([
+		mixed({ ...wire("rtmp", [2]), input_id: "embedded" }, wire("Second", [1])),
+	]);
+	expect(peer.checks).toEqual([]);
+	expect(await Bun.file(getConfigFilePath()).text()).toBe(before);
+});
+
+test.each(["arrives", "stays absent"] as const)(
+	"UI Auto Start defers Track 1 until launch when HDMI audio %s",
+	async (arrival) => {
+		const peer = await hdmiAutoPeer();
+		const before = await Bun.file(getConfigFilePath()).text();
+		GATES["update admission"]?.();
+		const starting = start();
+		try {
+			await awaitLaunchBoundary(starting);
+			if (arrival === "arrives") hdmiAudioArrives();
+		} finally {
+			gate.resolve();
+			await starting;
+		}
+
+		const result = await starting;
+		if (arrival === "arrives") {
+			expect(result).toMatchObject({ success: true });
+			expect(peer.starts().map(({ method }) => method)).toEqual([
+				"start-verified",
+			]);
+			expect(peer.startAudio).toMatchObject([
+				mixed(wire("rockchiphdmiin", [1]), wire("Second", [2])),
+			]);
+		} else {
+			expect(result).toMatchObject({
+				result: "failed",
+				failure: { class: "audio_source_unavailable", retriable: false },
+			});
+			expect(peer.starts()).toEqual([]);
+		}
+		expect(await Bun.file(getConfigFilePath()).text()).toBe(before);
+	},
+);
+
+test("concrete Start verifies a previously admitted mix leg that returns to cover off-source RTMP Track 2", async () => {
+	const peer = await embeddedStartPeer();
+	const mix = [entry("Primary", [1]), entry("Second", [2]), entry("rtmp", [2])];
+	Object.assign(getConfig(), {
+		pipeline: "rtmp",
+		source: "rtmp",
+		asrc: "Primary",
+	});
+	expect(
+		await call(setConfigProcedure, { audio_inputs: mix }, context()),
+	).toMatchObject({ success: true });
+	Object.assign(getConfig(), { pipeline: "test", source: "test" });
+	saveConfig();
+	audio.setMockAudioDevicesProvider(() => ({ Primary: "hw:CARD=primary" }));
+	GATES["update admission"]?.();
+	const starting = start();
+	try {
+		await awaitLaunchBoundary(starting);
+		audio.setMockAudioDevicesProvider(() => ({
+			Primary: "hw:CARD=primary",
+			Second: "hw:CARD=second",
+		}));
+	} finally {
+		gate.resolve();
+		await starting;
+	}
+
+	expect(await starting).toMatchObject({ success: true });
+	expect(peer.starts().map(({ method }) => method)).toEqual(["start-verified"]);
+	expect(peer.startAudio).toMatchObject([
+		mixed(wire("Primary", [1]), wire("Second", [2])),
+	]);
+	expect(await disk()).toMatchObject({ asrc: "Primary", audio_inputs: mix });
+});
 
 test("a missing tagged picker choice does not touch the running engine or saved routing", async () => {
 	const peer = await embeddedStartPeer();

@@ -13,8 +13,15 @@
  * the static device getters (config, sources, network) and heavy leaves are
  * scripted. Expectations are literal control lists and optimism states.
  */
-import { fireEvent, render, waitFor } from "@testing-library/svelte";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/svelte";
 import { flushSync } from "svelte";
+import { toast } from "svelte-sonner";
 import {
 	afterEach,
 	beforeAll,
@@ -49,6 +56,9 @@ const transport = vi.hoisted(
 		authenticated: false,
 	}),
 );
+const savedAsrc = vi.hoisted((): { value: string | undefined } => ({
+	value: undefined,
+}));
 
 vi.mock("$lib/config", () => ({
 	navElements: { network: { label: "Network" } },
@@ -78,11 +88,18 @@ vi.mock("$lib/rpc/client", async (importOriginal) => ({
 		transport,
 	),
 }));
-vi.mock("$lib/rpc/subscriptions.svelte", async (importOriginal) =>
-	(await import("../tests/fixtures/real-store-live")).deviceGettersMock(
+vi.mock("$lib/rpc/subscriptions.svelte", async (importOriginal) => {
+	const { deviceGettersMock } = await import(
+		"../tests/fixtures/real-store-live"
+	);
+	const getters = await deviceGettersMock(
 		await importOriginal<typeof import("$lib/rpc/subscriptions.svelte")>(),
-	),
-);
+	);
+	return {
+		...getters,
+		getConfig: () => ({ ...getters.getConfig(), asrc: savedAsrc.value }),
+	};
+});
 vi.mock("$lib/stores/auth-status.svelte", async (importOriginal) => ({
 	...(await importOriginal<typeof import("$lib/stores/auth-status.svelte")>()),
 	authStatusStore: {
@@ -167,6 +184,7 @@ beforeAll(() => {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	savedAsrc.value = undefined;
 	localStorage.setItem("auth", "token-abc");
 	resetState();
 	initSubscriptions();
@@ -183,6 +201,61 @@ afterEach(() => {
 	dropLink(transport);
 	localStorage.clear();
 	document.body.innerHTML = "";
+});
+
+it("keeps the saved microphone visible when verification fails, cancels queued Start and lets the operator recheck", async () => {
+	savedAsrc.value = "Old microphone";
+	push(transport, { asrcs: ["Old microphone", "New microphone"] });
+	const save = vi.mocked(rpc.streaming.setConfig);
+	const reply = Promise.withResolvers<Awaited<ReturnType<typeof save>>>();
+	save.mockReturnValueOnce(reply.promise);
+	const { container } = render(LiveView);
+
+	const picker = screen.getByRole("combobox", { name: "Old microphone" });
+	await fireEvent.keyDown(picker, { key: "ArrowDown" });
+	await fireEvent.pointerUp(
+		await screen.findByRole("option", { name: "New microphone" }),
+	);
+	expect(save).toHaveBeenCalledExactlyOnceWith({
+		asrc: "New microphone",
+		audio_pick: true,
+	});
+	await fireEvent.click(button(container, "Start Stream"));
+	await act(async () => {
+		reply.resolve({
+			success: false,
+			error: "audio_source_probe_failed",
+			applied: { asrc: "New microphone" },
+		});
+		await reply.promise;
+	});
+
+	const message =
+		"Your choice was saved, but the microphone couldn't be verified for Start. Try again to recheck it.";
+	await waitFor(() =>
+		expect(button(container, "Start Stream").disabled).toBe(false),
+	);
+	expect({
+		picker: screen.getByTestId("audio-source-select").textContent?.trim(),
+		notice: screen.queryByText(message)?.textContent?.trim(),
+	}).toEqual({ picker: "New microphone", notice: message });
+	expect(toast.error).not.toHaveBeenCalled();
+	expect(start).not.toHaveBeenCalled();
+
+	save.mockResolvedValueOnce({
+		success: true,
+		applied: { asrc: "New microphone" },
+	});
+	await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+	expect(save.mock.calls).toEqual([
+		[{ asrc: "New microphone", audio_pick: true }],
+		[{ asrc: "New microphone", audio_pick: true }],
+	]);
+	expect(screen.queryByText(message)).toBeNull();
+	expect(screen.getByTestId("audio-source-select").textContent?.trim()).toBe(
+		"New microphone",
+	);
+	expect(start).not.toHaveBeenCalled();
 });
 
 /**

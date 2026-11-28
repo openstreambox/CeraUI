@@ -55,10 +55,9 @@ import {
 	getLastCapabilities,
 	MINIMAL_SAFE_CAPABILITIES,
 } from "../../modules/streaming/capabilities.ts";
-import { fromEngineDevice } from "../../modules/streaming/devices.ts";
 import type { LinkTelemetryMessage } from "../../modules/streaming/link-telemetry.ts";
 import {
-	applyObservedDevicesAndBroadcast,
+	applyEngineDeviceObservationAndBroadcast,
 	getSourcesMessage,
 } from "../../modules/streaming/sources.ts";
 import { broadcastMsg } from "../../modules/ui/websocket-server.ts";
@@ -523,17 +522,7 @@ export function setMockDeviceAttached(
 		detached[inputId] = true;
 	}
 	updateMockState({ detachedSources: detached });
-	const observed = getMockEngineDevices().devices.map((d) =>
-		fromEngineDevice({
-			input_id: d.input_id,
-			device_path: d.device_path,
-			display_name: d.display_name,
-			media_class: d.media_class,
-			kind: d.kind,
-			caps: d.caps,
-		}),
-	);
-	applyObservedDevicesAndBroadcast(observed);
+	applyEngineDeviceObservationAndBroadcast(getMockEngineDevices());
 	// Clients hear an audio card leave or return on `status`, as on an ALSA hotplug.
 	if (
 		Object.values(scenarioAudioDevices()).some(

@@ -26,8 +26,7 @@
  * stops the stream, waits for the engine + processes to settle, then re-enters
  * connect with the persisted config (the only way to change latency — the engine
  * reload-config has no latency arm). It is bounded and never throws; if the stream
- * does not settle in time it leaves the running stream untouched and the persisted
- * config is applied on the next start instead.
+ * cannot be safely replaced, the persisted config applies on the next Start.
  */
 
 import { resolverDecidedBySchema } from "@ceraui/rpc/schemas";
@@ -43,6 +42,7 @@ import {
 } from "../streaming/start-failure-taxonomy.ts";
 import { startStreamSession } from "../streaming/stream-session-orchestrator.ts";
 import { acceptStartConfig, getIsStreaming } from "../streaming/streaming.ts";
+import { verifyReplacementAudio } from "../streaming/streamloop/start-stream.ts";
 import { start as startStream } from "../streaming/streamloop.ts";
 import { reportActiveProfile } from "./active-profile-reporter.ts";
 import { configureSetProfile, type SetProfileCaps } from "./set-profile.ts";
@@ -72,6 +72,8 @@ async function reconnect(): Promise<void> {
 	const started = await startStreamSession({
 		origin: "set-profile",
 		audio: accepted.audio,
+		verifyReplacementAudio: () =>
+			verifyReplacementAudio(accepted.params, accepted.audio),
 		launch: async ({ attemptId, generation }) => {
 			const result = await startStream(
 				stubConn,

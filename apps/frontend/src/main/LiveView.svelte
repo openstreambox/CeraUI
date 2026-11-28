@@ -692,8 +692,13 @@ let encoderConfig = $state<EncoderConfig>({
 
 // Audio dialog: working override layered over the saved config until the next
 // stream (re)start folds it into the full config sent to rpc.streaming.start.
-let audioOverride = $state<AudioConfigValues | null>(null);
-let pendingAudioPick: { readonly draft: AudioConfigValues; readonly result: Promise<AudioConfigValues | null> } | undefined;
+type AudioDraft = AudioConfigValues & { readonly unverified?: true };
+type AudioPickOutcome = 'verified' | 'refused' | { readonly savedAsrc: string };
+let audioOverride = $state<AudioDraft | null>(null);
+let pendingAudioPick: {
+	readonly draft: AudioDraft;
+	readonly result: Promise<AudioDraft | null>;
+} | undefined;
 let audioPickRefusalCount = 0;
 let startWaitingForAudioPick = $state(false);
 
@@ -876,39 +881,48 @@ function handleSelectAudioSource(selection: string) {
 	const previous = audioOverride;
 	const earlier = pendingAudioPick;
 	const picked = handleAudioSelectionApplied(asrc);
-	const result = saveAudioPick(asrc).then(async (accepted) => {
-		// A refusal counts when reported, not when its rollback reaches the front.
-		if (!accepted) audioPickRefusalCount += 1;
+	const result = saveAudioPick(asrc).then(async (outcome) => {
+		// A queued Start needs verification even when the device kept the save.
+		if (outcome !== 'verified') audioPickRefusalCount += 1;
 		// An earlier refused draft must not become this pick's rollback value.
 		const prior = await (earlier?.result ?? previous);
 		const rollback = earlier?.draft === previous ? prior : previous;
-		if (!accepted && audioOverride === picked) audioOverride = rollback;
+		let settled: AudioDraft | null = outcome === 'verified' ? picked
+			: outcome === 'refused' ? rollback
+			: { ...picked, asrc: outcome.savedAsrc, unverified: true };
+		if (audioOverride === picked && settled !== picked) {
+			audioOverride = settled;
+			settled = audioOverride;
+		}
 		if (pendingAudioPick?.draft === picked) pendingAudioPick = undefined;
-		return accepted ? picked : rollback;
+		return settled;
 	});
 	pendingAudioPick = { draft: picked, result };
 }
 
-async function saveAudioPick(asrc: string): Promise<boolean> {
+async function saveAudioPick(asrc: string): Promise<AudioPickOutcome> {
 	markPending('asrc', asrc);
 	try {
 		// The device validates the mix and checks the selected route in one request.
 		const result = await rpc.streaming.setConfig({ asrc, audio_pick: true });
-		if (result.success) return true;
+		if (result.success) return 'verified';
+		if (result.error === 'audio_source_probe_failed' && result.applied?.asrc !== undefined) {
+			return { savedAsrc: result.applied.asrc };
+		}
 		if (result.error === 'audio_source_unavailable' || result.error === 'audio_inputs_too_many') {
 			toast.error(result.error === 'audio_inputs_too_many'
 				? m['live.audioMixer.error.audio_inputs_too_many']()
 				: m['live.startFailure.class.audio_source_unavailable']());
-			return false;
+			return 'refused';
 		}
 	} catch {
 		toast.error(m["notifications.saveFailed"]());
-		return false;
+		return 'refused';
 	} finally {
 		onRpcResolved('asrc');
 	}
 	toast.error(m["notifications.saveFailed"]());
-	return false;
+	return 'refused';
 }
 
 // A source switch can retire (or restore) the device audio pick in its own
@@ -1388,6 +1402,7 @@ const configRows = $derived<ConfigRow[]>([
 			{audioSourceList}
 			audioStatus={getStatus()}
 			selectedAudioSource={resolvedAudioSource}
+			audioPickUnverified={audioOverride?.unverified === true}
 			onSelectAudioSource={handleSelectAudioSource}
 			onAudioSelectionApplied={handleAudioSelectionApplied}
 			onOpenAudioDialog={() => (audioDialogOpen = true)}

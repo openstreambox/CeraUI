@@ -18,6 +18,7 @@ import {
 	type StartParams,
 	setAudioMixResultSchema,
 } from "@ceralive/cerastream";
+import { call } from "@orpc/server";
 import {
 	ENGINE_AUDIO_TOKENS,
 	type EngineAudioToken,
@@ -42,8 +43,22 @@ import {
 	getAudioDevices,
 	setMockAudioDevicesProvider,
 } from "../modules/streaming/audio.ts";
+import { clearCapabilitiesCache } from "../modules/streaming/capabilities.ts";
+import { initPipelines } from "../modules/streaming/pipelines.ts";
+import {
+	refreshEngineDeviceCache,
+	resetEngineDeviceCache,
+} from "../modules/streaming/sources.ts";
 import { addClient, removeClient } from "../rpc/events.ts";
+import { setAudioMixProcedure } from "../rpc/procedures/audio-mix.procedure.ts";
+import {
+	setConfigProcedure,
+	setMockDeviceAttachedProcedure,
+	streamingStartProcedure,
+	streamingStopProcedure,
+} from "../rpc/procedures/streaming.procedure.ts";
 import type { AppWebSocket } from "../rpc/types.ts";
+import { makeRpcContext } from "./helpers/bond-toggle-fixture.ts";
 
 // The exact token cerastream returns for each rule, at origin/main 2ad2349e:
 // crates/cerastream/src/engine/audio_mix.rs (validate, start),
@@ -298,6 +313,94 @@ describe("results and frames parse with the producer schemas", () => {
 });
 
 describe("an audio device unplug and replug", () => {
+	test("Start admits the picked main first after a retained saved device is reattached", async () => {
+		clearCapabilitiesCache();
+		resetEngineDeviceCache();
+		setMockAudioDevicesProvider(engine.getMockAudioDevices);
+		await initPipelines({
+			fetchEngineCapabilities: async () => engine.getMockEngineCapabilities(),
+			fetchEngineDevices: async () => engine.getMockEngineDevices(),
+		});
+		const fetchEngineDevices = async () => engine.getMockEngineDevices();
+		const context = { context: makeRpcContext() };
+		const primary = "RØDE AI-Micro";
+		const third = "HDMI Input";
+		const setting = (id: string, track: number) => ({
+			id,
+			tracks: [track],
+			gain_db: 0,
+			mute: false,
+			delay_ms: 0,
+		});
+		const saved = [setting(primary, 1), setting("Elgato Wave:3", 2)];
+		const mix = [setting(third, 1), ...saved];
+		const attach = (attached: boolean) =>
+			call(
+				setMockDeviceAttachedProcedure,
+				{ input_id: SECOND, attached },
+				context,
+			);
+		try {
+			await refreshEngineDeviceCache({ fetchEngineDevices });
+			Object.assign(getConfig(), { audio_inputs: undefined, asrc: primary });
+			expect(
+				await call(
+					setConfigProcedure,
+					{ source: "usb", audio_inputs: saved },
+					context,
+				),
+			).toMatchObject({ success: true });
+			expect(await attach(false)).toEqual({ success: true });
+			// A completed list-devices refresh while Elgato is absent.
+			await refreshEngineDeviceCache({ fetchEngineDevices });
+			expect(
+				await call(
+					setConfigProcedure,
+					{ asrc: third, audio_pick: true },
+					context,
+				),
+			).toMatchObject({
+				success: true,
+				applied: { asrc: third, audio_inputs: mix },
+			});
+			expect(await attach(true)).toEqual({ success: true });
+
+			const started = await call(
+				streamingStartProcedure,
+				{ asrc: third },
+				context,
+			);
+			expect({
+				started,
+				inputs: engine
+					.getMockLastStartParams()
+					?.audio?.inputs?.map(({ input_id, tracks }) => [input_id, tracks]),
+			}).toMatchObject({
+				started: { success: true },
+				inputs: [
+					[HDMI, [1]],
+					[FIRST, [1]],
+					[SECOND, [2]],
+				],
+			});
+			expect(await Bun.file(getConfigFilePath()).json()).toMatchObject({
+				asrc: third,
+				audio_inputs: mix,
+			});
+			expect(
+				await call(setAudioMixProcedure, { id: third, gain_db: -1 }, context),
+			).toMatchObject({
+				success: true,
+				applies_next_start: false,
+				applied: { id: third, gain_db: -1 },
+			});
+		} finally {
+			await call(streamingStopProcedure, undefined, context);
+			resetEngineDeviceCache();
+			clearCapabilitiesCache();
+		}
+	});
+
 	test("leaves and rejoins the audio sources, the engine registry and the idle meters, and clients hear both", async () => {
 		setMockAudioDevicesProvider(engine.getMockAudioDevices);
 		advertiseIdleInputMeters();

@@ -77,7 +77,6 @@ export type StreamLaunchContext = {
 };
 
 export type StreamStartRequest = {
-	readonly origin: StreamLaunchOrigin;
 	readonly audio?:
 		| Pick<
 				import("./start-audio.ts").StartAudio,
@@ -85,7 +84,13 @@ export type StreamStartRequest = {
 		  >
 		| undefined;
 	readonly launch: (context: StreamLaunchContext) => Promise<void>;
-};
+} & (
+	| {
+			readonly origin: "set-profile";
+			readonly verifyReplacementAudio: () => Promise<() => boolean>;
+	  }
+	| { readonly origin: Exclude<StreamLaunchOrigin, "set-profile"> }
+);
 
 export type StreamSessionSnapshot = {
 	readonly state: LifecycleState;
@@ -421,6 +426,20 @@ export function createStreamSessionOrchestrator(
 		failure: typedStartFailure(attemptId, "params", failureClass, code),
 	});
 
+	const refuseAudio = (attemptId: string): StartResult => {
+		const { failure } = unavailableAudioRoute(attemptId);
+		deps.reportTerminalFailure?.(
+			startRetryDiagnostic(failure, {
+				state: "not_retriable",
+				attempt: 1,
+				maxAttempts: (deps.retryPolicy ?? DEFAULT_START_RETRY_POLICY)
+					.maxAttempts,
+				suppressed: false,
+			}),
+		);
+		return { result: "failed", attemptId, failure };
+	};
+
 	const start = async (request: StreamStartRequest): Promise<StartResult> => {
 		const currentIntent = captureOperatorStopIntent();
 		const attemptId = deps.createAttemptId();
@@ -442,20 +461,21 @@ export function createStreamSessionOrchestrator(
 		}
 
 		// A captured refusal is terminal before we touch the engine or a live session.
-		if (request.audio?.routeUnavailable) {
-			const { failure } = unavailableAudioRoute(attemptId);
-			deps.reportTerminalFailure?.(
-				startRetryDiagnostic(failure, {
-					state: "not_retriable",
-					attempt: 1,
-					maxAttempts: (deps.retryPolicy ?? DEFAULT_START_RETRY_POLICY)
-						.maxAttempts,
-					suppressed: false,
-				}),
-			);
-			return { result: "failed", attemptId, failure };
-		}
+		if (request.audio?.routeUnavailable) return refuseAudio(attemptId);
 		if (request.origin === "set-profile" && deps.getStreamingStatus?.()) {
+			const owner = ownership.capture();
+			const ready = await request.verifyReplacementAudio();
+			if (!currentIntent()) return { result: "cancelled", attemptId };
+			if (
+				!ownership.owns(owner) ||
+				ownership.state !== "streaming" ||
+				stopFlight !== undefined ||
+				lossRetirement !== undefined ||
+				engineTransitionLatched ||
+				!deps.getStreamingStatus()
+			)
+				return { result: "busy", attemptId };
+			if (!ready()) return refuseAudio(attemptId);
 			// Preserve the armed marker and let an operator Stop veto the restart.
 			const stopped = await stop("reconfigure");
 			if (!currentIntent()) return { result: "cancelled", attemptId };

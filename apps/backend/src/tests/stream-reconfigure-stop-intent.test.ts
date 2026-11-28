@@ -49,17 +49,20 @@ test("operator Stop cancels a reconfigure flight before its replacement Start", 
 			await streamSessionProductionDeps.stopRuntime(generation, confirmUnknown);
 		},
 	});
-	let submissions = 0;
+	let replacementLaunches = 0;
 	const live = spyOn(streaming, "getIsStreaming").mockImplementation(
 		() => harness.view().live,
 	);
-	const stop = spyOn(owner, "stopStreamSession").mockImplementation(
-		harness.session.stop,
+	const start = spyOn(owner, "startStreamSession").mockImplementation(
+		(request) =>
+			harness.session.start({
+				...request,
+				launch: (context) => {
+					replacementLaunches++;
+					return request.launch(context);
+				},
+			}),
 	);
-	const start = spyOn(owner, "startStreamSession").mockImplementation(() => {
-		submissions++;
-		return harness.start();
-	});
 	try {
 		await harness.start();
 		wireSetProfile();
@@ -73,15 +76,27 @@ test("operator Stop cancels a reconfigure flight before its replacement Start", 
 				recoveryMode: "standard",
 			},
 		});
-		await entered.promise;
+		expect(
+			await Promise.race([
+				entered.promise.then(() => "stopping"),
+				configuring.then(() => "profile returned before stopping"),
+			]),
+		).toBe("stopping");
 		// When operator Stop supersedes the reconfigure flight during its Stop await.
 		const stopping = harness.session.stop("operator");
 		release.resolve();
 		await configuring;
 		expect(await stopping).toEqual({ result: "stopped" });
-		// Then no replacement Start is submitted and physical/intent files stay absent.
-		expect(submissions).toBe(0);
+		// Then the reconnect never enters its replacement launch callback.
+		expect(start).toHaveBeenCalledTimes(1);
+		expect(await start.mock.results[0]?.value).toMatchObject({
+			result: "cancelled",
+		});
+		expect(replacementLaunches).toBe(0);
 		expect(harness.view().launches).toBe(1);
+		expect(harness.calls().filter((call) => call === "start")).toEqual([
+			"start",
+		]);
 		expect(harness.calls().filter((call) => call === "stop")).toEqual(["stop"]);
 		expect(harness.engine.view().engine).toBe("idle");
 		expect(existsSync(marker.markerPath)).toBe(false);
@@ -89,7 +104,6 @@ test("operator Stop cancels a reconfigure flight before its replacement Start", 
 	} finally {
 		release.resolve();
 		start.mockRestore();
-		stop.mockRestore();
 		live.mockRestore();
 		await harness.dispose();
 		if (previous === undefined) delete process.env.CERALIVE_STREAMING_MARKER;

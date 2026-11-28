@@ -863,6 +863,7 @@
 	"live.audioMixer.error.audio_delay_range": "O delay deve ser um número inteiro de 0 a {max} ms.",
 	"live.audioMixer.error.audio_mix_active": "Esta transmissão está mixando entradas. Pare-a para trocar a entrada principal.",
 	"live.audioMixer.error.refused": "O dispositivo recusou esta alteração; nada foi alterado.",
+	"live.source.audioPickUnverified": "Sua escolha foi salva, mas não foi possível verificar o microfone para iniciar a transmissão. Tente novamente para verificá-lo.",
 	"live.telemetryCard.title": "Telemetria",
 	"live.bar.beforeLive": "Antes de entrar ao vivo",
 	"live.bar.checking": "Verificando se está tudo pronto…",

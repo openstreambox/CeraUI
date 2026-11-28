@@ -845,7 +845,7 @@ export class CerastreamBackend implements StreamingBackend {
 		return ["--config", this.deps.configPath];
 	}
 
-	/** A choice observation is read-only and never reserves a Start. */
+	/** Read-only observation or verification; neither reserves a Start. */
 	async admitMicRoutes(
 		params: CheckMicRoutesParams,
 	): Promise<string[] | undefined> {
@@ -856,8 +856,22 @@ export class CerastreamBackend implements StreamingBackend {
 			});
 			try {
 				const caps = await readLaunchCapabilities(client);
-				if (!caps.micRouteCheck) return undefined;
-				const result = await client.checkMicRoutes?.(params);
+				if (
+					!caps.micRouteCheck ||
+					(params.operation.kind === "verify" && !caps.scoped)
+				)
+					return undefined;
+				const result = await client.checkMicRoutes?.(
+					params.operation.kind === "verify"
+						? {
+								...params,
+								audio: {
+									...params.audio,
+									backend: params.audio.backend ?? caps.audioBackend,
+								},
+							}
+						: params,
+				);
 				if (
 					result?.status === "checked" &&
 					hasOrderedMicProofs(result.proofs, micRouteKeys(params.audio).length)

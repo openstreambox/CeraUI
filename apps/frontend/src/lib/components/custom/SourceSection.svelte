@@ -138,6 +138,7 @@ interface Props {
 	/** Typed audio-source model (status.audio_sources); falls back to `audioSources`. */
 	audioSourceList?: AudioSource[] | undefined;
 	selectedAudioSource?: string | undefined;
+	audioPickUnverified?: boolean;
 	onSelectAudioSource?: (id: string) => void;
 	/**
 	 * A source switch that ALSO retires or restores the device audio pick writes
@@ -171,6 +172,7 @@ let {
 	audioSources = [],
 	audioSourceList,
 	selectedAudioSource,
+	audioPickUnverified = false,
 	onSelectAudioSource,
 	onAudioSelectionApplied,
 	audioStatus,
@@ -1554,6 +1556,21 @@ const showEmbedded = $derived(
 							<LiveAudioMeter class="px-3 py-2.5" />
 						{/if}
 					</div>
+					{#if audioPickUnverified && !showEmbedded && !isStreaming && selectedAudioSource}
+						<div class="space-y-1 px-3 py-2 text-xs">
+							<p class="text-status-warning" role="status">
+								{m["live.source.audioPickUnverified"]()}
+							</p>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={notAvailableAudioSource !== undefined}
+								onclick={() => selectedAudioSource && onSelectAudioSource?.(selectedAudioSource)}
+							>
+								{m["live.startFailure.action.tryAgain"]()}
+							</Button>
+						</div>
+					{/if}
 					<!-- Auto found several, or no, audio devices on the camera's OWN physical
 					     device. It deliberately does not guess across devices, so the operator
 					     is told which state they are in and asked to pick. -->

@@ -783,6 +783,7 @@
 	"live.audioMixer.error.audio_delay_range": "Delay は 0〜{max} ms の整数で指定してください。",
 	"live.audioMixer.error.audio_mix_active": "この配信は入力をミックスしています。メイン入力を変えるには配信を停止してください。",
 	"live.audioMixer.error.refused": "デバイスがこの変更を拒否したため、何も変わっていません。",
+	"live.source.audioPickUnverified": "選択は保存されましたが、配信開始に必要なマイクの確認ができませんでした。もう一度試してマイクを確認してください。",
 	"live.telemetryCard.title": "テレメトリー",
 	"live.bar.beforeLive": "配信を始める前に",
 	"live.bar.checking": "配信の準備を確認中…",

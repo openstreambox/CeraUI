@@ -858,6 +858,7 @@
 	"live.audioMixer.error.audio_delay_range": "Delay must be a whole number from 0 to {max} ms.",
 	"live.audioMixer.error.audio_mix_active": "This stream is mixing inputs. Stop it to change the main input.",
 	"live.audioMixer.error.refused": "The device refused this change, so nothing changed.",
+	"live.source.audioPickUnverified": "Your choice was saved, but the microphone couldn't be verified for Start. Try again to recheck it.",
 	"live.telemetryCard.title": "Telemetry",
 	"live.bar.beforeLive": "Before you go live",
 	"live.bar.checking": "Checking readiness…",

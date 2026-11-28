@@ -783,6 +783,7 @@
 	"live.audioMixer.error.audio_delay_range": "Delay 必须是 0 到 {max} ms 之间的整数。",
 	"live.audioMixer.error.audio_mix_active": "此推流正在混合多个输入。请停止推流后再更改主输入。",
 	"live.audioMixer.error.refused": "设备拒绝了此更改，因此未做任何更改。",
+	"live.source.audioPickUnverified": "已保存你的选择，但未能验证麦克风是否可用于开始直播。请重试以重新验证。",
 	"live.telemetryCard.title": "遥测",
 	"live.bar.beforeLive": "开始直播前",
 	"live.bar.checking": "正在检查开播条件…",

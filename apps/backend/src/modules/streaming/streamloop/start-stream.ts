@@ -20,6 +20,7 @@
 // wires srtla per-uplink telemetry, then starts the engine session over the
 // StreamingBackend seam.
 
+import type { AudioConfig } from "@ceralive/cerastream";
 import { AUDIO_SOURCE_AUTO, type StartFailureClass } from "@ceraui/rpc/schemas";
 import {
 	buildSrtlaSendArgs,
@@ -49,7 +50,9 @@ import {
 } from "../audio.ts";
 import {
 	audioInputEngineId,
+	canPickAudioInput,
 	effectiveAudioInputs,
+	planLaunchAudio,
 	unavailableAudioRoute,
 } from "../audio-inputs.ts";
 import {
@@ -69,7 +72,11 @@ import {
 	startLinkTelemetry,
 	stopLinkTelemetry,
 } from "../link-telemetry.ts";
-import { micRouteKeys } from "../mic-route-admission.ts";
+import {
+	hasOrderedMicProofs,
+	micRouteKeys,
+	networkAudioSource,
+} from "../mic-route-admission.ts";
 import type { Pipeline } from "../pipelines.ts";
 import { replayPreviewEncodeMode } from "../preview-encode-replay.ts";
 import { getLastPublishedBond } from "../srtla.ts";
@@ -176,12 +183,8 @@ export async function maybeProbeAudioSource(
  */
 const autoLaunches = new WeakMap<StartAudio, ReturnType<typeof launchAudio>>();
 
-function launchAudio(
-	config: RuntimeConfig,
-	startAudio: StartAudio,
-	attemptId: string,
-) {
-	const launchConfig = resolveLaunchConfig(config);
+function launchAudio(config: RuntimeConfig, startAudio: StartAudio) {
+	const { config: launchConfig, publish } = resolveLaunchConfig(config);
 	const chosen = launchConfig.asrc;
 	const wasAuto = config.asrc === AUDIO_SOURCE_AUTO;
 	const autoEvidence =
@@ -200,7 +203,6 @@ function launchAudio(
 		wasAuto && startAudio.restoration === undefined
 			? startAudio.autoMicChoices(launchConfig, audioOff)
 			: startAudio.micChoices;
-	if (micChoices === null) throw unavailableAudioRoute(attemptId);
 	return {
 		launchConfig,
 		chosen,
@@ -209,6 +211,110 @@ function launchAudio(
 		audioEvidence,
 		audioOff,
 		micChoices,
+		publish,
+	};
+}
+
+function resolveLaunchRoute(
+	{
+		launchConfig,
+		chosen,
+		wasAuto,
+		audioEvidence,
+		audioOff,
+	}: ReturnType<typeof launchAudio>,
+	settings: StartAudio["config"],
+) {
+	const asrc = wasAuto
+		? chosen &&
+			(audioEvidence.has(chosen)
+				? chosen
+				: (audioIdentitySuccessor(chosen) ?? chosen))
+		: settings.asrc;
+	return resolvePinnedLaunchAudio(
+		{ ...launchConfig, ...settings, asrc },
+		audioEvidence,
+		{ audioOff, embedded: isEmbeddedAudioPipeline(launchConfig.pipeline) },
+	);
+}
+
+async function launchMicProofs(
+	audio: AudioConfig,
+	config: RuntimeConfig,
+	originalKey: (id: string) => string,
+	choices: StartAudio["micChoices"],
+) {
+	const ids =
+		audio.inputs === undefined
+			? [config.asrc]
+			: micRouteKeys(audio).map(
+					(key) =>
+						effectiveAudioInputs(config)?.find(
+							({ id }) => audioInputEngineId(id, config) === key,
+						)?.id,
+				);
+	const proofs = await Promise.all(
+		ids.map((id) =>
+			id === undefined ? undefined : choices.get(originalKey(id)),
+		),
+	);
+	return {
+		ids,
+		proofs: proofs.every((proof) => proof !== undefined) ? proofs : undefined,
+	};
+}
+
+/** Preflight only a destructive replacement. Dispatch still verifies independently. */
+export async function verifyReplacementAudio(
+	capture: Pick<RuntimeConfig, "pipeline" | "source">,
+	startAudio: StartAudio,
+): Promise<() => boolean> {
+	const audio = launchAudio({ ...capture, ...startAudio.config }, startAudio);
+	const current = () => {
+		const resolved = resolveLaunchRoute(audio, startAudio.config);
+		if (!resolved.ok) return undefined;
+		const config = {
+			...audio.launchConfig,
+			asrc: resolved.asrc,
+			audio_inputs: resolved.audio_inputs,
+		};
+		const plan = planLaunchAudio(config, { audioOff: audio.audioOff });
+		if (plan === null) return undefined;
+		return { config, plan, originalKeys: resolved.originalKeys };
+	};
+	const initial = current();
+	const refused = () => false;
+	if (initial === undefined) return refused;
+	const { config, plan, originalKeys } = initial;
+	const keys = micRouteKeys(plan);
+	let listed = () => true;
+	if (plan !== undefined && keys.length > 0) {
+		const { ids, proofs } = await launchMicProofs(
+			plan,
+			config,
+			(id) => originalKeys.get(id) ?? startAudio.originalMicChoice(id),
+			audio.micChoices,
+		);
+		listed = () =>
+			ids.every((id) => id !== undefined && canPickAudioInput(config, id));
+		if (
+			!listed() ||
+			proofs === undefined ||
+			!hasOrderedMicProofs(proofs, keys.length) ||
+			new Set(keys).size !== keys.length
+		)
+			return refused;
+		const verified = await getStreamingBackend().admitMicRoutes({
+			audio: { ...plan, backend: config.audio_backend },
+			network: networkAudioSource(config.pipeline),
+			operation: { kind: "verify", expected: proofs },
+		});
+		if (!Bun.deepEquals(proofs, verified)) return refused;
+	}
+	return () => {
+		if (!listed() || !Bun.deepEquals(current(), initial)) return false;
+		if (audio.wasAuto) autoLaunches.set(startAudio, audio);
+		return true;
 	};
 }
 
@@ -266,9 +372,17 @@ export async function startStream(
 	};
 	// Auto can first resolve from the live roster, but retries cannot choose a
 	// new microphone. Dispatch still rechecks the accepted physical identity.
+	const prechecked = autoLaunches.get(startAudio);
 	const audio =
-		autoLaunches.get(startAudio) ?? launchAudio(config, startAudio, attemptId);
-	if (audio.wasAuto) autoLaunches.set(startAudio, audio);
+		prechecked === undefined
+			? launchAudio(config, startAudio)
+			: {
+					...prechecked,
+					launchConfig: { ...config, ...prechecked.launchConfig },
+				};
+	if (audio.wasAuto)
+		autoLaunches.set(startAudio, { ...audio, publish: undefined });
+	audio.publish?.();
 	const {
 		launchConfig,
 		chosen,
@@ -390,29 +504,16 @@ export async function startStream(
 				// Auto's launch copy can read "No audio" without the operator picking it.
 				audioOff,
 				audioAtDispatch: () => {
-					const audio = startAudio.config;
-					const asrc = wasAuto
-						? chosen &&
-							(audioEvidence.has(chosen)
-								? chosen
-								: (audioIdentitySuccessor(chosen) ?? chosen))
-						: audio.asrc;
-					const resolved = resolvePinnedLaunchAudio(
-						{ ...launchConfig, ...audio, asrc },
-						audioEvidence,
-						{
-							audioOff,
-							embedded: isEmbeddedAudioPipeline(pipeline.source),
-						},
-					);
+					const settings = startAudio.config;
+					const resolved = resolveLaunchRoute(audio, settings);
 					if (!resolved.ok) throw unavailableAudioRoute(attemptId);
 					originalKeys = resolved.originalKeys;
 					launchedAsrc = resolved.asrc;
 					launchedAudio = {
-						...audio,
+						...settings,
 						asrc:
 							wasAuto && autoEvidence === undefined
-								? audio.asrc
+								? settings.asrc
 								: resolved.asrc,
 						audio_inputs: resolved.audio_inputs,
 						audio_physical_ids: resolved.audio_physical_ids,
@@ -432,28 +533,14 @@ export async function startStream(
 							...launchedAudio,
 							asrc: launchedAsrc,
 						};
-						const ids =
-							audio.inputs === undefined
-								? [projected.asrc]
-								: micRouteKeys(audio).map(
-										(key) =>
-											effectiveAudioInputs(projected)?.find(
-												({ id }) => audioInputEngineId(id, projected) === key,
-											)?.id,
-									);
-						checkedIds = ids;
-						const proofs = await Promise.all(
-							ids.map((id) =>
-								id === undefined
-									? undefined
-									: micChoices.get(
-											originalKeys.get(id) ?? startAudio.originalMicChoice(id),
-										),
-							),
+						const { ids, proofs } = await launchMicProofs(
+							audio,
+							projected,
+							(id) => originalKeys.get(id) ?? startAudio.originalMicChoice(id),
+							micChoices,
 						);
-						return proofs.every((proof) => proof !== undefined)
-							? proofs
-							: undefined;
+						checkedIds = ids;
+						return proofs;
 					},
 					applied: (proofs, backend) => {
 						for (const [index, proof] of (proofs ?? []).entries()) {

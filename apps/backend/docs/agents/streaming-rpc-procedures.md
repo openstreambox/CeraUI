@@ -124,11 +124,17 @@ Start builds `effectiveAudioInputs` from the saved mix, with an available
 primary added if needed. `projectLaunchAudioInputs` omits unavailable legs
 only if it omits no primary leg from that mix and the surviving legs cover
 every assigned track. Otherwise Start keeps the routing for normal admission
-or refuses an input that cannot be safely resolved. If a saved leg from another
-source is the only input on a track, Start returns `audio_source_unavailable`
-through the normal recovery flow without dispatching or changing saved routing.
+or refuses an input that cannot be safely resolved. The early gate refuses a
+saved leg from another source only when no possible launch resolution covers its
+tracks. An unresolved Auto primary or a returning local leg can defer the
+verdict to launch. A route that still cannot be resolved returns
+`audio_source_unavailable` without dispatching or changing saved routing.
 The same captured refusal prevents `device.setProfile` from stopping a live
-stream for that replacement. The profile save still applies to the next Start.
+stream for that replacement. Even when the plan is structurally possible, a live
+profile reconnect resolves Auto and verifies the currently usable microphone
+route before Stop, without preparing a Start. If a required local input is
+missing or cannot be verified, the current stream stays live and the profile
+save applies to the next Start. Normal dispatch still rechecks the route.
 The engine adapter puts the primary
 first, maps the projected IDs to engine selectors, and sends producer-owned
 `audio.inputs` instead of `audio.device`. Projection does not rewrite the

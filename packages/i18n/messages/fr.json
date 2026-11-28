@@ -863,6 +863,7 @@
 	"live.audioMixer.error.audio_delay_range": "Le delay doit être un nombre entier de 0 à {max} ms.",
 	"live.audioMixer.error.audio_mix_active": "Ce direct mixe plusieurs entrées. Arrêtez-le pour changer l'entrée principale.",
 	"live.audioMixer.error.refused": "L'appareil a refusé cette modification ; rien n'a changé.",
+	"live.source.audioPickUnverified": "Votre choix a été enregistré, mais le microphone n’a pas pu être vérifié pour le démarrage du flux. Réessayez pour le vérifier.",
 	"live.telemetryCard.title": "Télémétrie",
 	"live.bar.beforeLive": "Avant de passer en direct",
 	"live.bar.checking": "Vérification avant le direct…",
