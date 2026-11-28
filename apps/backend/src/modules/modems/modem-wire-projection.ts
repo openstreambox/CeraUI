@@ -164,6 +164,7 @@ export interface ProjectedModemAdditive {
  * this; the projector consumes only this.
  */
 export interface ProjectedModemSource {
+	readonly tac?: string;
 	readonly kind: ProjectedDeviceKind;
 	/**
 	 * The ModemManager runtime id for an `mm-managed` device — the wire key.
